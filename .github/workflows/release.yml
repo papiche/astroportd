@@ -17,6 +17,8 @@ jobs:
   build:
     name: ${{ matrix.target }}
     runs-on: ubuntu-latest
+    # La cible statique (musl) est « au mieux » : son échec ne bloque pas la publication des autres.
+    continue-on-error: ${{ matrix.experimental == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -29,6 +31,7 @@ jobs:
             apt: gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
           - target: x86_64-unknown-linux-musl
             apt: musl-tools
+            experimental: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.94.0

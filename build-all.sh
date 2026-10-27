@@ -74,6 +74,10 @@ cross_env() {
   var="$(echo "$t" | tr '-' '_')"
   export "CARGO_TARGET_${up}_LINKER=$gcc"
   export "CC_${var}=$gcc"
+  # musl n'a pas les alias BSD u_int8_t/u_int16_t/u_int64_t que sqlite-vec (C) utilise : on les redirige vers <stdint.h>.
+  case "$t" in
+    *-musl) export "CFLAGS_${var}=-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t" ;;
+  esac
 }
 
 target_state() { # ok | "raison"
