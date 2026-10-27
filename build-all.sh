@@ -128,7 +128,10 @@ for t in "${TARGETS[@]}"; do
     stage="$OUT/$name"
     rm -rf "$stage"; mkdir -p "$stage"
     cp "$src" "$stage/$BIN"
-    command -v "$(cross_gcc "$t" | sed 's/gcc$/strip/')" >/dev/null 2>&1 && "$(cross_gcc "$t" | sed 's/gcc$/strip/')" "$stage/$BIN" 2>/dev/null || true
+    strip_tool="$(cross_gcc "$t" | sed 's/gcc$/strip/')"
+    if [ -n "$strip_tool" ] && command -v "$strip_tool" >/dev/null 2>&1; then
+      "$strip_tool" "$stage/$BIN" || echo "⚠ strip a échoué pour $t : binaire gardé tel quel" >&2
+    fi
     [ -f README.md ] && cp README.md "$stage/"
     tar -C "$OUT" -czf "$OUT/$name.tar.gz" "$name"
     rm -rf "$stage"
