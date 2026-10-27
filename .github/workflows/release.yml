@@ -24,14 +24,14 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             apt: ''
           - target: aarch64-unknown-linux-gnu
-            apt: gcc-aarch64-linux-gnu
+            apt: gcc-aarch64-linux-gnu libc6-dev-arm64-cross
           - target: armv7-unknown-linux-gnueabihf
-            apt: gcc-arm-linux-gnueabihf
+            apt: gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
           - target: x86_64-unknown-linux-musl
             apt: musl-tools
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.94.0
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
