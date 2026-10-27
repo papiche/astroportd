@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 530" role="img" aria-labelledby="iat-t iat-d" width="520" height="530">
+<title id="iat-t">Individus, Astroports et territoire</title>
+<desc id="iat-d">Trois niveaux. Des individus, chacun avec un MULTIPASS Nostr, sont hébergés par une station Astroport. Chaque station a pour identité IPFSNODEID, qui est aussi sa clé SSH. Les Capitaines de deux stations se suivent sur Nostr, ce qui ouvre un accès SSH pair à pair entre machines de confiance. Les stations s&#x27;inscrivent dans un territoire, découpé en dalles UMAP de 0,01 degré.</desc>
+<style>
+.ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
+.ill .bg{fill:var(--bg)}.ill .pan{fill:var(--pan);stroke:var(--line);stroke-width:1.5}.ill .pan2{fill:var(--pan2);stroke:var(--acc);stroke-width:2}
+.ill .okp{fill:var(--pan);stroke:var(--ok);stroke-width:2.5}.ill .wnp{fill:var(--pan);stroke:var(--warn);stroke-width:2.5}
+.ill .t{fill:var(--ink);font-size:17px;font-weight:700}.ill .s{fill:var(--mut);font-size:14.5px}.ill .a{fill:var(--acc);font-size:15px;font-weight:700}
+.ill .g{fill:var(--ok);font-size:15px;font-weight:700}.ill .w{fill:var(--warn);font-size:15px;font-weight:700}
+.ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
+.ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
+</style>
+<rect class="bg" width="520" height="530" rx="14"/>
+<text x="260" y="34" class="t m">Individu ↔ Astroport ↔ Territoire</text>
+<text x="16" y="70" class="a">Individus</text>
+<circle class="okp" cx="62" cy="106" r="22"/>
+<text x="62" y="111" class="s m">MP</text>
+<circle class="okp" cx="132" cy="106" r="22"/>
+<text x="132" y="111" class="s m">MP</text>
+<circle class="okp" cx="202" cy="106" r="22"/>
+<text x="202" y="111" class="s m">MP</text>
+<circle class="okp" cx="342" cy="106" r="22"/>
+<text x="342" y="111" class="s m">MP</text>
+<circle class="okp" cx="412" cy="106" r="22"/>
+<text x="412" y="111" class="s m">MP</text>
+<circle class="okp" cx="462" cy="106" r="22"/>
+<text x="462" y="111" class="s m">MP</text>
+<text x="130" y="150" class="s m">MULTIPASS (clé Nostr)</text>
+<text x="380" y="150" class="s m">MULTIPASS (clé Nostr)</text>
+<text x="16" y="196" class="a">Astroports</text>
+<rect class="pan2" x="16" y="208" width="220" height="96" rx="10"/>
+<text x="126.0" y="232" class="t m">Station A · Capitaine</text>
+<text x="126.0" y="253" class="s m">IPFSNODEID = clé SSH</text>
+<text x="126.0" y="272" class="s m">12D3Koo…A</text>
+<rect class="pan2" x="284" y="208" width="220" height="96" rx="10"/>
+<text x="394.0" y="232" class="t m">Station B · Capitaine</text>
+<text x="394.0" y="253" class="s m">IPFSNODEID = clé SSH</text>
+<text x="394.0" y="272" class="s m">12D3Koo…B</text>
+<path class="ln" d="M126 150 L126 208"/>
+<path class="ln" d="M394 150 L394 208"/>
+<path class="ds" d="M236 256 L284 256"/>
+<text x="260" y="330" class="a m">Les Capitaines se suivent sur Nostr</text>
+<text x="260" y="350" class="s m">→ accès SSH P2P (tunnel : astroportd · suivi : Astroport.ONE)</text>
+<text x="16" y="396" class="a">Territoire</text>
+<rect class="okp" x="16" y="408" width="488" height="104" rx="12"/>
+<text x="260" y="440" class="t m">Constellation · UMAP</text>
+<text x="260" y="464" class="s m">dalles de 0,01° (≈ 1 km²), chacune avec son identité</text>
+<text x="260" y="486" class="s m">les stations voisines forment le territoire</text>
+<path class="ln" d="M126 304 L126 408"/>
+<path class="ln" d="M394 304 L394 408"/>
+</svg>

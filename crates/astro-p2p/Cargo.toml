@@ -1,0 +1,27 @@
+[package]
+name = "astro-p2p"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+astro-dav.workspace = true
+libp2p.workspace = true
+libp2p-stream.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures-util.workspace = true
+sha2.workspace = true
+hex.workspace = true
+getrandom.workspace = true
+zeroize.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+astro-core.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[lints]
+workspace = true

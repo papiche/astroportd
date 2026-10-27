@@ -1,0 +1,31 @@
+[package]
+name = "astro-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+astro-nostr-proto.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+aes-gcm.workspace = true
+chacha20poly1305.workspace = true
+getrandom.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+serde_json.workspace = true
+url.workspace = true
+secp256k1.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
+chacha20.workspace = true
+bech32.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[lints]
+workspace = true

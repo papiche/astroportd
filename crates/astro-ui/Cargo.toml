@@ -1,0 +1,42 @@
+[package]
+name = "astro-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+astro-core.workspace = true
+astro-db.workspace = true
+axum = { workspace = true, features = ["json", "query"] }
+rust-embed.workspace = true
+qrcode.workspace = true
+futures-util.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+rustls.workspace = true
+instant-acme.workspace = true
+arc-swap.workspace = true
+x509-parser.workspace = true
+base64.workspace = true
+rusqlite.workspace = true
+rcgen.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+brotli.workspace = true
+flate2.workspace = true
+
+[dev-dependencies]
+time = "0.3"
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tower.workspace = true
+sha2.workspace = true
+tokio-tungstenite.workspace = true
+
+[lints]
+workspace = true

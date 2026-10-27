@@ -1,0 +1,181 @@
+[package]
+name = "astroportd"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Binaire unique et souverain d'Astroport.ONE / UPlanet (Nostr + IPFS = sources de vérité, SQLite = cache rejouable)"
+
+[dependencies]
+astro-db.workspace = true
+astro-relay.workspace = true
+astro-sync.workspace = true
+astro-nostr-proto.workspace = true
+astro-dav.workspace = true
+astro-facecloud.workspace = true
+astro-p2p.workspace = true
+astro-ui.workspace = true
+astro-lifecycle.workspace = true
+astro-bro.workspace = true
+astro-plugins.workspace = true
+astro-economy.workspace = true
+astro-core.workspace = true
+astro-duniter.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+zeroize.workspace = true
+base64.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+tokio-util.workspace = true
+url.workspace = true
+percent-encoding.workspace = true
+futures-util.workspace = true
+thiserror.workspace = true
+astro-crypto.workspace = true
+axum.workspace = true
+clap.workspace = true
+hex.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "signal", "process"] }
+
+[dev-dependencies]
+rcgen.workspace = true
+image.workspace = true
+tower.workspace = true
+http-body-util.workspace = true
+astro-nostr-proto.workspace = true
+bech32.workspace = true
+
+[workspace]
+resolver = "3"
+members = [
+    ".",
+    "crates/astro-core",
+    "crates/astro-crypto",
+    "crates/astro-db",
+    "crates/astro-p2p",
+    "crates/astro-relay",
+    "crates/astro-sync",
+    "crates/astro-dav",
+    "crates/astro-facecloud",
+    "crates/astro-bro",
+    "crates/astro-duniter",
+    "crates/astro-g1-runtime",
+    "crates/astro-economy",
+    "crates/astro-plugins",
+    "crates/astro-ui",
+    "crates/astro-nostr-proto",
+    "crates/astro-lifecycle",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "AGPL-3.0-only"
+authors = ["Fred <support@qo-op.com>"]
+
+# Seules les dépendances réellement utilisées par un crate existant sont déclarées ici.
+# axum, subxt, libp2p/iroh, wasmtime/extism, ort, rust-embed… entreront avec leurs crates (Sprints suivants).
+[workspace.dependencies]
+astro-nostr-proto = { path = "crates/astro-nostr-proto" }
+astro-core = { path = "crates/astro-core" }
+astro-relay = { path = "crates/astro-relay" }
+astro-sync = { path = "crates/astro-sync" }
+astro-dav = { path = "crates/astro-dav" }
+astro-facecloud = { path = "crates/astro-facecloud" }
+astro-p2p = { path = "crates/astro-p2p" }
+astro-ui = { path = "crates/astro-ui" }
+astro-duniter = { path = "crates/astro-duniter" }
+astro-g1-runtime = { path = "crates/astro-g1-runtime" }
+astro-economy = { path = "crates/astro-economy" }
+astro-lifecycle = { path = "crates/astro-lifecycle" }
+astro-crypto = { path = "crates/astro-crypto" }
+astro-db = { path = "crates/astro-db" }
+
+tokio = { version = "1", default-features = false, features = ["io-util", "rt", "macros", "sync", "net", "time", "fs"] }
+thiserror = "2"
+zeroize = { version = "1", features = ["derive"] }
+aes-gcm = { version = "0.10", features = ["zeroize"] }
+chacha20poly1305 = "0.10"
+getrandom = "0.3"
+sha2 = "0.10"
+brotli = { version = "8", default-features = false, features = ["std"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+hex = "0.4"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+secp256k1 = { version = "0.30", default-features = false, features = ["std"] }
+url = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+sqlite-vec = "0.1"
+scrypt = { version = "0.11", default-features = false }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize"] }
+bs58 = "0.5"
+bech32 = "0.11"
+blake2 = "0.10"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "0.26"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "ring", "pem", "x509-parser"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std", "io"] }
+clap = { version = "4", features = ["derive"] }
+hkdf = "0.12"
+hmac = "0.12"
+chacha20 = "0.9"
+tokio-util = { version = "0.7", default-features = false, features = ["io", "compat"] }
+percent-encoding = "2"
+quick-xml = "0.37"
+hyper = { version = "1", default-features = false, features = ["http1", "client"] }
+hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+instant-acme = { version = "0.8", default-features = false, features = ["ring", "hyper-rustls", "rcgen"] }
+arc-swap = "1"
+subxt = { version = "0.44", default-features = false, features = ["native", "jsonrpsee"] }
+parity-scale-codec = "3"
+x509-parser = "0.17"
+libp2p = { version = "0.56", default-features = false, features = ["tokio", "tcp", "quic", "noise", "yamux", "pnet", "relay", "dcutr", "identify", "ping", "macros", "ed25519"] }
+libp2p-stream = "0.4.0-alpha"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+webp = { version = "0.3", default-features = false }
+wasmtime = { version = "36", default-features = false, features = ["runtime", "cranelift", "std", "wat"] }
+regex = { version = "1", default-features = false, features = ["std", "unicode-case", "unicode-perl", "perf"] }
+rust-embed = { version = "8", features = ["debug-embed", "include-exclude"] }
+astro-bro = { path = "crates/astro-bro" }
+astro-plugins = { path = "crates/astro-plugins" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"
+
+[lints]
+workspace = true
+
+# Dépendances optimisées en dev : scrypt et PBKDF2 (600 000 itérations) restent rapides dans les tests.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+# Pas de `panic = "abort"` : l'écrivain SQLite et le pool de lecture attrapent les paniques (catch_unwind) pour rester vivants.
+strip = true
+opt-level = "s"

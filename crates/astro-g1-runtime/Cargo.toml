@@ -1,0 +1,11 @@
+[package]
+name = "astro-g1-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Types générés par subxt depuis la metadata du runtime Ğ1 (Duniter v2s) : isolés pour ne pas recompiler 150 000 lignes à chaque modification du client"
+
+[dependencies]
+subxt.workspace = true
+parity-scale-codec.workspace = true

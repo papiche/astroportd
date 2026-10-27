@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Astroport</title>
+<meta name="theme-color" content="#3b5bdb">
+<link rel="manifest" href="/ui/manifest.webmanifest">
+<link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+<a class="skip" href="#main">Aller au contenu</a>
+<header>
+  <h1><img src="/ui/icon.svg" alt="" width="28" height="28"> Astroport</h1>
+  <nav aria-label="Écrans">
+    <a href="#/" data-r="home">Tableau de bord</a>
+    <a href="#/station" data-r="station" hidden>Station</a>
+    <a href="#/cloud" data-r="cloud">uCloud</a>
+    <a href="#/bro" data-r="bro">Visages &amp; BRO</a>
+  </nav>
+  <button id="out" type="button" hidden>Déconnexion</button>
+</header>
+<main id="main" tabindex="-1"><p class="muted">Chargement…</p></main>
+
+<dialog id="login" aria-labelledby="login-t">
+  <form method="dialog" id="login-f">
+    <h2 id="login-t">Connexion</h2>
+    <p class="muted">Adresse email (ou clé) et jeton de la station (<code>astroportd token</code>).</p>
+    <label>Identifiant <input name="u" autocomplete="username" required></label>
+    <label>Jeton <input name="p" type="password" autocomplete="current-password" required></label>
+    <p id="login-e" class="err" role="alert"></p>
+    <menu>
+      <button type="button" id="login-n" hidden>Extension Nostr</button>
+      <button value="ok">Se connecter</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="view" aria-label="Visionneuse">
+  <button type="button" class="x" id="view-x" aria-label="Fermer">×</button>
+  <div id="view-b"></div>
+  <p id="view-t" class="muted"></p>
+</dialog>
+
+<dialog id="share" aria-labelledby="share-t">
+  <button type="button" class="x" id="share-x" aria-label="Fermer">×</button>
+  <h2 id="share-t">Lien magique</h2>
+  <div id="share-b"></div>
+</dialog>
+<div id="toasts" role="status" aria-live="polite"></div>
+<script type="module" src="/ui/app.js"></script>
+</body>
+</html>

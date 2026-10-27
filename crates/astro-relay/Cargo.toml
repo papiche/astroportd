@@ -1,0 +1,28 @@
+[package]
+name = "astro-relay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+astro-nostr-proto.workspace = true
+astro-db.workspace = true
+axum.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+url.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+tower.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+
+[lints]
+workspace = true

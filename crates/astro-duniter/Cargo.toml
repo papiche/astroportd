@@ -1,0 +1,22 @@
+[package]
+name = "astro-duniter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+astro-core.workspace = true
+astro-g1-runtime.workspace = true
+bs58.workspace = true
+subxt.workspace = true
+parity-scale-codec.workspace = true
+ed25519-dalek.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
+zeroize.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

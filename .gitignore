@@ -1,0 +1,33 @@
+# Compilation et livrables
+target/
+dist/
+*.tar.gz
+
+# Données locales d'une station : jamais dans le dépôt
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+blobs/
+snapshots/
+secrets/
+
+# Secrets et clés
+.env
+.env.*
+*.key
+swarm.key
+*.dunikey
+id_ssh*
+id_ed25519*
+origin.key
+origin.pub
+secret.*
+.secret.*
+
+# Fichiers temporaires
+*.tmp
+*.swp
+*~
+.DS_Store
+/tmp/

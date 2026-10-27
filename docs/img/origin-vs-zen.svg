@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 552" role="img" aria-labelledby="ovz-t ovz-d" width="520" height="552">
+<title id="ovz-t">ORIGIN ou ẐEN : le choix de la constellation</title>
+<desc id="ovz-d">Comparaison de deux constellations. UPlanet ORIGIN : pas de swarm.key, UPLANETNAME vaut 64 zéros, réseau ouvert, 1 Ẑen vaut 0,1 Ğ1, bac à sable pour tous. UPlanet ẐEN : swarm.key présente, UPLANETNAME est la clé partagée, réseau privé chiffré, 1 Ẑen vaut 1 euro, pour les membres certifiés. On passe d&#x27;ORIGIN à ẐEN en recevant une swarm.key d&#x27;un Capitaine ou en fondant sa constellation.</desc>
+<style>
+.ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
+.ill .bg{fill:var(--bg)}.ill .pan{fill:var(--pan);stroke:var(--line);stroke-width:1.5}.ill .pan2{fill:var(--pan2);stroke:var(--acc);stroke-width:2}
+.ill .okp{fill:var(--pan);stroke:var(--ok);stroke-width:2.5}.ill .wnp{fill:var(--pan);stroke:var(--warn);stroke-width:2.5}
+.ill .t{fill:var(--ink);font-size:17px;font-weight:700}.ill .s{fill:var(--mut);font-size:14.5px}.ill .a{fill:var(--acc);font-size:15px;font-weight:700}
+.ill .g{fill:var(--ok);font-size:15px;font-weight:700}.ill .w{fill:var(--warn);font-size:15px;font-weight:700}
+.ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
+.ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
+</style>
+<rect class="bg" width="520" height="552" rx="14"/>
+<text x="260" y="34" class="t m">Deux constellations, deux usages</text>
+<rect class="pan" x="16" y="56" width="234" height="344" rx="12"/>
+<text x="133" y="90" class="t m">UPlanet ORIGIN</text>
+<text x="133" y="112" class="s m">Bac à sable · apprendre</text>
+<text x="32" y="150" class="s">swarm.key</text>
+<text x="32" y="172" class="t">absente</text>
+<text x="32" y="200" class="s">UPLANETNAME</text>
+<text x="32" y="222" class="t">64 zéros</text>
+<text x="32" y="250" class="s">Réseau</text>
+<text x="32" y="272" class="t">ouvert à tous</text>
+<text x="32" y="300" class="s">1 Ẑen vaut</text>
+<text x="32" y="322" class="t">0,1 Ğ1 (jeu)</text>
+<text x="32" y="350" class="s">Pour qui</text>
+<text x="32" y="372" class="t">tout le monde</text>
+<rect class="okp" x="270" y="56" width="234" height="344" rx="12"/>
+<text x="387" y="90" class="t m">UPlanet ẐEN</text>
+<text x="387" y="112" class="s m">Production · coopérative</text>
+<text x="286" y="150" class="s">swarm.key</text>
+<text x="286" y="172" class="t">présente</text>
+<text x="286" y="200" class="s">UPLANETNAME</text>
+<text x="286" y="222" class="t">la clé partagée</text>
+<text x="286" y="250" class="s">Réseau</text>
+<text x="286" y="272" class="t">privé, chiffré</text>
+<text x="286" y="300" class="s">1 Ẑen vaut</text>
+<text x="286" y="322" class="t">1 € (réel)</text>
+<text x="286" y="350" class="s">Pour qui</text>
+<text x="286" y="372" class="t">membres certifiés</text>
+<rect class="pan2" x="16" y="440" width="488" height="94" rx="12"/>
+<text x="260" y="470" class="t m">Le passage d&#x27;ORIGIN à ẐEN</text>
+<text x="260" y="494" class="s m">se fait en recevant la swarm.key d&#x27;un Capitaine</text>
+<text x="260" y="514" class="s m">(certification DRAGON) — ou en fondant la vôtre</text>
+<path class="ar" d="M135 440 L135 406"/>
+<path class="hd" d="M135 400 L127 414 L143 414 Z"/>
+<path class="ar" d="M385 406 L385 440"/>
+<path class="hd" d="M385 446 L377 432 L393 432 Z"/>
+</svg>

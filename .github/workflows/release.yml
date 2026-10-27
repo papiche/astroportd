@@ -1,0 +1,71 @@
+name: Release
+
+# Un tag `vX.Y.Z` construit les 4 cibles de build-all.sh et publie les archives + SHA256SUMS dans une release GitHub.
+# Un tag avec suffixe (`v0.1.0-rc1`, `v0.1.0-beta`) est marqué « préversion ».
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            apt: ''
+          - target: aarch64-unknown-linux-gnu
+            apt: gcc-aarch64-linux-gnu
+          - target: armv7-unknown-linux-gnueabihf
+            apt: gcc-arm-linux-gnueabihf
+          - target: x86_64-unknown-linux-musl
+            apt: musl-tools
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Chaîne d'outils croisée
+        if: matrix.apt != ''
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential ${{ matrix.apt }}
+      - name: Compilation (build-all.sh --strict)
+        run: ./build-all.sh --strict --targets ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: astroportd-${{ matrix.target }}
+          path: dist/astroportd-*-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publication
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: SHA256SUMS agrégé
+        working-directory: dist
+        run: |
+          sha256sum astroportd-*.tar.gz | sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/astroportd-*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

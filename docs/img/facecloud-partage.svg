@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 580" role="img" aria-labelledby="fcs-t fcs-d" width="520" height="580">
+<title id="fcs-t">Parcours FaceCloud : photos, visages, albums, partage</title>
+<desc id="fcs-d">Cinq étapes. Les photos sont déposées dans l&#x27;uCloud et chiffrées. Les visages sont détectés et comparés, avec un seuil de 0,82 pour une reconnaissance et une suggestion entre 0,55 et 0,82. Vous nommez et validez dans l&#x27;album. Le partage automatique concerne les amis N1 réciproques, par copie locale ou message chiffré vers leur station. Pour tous les autres, un lien secret dont la clé reste dans le fragment de l&#x27;adresse.</desc>
+<style>
+.ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
+.ill .bg{fill:var(--bg)}.ill .pan{fill:var(--pan);stroke:var(--line);stroke-width:1.5}.ill .pan2{fill:var(--pan2);stroke:var(--acc);stroke-width:2}
+.ill .okp{fill:var(--pan);stroke:var(--ok);stroke-width:2.5}.ill .wnp{fill:var(--pan);stroke:var(--warn);stroke-width:2.5}
+.ill .t{fill:var(--ink);font-size:17px;font-weight:700}.ill .s{fill:var(--mut);font-size:14.5px}.ill .a{fill:var(--acc);font-size:15px;font-weight:700}
+.ill .g{fill:var(--ok);font-size:15px;font-weight:700}.ill .w{fill:var(--warn);font-size:15px;font-weight:700}
+.ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
+.ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
+</style>
+<rect class="bg" width="520" height="580" rx="14"/>
+<text x="260" y="34" class="t m">FaceCloud : de la photo au partage</text>
+<rect class="pan" x="16" y="56" width="488" height="78" rx="10"/>
+<text x="260.0" y="80" class="t m">1 · Vos photos</text>
+<text x="260.0" y="101" class="s m">déposées dans votre uCloud (WebDAV)</text>
+<text x="260.0" y="120" class="s m">chiffrées avant de quitter l&#x27;appareil</text>
+<path class="ar" d="M260 134 L260 164"/>
+<path class="hd" d="M260 164 L256.1 155.9 L263.9 155.9 Z"/>
+<rect class="pan" x="16" y="164" width="488" height="78" rx="10"/>
+<text x="260.0" y="188" class="t m">2 · Les visages</text>
+<text x="260.0" y="209" class="s m">détectés et comparés (cosinus)</text>
+<text x="260.0" y="228" class="s m">≥ 0,82 reconnu · 0,55–0,82 « est-ce X ? »</text>
+<path class="ar" d="M260 242 L260 272"/>
+<path class="hd" d="M260 272 L256.1 263.9 L263.9 263.9 Z"/>
+<rect class="pan" x="16" y="272" width="488" height="78" rx="10"/>
+<text x="260.0" y="296" class="t m">3 · L&#x27;album</text>
+<text x="260.0" y="317" class="s m">vous nommez, vous validez</text>
+<text x="260.0" y="336" class="s m">les inconnus restent « Inconnu_… »</text>
+<path class="ar" d="M260 350 L260 380"/>
+<path class="hd" d="M260 380 L256.1 371.9 L263.9 371.9 Z"/>
+<rect class="okp" x="16" y="380" width="488" height="78" rx="10"/>
+<text x="260.0" y="404" class="t m">4 · Amis N¹ (réciproques)</text>
+<text x="260.0" y="425" class="s m">copie dans /Partages/De_&lt;nom&gt;/</text>
+<text x="260.0" y="444" class="s m">ou message chiffré vers l&#x27;autre station</text>
+<path class="ar" d="M260 458 L260 488"/>
+<path class="hd" d="M260 488 L256.1 479.9 L263.9 479.9 Z"/>
+<rect class="wnp" x="16" y="488" width="488" height="78" rx="10"/>
+<text x="260.0" y="512" class="t m">5 · Lien secret</text>
+<text x="260.0" y="533" class="s m">/s/&lt;slug&gt;#clé · 1 h à 30 jours</text>
+<text x="260.0" y="552" class="s m">la clé ne quitte jamais le navigateur</text>
+</svg>

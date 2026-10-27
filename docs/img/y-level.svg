@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 590" role="img" aria-labelledby="ylv-t ylv-d" width="520" height="590">
+<title id="ylv-t">Schéma Y-Level : de la clé SSH à quatre identités</title>
+<desc id="ylv-d">Votre clé SSH ed25519 est hachée en sha512, ce qui donne un SALT et un PEPPER. Un étirement scrypt en tire une graine ed25519 unique. De cette graine viennent quatre identités : une clé SSH jumelle, le PeerID IPFS de la station, le portefeuille Ğ1 et l&#x27;identité Nostr. L&#x27;ancienne clé SSH est conservée dans origin.key.</desc>
+<style>
+.ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
+.ill .bg{fill:var(--bg)}.ill .pan{fill:var(--pan);stroke:var(--line);stroke-width:1.5}.ill .pan2{fill:var(--pan2);stroke:var(--acc);stroke-width:2}
+.ill .okp{fill:var(--pan);stroke:var(--ok);stroke-width:2.5}.ill .wnp{fill:var(--pan);stroke:var(--warn);stroke-width:2.5}
+.ill .t{fill:var(--ink);font-size:17px;font-weight:700}.ill .s{fill:var(--mut);font-size:14.5px}.ill .a{fill:var(--acc);font-size:15px;font-weight:700}
+.ill .g{fill:var(--ok);font-size:15px;font-weight:700}.ill .w{fill:var(--warn);font-size:15px;font-weight:700}
+.ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
+.ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
+</style>
+<rect class="bg" width="520" height="590" rx="14"/>
+<text x="260" y="34" class="t m">Le rituel Y-Level : une clé, quatre identités</text>
+<rect class="pan" x="20" y="56" width="480" height="62" rx="10"/>
+<text x="260.0" y="80" class="t m">1 · Votre clé SSH ed25519</text>
+<text x="260.0" y="101" class="s m">le fichier ~/.ssh/id_ed25519</text>
+<path class="ar" d="M260 118 L260 160"/>
+<path class="hd" d="M260 160 L256.1 151.9 L263.9 151.9 Z"/>
+<text x="274" y="144" class="a">empreinte sha512 du fichier</text>
+<rect class="pan" x="20" y="160" width="480" height="62" rx="10"/>
+<text x="260.0" y="184" class="t m">2 · SALT + PEPPER</text>
+<text x="260.0" y="205" class="s m">deux fois 64 caractères hexadécimaux</text>
+<path class="ar" d="M260 222 L260 264"/>
+<path class="hd" d="M260 264 L256.1 255.9 L263.9 255.9 Z"/>
+<text x="274" y="248" class="a">étirement scrypt (N = 4096)</text>
+<rect class="pan2" x="20" y="264" width="480" height="62" rx="10"/>
+<text x="260.0" y="288" class="t m">3 · Une seule graine ed25519</text>
+<text x="260.0" y="309" class="s m">la même racine pour tout ce qui suit</text>
+<rect class="okp" x="20" y="376" width="230" height="66" rx="10"/>
+<text x="135.0" y="400" class="t m">Clé SSH jumelle</text>
+<text x="135.0" y="421" class="s m">accès à la machine</text>
+<rect class="okp" x="270" y="376" width="230" height="66" rx="10"/>
+<text x="385.0" y="400" class="t m">PeerID IPFS</text>
+<text x="385.0" y="421" class="s m">12D3Koo… = IPFSNODEID</text>
+<rect class="okp" x="20" y="456" width="230" height="66" rx="10"/>
+<text x="135.0" y="480" class="t m">Portefeuille Ğ1</text>
+<text x="135.0" y="501" class="s m">même clé publique</text>
+<rect class="okp" x="270" y="456" width="230" height="66" rx="10"/>
+<text x="385.0" y="480" class="t m">Identité Nostr</text>
+<text x="385.0" y="501" class="s m">npub, graine hachée (sha256)</text>
+<path class="ln" d="M260 326 L260 352 M135 352 L385 352"/>
+<path class="ar" d="M135 352 L135 376 M385 352 L385 376"/>
+<path class="ln" d="M135 442 L135 456 M385 442 L385 456"/>
+<text x="260" y="548" class="s m">Ancienne clé SSH conservée : ~/.ssh/origin.key</text>
+<text x="260" y="570" class="g m">SSH = IPFS = Ğ1 : la même clé publique, vérifiable</text>
+</svg>

@@ -1,0 +1,21 @@
+[package]
+name = "astro-db"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+astro-crypto.workspace = true
+astro-nostr-proto.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+sqlite-vec.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+
+[lints]
+workspace = true
