@@ -8,6 +8,7 @@ pub mod fetch;
 pub mod init;
 pub mod lease_gate;
 pub mod media;
+pub mod register;
 pub mod solar_cron;
 pub mod upload_worker;
 pub mod station;

@@ -12,12 +12,12 @@ guide `docs/index.html` (à remplacer par l'adresse publique du guide, une fois 
 
 ## 1. Note courte (kind 1)
 
-### Version française (≈ 500 caractères)
+### Version française (≈ 555 caractères)
 
 ```
-astroportd 0.1 (préversion) : le cœur d'Astroport.ONE réécrit en Rust, en un seul binaire.
+astroportd 0.2.0-beta (préversion) : le cœur d'Astroport.ONE réécrit en Rust, en un seul binaire.
 
-Relai Nostr, cloud personnel chiffré, reconnaissance de visages et partage entre amis (N¹) ou par lien secret, maillage P2P. Tourne sur un Raspberry Pi.
+Relai Nostr, cloud personnel chiffré, reconnaissance de visages et partage entre amis (N¹) ou par lien secret, maillage P2P. On crée son MULTIPASS directement sur sa station. Tourne sur un Raspberry Pi.
 
 Votre clé SSH devient l'identité IPFS de votre station (Y-Level) ; deux constellations : ORIGIN (ouverte) et ẐEN (privée).
 
@@ -27,12 +27,12 @@ https://github.com/papiche/astroportd
 #nostr #opensource #selfhosted #ipfs #rust #g1 #UPlanet
 ```
 
-### English version (≈ 470 characters)
+### English version (≈ 530 characters)
 
 ```
-astroportd 0.1 (preview): the core of Astroport.ONE rewritten in Rust, as a single binary.
+astroportd 0.2.0-beta (preview): the core of Astroport.ONE rewritten in Rust, as a single binary.
 
-Nostr relay, encrypted personal cloud, face recognition with sharing to friends (N¹) or via secret link, P2P mesh. Runs on a Raspberry Pi.
+Nostr relay, encrypted personal cloud, face recognition with sharing to friends (N¹) or via secret link, P2P mesh. You create your MULTIPASS right on your own station. Runs on a Raspberry Pi.
 
 Your SSH key becomes your station's IPFS identity (Y-Level); two constellations: ORIGIN (open) and ẐEN (private).
 
@@ -66,12 +66,14 @@ De cette graine : une clé SSH jumelle, le PeerID IPFS de la station, la clé pu
 SSH = IPFS : la même clé publique. Les Capitaines qui se suivent sur Nostr peuvent s'ouvrir un accès SSH entre machines de confiance. `astroportd ylevel --verify` le prouve.
 ```
 
-**Note 3/4 — ORIGIN / ẐEN**
+**Note 3/4 — ORIGIN / ẐEN et MULTIPASS**
 
 ```
 3/4 Deux constellations. ORIGIN : bac à sable ouvert, sans clé secrète, 1 Ẑen = 0,1 Ğ1 (un jeu). ẐEN : réseau privé, il faut la swarm.key ; 1 Ẑen = 1 € dans la coopérative UPlanet ẐEN.
 
 Pas de swarm.key = ORIGIN ; swarm.key présente = ẐEN. Vous pouvez aussi fonder la vôtre : `astroportd swarm-key`.
+
+Votre MULTIPASS se crée directement sur votre station : `astroportd multipass create <email> --captain`, puis les membres sur /register. Une station = une constellation pour l'instant.
 ```
 
 **Note 4/4 — Comment essayer**
@@ -81,9 +83,10 @@ Pas de swarm.key = ORIGIN ; swarm.key présente = ẐEN. Vous pouvez aussi fonde
 
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 astroportd init
+astroportd multipass create vous@exemple.org --captain
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
 
-Préversion 0.1.0 : elle héberge des MULTIPASS mais n'en crée pas encore en ligne de commande. Retours bienvenus : https://github.com/papiche/astroportd/issues
+On crée son MULTIPASS directement sur sa station (les membres via la page /register). Préversion 0.2.0-beta : une station = une constellation pour l'instant. Retours bienvenus : https://github.com/papiche/astroportd/issues
 ```
 
 ---
@@ -98,7 +101,7 @@ Tags suggérés : `d` = `astroportd-presentation`, `title` = « astroportd : une
 
 **astroportd** est la réécriture en Rust du cœur d'[Astroport.ONE](https://github.com/papiche/Astroport.ONE) et
 d'UPlanet. Il remplace une pile de scripts et de services (relai Nostr, API, cloud, visages…) par **un exécutable**,
-qui tient sur un Raspberry Pi. C'est une **préversion 0.1.0**, testée de bout en bout mais jeune.
+qui tient sur un Raspberry Pi. C'est une **préversion 0.2.0-beta**, testée de bout en bout mais jeune.
 
 ## Le principe
 
@@ -128,10 +131,19 @@ ORIGIN est un bac à sable ouvert (pas de clé de réseau, 1 Ẑen = 0,1 Ğ1). �
 `swarm.key` (1 Ẑen = 1 € dans la coopérative UPlanet ẐEN). Pas de clé : ORIGIN. Clé présente : ẐEN. On peut aussi
 fonder sa propre constellation avec `astroportd swarm-key`.
 
+## Votre identité, sur votre station
+
+On crée son **MULTIPASS directement sur sa station** : `astroportd multipass create <email> --captain` pour le Capitaine,
+puis les membres, au terminal ou sur la page `/register`. Un SALT et un PEPPER aléatoires, isolés par constellation,
+donnent la clé Nostr, la clé Ğ1 et l'identité IPNS ; ils ne sont affichés qu'une fois. La création est plus simple que celle
+d'Astroport.ONE (ni ZenCard, ni QR codes, ni découpage SSSS), et une station n'appartient pour l'instant qu'à une
+constellation.
+
 ## Essayer
 
     curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
     astroportd init
+    astroportd multipass create vous@exemple.org --captain
     astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
 
 Binaires pour x86_64, Raspberry Pi (aarch64, armv7) et x86_64 statique. Code sous licence AGPL-3.0 :
@@ -151,12 +163,11 @@ https://github.com/papiche/astroportd — retours et contributions bienvenus.
   relais et de clients, auto-hébergement, monnaie libre Ğ1 / Duniter, francophonie.
 - **Hors Nostr** : le fil de releases du dépôt, le dépôt [Astroport.ONE](https://github.com/papiche/Astroport.ONE)
   (lien dans son README), le forum de la monnaie libre.
-- **Étiqueter** l'annonce comme **préversion** et rappeler la limite principale : pas de création de MULTIPASS en ligne
-  de commande dans la 0.1.
+- **Étiqueter** l'annonce comme **préversion** et rappeler les limites principales : une station = une constellation (ORIGIN + ẐEN en parallèle est prévu), et une création de MULTIPASS plus simple que celle d'Astroport.ONE (ni ZenCard, ni QR codes, ni SSSS).
 
 ## 5. Avant de publier
 
-- [ ] Le dépôt est public, la release `v0.1.0` existe, `install.sh` fonctionne sur une machine neuve.
+- [ ] Le dépôt est public, la release `v0.2.0-beta` existe, `install.sh` fonctionne sur une machine neuve.
 - [ ] Les liens des notes répondent (dépôt, releases, guide).
 - [ ] Les affirmations restent exactes (seuils 0,82 / 0,55, tailles de lien, limites de la préversion).
 - [ ] Signé avec la clé de Fred ; aucune clé de station utilisée.

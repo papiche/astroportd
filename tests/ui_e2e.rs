@@ -77,7 +77,8 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
     let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: None, chain: None, hardware: Hardware { vram_gb: 24.0, cpu_cores: 16, ram_gb: 64.0 }, p2p: None, weekly_rent_cents: 100, activity: bus.clone(), swarm_dir, origin: Some((45.76, 4.83)), exposed: vec!["comfyui".into(), "ssh".into()] }));
     let client = ollama.map(|url| Arc::new(OllamaClient::new(url, "bge-m3", "llama3.2", Duration::from_secs(5))));
     let memory = client.as_ref().map(|o| Arc::new(MemoryStore::new(db.clone(), o.clone(), o.clone(), Some(bus.clone()))));
-    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true));
+    let registrar = Arc::new(astroportd::register::Registrar::new(db.clone(), dir.join("nostr"), "0".repeat(64), Arc::new(|hex| derive_dav_token(SECRET, hex)), astroportd::register::Limits::default()));
+    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_registrar(registrar));
     let relay = Relay::new(db.clone(), Arc::new(DbCircle::new()), RelayConfig::default());
     let app = astro_dav::router(dav)
         .merge(relay.router())
@@ -601,4 +602,46 @@ async fn the_captain_screens_show_the_constellation_the_regie_and_the_hosted_acc
     assert_eq!(audits, 1);
     assert_eq!(api(&b.app, Method::POST, &format!("/api/v1/station/accounts/{}/token", hex(&[9; 32])), &bob, None).await.0, StatusCode::NOT_FOUND);
     let _ = std::fs::remove_dir_all(swarm);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn anyone_can_create_a_multipass_from_the_web_and_log_in_with_the_returned_token() {
+    let b = bench("register", None).await;
+    // Sans compte : la page, ses fichiers et l'état de l'inscription sont publics.
+    let (s, h, body) = call(&b.app, Method::GET, "/register", None, &[], vec![]).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&body).contains("Créer mon MULTIPASS") && h[header::CONTENT_SECURITY_POLICY].to_str().unwrap().contains("script-src 'self'"));
+    for f in ["register.js", "register.css"] {
+        assert_eq!(call(&b.app, Method::GET, &format!("/ui/{f}"), None, &[], vec![]).await.0, StatusCode::OK, "{f}");
+    }
+    let (s, _, body) = call(&b.app, Method::GET, "/api/v1/register", None, &[], vec![]).await;
+    let info: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!((s, info["open"].as_bool(), info["constellation"].as_str()), (StatusCode::OK, Some(true), Some("ORIGIN")), "{info}");
+
+    let post = |email: &str| (&[("content-type", "application/json")][..], json!({ "email": email, "lang": "en" }).to_string().into_bytes());
+    let (hdr, bytes) = post("Nouveau@Exemple.org");
+    let (s, h, body) = call(&b.app, Method::POST, "/api/v1/register", None, hdr, bytes).await;
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(h[header::CACHE_CONTROL], "no-store", "les secrets ne se mettent pas en cache");
+    assert_eq!((v["email"].as_str(), v["constellation"].as_str()), (Some("nouveau@exemple.org"), Some("ORIGIN")));
+    for k in ["token", "pass", "salt", "pepper", "nsec", "npub", "hex", "g1pub", "nostrns"] {
+        assert!(v[k].as_str().is_some_and(|x| !x.is_empty()), "{k} : {v}");
+    }
+    assert!(v["nsec"].as_str().unwrap().starts_with("nsec1") && v["g1pub"].as_str().unwrap().starts_with('g'));
+
+    // Le jeton rendu ouvre l'interface : le compte est connu de la base dès la réponse.
+    let login = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("nouveau@exemple.org:{}", v["token"].as_str().unwrap())));
+    let (s, me) = api(&b.app, Method::GET, "/api/v1/me", &login, None).await;
+    assert_eq!((s, me["email"].as_str(), me["hex"].as_str()), (StatusCode::OK, Some("nouveau@exemple.org"), v["hex"].as_str()), "{me}");
+    assert!(b.dir.join("nostr/nouveau@exemple.org/.secret.nostr").is_file());
+
+    // Refus : doublon, adresse invalide, corps illisible.
+    let (hdr, bytes) = post("NOUVEAU@exemple.org");
+    assert_eq!(call(&b.app, Method::POST, "/api/v1/register", None, hdr, bytes).await.0, StatusCode::CONFLICT);
+    let (hdr, bytes) = post("../../etc@x.y");
+    assert_eq!(call(&b.app, Method::POST, "/api/v1/register", None, hdr, bytes).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(call(&b.app, Method::POST, "/api/v1/register", None, &[("content-type", "application/json")], b"pas du json".to_vec()).await.0, StatusCode::BAD_REQUEST);
+    // L'inscription n'ouvre aucune autre porte : le reste de l'API exige toujours un compte.
+    assert_eq!(call(&b.app, Method::GET, "/api/v1/me", None, &[], vec![]).await.0, StatusCode::UNAUTHORIZED);
 }

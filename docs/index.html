@@ -57,10 +57,10 @@ footer{padding:28px 16px 48px;color:var(--mut);border-top:1px solid var(--line);
 <body>
 <a class="skip" href="#contenu">Aller au contenu</a>
 <header class="top">
-<p><span class="badge">Préversion 0.1.0</span> <span class="badge">AGPL-3.0</span></p>
+<p><span class="badge">Préversion 0.2.0-beta</span> <span class="badge">AGPL-3.0</span></p>
 <h1>Démarrer sa station <span style="white-space:nowrap">astroportd</span>, pas à pas</h1>
 <p class="lead">Un cloud personnel chiffré, vos photos qui retrouvent les visages, le partage entre amis — sur une machine qui est la vôtre. Chaque étape se fait au <strong>terminal</strong> ou, quand c'est possible, au <strong>navigateur</strong>.</p>
-<nav class="toc" aria-labelledby="toc-t"><h2 id="toc-t">Les étapes</h2><ol start="0"><li><a href="#etape-0">Avant de commencer</a></li><li><a href="#etape-1">Installer astroportd</a></li><li><a href="#etape-2">Activer Y-Level </a></li><li><a href="#etape-3">Choisir sa constellation </a></li><li><a href="#etape-4">Démarrer la station</a></li><li><a href="#etape-5">Vérifier que tout va bien</a></li><li><a href="#etape-6">Entrer dans l&#x27;interface web</a></li><li><a href="#etape-7">FaceCloud </a></li><li><a href="#etape-8">Relier sa station aux autres Capitaines</a></li><li><a href="#etape-9">En cas de problème</a></li></ol></nav>
+<nav class="toc" aria-labelledby="toc-t"><h2 id="toc-t">Les étapes</h2><ol start="0"><li><a href="#etape-0">Avant de commencer</a></li><li><a href="#etape-1">Installer astroportd</a></li><li><a href="#etape-2">Activer Y-Level </a></li><li><a href="#etape-3">Choisir sa constellation </a></li><li><a href="#etape-4">Démarrer la station</a></li><li><a href="#etape-5">Créer mon MULTIPASS</a></li><li><a href="#etape-6">Vérifier que tout va bien</a></li><li><a href="#etape-7">Entrer dans l&#x27;interface web</a></li><li><a href="#etape-8">FaceCloud </a></li><li><a href="#etape-9">Relier sa station aux autres Capitaines</a></li><li><a href="#etape-10">En cas de problème</a></li></ol></nav>
 </header>
 <main id="contenu" tabindex="-1">
 <section id="etape-0" aria-labelledby="h-0">
@@ -77,8 +77,8 @@ date       # l'année doit être 2026 ou plus</code></pre></div>
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p>Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.</p>
-<p class="box note"><span class="lbl">À savoir</span> astroportd est en <strong>préversion 0.1.0</strong> : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.</p>
-<p>Vous aurez aussi besoin d'un compte <strong>MULTIPASS</strong> (votre identité Nostr). On l'obtient à l'étape 3.</p>
+<p class="box note"><span class="lbl">À savoir</span> astroportd est en <strong>préversion 0.2.0-beta</strong> : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.</p>
+<p>Vous aurez aussi besoin d'un compte <strong>MULTIPASS</strong> (votre identité Nostr) : astroportd le crée pour vous à l'étape 5.</p>
 </div>
 </div>
 </section>
@@ -88,7 +88,7 @@ date       # l'année doit être 2026 ou plus</code></pre></div>
 <div class="cols">
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <div class="code"><pre><code>curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash</code></pre></div>
-<p>Options utiles : <code>--version v0.1.0</code>, <code>--static</code> (binaire statique, x86_64), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>. Ensuite :</p>
+<p>Options utiles : <code>--version v0.2.0-beta</code>, <code>--static</code> (binaire statique, x86_64), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>. Ensuite :</p>
 <div class="code"><pre><code>astroportd --version</code></pre></div>
 <p>Si la commande est introuvable, ajoutez <code>~/.local/bin</code> à votre PATH : <code>export PATH="$HOME/.local/bin:$PATH"</code>.</p>
 </div>
@@ -222,9 +222,9 @@ astroportd init --mode zen --swarm-key ./swarm.key</code></pre></div>
 <p class="box note"><span class="lbl">À savoir</span> Fonder sa constellation crée un <strong>réseau privé</strong> dont vous fixez les règles. La valeur « 1 Ẑen = 1 € » est celle de la coopérative UPlanet ẐEN ; elle ne s'applique pas toute seule à une constellation que vous créez.</p>
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
-<p><strong>ORIGIN</strong> — créez votre MULTIPASS sur <a href="https://qo-op.com">qo-op.com</a> (UPlanet ORIGIN) : vous recevez votre identité Nostr et votre portefeuille.</p>
+<p><strong>ORIGIN</strong> — <a href="https://qo-op.com">qo-op.com</a> reste une <strong>option</strong> : c'est une station ORIGIN publique où l'on peut s'inscrire. Ce n'est pas une obligation : sur votre propre station, vous créez vos MULTIPASS vous-même (étape 5).</p>
 <p><strong>ẐEN</strong> — pour passer d'ORIGIN à ẐEN, la voie habituelle est la certification DRAGON, puis la réception de la <code>swarm.key</code>. Informations : le dépôt <a href="https://github.com/papiche/Astroport.ONE">Astroport.ONE</a> et support@qo-op.com.</p>
-<p class="box note"><span class="lbl">À savoir</span> astroportd 0.1 ne crée pas encore de MULTIPASS en ligne de commande. Il <strong>héberge</strong> les comptes qu'il trouve dans <code>~/.zen/game/nostr/&lt;email&gt;/</code> (créés par <a href="https://github.com/papiche/Astroport.ONE">Astroport.ONE</a> ou déménagés depuis une autre station). Sans compte hébergé, la station tourne mais vous ne pourrez pas vous connecter à l'interface.</p>
+<p class="box note"><span class="lbl">À savoir</span> Une station appartient à <strong>une seule constellation</strong> à la fois (une <code>swarm.key</code>, ou aucune). Raccorder une même station à deux constellations en parallèle (ORIGIN et ẐEN) est <strong>prévu</strong>, pas encore disponible : deux réseaux P2P parallèles, la même identité Y-Level, chaque MULTIPASS rattaché à une constellation.</p>
 <p>Il n'y a pas d'assistant web pour choisir sa constellation : ce choix engage une clé secrète, il se fait au terminal.</p>
 </div>
 </div>
@@ -257,7 +257,79 @@ journalctl --user -u astroportd -f   # suivre les journaux</code></pre></div>
 </div>
 </section>
 <section id="etape-5" aria-labelledby="h-5">
-<h2 id="h-5"><span class="num" aria-hidden="true">5</span> Vérifier que tout va bien</h2>
+<h2 id="h-5"><span class="num" aria-hidden="true">5</span> Créer mon MULTIPASS</h2>
+<p>Votre <strong>MULTIPASS</strong> est votre identité sur la station : une clé Nostr, un portefeuille Ğ1 et une identité IPNS. astroportd le crée <strong>directement sur votre station</strong>, il n'y a pas besoin d'aller ailleurs.</p>
+<p>On commence par le <strong>Capitaine</strong> (la personne qui tient la station), puis les autres membres s'inscrivent. Les secrets ne sont affichés qu'<strong>une seule fois</strong> : notez-les.</p>
+<figure><svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 640" role="img" aria-labelledby="mpc-t mpc-d" width="520" height="640">
+<title id="mpc-t">Création d&#x27;un MULTIPASS : de l&#x27;email aux clés</title>
+<desc id="mpc-d">L&#x27;email du titulaire sert d&#x27;identifiant. Un SALT et un PEPPER aléatoires de 24 caractères sont tirés. Le PEPPER est isolé par constellation grâce au sel dérivé de UPLANETNAME, qui vaut 64 zéros en ORIGIN ou la clé partagée en ẐEN. Un étirement scrypt donne une graine ed25519, d&#x27;où viennent la clé Nostr, la clé Ğ1 et l&#x27;identité IPNS. Une autre constellation donne d&#x27;autres clés pour le même SALT et PEPPER. La carte d&#x27;identité, avec SALT, PEPPER, nsec, code PASS et jeton, n&#x27;est affichée qu&#x27;une seule fois.</desc>
+<rect class="bg" width="520" height="640" rx="14"/>
+<text x="260" y="34" class="t m">Créer un MULTIPASS : de l&#x27;email aux clés</text>
+<rect class="pan" x="20" y="52" width="480" height="58" rx="10"/>
+<text x="260.0" y="76" class="t m">1 · Votre email</text>
+<text x="260.0" y="97" class="s m">astroportd multipass create &lt;email&gt;</text>
+<path class="ar" d="M260 110 L260 142"/>
+<path class="hd" d="M260 142 L256.1 133.9 L263.9 133.9 Z"/>
+<text x="274" y="132" class="a">tirage aléatoire</text>
+<rect class="pan" x="20" y="142" width="480" height="58" rx="10"/>
+<text x="260.0" y="166" class="t m">2 · SALT + PEPPER</text>
+<text x="260.0" y="187" class="s m">24 caractères alphanumériques chacun</text>
+<path class="ar" d="M260 200 L260 232"/>
+<path class="hd" d="M260 232 L256.1 223.9 L263.9 223.9 Z"/>
+<text x="274" y="222" class="a">sel de la constellation</text>
+<rect class="pan2" x="20" y="232" width="480" height="66" rx="10"/>
+<text x="260.0" y="256" class="t m">3 · PEPPER isolé par constellation</text>
+<text x="260.0" y="277" class="s m">(SALT, PEPPER_&lt;sha256(UPLANETNAME)[:16]&gt;)</text>
+<text x="260.0" y="296" class="s m">ORIGIN : 64 zéros · ẐEN : votre swarm.key</text>
+<path class="ar" d="M260 298 L260 330"/>
+<path class="hd" d="M260 330 L256.1 321.9 L263.9 321.9 Z"/>
+<text x="274" y="320" class="a">scrypt</text>
+<rect class="pan2" x="20" y="330" width="480" height="50" rx="10"/>
+<text x="260.0" y="361.0" class="t m">4 · Une graine ed25519</text>
+<path class="ln" d="M260 380 L260 396 M90 396 L430 396"/>
+<path class="ar" d="M90 396 L90 410"/>
+<rect class="okp" x="20" y="410" width="140" height="62" rx="10"/>
+<text x="90.0" y="434" class="t m">Nostr</text>
+<text x="90.0" y="455" class="s m">sha256 de la graine</text>
+<path class="ar" d="M260 396 L260 410"/>
+<rect class="okp" x="190" y="410" width="140" height="62" rx="10"/>
+<text x="260.0" y="434" class="t m">Ğ1</text>
+<text x="260.0" y="455" class="s m">même graine</text>
+<path class="ar" d="M430 396 L430 410"/>
+<rect class="okp" x="360" y="410" width="140" height="62" rx="10"/>
+<text x="430.0" y="434" class="t m">IPNS</text>
+<text x="430.0" y="455" class="s m">même graine</text>
+<text x="260" y="500" class="w m">Autre constellation = autres clés pour le même SALT/PEPPER</text>
+<rect class="wnp" x="20" y="516" width="480" height="104" rx="12"/>
+<text x="260" y="544" class="t m">La carte à noter UNE seule fois</text>
+<text x="260" y="568" class="s m">SALT · PEPPER · nsec · code PASS · jeton web</text>
+<text x="260" y="590" class="s m">c&#x27;est ce qui permet de retrouver le compte</text>
+<text x="260" y="610" class="s m">(carte téléchargeable en .txt sur /register)</text>
+</svg>
+<figcaption>Création d&#x27;un MULTIPASS : email, SALT/PEPPER, graine, clés Nostr, Ğ1 et IPNS isolées par constellation, carte à noter une seule fois.</figcaption></figure>
+<div class="cols">
+<div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
+<p><strong>Le Capitaine d'abord</strong> — le premier compte, désigné par <code>--captain</code> :</p>
+<div class="code"><pre><code>astroportd multipass create capitaine@exemple.org --captain --lang fr</code></pre></div>
+<p><code>--captain</code> écrit aussi <code>~/.zen/game/players/.current/.player</code> et donne le rôle de Capitaine. C'est refusé si un autre Capitaine existe déjà. En ẐEN, ajoutez <code>--swarm-key ./swarm.key</code> : le compte est <strong>rattaché à une seule constellation</strong> (ORIGIN s'il n'y a pas de <code>swarm.key</code>, sinon ẐEN).</p>
+<p class="box warn"><span class="lbl">Attention</span> Le programme affiche <strong>une seule fois</strong> : <code>SALT</code>, <code>PEPPER</code>, <code>nsec</code>, code <code>PASS</code> et jeton web. Notez-les maintenant (<code>--json</code> pour les récupérer par script). Le même SALT/PEPPER donne <strong>d'autres clés</strong> dans une autre constellation.</p>
+<p><strong>Les membres ensuite</strong> — ils suivent automatiquement le Capitaine (liste de contacts Nostr, kind 3) :</p>
+<div class="code"><pre><code>astroportd multipass create ami@exemple.org
+astroportd multipass list</code></pre></div>
+<p>Options : <code>--lang fr|en|es</code>, <code>--relay ws://…</code> (publier les événements de naissance sur un relai), <code>--home DIR</code>, <code>--game-dir DIR</code>, <code>--db FICHIER</code>.</p>
+<p>Ce que la création écrit : un dossier <code>~/.zen/game/nostr/&lt;email&gt;/</code> (<code>.secret.nostr</code>, <code>.secret.dunikey</code>, <code>.keyformula</code>, <code>.pass</code>, <code>.multipass.json</code> en <code>0600</code>, plus <code>HEX</code>, <code>NPUB</code>, <code>G1PUBNOSTR</code>, <code>LANG</code>, <code>NOSTRNS</code>) et trois événements signés par le compte : son <strong>profil</strong> (kind 0), le <strong>suivi du Capitaine</strong> (kind 3) et son <strong>DID</strong> (kind 30800).</p>
+<p class="box note"><span class="lbl">À savoir</span> <strong>Limites.</strong> La création reprend l'essentiel de <code>make_NOSTRCARD.sh</code> d'Astroport.ONE, mais pas : le découpage SSSS 2-sur-3 de DISCO chiffré vers le Capitaine, les QR codes, l'import de la clé IPNS dans Kubo, l'envoi du zine par email, la ZenCard et la primo-transaction. Retrouver un compte repose sur le SALT/PEPPER remis une fois au titulaire (et sur le <code>nsec</code>).</p>
+</div>
+<div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
+<p>Les <strong>membres</strong> s'inscrivent depuis le navigateur (le Capitaine se crée au terminal, ci-contre). La station doit tourner (étape 4).</p>
+<ol><li>Ouvrez <code>https://votre-domaine/register</code> (ou, dans la fenêtre <strong>Connexion</strong>, le lien <strong>« Pas de compte ? Créer mon MULTIPASS »</strong>).</li><li>Saisissez votre <strong>email</strong> et choisissez la <strong>langue</strong>.</li><li>Une <strong>carte d'identité</strong> s'affiche : SALT, PEPPER, nsec, npub, Ğ1, IPNS, code PASS et jeton. <strong>Elle ne s'affiche qu'une fois.</strong></li><li>Cliquez <strong>« Télécharger ma carte (.txt) »</strong> et gardez le fichier en lieu sûr.</li><li>Cliquez <strong>« Ouvrir mon espace »</strong> : vous êtes connecté directement.</li></ol>
+<p>L'inscription web est <strong>ouverte par défaut</strong>, avec des garde-fous réglables au démarrage : <code>--max-accounts N</code> (500 par défaut, <code>0</code> = illimité), <code>--register-per-hour N</code> (5 par adresse IP, <code>0</code> = illimité) et <code>--no-register</code> pour la <strong>fermer</strong>. Un email déjà inscrit est refusé (erreur 409), une adresse invalide aussi (400).</p>
+<p class="box note"><span class="lbl">À savoir</span> Sur une station publique, pensez à fermer l'inscription (<code>--no-register</code>) quand vos membres sont inscrits.</p>
+</div>
+</div>
+</section>
+<section id="etape-6" aria-labelledby="h-6">
+<h2 id="h-6"><span class="num" aria-hidden="true">6</span> Vérifier que tout va bien</h2>
 <p>Trois vérifications, de la plus complète à la plus rapide. Aucune ne modifie rien.</p>
 <div class="cols">
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
@@ -274,10 +346,10 @@ curl http://127.0.0.1:8080/health</code></pre></div>
 </div>
 </div>
 </section>
-<section id="etape-6" aria-labelledby="h-6">
-<h2 id="h-6"><span class="num" aria-hidden="true">6</span> Entrer dans l&#x27;interface web</h2>
+<section id="etape-7" aria-labelledby="h-7">
+<h2 id="h-7"><span class="num" aria-hidden="true">7</span> Entrer dans l&#x27;interface web</h2>
 <p>L'application web a quatre écrans : <strong>Tableau de bord</strong>, <strong>Station</strong> (réservé au Capitaine), <strong>uCloud</strong> (vos fichiers et vos photos) et <strong>Visages &amp; BRO</strong>.</p>
-<p>Pour s'y connecter, il faut un compte hébergé par la station et son <strong>jeton</strong>.</p>
+<p>Pour s'y connecter, il faut un compte hébergé par la station (étape 5) et son <strong>jeton</strong>.</p>
 <figure><svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 540" role="img" aria-labelledby="mpe-t mpe-d" width="520" height="540">
 <title id="mpe-t">Schéma de l&#x27;écran MULTIPASS</title>
 <desc id="mpe-d">Le tableau de bord de l&#x27;interface web montre des cartes : solde, autonomie, empreinte sur les communs, souveraineté, puis deux cartes distinctes, Ẑen Opex pour les redevances d&#x27;usage et Ẑen Capex pour les parts d&#x27;investissement, enfin la copie privée et les baux.</desc>
@@ -317,7 +389,7 @@ curl http://127.0.0.1:8080/health</code></pre></div>
 <figcaption>Schéma de l&#x27;écran MULTIPASS : cartes Solde, Autonomie, Empreinte, Souveraineté, Ẑen Opex et Ẑen Capex.</figcaption></figure>
 <div class="cols">
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
-<p>Affichez le jeton d'un compte (son email) :</p>
+<p>Le jeton est affiché à la création du compte. Pour le retrouver (son email) :</p>
 <div class="code"><pre><code>astroportd token vous@exemple.org --game-dir ~/.zen/game</code></pre></div>
 <p>Le même jeton sert de mot de passe pour monter votre cloud en WebDAV (Finder, Explorateur Windows, application mobile) : adresse <code>https://votre-domaine/dav</code>, identifiant = votre email.</p>
 </div>
@@ -327,8 +399,8 @@ curl http://127.0.0.1:8080/health</code></pre></div>
 </div>
 </div>
 </section>
-<section id="etape-7" aria-labelledby="h-7">
-<h2 id="h-7"><span class="num" aria-hidden="true">7</span> FaceCloud : retrouver et partager vos photos entre amis</h2>
+<section id="etape-8" aria-labelledby="h-8">
+<h2 id="h-8"><span class="num" aria-hidden="true">8</span> FaceCloud : retrouver et partager vos photos entre amis</h2>
 <p>C'est l'application phare. Vous déposez vos photos dans votre <strong>uCloud</strong> (chiffré avant de quitter votre appareil). La station y repère les <strong>visages</strong>, les compare, et vous aide à les nommer. Les photos où figure un ami peuvent alors lui être <strong>partagées automatiquement</strong>.</p>
 <p>Deux cercles : vos <strong>amis N¹</strong> (ceux que vous suivez <em>et</em> qui vous suivent) reçoivent le partage automatique ; pour tous les autres, vous créez un <strong>lien secret</strong>.</p>
 <figure><svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 580" role="img" aria-labelledby="fcs-t fcs-d" width="520" height="580">
@@ -380,10 +452,10 @@ curl http://127.0.0.1:8080/health</code></pre></div>
 </div>
 </div>
 </section>
-<section id="etape-8" aria-labelledby="h-8">
-<h2 id="h-8"><span class="num" aria-hidden="true">8</span> Relier sa station aux autres Capitaines</h2>
+<section id="etape-9" aria-labelledby="h-9">
+<h2 id="h-9"><span class="num" aria-hidden="true">9</span> Relier sa station aux autres Capitaines</h2>
 <p>Grâce à Y-Level, la clé publique SSH d'une station <strong>se déduit de son identité IPFS</strong> (<code>12D3Koo…</code>) : c'est la même clé. Quand deux Capitaines se suivent sur Nostr, ils peuvent donc s'ouvrir un accès SSH entre machines de confiance : de l'<strong>individu</strong>, à l'<strong>Astroport</strong>, au <strong>territoire</strong>.</p>
-<p>Qui fait quoi ? Le <strong>suivi automatique</strong> entre Capitaines (lecture des rapports économiques kind 30850, suivi mutuel) est fait par <strong>Astroport.ONE</strong> (<code>DRAGON_p2p_ssh.sh</code>). <strong>astroportd</strong>, lui, fournit le <strong>tunnel</strong> P2P entre les stations, sans ouvrir de port sur la box.</p>
+<p>Qui fait quoi ? Le <strong>suivi automatique</strong> entre Capitaines (lecture des rapports économiques kind 30850, suivi mutuel) est fait par <strong>Astroport.ONE</strong> (<code>DRAGON_p2p_ssh.sh</code>). <strong>astroportd</strong>, lui, fournit le <strong>tunnel</strong> P2P entre les stations, sans ouvrir de port sur la box ; et il fait suivre le Capitaine par chaque MULTIPASS qu'il crée.</p>
 <figure><svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 530" role="img" aria-labelledby="iat-t iat-d" width="520" height="530">
 <title id="iat-t">Individus, Astroports et territoire</title>
 <desc id="iat-d">Trois niveaux. Des individus, chacun avec un MULTIPASS Nostr, sont hébergés par une station Astroport. Chaque station a pour identité IPFSNODEID, qui est aussi sa clé SSH. Les Capitaines de deux stations se suivent sur Nostr, ce qui ouvre un accès SSH pair à pair entre machines de confiance. Les stations s&#x27;inscrivent dans un territoire, découpé en dalles UMAP de 0,01 degré.</desc>
@@ -444,16 +516,16 @@ ssh -p 2222 utilisateur@127.0.0.1</code></pre></div>
 </div>
 </div>
 </section>
-<section id="etape-9" aria-labelledby="h-9">
-<h2 id="h-9"><span class="num" aria-hidden="true">9</span> En cas de problème</h2>
+<section id="etape-10" aria-labelledby="h-10">
+<h2 id="h-10"><span class="num" aria-hidden="true">10</span> En cas de problème</h2>
 <p>Les réponses aux questions les plus fréquentes. Dans tous les cas, <code>astroportd doctor</code> est le premier réflexe.</p>
 <div class="cols">
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
-<ul><li><strong>« L'horloge est antérieure à 2026 »</strong> : réglez l'heure (<code>sudo timedatectl set-ntp true</code>). Sur Raspberry Pi sans pile, c'est normal au premier démarrage.</li><li><strong>Le port 80 ou 443 est refusé</strong> : un utilisateur ordinaire ne peut pas ouvrir les ports sous 1024. Autorisez-le : <code>sudo setcap 'cap_net_bind_service=+ep' ~/.local/bin/astroportd</code>.</li><li><strong><code>doctor</code> signale un secret lisible par d'autres</strong> : <code>chmod 600 ~/.zen/game/secret.*</code> (et <code>chmod 600</code> sur la base).</li><li><strong><code>ylevel --verify</code> échoue</strong> : la clé SSH a été remplacée après Y-Level (ou une autre machine l'a écrasée). Relancez <code>astroportd init</code>, ou restaurez <code>~/.ssh/id_ed25519</code> depuis vos sauvegardes.</li><li><strong>La reconnaissance de visages ne démarre pas</strong> : vérifiez <code>--face-engine</code> (voir étape 7).</li><li><strong>La station ne voit pas les autres</strong> : en ẐEN, toutes les stations doivent avoir <strong>exactement la même</strong> <code>swarm.key</code>.</li><li><strong>Passer d'ORIGIN à ẐEN</strong> : ajoutez <code>--swarm-key ./swarm.key</code> au démarrage et redémarrez ; la station ne verra plus que les stations de la même clé.</li></ul>
+<ul><li><strong>« L'horloge est antérieure à 2026 »</strong> : réglez l'heure (<code>sudo timedatectl set-ntp true</code>). Sur Raspberry Pi sans pile, c'est normal au premier démarrage.</li><li><strong>Le port 80 ou 443 est refusé</strong> : un utilisateur ordinaire ne peut pas ouvrir les ports sous 1024. Autorisez-le : <code>sudo setcap 'cap_net_bind_service=+ep' ~/.local/bin/astroportd</code>.</li><li><strong><code>doctor</code> signale un secret lisible par d'autres</strong> : <code>chmod 600 ~/.zen/game/secret.*</code> (et <code>chmod 600</code> sur la base).</li><li><strong><code>ylevel --verify</code> échoue</strong> : la clé SSH a été remplacée après Y-Level (ou une autre machine l'a écrasée). Relancez <code>astroportd init</code>, ou restaurez <code>~/.ssh/id_ed25519</code> depuis vos sauvegardes.</li><li><strong>La reconnaissance de visages ne démarre pas</strong> : vérifiez <code>--face-engine</code> (voir étape 8).</li><li><strong>La station ne voit pas les autres</strong> : en ẐEN, toutes les stations doivent avoir <strong>exactement la même</strong> <code>swarm.key</code>.</li><li><strong>Passer d'ORIGIN à ẐEN</strong> : ajoutez <code>--swarm-key ./swarm.key</code> au démarrage et redémarrez ; la station ne verra plus que les stations de la même clé.</li></ul>
 <p>Une question, un bug ? Ouvrez un ticket : <a href="https://github.com/papiche/astroportd/issues">https://github.com/papiche/astroportd/issues</a>. Pour la coopérative : support@qo-op.com.</p>
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
-<ul><li><strong>Impossible de se connecter</strong> : le compte doit être hébergé par la station (dossier <code>~/.zen/game/nostr/&lt;email&gt;/</code>) ; le jeton s'obtient avec <code>astroportd token</code>.</li><li><strong>La page ne se charge pas</strong> : essayez <code>/health</code> ; si elle répond, videz le cache du navigateur.</li><li><strong>Le lien magique ne s'ouvre pas</strong> : l'adresse doit être copiée en entier, avec le <code>#</code> et ce qui le suit.</li><li><strong>Le guide en ligne</strong> : <a href="https://github.com/papiche/Astroport.ONE">Astroport.ONE</a> pour tout ce qui concerne le suivi des Capitaines et la création de MULTIPASS.</li></ul>
+<ul><li><strong>Impossible de se connecter</strong> : le compte doit être hébergé par la station (dossier <code>~/.zen/game/nostr/&lt;email&gt;/</code>) ; le jeton s'obtient avec <code>astroportd token</code>. Pas de compte ? <code>astroportd multipass create &lt;email&gt;</code> ou la page <code>/register</code>.</li><li><strong>La page ne se charge pas</strong> : essayez <code>/health</code> ; si elle répond, videz le cache du navigateur.</li><li><strong>Le lien magique ne s'ouvre pas</strong> : l'adresse doit être copiée en entier, avec le <code>#</code> et ce qui le suit.</li><li><strong>Le guide en ligne</strong> : <a href="https://github.com/papiche/Astroport.ONE">Astroport.ONE</a> pour le suivi automatique des Capitaines, la ZenCard et les QR codes.</li></ul>
 </div>
 </div>
 </section>

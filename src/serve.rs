@@ -150,6 +150,15 @@ pub struct ServeArgs {
     /// Prix maximal accepté par le courtier autonome, en centimes de Ẑen par semaine.
     #[arg(long, default_value_t = 500)]
     auto_lease_max_price: u64,
+    /// Ferme l'inscription web d'un MULTIPASS (`/register`), ouverte par défaut.
+    #[arg(long)]
+    no_register: bool,
+    /// Nombre maximal de MULTIPASS hébergés par cette station (0 = illimité).
+    #[arg(long, default_value_t = 500)]
+    max_accounts: u64,
+    /// Inscriptions acceptées par adresse IP et par heure (0 = illimité).
+    #[arg(long, default_value_t = 5)]
+    register_per_hour: usize,
     /// Désactive l'orchestrateur de nuit (20h12 solaire : snapshot, purges, RÊVE, clôture hebdomadaire, santé 30850).
     #[arg(long)]
     no_nightly: bool,
@@ -510,7 +519,28 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
             Box::pin(async move { p.record_consent(&owner).await.map(|_| ()).map_err(|e| e.to_string()) })
         })
     };
-    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, ollama, a.face_engine.is_some()).with_consent(consent_fn));
+    // Inscription d'un MULTIPASS : constellation = secret partagé de la swarm.key (ẐEN) ou 64 zéros (ORIGIN).
+    let uplanet_name = match &a.swarm_key {
+        Some(path) => std::fs::read_to_string(path)?.lines().map(str::trim).rfind(|l| !l.is_empty()).map(str::to_owned).ok_or("swarm.key vide")?,
+        None => astroportd::init::ORIGIN_UPLANETNAME.to_owned(),
+    };
+    let registrar = {
+        let secret = station.secret.clone();
+        let publisher = event_publisher.clone();
+        let publish: astroportd::register::PublishFn = Arc::new(move |e| {
+            let p = publisher.clone();
+            Box::pin(async move { astro_bro::broker::Publisher::publish(&*p, e).await })
+        });
+        let captain = station.discovered.as_ref().and_then(|d| d.captain()).map(|m| m.hex.clone());
+        let limits = astroportd::register::Limits { open: !a.no_register, max_accounts: a.max_accounts, per_ip_per_hour: a.register_per_hour };
+        Arc::new(
+            astroportd::register::Registrar::new(db.clone(), secrets_dir.clone(), uplanet_name, Arc::new(move |hex| astro_dav::auth::derive_dav_token(&secret, hex)), limits)
+                .with_captain(captain)
+                .with_publisher(publish, Some(activity.clone())),
+        )
+    };
+    println!("inscription web des MULTIPASS : {} (constellation {}, max {} comptes, {} par heure et par adresse) → /register", if a.no_register { "fermée" } else { "ouverte" }, registrar.constellation(), a.max_accounts, a.register_per_hour);
+    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, ollama, a.face_engine.is_some()).with_consent(consent_fn).with_registrar(registrar));
 
     // Reverse proxy : les routes gardées exigent un compte de la station (Basic ou NIP-98).
     let gate: Gate = {

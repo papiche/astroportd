@@ -38,7 +38,17 @@ fn mime_of(path: &str) -> &'static str {
 
 /// Taille cumulée des fichiers embarqués, en octets (budget : 48 Ko bruts, 15 Ko transférés compressés).
 pub fn embedded_bytes() -> usize {
-    Assets::iter().filter_map(|p| Assets::get(&p)).map(|f| f.data.len()).sum()
+    shell_files().map(|(_, f)| f.data.len()).sum()
+}
+
+/// Page d'inscription (`register.*`) : chargée par les seuls nouveaux venus, elle n'entre pas dans le budget de la coque.
+fn is_register_page(path: &str) -> bool {
+    path.starts_with("register.")
+}
+
+/// Fichiers de la coque de l'application (tout sauf la page d'inscription).
+fn shell_files() -> impl Iterator<Item = (String, rust_embed::EmbeddedFile)> {
+    Assets::iter().filter(|p| !is_register_page(p)).filter_map(|p| Assets::get(&p).map(|f| (p.into_owned(), f)))
 }
 
 /// Compression négociée par `Accept-Encoding` : Brotli de préférence, puis Gzip, sinon octets bruts.
@@ -118,8 +128,7 @@ fn compressed(path: &str, enc: Encoding, data: &[u8]) -> Vec<u8> {
 pub fn transfer_bytes(enc: Option<&str>) -> usize {
     let accept = enc.and_then(|e| HeaderValue::from_str(e).ok());
     let chosen = negotiate_encoding(accept.as_ref());
-    Assets::iter()
-        .filter_map(|p| Assets::get(&p).map(|f| (p.into_owned(), f)))
+    shell_files()
         .map(|(p, f)| chosen.map_or(f.data.len(), |e| compressed(&p, e, &f.data).len()))
         .sum()
 }
@@ -183,9 +192,13 @@ async fn static_file(Path(path): Path<String>, headers: HeaderMap) -> Response {
     asset(&path, &headers)
 }
 
-/// Routes `/ui/{fichier}`.
+async fn register_page(headers: HeaderMap) -> Response {
+    asset("register.html", &headers)
+}
+
+/// Routes `/ui/{fichier}` et `/register` (page d'inscription d'un MULTIPASS).
 pub fn static_router() -> Router {
-    Router::new().route("/ui/{*path}", get(static_file))
+    Router::new().route("/ui/{*path}", get(static_file)).route("/register", get(register_page))
 }
 
 #[cfg(test)]

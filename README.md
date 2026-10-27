@@ -10,7 +10,7 @@ relais Nostr, cloud personnel chiffré, reconnaissance de visages, agent BRO, é
 P2P et interface web — dans **un seul exécutable** de quelques dizaines de Mo, qui tient sur un Raspberry Pi comme
 sur un serveur GPU.
 
-> **Préversion 0.1.0.** Le code est testé de bout en bout (≈ 410 tests, `clippy` sans avertissement) mais jeune :
+> **Préversion 0.2.0-beta.** Le code est testé de bout en bout (≈ 410 tests, `clippy` sans avertissement) mais jeune :
 > lisez [les limites connues](#8-état-du-projet-et-limites-connues). Licence **AGPL-3.0** · Auteur : Fred
 > (support@qo-op.com) · Rust 2024 (≥ 1.85).
 
@@ -44,7 +44,7 @@ sur un serveur GPU.
 > pas de modèle. Sans lui, uCloud fonctionne mais sans visages. Pas de partage « automatique » vers un ami qui ne vous
 > suit pas en retour : c'est le lien secret qui sert alors.
 
-Pas à pas : [étape 7 du guide](docs/GUIDE.md#etape-7).
+Pas à pas : [étape 8 du guide](docs/GUIDE.md#etape-8).
 
 ---
 
@@ -57,9 +57,14 @@ curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh 
 # 2. Préparer la station : clé Y-Level, choix ORIGIN ou ẐEN, dossiers (assistant en français)
 astroportd init
 
-# 3. Démarrer
+# 3. Créer le MULTIPASS du Capitaine (secrets affichés UNE seule fois : notez-les)
+astroportd multipass create capitaine@exemple.org --captain
+
+# 4. Démarrer
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
 # → http://127.0.0.1:8080 : l'application web ; la même adresse sert le relai Nostr
+
+# 5. Les membres s'inscrivent sur http://127.0.0.1:8080/register (ou : astroportd multipass create <email>)
 ```
 
 `astroportd init --mode origin` ou `--mode zen --swarm-key ./swarm.key` s'utilisent aussi sans questions (`--yes`).
@@ -68,8 +73,27 @@ astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blo
 **Guide pas à pas illustré** (terminal *et* navigateur, accessible à tous) : [docs/index.html](docs/index.html)
 · version texte : [docs/GUIDE.md](docs/GUIDE.md) · en profondeur : [docs/CONSTELLATIONS.md](docs/CONSTELLATIONS.md).
 
-> astroportd 0.1 **héberge** des MULTIPASS mais n'en crée pas encore en ligne de commande : créez le vôtre sur une
-> station ORIGIN ([qo-op.com](https://qo-op.com)) ou avec [Astroport.ONE](https://github.com/papiche/Astroport.ONE).
+## Créer son MULTIPASS, directement sur sa station
+
+![Création d'un MULTIPASS : de l'email aux clés](docs/img/multipass-creation.svg)
+
+astroportd **crée les MULTIPASS lui-même**, sans passer par un autre service (reprise de `make_NOSTRCARD.sh`
+d'Astroport.ONE) :
+
+- **Au terminal** : `astroportd multipass create <email> [--captain] [--lang fr|en|es] [--json]` et
+  `astroportd multipass list`. `--captain` désigne le **premier** compte comme Capitaine de la station (refusé si un
+  autre Capitaine existe) ; les suivants **suivent automatiquement le Capitaine** (kind 3).
+- **Au navigateur** : la page publique **`/register`** (lien « Pas de compte ? Créer mon MULTIPASS » dans la fenêtre de
+  connexion) : email + langue, puis une **carte d'identité** à noter (SALT, PEPPER, nsec, npub, Ğ1, IPNS, code PASS,
+  jeton), téléchargeable en `.txt`, et un bouton « Ouvrir mon espace ». API : `GET/POST /api/v1/register`.
+- **Inscription web ouverte par défaut**, avec garde-fous : `--max-accounts N` (500 par défaut, `0` = illimité),
+  `--register-per-hour N` (5 par adresse IP, `0` = illimité), `--no-register` pour la fermer.
+- **Une seule constellation par compte** : SALT et PEPPER aléatoires (24 caractères), puis la formule **isolée**
+  `(SALT, PEPPER_<sha256(UPLANETNAME)[:16]>)`. Le même couple donne donc **d'autres clés** dans une autre constellation.
+  La création signe un profil (kind 0), le suivi du Capitaine (kind 3) et un DID (kind 30800).
+
+Les secrets ne sont affichés qu'**une seule fois**. [qo-op.com](https://qo-op.com) reste une option (une station ORIGIN
+publique où s'inscrire), pas une obligation.
 
 ---
 
@@ -284,6 +308,7 @@ automatiquement dans `~/.zen/game` (`--game-dir` ou `ASTRO_GAME_DIR`).
 |---|---|
 | `astroportd init [--mode origin\|zen]` | Assistant d'installation : rituel **Y-Level**, choix ORIGIN/ẐEN, dossiers de la station, service systemd (`--systemd`). |
 | `astroportd ylevel [--verify]` | Affiche (ou vérifie, code 1 si faux) la correspondance SSH ↔ PeerID IPFS ↔ Ğ1 ↔ Nostr. |
+| `astroportd multipass create <email> [--captain]` / `multipass list` | Crée (et liste) les MULTIPASS de la station ; secrets affichés une seule fois. |
 | `astroportd token <email>` | Jeton de connexion d'un compte hébergé (interface web, clients WebDAV). |
 | `astroportd tariff --gpu 3.50 --disk128 4.00 --db uplanet.db` | Signe et publie la grille tarifaire du nœud (kind 30850), **en Ẑen par semaine**. |
 | `astroportd media --account <email> consent` | Atteste la copie privée (CPI L. 122-5), une fois. `--show` affiche le texte. |
@@ -423,6 +448,13 @@ courtier), économie 3×1/3 et baux, cycle de vie, maillage P2P et tunnels gard�
 `doctor`.
 
 À connaître :
+- **MULTIPASS** : la création reprend l'essentiel de `make_NOSTRCARD.sh`, mais **pas** le découpage SSSS 2-sur-3 de
+  DISCO chiffré vers le Capitaine, les QR codes, l'import de la clé IPNS dans Kubo, l'envoi du zine par email, la
+  ZenCard ni la primo-transaction ; retrouver un compte repose sur le SALT/PEPPER remis une fois au titulaire (et le
+  `nsec`) ;
+- **une station = une constellation** (une `swarm.key`, ou aucune). Raccorder une même station à ORIGIN **et** à ẐEN en
+  parallèle est *prévu* (deux réseaux P2P parallèles, même identité Y-Level, chaque MULTIPASS rattaché à une
+  constellation), pas encore disponible ;
 - le client Duniter (`subxt`) n'a été éprouvé que hors ligne : son comportement sur un nœud réel reste à valider ;
 - une nuit de 20h12 manquée n'est rejouée qu'au démarrage et seulement pour la veille et le jour courant ;
 - l'inférence faciale passe par un « Brain » HTTP : pas de modèle ONNX embarqué ;

@@ -6,6 +6,7 @@
 //! - [`state`] : machine d'état hebdomadaire (loyer Opex ou parts sociétaires, grâce, suspension) ;
 //! - [`migration`] : déménagement souverain (`home:station`) : conteneur chiffré UENC v2 et `cashback` résiduel ;
 //! - [`rebuild`] : reconstruction du statut des comptes après un `replay` (loyers constatés en 30852 / 30851) ;
+//! - [`multipass`] : création d'un MULTIPASS (clés isolées par UPlanet, fichiers du compte, événements de naissance) ;
 //! - [`ylevel`] : rituel Y-Level, clé SSH = PeerID IPFS = Ğ1 = Nostr (`astroportd init` / `ylevel`) ;
 //! - [`store`] : traduction en requêtes SQL (`identities`, `kv`, `done`).
 //!
@@ -16,6 +17,7 @@
 pub mod discovery;
 pub mod dunikey;
 pub mod migration;
+pub mod multipass;
 pub mod rebuild;
 pub mod state;
 pub mod store;

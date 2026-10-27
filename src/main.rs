@@ -92,6 +92,11 @@ enum Command {
         #[command(subcommand)]
         action: PluginAction,
     },
+    /// MULTIPASS : créer un compte sur cette station (clés isolées par constellation) ou lister les comptes hébergés.
+    Multipass {
+        #[command(subcommand)]
+        action: MultipassAction,
+    },
     /// Films et séries : attestation de copie privée (CPI L. 122-5) et dépôt chiffré avec publication NIP-71 (kind 21/22)
     /// réservée au cercle N¹.
     Media(Box<MediaArgs>),
@@ -192,6 +197,47 @@ enum Command {
         /// Période de rafraîchissement du cercle social, en secondes.
         #[arg(long, default_value_t = 15)]
         circle_refresh_secs: u64,
+    },
+}
+
+#[derive(Subcommand)]
+enum MultipassAction {
+    /// Crée un MULTIPASS : SALT/PEPPER aléatoires, clés Nostr + Ğ1 + IPNS, fichiers du compte, événements de naissance.
+    /// Les secrets ne sont affichés **qu'une fois**.
+    Create {
+        /// Adresse email du titulaire.
+        email: String,
+        /// Langue du compte (`fr`, `en`, `es`…).
+        #[arg(long, default_value = "fr")]
+        lang: String,
+        /// Dossier `~/.zen/game` (défaut : `$ASTRO_GAME_DIR`, sinon `$HOME/.zen/game`).
+        #[arg(long)]
+        game_dir: Option<PathBuf>,
+        /// Dossier de la station (`station.conf`, `uplanet.db`) ; défaut `~/.zen/astroportd`.
+        #[arg(long)]
+        home: Option<PathBuf>,
+        /// `swarm.key` de la constellation (ẐEN) ; sinon `uplanetname` de station.conf, sinon ORIGIN (64 zéros).
+        #[arg(long)]
+        swarm_key: Option<PathBuf>,
+        /// Base `uplanet.db` (défaut : `<home>/uplanet.db`).
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Relai (`ws://` ou `wss://`) où publier les événements de naissance ; répétable.
+        #[arg(long = "relay")]
+        relays: Vec<String>,
+        /// Désigne ce compte comme **Capitaine** de la station (le premier MULTIPASS, `players/.current/.player`) ;
+        /// les MULTIPASS créés ensuite le suivent. Refusé si la station a déjà un autre Capitaine.
+        #[arg(long)]
+        captain: bool,
+        /// Sortie JSON (scripts).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Liste les MULTIPASS hébergés (sans aucun secret).
+    List {
+        /// Dossier `~/.zen/game`.
+        #[arg(long)]
+        game_dir: Option<PathBuf>,
     },
 }
 
@@ -330,6 +376,7 @@ async fn run(cli: Cli) -> Result<(), Failure> {
             }
         }
         Command::Media(args) => media_cmd(*args).await,
+        Command::Multipass { action } => multipass_cmd(action).await,
         Command::Route { service, mode, swarm_dir, lat, lon } => route(&service, mode, swarm_dir, lat.zip(lon)),
         Command::SwarmKey => {
             print!("{}", astro_p2p::generate_swarm_key()?);
@@ -537,6 +584,113 @@ async fn tariff(prices: [(Resource, Option<astro_economy::Amount>); 4], game_dir
         println!("événement {} : {}", event.id, serde_json::to_string(&event)?);
     }
     if failures > 0 { Err(format!("{failures} publication(s) en échec").into()) } else { Ok(()) }
+}
+
+/// `astroportd multipass …`.
+async fn multipass_cmd(action: MultipassAction) -> Result<(), Failure> {
+    match action {
+        MultipassAction::List { game_dir } => {
+            let station = identity::resolve(game_dir.as_deref(), true)?;
+            let found = station.discovered.as_ref().ok_or("identités locales introuvables (--game-dir)")?;
+            for m in &found.multipasses {
+                println!("{:<40} {}  {}", m.email, m.hex, if found.captain_email.as_deref() == Some(m.email.as_str()) { "Capitaine" } else { "" });
+            }
+            for p in &found.problems {
+                eprintln!("⚠ {} : {}", p.path.display(), p.what);
+            }
+            println!("{} MULTIPASS hébergé(s)", found.multipasses.len());
+            Ok(())
+        }
+        MultipassAction::Create { email, lang, game_dir, home, swarm_key, db, relays, captain: make_captain, json } => {
+            let home = home.map_or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".zen/astroportd")).ok_or("HOME introuvable : indiquer --home"), Ok)?;
+            let uplanet_name = match swarm_key {
+                Some(path) => std::fs::read_to_string(&path).map_err(|e| format!("{} : {e}", path.display()))?.lines().map(str::trim).rfind(|l| !l.is_empty()).map(str::to_owned).ok_or("swarm.key vide")?,
+                None => std::fs::read_to_string(home.join("station.conf"))
+                    .ok()
+                    .and_then(|t| t.lines().find_map(|l| l.strip_prefix("uplanetname").and_then(|v| v.trim_start().strip_prefix('=')).map(|v| v.trim().to_owned())))
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or_else(|| astroportd::init::ORIGIN_UPLANETNAME.to_owned()),
+            };
+            let station = identity::resolve(game_dir.as_deref(), true)?;
+            let nostr_dir = station.nostr_dir.clone().ok_or("dossier des comptes introuvable (--game-dir)")?;
+            let db_path = db.unwrap_or_else(|| home.join("uplanet.db"));
+            let db = Arc::new(Db::open(&db_path, 1)?);
+            let secret = station.secret.clone();
+            let captain = station.discovered.as_ref().and_then(|d| d.captain()).map(|m| m.hex.clone());
+            let player_file = nostr_dir.parent().map(|g| g.join("players/.current/.player"));
+            if make_captain {
+                let wanted = astro_lifecycle::multipass::normalize_email(&email)?;
+                let current = player_file.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| t.trim().to_ascii_lowercase()).filter(|t| !t.is_empty());
+                if current.as_deref().is_some_and(|c| c != wanted) {
+                    return Err(format!("la station a déjà un Capitaine ({}) : --captain refusé", current.unwrap_or_default()).into());
+                }
+            }
+            let registrar = astroportd::register::Registrar::new(db.clone(), nostr_dir, uplanet_name, Arc::new(move |hex| astro_dav::auth::derive_dav_token(&secret, hex)), astroportd::register::Limits { open: true, max_accounts: 0, per_ip_per_hour: 0 }).with_captain(captain);
+            let reg = registrar.register(None, &email, &lang).await?;
+            if make_captain {
+                let file = player_file.ok_or("dossier de la station introuvable")?;
+                if let Some(dir) = file.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                std::fs::write(&file, format!("{}\n", reg.account.email))?;
+                db.writer().execute("UPDATE identities SET role = 'captain' WHERE hex = ?1", vec![rusqlite::types::Value::Text(reg.account.hex.clone())]).await?;
+                println!("⚓ {} est le Capitaine de cette station ({}).", reg.account.email, file.display());
+            }
+            // Publication directe (pas de démon ici) : les événements de naissance partent vers les relais demandés.
+            let mut failures = 0;
+            if !relays.is_empty() {
+                let mut client = WsClient::new(Duration::from_secs(30));
+                if let Some(signer) = station.signer {
+                    client = client.with_signer(signer);
+                }
+                let events = stored_birth_events(&db, &reg.account.hex).await?;
+                for relay in &relays {
+                    for e in &events {
+                        match client.publish(relay, e).await {
+                            Ok((true, _)) => {}
+                            Ok((false, why)) => {
+                                failures += 1;
+                                eprintln!("refusé par {relay} : {why}");
+                            }
+                            Err(err) => {
+                                failures += 1;
+                                eprintln!("échec sur {relay} : {err}");
+                            }
+                        }
+                    }
+                }
+            }
+            db.writer().shutdown().await?;
+            let a = &reg.account;
+            if json {
+                println!("{}", serde_json::json!({ "email": a.email, "token": reg.token, "pass": a.pass, "salt": &*a.salt, "pepper": &*a.pepper, "nsec": &*a.nsec, "npub": a.npub, "hex": a.hex, "g1pub": a.g1_ss58, "nostrns": a.nostrns, "constellation": reg.constellation }));
+            } else {
+                println!("MULTIPASS {} créé sur la constellation {}\n", a.email, reg.constellation);
+                println!("  Identifiant web : {}\n  Jeton web       : {}\n  Code PASS       : {}", a.email, reg.token, a.pass);
+                println!("  SALT            : {}\n  PEPPER          : {}", &*a.salt, &*a.pepper);
+                println!("  nsec            : {}\n  npub            : {}\n  Ğ1              : {}\n  IPNS            : {}", &*a.nsec, a.npub, a.g1_ss58, a.nostrns);
+                println!("\n⚠ Notez SALT et PEPPER maintenant : ils permettent de récupérer le compte et ne seront plus affichés.");
+                println!("  Dossier du compte : {}", a.dir.display());
+            }
+            if failures > 0 { Err(format!("{failures} publication(s) en échec (le compte est créé)").into()) } else { Ok(()) }
+        }
+    }
+}
+
+/// Événements de naissance déjà stockés pour `hex`, à publier tels quels (mêmes identifiants que dans la base).
+async fn stored_birth_events(db: &Db, hex: &str) -> Result<Vec<astro_nostr_proto::Event>, Failure> {
+    let hex = hex.to_owned();
+    let rows: Vec<(String, String, i64, u32, String, String, String)> = db
+        .readers()
+        .read(move |c| {
+            let mut stmt = c.prepare("SELECT id, pubkey, created_at, kind, tags, content, sig FROM nostr_events WHERE pubkey = ?1 ORDER BY created_at, kind")?;
+            let rows = stmt.query_map([&hex], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?.collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await?;
+    rows.into_iter()
+        .map(|(id, pubkey, at, kind, tags, content, sig)| Ok(astro_nostr_proto::Event { id, pubkey, created_at: u64::try_from(at).unwrap_or(0), kind, tags: serde_json::from_str(&tags)?, content, sig }))
+        .collect()
 }
 
 /// `astroportd media …` : copie privée et dépôt d'un film ou d'un épisode.

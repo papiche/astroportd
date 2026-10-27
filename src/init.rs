@@ -299,9 +299,7 @@ pub fn init(a: InitArgs) -> Res {
     }
     println!("Démarrer :        {serve}\nVérifier :        astroportd doctor --game-dir {} && astroportd ylevel --verify", game.display());
     println!("Interface web :   http://127.0.0.1:8080/   (jeton : astroportd token <email>)");
-    if email.is_empty() {
-        println!("MULTIPASS :       créez le vôtre sur une station ORIGIN (https://qo-op.com), puis placez-le dans {}/nostr/<email>/", game.display());
-    }
+    println!("MULTIPASS :       astroportd multipass create {} --captain   (le premier compte devient le Capitaine ; les suivants s'inscrivent sur /register)", if email.is_empty() { "<votre@email>" } else { &email });
     Ok(())
 }
 

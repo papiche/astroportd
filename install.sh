@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installeur d'astroportd — préversion 0.1.0
+# Installeur d'astroportd — préversion 0.2.0-beta
 #
 #   curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash -s -- --yes --mode origin
@@ -22,7 +22,7 @@ EMAIL=""
 
 usage() {
   cat <<'USAGE'
-Installeur d'astroportd (préversion 0.1.0)
+Installeur d'astroportd (préversion 0.2.0-beta)
 
 Usage : install.sh [options]
 
@@ -46,7 +46,7 @@ die()  { printf '✘ %s\n' "$*" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) shift; VERSION="${1:?--version attend une valeur (ex. v0.1.0)}" ;;
+    --version) shift; VERSION="${1:?--version attend une valeur (ex. v0.2.0-beta)}" ;;
     --prefix)  shift; PREFIX="${1:?--prefix attend un dossier}" ;;
     --static)  STATIC=1 ;;
     --no-init) RUN_INIT=0 ;;

@@ -2,7 +2,7 @@
 
 Ce document explique **ce qui se passe sous le capot** quand on démarre une station. Pour le pas-à-pas, voir le [guide](GUIDE.md) ([version illustrée](index.html)).
 
-> **Comment lire ce document.** Chaque point est marqué : **astroportd** (implémenté dans ce dépôt et testé) ou **Astroport.ONE** (hérité : fait par les scripts bash du dépôt [papiche/Astroport.ONE](https://github.com/papiche/Astroport.ONE), pas encore réécrit en Rust). Les deux fonctionnent ensemble ; astroportd 0.1 est une **préversion**.
+> **Comment lire ce document.** Chaque point est marqué : **astroportd** (implémenté dans ce dépôt et testé) ou **Astroport.ONE** (hérité : fait par les scripts bash du dépôt [papiche/Astroport.ONE](https://github.com/papiche/Astroport.ONE), pas encore réécrit en Rust). Les deux fonctionnent ensemble ; astroportd 0.2.0-beta est une **préversion**.
 
 ![Individus, Astroports et territoire](img/individu-astroport-territoire.svg)
 
@@ -62,7 +62,7 @@ astroportd init --mode origin
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
 ```
 
-Rien de secret à fournir. Votre station est visible des autres stations ORIGIN. Pour avoir un compte, créez votre MULTIPASS sur [qo-op.com](https://qo-op.com).
+Rien de secret à fournir. Votre station est visible des autres stations ORIGIN. Pour avoir un compte, créez-le sur votre station : `astroportd multipass create <email> --captain` (voir §3.4). [qo-op.com](https://qo-op.com) reste une option (une station ORIGIN publique), pas une obligation.
 
 ### 3.2 Rejoindre une constellation ẐEN existante
 
@@ -85,9 +85,28 @@ Le fichier est au format `/key/swarm/psk/1.0.0/` · `/base16/` · 64 caractères
 
 > Une constellation que vous fondez est un **réseau privé dont vous fixez les règles**. L'économie « 1 Ẑen = 1 € » est celle de la coopérative UPlanet ẐEN (financement via OpenCollective, comptabilité des trois tiers) ; elle ne s'applique pas automatiquement à votre réseau.
 
-### 3.4 Limite de la préversion : les comptes
+### 3.4 Créer les MULTIPASS sur sa station
 
-astroportd 0.1 **ne crée pas encore de MULTIPASS** en ligne de commande. Il héberge ceux qu'il trouve dans `~/.zen/game/nostr/<email>/` (`.secret.nostr`, `.keyformula`), créés par *Astroport.ONE* ou déménagés depuis une autre station (*astroportd* : `astro-lifecycle`, commande de déménagement `home:station`). Sans compte hébergé, la station tourne, mais personne ne peut se connecter à l'interface web.
+![Création d'un MULTIPASS](img/multipass-creation.svg)
+
+*astroportd* crée les MULTIPASS lui-même (reprise de `make_NOSTRCARD.sh` d'*Astroport.ONE*) :
+
+```bash
+astroportd multipass create capitaine@exemple.org --captain   # le PREMIER compte = le Capitaine de la station
+astroportd multipass create ami@exemple.org                   # les suivants suivent automatiquement le Capitaine
+astroportd multipass list
+```
+
+Les membres peuvent aussi s'inscrire au navigateur sur la page **`/register`** de la station (inscription **ouverte par défaut** ; `--max-accounts`, `--register-per-hour`, `--no-register` pour la régler ou la fermer). Les secrets (SALT, PEPPER, nsec, code PASS, jeton web) ne sont affichés **qu'une seule fois**.
+
+**Une constellation par compte.** Le SALT et le PEPPER sont tirés au hasard (24 caractères). Les crédentiels passés à scrypt sont `(SALT, PEPPER_<sha256(UPLANETNAME)[:16]>)` : la clé Nostr (sha256 de la graine), la clé Ğ1 et l'identité IPNS en découlent. Le **même** couple SALT/PEPPER donne donc **d'autres clés** dans une autre constellation (vérifié contre le `keygen` d'Astroport.ONE). Un MULTIPASS est rattaché à **une** constellation : ORIGIN s'il n'y a pas de `swarm.key`, sinon ẐEN.
+
+**Ce qui est écrit** : `~/.zen/game/nostr/<email>/` (`.secret.nostr`, `.secret.dunikey`, `.keyformula`, `.pass`, `.multipass.json`, en `0600`, plus `HEX`, `NPUB`, `G1PUBNOSTR`, `LANG`, `NOSTRNS`) et trois événements signés par le compte : profil (kind 0), suivi du Capitaine (kind 3), DID W3C (kind 30800).
+
+#### Limites
+
+- **Non repris de `make_NOSTRCARD.sh`** : le découpage SSSS 2-sur-3 de DISCO chiffré vers le Capitaine, les QR codes, l'import de la clé IPNS dans Kubo, l'envoi du zine par email, la ZenCard et la primo-transaction. Retrouver un compte repose sur le SALT/PEPPER remis une fois au titulaire (et sur le `nsec`).
+- **Une station = une constellation** (une `swarm.key`, ou aucune). Raccorder une même station à ORIGIN **et** à ẐEN en parallèle est **prévu** : deux réseaux P2P parallèles, la même identité Y-Level, chaque MULTIPASS rattaché à sa constellation. Ce n'est **pas encore disponible**.
 
 ---
 
@@ -177,13 +196,13 @@ La reconnaissance faciale passe par un service HTTP (`--face-engine`) ; il n'y a
 
 ## 7. Résumé : qui fait quoi
 
-| Fonction | astroportd 0.1 | Astroport.ONE |
+| Fonction | astroportd 0.2.0-beta | Astroport.ONE |
 |---|:---:|:---:|
 | Rituel Y-Level (SSH → IPFS → Ğ1 → Nostr) | ✔ `init`, `ylevel` | ✔ `Ylevel.sh` |
 | Réseau privé `swarm.key` (ẐEN), réseau ouvert (ORIGIN) | ✔ | ✔ |
 | Tunnels P2P entre stations (dont SSH) | ✔ | ✔ `DRAGON_p2p_ssh.sh` |
 | Suivi automatique entre Capitaines (kind 30850) | — | ✔ |
-| Création d'un MULTIPASS | — (héberge les comptes existants) | ✔ `make_NOSTRCARD.sh`, web UPlanet |
+| Création d'un MULTIPASS | ✔ `multipass create`, page `/register` (version allégée) | ✔ `make_NOSTRCARD.sh` (complet : SSSS, QR, zine, ZenCard) |
 | uCloud chiffré, FaceCloud, liens secrets | ✔ | ✔ (version bash/Python) |
 | Relai Nostr avec pare-feu social N¹/N² | ✔ intégré | ✔ strfry + filtres NIP-101 |
 | Économie Ẑen (3×1/3, baux 1/24e de GPU) | ✔ | ✔ |

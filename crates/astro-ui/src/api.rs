@@ -72,6 +72,16 @@ impl ApiError {
         Self { status: StatusCode::FORBIDDEN, message: m.into() }
     }
 
+    /// 409 : la ressource existe déjà (email déjà inscrit).
+    pub fn conflict(m: impl Into<String>) -> Self {
+        Self { status: StatusCode::CONFLICT, message: m.into() }
+    }
+
+    /// 429 : trop de demandes.
+    pub fn too_many(m: impl Into<String>) -> Self {
+        Self { status: StatusCode::TOO_MANY_REQUESTS, message: m.into() }
+    }
+
     /// 501 : fonction non activée sur cette station.
     pub fn unavailable(m: impl Into<String>) -> Self {
         Self { status: StatusCode::NOT_IMPLEMENTED, message: m.into() }
@@ -171,6 +181,14 @@ pub trait Backend: Send + Sync + 'static {
     fn consent_accept(&self, _who: &Principal, _version: u32) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("dépôt de médias non disponible sur cette station")) }
     }
+    /// L'inscription d'un MULTIPASS est-elle ouverte ? `{ open, constellation, accounts, max_accounts }` (public).
+    fn register_info(&self) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("inscription non disponible sur cette station")) }
+    }
+    /// Crée un MULTIPASS (public). `ip` : adresse du client, pour la limite de débit.
+    fn register(&self, _ip: Option<std::net::IpAddr>, _email: String, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("inscription non disponible sur cette station")) }
+    }
     /// État des sous-systèmes.
     fn health(&self) -> impl Future<Output = Vec<Subsystem>> + Send;
 }
@@ -201,6 +219,7 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/bro/say", post(bro_say::<B>))
         .route("/api/v1/consent/private-copy", get(consent::<B>).post(consent_accept::<B>))
         .route("/api/v1/me/footprint", get(footprint::<B>))
+        .route("/api/v1/register", get(register_info::<B>).post(register::<B>))
         .route("/api/v1/station/constellation", get(constellation::<B>))
         .route("/api/v1/station/economy", get(economy::<B>))
         .route("/api/v1/station/accounts", get(accounts::<B>))
@@ -438,6 +457,26 @@ async fn bro_say<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderM
         Ok(p) => reply(st.backend.bro_say(&p, text).await),
         Err(r) => r,
     }
+}
+
+#[derive(Deserialize)]
+struct RegisterBody {
+    email: String,
+    #[serde(default)]
+    lang: String,
+}
+
+/// Inscription ouverte ? (aucun compte requis : c'est la porte d'entrée.)
+async fn register_info<B: Backend>(State(st): State<Arc<UiState<B>>>) -> Response {
+    reply(st.backend.register_info().await)
+}
+
+/// Crée un MULTIPASS. Les secrets de la réponse ne sont jamais remis une seconde fois : `no-store`.
+async fn register<B: Backend>(State(st): State<Arc<UiState<B>>>, req: axum::extract::Request) -> Response {
+    let ip = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|c| c.0.ip());
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), 2048).await else { return reply(Err(ApiError::bad_request("requête trop grande"))) };
+    let Ok(body) = serde_json::from_slice::<RegisterBody>(&bytes) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"email\": \"…\", \"lang\": \"fr\" }"))) };
+    reply(st.backend.register(ip, body.email, body.lang).await)
 }
 
 /// Flux SSE : d'abord ce que le client a manqué (`Last-Event-ID`), puis le direct.

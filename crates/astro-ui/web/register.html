@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0b5fff">
+<title>Créer mon MULTIPASS</title>
+<link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/register.css">
+</head>
+<body>
+<a class="skip" href="#main">Aller au contenu</a>
+<main id="main">
+  <h1>Créer mon MULTIPASS</h1>
+  <p class="lead">Votre identité sur cette station : un compte Nostr, un portefeuille Ğ1 et un espace IPFS, nés d’un même secret que <strong>vous seul</strong> conservez.</p>
+  <p id="info" class="muted" role="status">Vérification de la station…</p>
+
+  <form id="f" hidden>
+    <label for="email">Votre adresse email</label>
+    <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="vous@exemple.org">
+    <label for="lang">Langue</label>
+    <select id="lang" name="lang"><option value="fr">Français</option><option value="en">English</option><option value="es">Español</option></select>
+    <button id="go">Créer mon MULTIPASS</button>
+    <p id="err" class="err" role="alert"></p>
+  </form>
+
+  <section id="done" hidden aria-labelledby="done-t">
+    <h2 id="done-t" tabindex="-1">Votre MULTIPASS est prêt</h2>
+    <p class="warn"><strong>Notez ces informations maintenant.</strong> Elles ne seront plus jamais affichées : la station ne garde pas votre SALT ni votre PEPPER en clair pour vous les redonner. Sans eux, un compte perdu ne se récupère pas.</p>
+    <dl id="card"></dl>
+    <p class="row">
+      <button id="save" type="button">Télécharger ma carte (.txt)</button>
+      <button id="open" type="button" class="primary">Ouvrir mon espace</button>
+    </p>
+  </section>
+
+  <p class="muted small">Le MULTIPASS est rattaché à la constellation de cette station (<span id="const">…</span>) : le même couple SALT/PEPPER donne une autre clé dans une autre constellation. <a href="/">Retour à la connexion</a></p>
+</main>
+<script src="/ui/register.js"></script>
+</body>
+</html>

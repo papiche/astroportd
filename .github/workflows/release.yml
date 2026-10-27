@@ -1,7 +1,7 @@
 name: Release
 
 # Un tag `vX.Y.Z` construit les 4 cibles de build-all.sh et publie les archives + SHA256SUMS dans une release GitHub.
-# Un tag avec suffixe (`v0.1.0-rc1`, `v0.1.0-beta`) est marqué « préversion ».
+# Un tag avec suffixe (`v0.2.0-beta`, `v0.2.0-rc1`) est marqué « préversion ».
 
 on:
   push:

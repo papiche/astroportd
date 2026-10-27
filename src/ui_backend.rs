@@ -36,6 +36,7 @@ pub struct StationUi<B: BlobStore> {
     /// FaceCloud est actif.
     pub faces_enabled: bool,
     consent_fn: Option<ConsentFn>,
+    registrar: Option<Arc<crate::register::Registrar>>,
     probe: Mutex<Option<(Instant, Result<(), String>)>>,
 }
 
@@ -45,12 +46,18 @@ pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Fu
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, probe: Mutex::new(None) }
+        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, registrar: None, probe: Mutex::new(None) }
     }
 
     /// Active l'attestation de copie privée depuis l'interface.
     pub fn with_consent(mut self, f: ConsentFn) -> Self {
         self.consent_fn = Some(f);
+        self
+    }
+
+    /// Ouvre l'inscription d'un MULTIPASS depuis l'interface (`/register`).
+    pub fn with_registrar(mut self, r: Arc<crate::register::Registrar>) -> Self {
+        self.registrar = Some(r);
         self
     }
 
@@ -114,6 +121,34 @@ impl<B: BlobStore> Backend for StationUi<B> {
             .await
             .ok()?;
         Some(Principal { hex: account.owner, email, captain: role.as_deref() == Some("captain") })
+    }
+
+    async fn register_info(&self) -> Result<Value, ApiError> {
+        let r = self.registrar.as_ref().ok_or_else(|| ApiError::unavailable("inscription non disponible sur cette station"))?;
+        let limits = r.limits();
+        let accounts = r.hosted_accounts().await.map_err(|e| ApiError::internal(e.to_string()))?;
+        let open = limits.open && (limits.max_accounts == 0 || accounts < limits.max_accounts);
+        Ok(json!({ "open": open, "constellation": r.constellation(), "accounts": accounts, "max_accounts": limits.max_accounts }))
+    }
+
+    async fn register(&self, ip: Option<std::net::IpAddr>, email: String, lang: String) -> Result<Value, ApiError> {
+        use crate::register::RegisterError as E;
+        let r = self.registrar.as_ref().ok_or_else(|| ApiError::unavailable("inscription non disponible sur cette station"))?;
+        let reg = r.register(ip, &email, &lang).await.map_err(|e| match e {
+            E::Closed | E::Full => ApiError::unavailable(e.to_string()),
+            E::RateLimited(_) => ApiError::too_many(e.to_string()),
+            E::Invalid(m) => ApiError::bad_request(m),
+            E::Conflict(m) => ApiError::conflict(m),
+            E::Internal(m) => {
+                eprintln!("inscription : {m}");
+                ApiError::internal("inscription impossible : voir les journaux de la station")
+            }
+        })?;
+        let a = &reg.account;
+        Ok(json!({
+            "email": a.email, "token": reg.token, "pass": a.pass, "salt": &*a.salt, "pepper": &*a.pepper, "nsec": &*a.nsec,
+            "npub": a.npub, "hex": a.hex, "g1pub": a.g1_ss58, "nostrns": a.nostrns, "constellation": reg.constellation, "lang": a.lang,
+        }))
     }
 
     async fn dashboard(&self, who: &Principal) -> Result<Value, ApiError> {
