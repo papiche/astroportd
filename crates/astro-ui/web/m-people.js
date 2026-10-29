@@ -187,6 +187,7 @@ function pointer() {
   });
   const end = e => {
     ptrs.delete(e.pointerId);
+    if (g?.kind === 'pinch') { if (ptrs.size < 2) g = null; return; }
     if (!g || ptrs.size) return;
     const p = at(e);
     if (g.kind === 'lasso') {

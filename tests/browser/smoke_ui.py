@@ -116,6 +116,7 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/v1/invites': return self.send(200, dict(token=TOKEN, count=3, label=body.get('label'), expires_at=1791000000, url='https://s.example/i/' + TOKEN, qr_svg=QR))
         if p == f'/api/v1/invite/{TOKEN}/accept': return self.send(200, dict(**{'from': 'alice'}, shared=4, warnings=[]))
         if p == f'/api/v1/invite/{TOKEN}/claim':
+            if body.get('email') == 'taken@example.org': return self.send(409, dict(error='adresse déjà hébergée', code='email_taken'))
             return self.send(200, dict(email=body['email'], token='JETON-WEB', pass_='1234', salt='SEL', pepper='POIVRE', nsec='nsec1secret', npub='npub1x', hex='cd' * 32, g1pub='G1X', nostrns='/ipns/k51', constellation='ORIGIN', lang=body['lang'], **{'from': 'alice'}, shared=4, warnings=[]))
         if p.startswith('/api/v1/contacts/'): return self.send(200, dict(path='/Contacts/x.vcf', linked=1))
         if p == '/api/v1/account/unlock':
@@ -319,6 +320,18 @@ with sync_playwright() as pw:
     p8.goto(f'http://127.0.0.1:{port}/i/{TOKEN}'); p8.wait_for_selector('#acc:not([hidden])'); p8.click('#acc-other')
     check(p8.is_visible('#f') and p8.is_hidden('#acc'), 'l\'autre compte rouvre le formulaire d\'inscription')
     c8.close()
+    # Adresse déjà hébergée (Safari, session dans la PWA) : le PASS saisi sur place suffit pour accepter.
+    c9 = br.new_context(viewport=dict(width=390, height=800), locale='fr-FR', service_workers='block'); p9 = c9.new_page()
+    p9.on('console', lambda m: errors.append(m.text) if m.type == 'error' and '401' not in m.text and '409' not in m.text else None); p9.on('pageerror', lambda e: errors.append(str(e)))
+    p9.goto(f'http://127.0.0.1:{port}/i/{TOKEN}'); p9.wait_for_selector('#f:not([hidden])')
+    p9.fill('#email', 'taken@example.org'); p9.click('#go'); p9.wait_for_selector('#pw:not([hidden])')
+    check(p9.is_hidden('#f') and p9.is_hidden('#err'), 'adresse déjà prise : le formulaire cède la place au PASS')
+    p9.fill('#pw-pass', '000000'); p9.click('#pw-go'); p9.wait_for_timeout(400)
+    check('incorrect' in p9.inner_text('#pw-e'), 'un PASS faux est signalé : ' + p9.inner_text('#pw-e'))
+    p9.fill('#pw-pass', '123456'); p9.click('#pw-go'); p9.wait_for_selector('#acc:not([hidden])')
+    p9.click('#acc-go'); p9.wait_for_selector('#acc-done:not([hidden])')
+    check(p9.evaluate("localStorage.getItem('basic')") is None, 'la session obtenue par PASS n\'est pas enregistrée dans ce navigateur')
+    c9.close()
     # Connexion par code PASS : la station rend le jeton ; `window.nostr` délègue la signature à la station.
     ctx4 = br.new_context(viewport=dict(width=390, height=800), locale='fr-FR', service_workers='block'); p4 = ctx4.new_page()
     p4.on('console', lambda m: errors.append(m.text) if m.type == 'error' and '401' not in m.text else None); p4.on('pageerror', lambda e: errors.append(str(e)))

@@ -25,6 +25,14 @@
     <p id="acc-e" class="err" role="alert"></p>
   </section>
 
+  <form id="pw" hidden>
+    <p id="pw-t" class="lead" data-t="pwlead">Cette adresse a déjà un MULTIPASS ici. Saisissez son code PASS pour y ajouter ces photos.</p>
+    <label for="pw-pass" data-t="pwlabel">Code PASS</label>
+    <input id="pw-pass" name="pass" type="password" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4,6}" maxlength="6" required>
+    <button id="pw-go" class="primary" data-t="pwgo">Continuer</button>
+    <p id="pw-e" class="err" role="alert"></p>
+  </form>
+
   <section id="acc-done" hidden aria-live="polite">
     <h2 tabindex="-1" id="acc-done-t"></h2>
     <p id="acc-warns" class="muted"></p>
