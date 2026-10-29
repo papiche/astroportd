@@ -14,6 +14,32 @@ use tokio::sync::broadcast;
 /// Nombre d'événements conservés pour les reconnexions.
 pub const BACKLOG: usize = 200;
 
+/// Qui peut voir un événement dans le flux de l'interface.
+///
+/// Le flux est servi à tout compte authentifié : sans audience, l'inscription d'un MULTIPASS (avec son e-mail), un
+/// virement ou un jeton de secours seraient visibles de tous les membres.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Audience {
+    /// Tout compte connecté (événements de station sans donnée personnelle : démarrage, santé, relais).
+    #[default]
+    Everyone,
+    /// Le seul titulaire de cette clé Nostr (64 hex).
+    Owner(String),
+    /// Le seul Capitaine.
+    Captain,
+}
+
+impl Audience {
+    /// L'événement est-il destiné à ce compte ?
+    pub fn admits(&self, hex: &str, captain: bool) -> bool {
+        match self {
+            Self::Everyone => true,
+            Self::Owner(owner) => owner == hex,
+            Self::Captain => captain,
+        }
+    }
+}
+
 /// Un événement de la station.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Activity {
@@ -30,6 +56,9 @@ pub struct Activity {
     /// Détails structurés facultatifs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
+    /// Destinataires (jamais sérialisé : le filtrage se fait avant l'envoi).
+    #[serde(skip)]
+    pub audience: Audience,
 }
 
 struct Inner {
@@ -57,11 +86,17 @@ impl ActivityBus {
         Self { inner: Arc::new(Mutex::new(Inner { next_id: 1, ring: VecDeque::with_capacity(BACKLOG) })), tx }
     }
 
-    /// Publie un événement. Ne bloque jamais, même sans abonné.
+    /// Publie un événement visible de tout compte connecté. Pour une donnée personnelle, voir [`ActivityBus::publish_to`].
+    /// Ne bloque jamais, même sans abonné.
     pub fn publish(&self, kind: &str, source: &str, message: impl Into<String>, data: Option<serde_json::Value>) -> Arc<Activity> {
+        self.publish_to(Audience::Everyone, kind, source, message, data)
+    }
+
+    /// Publie un événement pour une audience précise.
+    pub fn publish_to(&self, audience: Audience, kind: &str, source: &str, message: impl Into<String>, data: Option<serde_json::Value>) -> Arc<Activity> {
         let at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let ev = Arc::new(Activity { id: g.next_id, at, kind: kind.to_owned(), source: source.to_owned(), message: message.into(), data });
+        let ev = Arc::new(Activity { id: g.next_id, at, kind: kind.to_owned(), source: source.to_owned(), message: message.into(), data, audience });
         g.next_id += 1;
         if g.ring.len() == BACKLOG {
             g.ring.pop_front();
@@ -101,6 +136,14 @@ mod tests {
         assert_eq!(recent.len(), BACKLOG);
         assert_eq!(recent.first().map(|a| a.id), Some(6));
         assert_eq!(recent.last().map(|a| a.id), Some((BACKLOG + 5) as u64));
+    }
+
+    #[test]
+    fn an_audience_admits_only_its_recipients() {
+        let owner = Audience::Owner("aa".into());
+        assert!(owner.admits("aa", false) && !owner.admits("bb", false) && !owner.admits("bb", true), "le Capitaine ne lit pas les événements d'un autre titulaire");
+        assert!(Audience::Captain.admits("bb", true) && !Audience::Captain.admits("aa", false));
+        assert!(Audience::Everyone.admits("zz", false));
     }
 
     #[tokio::test]

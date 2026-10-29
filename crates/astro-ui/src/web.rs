@@ -41,14 +41,25 @@ pub fn embedded_bytes() -> usize {
     shell_files().map(|(_, f)| f.data.len()).sum()
 }
 
-/// Page d'inscription (`register.*`) : chargée par les seuls nouveaux venus, elle n'entre pas dans le budget de la coque.
-fn is_register_page(path: &str) -> bool {
-    path.starts_with("register.")
+/// Fichiers chargés à la demande : la page d'inscription (`register.*`, pour les seuls nouveaux venus) et les écrans
+/// lourds (`m-*.js` / `m-*.css`, tri des visages, réplication) n'entrent pas dans le budget de la coque ; ils ont le leur.
+fn is_lazy(path: &str) -> bool {
+    path.starts_with("register.") || path.starts_with("invite.") || path.starts_with("m-")
 }
 
-/// Fichiers de la coque de l'application (tout sauf la page d'inscription).
+/// Fichiers de la coque de l'application (tout sauf les fichiers chargés à la demande).
 fn shell_files() -> impl Iterator<Item = (String, rust_embed::EmbeddedFile)> {
-    Assets::iter().filter(|p| !is_register_page(p)).filter_map(|p| Assets::get(&p).map(|f| (p.into_owned(), f)))
+    Assets::iter().filter(|p| !is_lazy(p)).filter_map(|p| Assets::get(&p).map(|f| (p.into_owned(), f)))
+}
+
+/// Écrans chargés à la demande (`m-*`).
+fn module_files() -> impl Iterator<Item = (String, rust_embed::EmbeddedFile)> {
+    Assets::iter().filter(|p| p.starts_with("m-")).filter_map(|p| Assets::get(&p).map(|f| (p.into_owned(), f)))
+}
+
+/// Taille cumulée des écrans chargés à la demande (octets bruts, Gzip) : chacun ne se télécharge qu'à sa première visite.
+pub fn module_bytes() -> (usize, usize) {
+    module_files().fold((0, 0), |(raw, gz), (p, f)| (raw + f.data.len(), gz + compressed(&p, Encoding::Gzip, &f.data).len()))
 }
 
 /// Compression négociée par `Accept-Encoding` : Brotli de préférence, puis Gzip, sinon octets bruts.
@@ -196,9 +207,16 @@ async fn register_page(headers: HeaderMap) -> Response {
     asset("register.html", &headers)
 }
 
-/// Routes `/ui/{fichier}` et `/register` (page d'inscription d'un MULTIPASS).
+/// Page d'un lien d'invitation (`/i/<jeton>`) : la même pour tous les jetons, qui se lit dans l'adresse. Jamais indexée.
+async fn invite_page(headers: HeaderMap) -> Response {
+    let mut r = asset("invite.html", &headers);
+    r.headers_mut().insert(header::HeaderName::from_static("x-robots-tag"), HeaderValue::from_static("noindex, nofollow, noarchive"));
+    r
+}
+
+/// Routes `/ui/{fichier}`, `/register` (inscription d'un MULTIPASS) et `/i/{jeton}` (invitation à recevoir des photos).
 pub fn static_router() -> Router {
-    Router::new().route("/ui/{*path}", get(static_file)).route("/register", get(register_page))
+    Router::new().route("/ui/{*path}", get(static_file)).route("/register", get(register_page)).route("/i/{token}", get(invite_page))
 }
 
 #[cfg(test)]
@@ -282,6 +300,9 @@ mod tests {
         assert!(br < 15 * 1024, "{br} octets en Brotli : budget réseau de 15 Ko dépassé");
         assert!(gz < 15 * 1024, "{gz} octets en Gzip : budget réseau de 15 Ko dépassé");
         eprintln!("poids de l'application : {size} o bruts, {gz} o en gzip, {br} o en brotli");
+        let (mraw, mgz) = module_bytes();
+        eprintln!("écrans à la demande : {mraw} o bruts, {mgz} o en gzip");
+        assert!(mraw > 0 && mraw < 128 * 1024 && mgz < 40 * 1024, "écrans à la demande : {mraw} o bruts (budget 128 Ko), {mgz} o en gzip (budget 40 Ko)");
         assert!(br <= gz && gz < size / 2, "la compression doit diviser par plus de deux : brut {size}, gzip {gz}, br {br}");
     }
 

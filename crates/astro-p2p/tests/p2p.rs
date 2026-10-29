@@ -281,3 +281,25 @@ async fn behind_a_box_a_station_is_reachable_through_a_relay_circuit() {
     s.read_to_string(&mut back).await.unwrap();
     assert_eq!(back, "bonjour a travers le relais");
 }
+
+#[tokio::test]
+async fn a_peer_can_be_asked_whether_it_holds_a_blob_without_transferring_it() {
+    use astro_p2p::blob::has_blob;
+    let key = generate_swarm_key().unwrap();
+    let (a, a_addr) = node(41, Some(&key), false).await;
+    let (b, _) = node(42, Some(&key), false).await;
+    b.handle.dial(a_addr).await.unwrap();
+    let dir = TempDir::new("has");
+    let store = Arc::new(FsBlobStore::open(dir.0.join("a")).unwrap());
+    let data = sample(300_000, 5);
+    let cid = put_blob(&store, &data).await;
+    let _server = serve_blobs(&a.handle, store.clone(), ServeOpts::default()).unwrap();
+
+    assert_eq!(has_blob(&b.handle, a.handle.peer_id(), &cid, FETCH).await, Ok(Some(300_000)), "présent : la taille, aucun octet de contenu");
+    let absent = cid_raw_sha256(&Sha256::digest(b"absent").into());
+    assert_eq!(has_blob(&b.handle, a.handle.peer_id(), &absent, FETCH).await, Ok(None), "absent : ce n'est pas une erreur");
+    assert!(has_blob(&b.handle, a.handle.peer_id(), "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", FETCH).await.is_err(), "CID non échangeable : refusé avant tout flux");
+    // Le téléchargement complet fonctionne toujours (le protocole GET n'a pas bougé).
+    let dest = FsBlobStore::open(dir.0.join("b")).unwrap();
+    assert_eq!(fetch_from(&b.handle, a.handle.peer_id(), &cid, &dest, 1 << 20, FETCH).await.unwrap().cid, cid);
+}

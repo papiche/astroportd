@@ -3,7 +3,7 @@ const $ = s => document.querySelector(s);
 const FIELDS = [
   ['email', 'Identifiant de connexion (email)'],
   ['token', 'Jeton de connexion web (avec l’email)'],
-  ['pass', 'Code PASS'],
+  ['pass', 'Code PASS (connexion sur téléphone : email + PASS)'],
   ['salt', 'SALT (secret de récupération 1/2)'],
   ['pepper', 'PEPPER (secret de récupération 2/2)'],
   ['nsec', 'Clé secrète Nostr (nsec) : ne la montrez à personne'],
@@ -12,6 +12,7 @@ const FIELDS = [
   ['nostrns', 'Espace IPNS'],
 ];
 let card = null;
+$('#guest').onchange = ev => { const g = ev.target.checked; $('#email').required = !g; $('#email').hidden = g; document.querySelector('label[for=email]').hidden = g; $('#alias-box').hidden = !g; };
 const msg = { 400: 'Adresse refusée : vérifiez-la.', 409: 'Cette adresse a déjà un MULTIPASS ici.', 429: 'Trop d’inscriptions depuis votre réseau. Patientez un peu.', 501: 'L’inscription est fermée sur cette station.' };
 async function init() {
   try {
@@ -26,7 +27,7 @@ $('#f').onsubmit = async ev => {
   ev.preventDefault();
   const b = $('#go'); b.disabled = true; $('#err').textContent = '';
   try {
-    const r = await fetch('/api/v1/register', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: $('#email').value.trim(), lang: $('#lang').value }) });
+    const r = await fetch('/api/v1/register', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify($('#guest').checked ? { guest: true, alias: $('#alias').value.trim() || undefined, lang: $('#lang').value } : { email: $('#email').value.trim(), lang: $('#lang').value }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { $('#err').textContent = (j.error && r.status !== 429 ? j.error : msg[r.status]) || j.error || 'Échec de l’inscription.'; return; }
     card = j;

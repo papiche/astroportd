@@ -82,6 +82,7 @@ pub struct Relay {
     db: Arc<Db>,
     circle: Arc<dyn CircleProvider>,
     config: RelayConfig,
+    policy: std::sync::RwLock<Arc<Policy>>,
     gift_limiter: RateLimiter,
     live: broadcast::Sender<Arc<Event>>,
 }
@@ -101,7 +102,18 @@ impl Relay {
     pub fn new(db: Arc<Db>, circle: Arc<dyn CircleProvider>, config: RelayConfig) -> Arc<Self> {
         let (live, _) = broadcast::channel(1024);
         let gift_limiter = RateLimiter::new(config.gift_wrap_burst, config.gift_wrap_per_minute);
-        Arc::new(Self { db, circle, config, gift_limiter, live })
+        let policy = std::sync::RwLock::new(Arc::new(config.policy.clone()));
+        Arc::new(Self { db, circle, config, policy, gift_limiter, live })
+    }
+
+    /// Politique en vigueur (changeable à chaud par [`Relay::set_policy`]).
+    pub fn policy(&self) -> Arc<Policy> {
+        self.policy.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+
+    /// Remplace la politique : les connexions et requêtes suivantes l'appliquent, sans redémarrage.
+    pub fn set_policy(&self, policy: Policy) {
+        *self.policy.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(policy);
     }
 
     /// Routeur axum : WebSocket sur `/`, document NIP-11 pour un GET simple.
@@ -256,18 +268,19 @@ impl Relay {
         if e.created_at > now_secs().saturating_add(self.config.future_skew_secs) {
             return (false, "invalid: created_at is too far in the future".into());
         }
-        match self.config.policy.write_decision(e, self.circle.as_ref()) {
+        let policy = self.policy();
+        match policy.write_decision(e, self.circle.as_ref()) {
             WriteDecision::Reject(reason) => return (false, reason.to_owned()),
-            WriteDecision::AcceptGiftWrap if !self.gift_limiter.check(ip) => {
-                return (false, "rate-limited: too many gift wraps from this address".into());
+            WriteDecision::AcceptGiftWrap | WriteDecision::AcceptLimited if !self.gift_limiter.check(ip) => {
+                return (false, "rate-limited: too many events from this address".into());
             }
-            WriteDecision::AcceptGiftWrap | WriteDecision::Accept => {}
+            WriteDecision::AcceptGiftWrap | WriteDecision::AcceptLimited | WriteDecision::Accept => {}
         }
         if classify(e.kind) == KindClass::Ephemeral {
             let _ = self.live.send(Arc::new(e.clone()));
             return (true, String::new());
         }
-        let (stored, plan) = (e.clone(), self.config.projection.clone());
+        let (stored, plan) = (e.clone(), self.config.projection.clone().filter(|_| policy.projects(e.kind)));
         let outcome = self
             .db
             .writer()
@@ -300,7 +313,8 @@ impl Relay {
         if !conn.subs.contains_key(&sub_id) && conn.subs.len() >= self.config.max_subscriptions {
             return send(socket, &closed("error: too many subscriptions")).await;
         }
-        let policy = &self.config.policy;
+        let policy = self.policy();
+        let policy = &*policy;
         for f in &filters {
             match policy.filter_access(f, &conn.auth, self.circle.as_ref()) {
                 ReadAccess::Open => {}
@@ -336,7 +350,7 @@ impl Relay {
     }
 
     async fn deliver_live(&self, socket: &mut WebSocket, conn: &Conn, event: &Event) -> bool {
-        if !self.config.policy.can_read(event, &conn.auth, self.circle.as_ref()) {
+        if !self.policy().can_read(event, &conn.auth, self.circle.as_ref()) {
             return true;
         }
         for (sub_id, filters) in &conn.subs {

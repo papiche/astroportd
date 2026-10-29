@@ -304,10 +304,12 @@ dependencies = [
 name = "astro-crypto"
 version = "0.2.0-beta"
 dependencies = [
+ "aes",
  "aes-gcm",
  "astro-nostr-proto",
  "base64",
  "bech32",
+ "cbc",
  "chacha20 0.9.1",
  "chacha20poly1305",
  "getrandom 0.3.4",
@@ -333,6 +335,7 @@ dependencies = [
  "astro-nostr-proto",
  "axum",
  "base64",
+ "bech32",
  "bytes",
  "futures-util",
  "getrandom 0.3.4",
@@ -342,6 +345,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "image",
+ "kamadak-exif",
  "percent-encoding",
  "quick-xml",
  "rusqlite",
@@ -416,6 +420,8 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "image",
+ "ort",
  "rusqlite",
  "serde",
  "serde_json",
@@ -602,6 +608,7 @@ dependencies = [
  "bytes",
  "clap",
  "futures-util",
+ "getrandom 0.3.4",
  "hex",
  "http-body-util",
  "hyper",
@@ -611,6 +618,7 @@ dependencies = [
  "rcgen 0.13.2",
  "rusqlite",
  "rustls",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
@@ -1015,6 +1023,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "block-padding"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8894febbff9f758034a5b8e12d87918f56dfc64a8e1fe757d65e29041538d93"
+dependencies = [
+ "generic-array",
+]
+
+[[package]]
 name = "blocking"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1105,6 +1122,15 @@ name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+
+[[package]]
+name = "cbc"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26b52a9543ae338f279b96b0b9fed9c8093744685043739079ce85cd58f289a6"
+dependencies = [
+ "cipher",
+]
 
 [[package]]
 name = "cc"
@@ -1425,7 +1451,7 @@ dependencies = [
  "regalloc2",
  "rustc-hash",
  "serde",
- "smallvec",
+ "smallvec 1.16.4",
  "target-lexicon",
  "wasmtime-internal-math",
 ]
@@ -1477,7 +1503,7 @@ checksum = "3463f1b26faac3491008cede8e9cdf7ceb83139143bd92ba86c14b0882aaf1bb"
 dependencies = [
  "cranelift-codegen",
  "log",
- "smallvec",
+ "smallvec 1.16.4",
  "target-lexicon",
 ]
 
@@ -2457,7 +2483,7 @@ dependencies = [
  "parking_lot",
  "rand 0.9.5",
  "resolv-conf",
- "smallvec",
+ "smallvec 1.16.4",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -2573,7 +2599,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "smallvec",
+ "smallvec 1.16.4",
  "tokio",
  "want",
 ]
@@ -2652,7 +2678,7 @@ dependencies = [
  "icu_normalizer_data",
  "icu_properties",
  "icu_provider",
- "smallvec",
+ "smallvec 1.16.4",
  "zerovec",
 ]
 
@@ -2710,7 +2736,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b0875f23caa03898994f6ddc501886a45c7d3d62d04d2d90788d47be1b1e4de"
 dependencies = [
  "idna_adapter",
- "smallvec",
+ "smallvec 1.16.4",
  "utf8_iter",
 ]
 
@@ -2853,6 +2879,7 @@ version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
+ "block-padding",
  "generic-array",
 ]
 
@@ -3098,6 +3125,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kamadak-exif"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1130d80c7374efad55a117d715a3af9368f0fa7a2c54573afc15a188cd984837"
+dependencies = [
+ "mutate_once",
+]
+
+[[package]]
 name = "keccak"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3148,6 +3184,16 @@ name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
+
+[[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
 
 [[package]]
 name = "libm"
@@ -3271,7 +3317,7 @@ dependencies = [
  "libp2p-core",
  "libp2p-identity",
  "parking_lot",
- "smallvec",
+ "smallvec 1.16.4",
  "tracing",
 ]
 
@@ -3291,7 +3337,7 @@ dependencies = [
  "libp2p-swarm",
  "quick-protobuf",
  "quick-protobuf-codec",
- "smallvec",
+ "smallvec 1.16.4",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -3327,7 +3373,7 @@ dependencies = [
  "libp2p-identity",
  "libp2p-swarm",
  "rand 0.8.8",
- "smallvec",
+ "smallvec 1.16.4",
  "socket2 0.5.10",
  "tokio",
  "tracing",
@@ -3482,7 +3528,7 @@ dependencies = [
  "libp2p-swarm-derive",
  "multistream-select",
  "rand 0.8.8",
- "smallvec",
+ "smallvec 1.16.4",
  "tokio",
  "tracing",
  "web-time",
@@ -3702,6 +3748,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
+name = "matrixmultiply"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f607c237553f086e7043417a51df26b2eb899d3caff94e6a67592ff992fedc7"
+dependencies = [
+ "autocfg",
+ "rawpointer",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3793,7 +3849,7 @@ dependencies = [
  "equivalent",
  "parking_lot",
  "portable-atomic",
- "smallvec",
+ "smallvec 1.16.4",
  "tagptr",
  "uuid",
 ]
@@ -3865,8 +3921,29 @@ dependencies = [
  "futures",
  "log",
  "pin-project",
- "smallvec",
+ "smallvec 1.16.4",
  "unsigned-varint 0.7.2",
+]
+
+[[package]]
+name = "mutate_once"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13d2233c9842d08cfe13f9eac96e207ca6a2ea10b80259ebe8ad0268be27d2af"
+
+[[package]]
+name = "ndarray"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "882ed72dce9365842bf196bdeedf5055305f11fc8c03dee7bb0194a6cad34841"
+dependencies = [
+ "matrixmultiply",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "portable-atomic",
+ "portable-atomic-util",
+ "rawpointer",
 ]
 
 [[package]]
@@ -3972,6 +4049,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-complex"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "num-conv"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4065,6 +4151,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
+name = "ort"
+version = "2.0.0-rc.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fa7e49bd669d32d7bc2a15ec540a527e7764aec722a45467814005725bcd721"
+dependencies = [
+ "libloading",
+ "ndarray",
+ "ort-sys",
+ "smallvec 2.0.0-alpha.10",
+ "tracing",
+]
+
+[[package]]
+name = "ort-sys"
+version = "2.0.0-rc.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2aba9f5c7c479925205799216e7e5d07cc1d4fa76ea8058c60a9a30f6a4e890"
+dependencies = [
+ "pkg-config",
+]
+
+[[package]]
 name = "parity-scale-codec"
 version = "3.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4117,7 +4225,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall",
- "smallvec",
+ "smallvec 1.16.4",
  "windows-link",
 ]
 
@@ -4261,6 +4369,15 @@ name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+
+[[package]]
+name = "portable-atomic-util"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10ab3eb7f3becc3a1cbc4f2c6f20267996cfc1a6467a873763411b136a122715"
+dependencies = [
+ "portable-atomic",
+]
 
 [[package]]
 name = "postcard"
@@ -4640,6 +4757,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rawpointer"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
+
+[[package]]
 name = "rcgen"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4687,7 +4810,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "log",
  "rustc-hash",
- "smallvec",
+ "smallvec 1.16.4",
 ]
 
 [[package]]
@@ -4768,7 +4891,7 @@ dependencies = [
  "fallible-streaming-iterator",
  "hashlink 0.9.1",
  "libsqlite3-sys",
- "smallvec",
+ "smallvec 1.16.4",
 ]
 
 [[package]]
@@ -5022,7 +5145,7 @@ dependencies = [
  "scale-bits",
  "scale-decode-derive",
  "scale-type-resolver",
- "smallvec",
+ "smallvec 1.16.4",
  "thiserror 2.0.21",
 ]
 
@@ -5049,7 +5172,7 @@ dependencies = [
  "scale-bits",
  "scale-encode-derive",
  "scale-type-resolver",
- "smallvec",
+ "smallvec 1.16.4",
  "thiserror 2.0.21",
 ]
 
@@ -5099,7 +5222,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0cded6518aa0bd6c1be2b88ac81bf7044992f0f154bfbabd5ad34f43512abcb"
 dependencies = [
  "scale-info",
- "smallvec",
+ "smallvec 1.16.4",
 ]
 
 [[package]]
@@ -5429,6 +5552,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "smallvec"
+version = "2.0.0-alpha.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51d44cfb396c3caf6fbfd0ab422af02631b69ddd96d2eff0b0f0724f9024051b"
+
+[[package]]
 name = "smol"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5491,7 +5620,7 @@ dependencies = [
  "sha3",
  "siphasher",
  "slab",
- "smallvec",
+ "smallvec 1.16.4",
  "soketto",
  "twox-hash 2.1.5",
  "wasmi",
@@ -6498,7 +6627,7 @@ checksum = "a19af97fcb96045dd1d6b4d23e2b4abdbbe81723dbc5c9f016eb52145b320063"
 dependencies = [
  "arrayvec 0.7.8",
  "multi-stash",
- "smallvec",
+ "smallvec 1.16.4",
  "spin",
  "wasmi_collections",
  "wasmi_core",
@@ -6600,7 +6729,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_derive",
- "smallvec",
+ "smallvec 1.16.4",
  "target-lexicon",
  "wasmparser 0.236.1",
  "wasmtime-environ",
@@ -6633,7 +6762,7 @@ dependencies = [
  "postcard",
  "serde",
  "serde_derive",
- "smallvec",
+ "smallvec 1.16.4",
  "target-lexicon",
  "wasm-encoder 0.236.1",
  "wasmparser 0.236.1",
@@ -6667,7 +6796,7 @@ dependencies = [
  "log",
  "object",
  "pulley-interpreter",
- "smallvec",
+ "smallvec 1.16.4",
  "target-lexicon",
  "thiserror 2.0.21",
  "wasmparser 0.236.1",

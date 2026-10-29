@@ -80,7 +80,7 @@ pub struct Created {
     pub g1_ss58: String,
     /// `/ipns/k51…` : l'espace IPNS du compte.
     pub nostrns: String,
-    /// Code PASS (4 chiffres).
+    /// Code PASS (6 chiffres pour un compte neuf, 4 pour un compte historique).
     pub pass: String,
     /// `SALT` à conserver : il permet de récupérer le compte.
     pub salt: Zeroizing<String>,
@@ -131,21 +131,19 @@ fn random_alnum(len: usize) -> Result<String, MultipassError> {
     Ok(out)
 }
 
+/// Longueur du code PASS d'un nouveau MULTIPASS. Les comptes existants gardent leur PASS à 4 chiffres : les deux
+/// longueurs sont acceptées partout. Le PASS ne protège rien hors ligne : seule la limite d'essais de la station le défend.
+pub const PASS_DIGITS: usize = 6;
+
 fn random_pass() -> Result<String, MultipassError> {
-    let mut buf = [0u8; 16];
-    loop {
+    let mut digits = String::with_capacity(PASS_DIGITS);
+    let mut buf = [0u8; 32];
+    while digits.len() < PASS_DIGITS {
         getrandom::fill(&mut buf).map_err(|_| MultipassError::Random)?;
-        if let Some(b) = buf.iter().find(|b| **b < 250) {
-            // 4 chiffres : on tire quatre octets non biaisés.
-            let mut digits = String::new();
-            for b in std::iter::once(b).chain(buf.iter().filter(|x| **x < 250).skip(1)).take(4) {
-                digits.push(char::from(b'0' + b % 10));
-            }
-            if digits.len() == 4 {
-                return Ok(digits);
-            }
-        }
+        // 10 chiffres : on rejette au-delà de 250 (= 10 × 25) pour que chacun soit équiprobable.
+        digits.extend(buf.iter().filter(|b| **b < 250).map(|b| char::from(b'0' + b % 10)).take(PASS_DIGITS - digits.len()));
     }
+    Ok(digits)
 }
 
 /// Espace IPNS (`k51…`) d'une clé ed25519 : CIDv1 `libp2p-key` de la clé publique, en base36 minuscule (`ipfs key import`).
@@ -265,7 +263,7 @@ pub fn constellation_label(uplanet_name: &str) -> &'static str {
 
 /// Événements de naissance, signés par le compte : profil (kind 0), suivi du Capitaine (kind 3, règle « les
 /// passagers suivent le Capitaine ») et DID W3C (kind 30800, `d = did`).
-pub fn birth_events(c: &Created, uplanet_name: &str, captain_hex: Option<&str>, now: u64) -> Result<Vec<Event>, MultipassError> {
+pub fn birth_events(c: &Created, uplanet_name: &str, captain_hex: Option<&str>, relays: &[String], now: u64) -> Result<Vec<Event>, MultipassError> {
     let secret = c.nostr_secret()?;
     let sign = |kind: u32, tags: Vec<Vec<String>>, content: String| UnsignedEvent { created_at: now, kind, tags, content }.sign(&secret).map_err(|e| MultipassError::Derive(e.to_string()));
     let name = c.email.split('@').next().unwrap_or("membre");
@@ -274,6 +272,11 @@ pub fn birth_events(c: &Created, uplanet_name: &str, captain_hex: Option<&str>, 
     let mut events = vec![sign(kind::METADATA, vec![vec!["i".into(), format!("g1:{}", c.g1_ss58)]], profile.to_string())?];
     if let Some(captain) = captain_hex.filter(|h| astro_nostr_proto::is_hex64(h) && *h != c.hex) {
         events.push(sign(kind::CONTACTS, vec![vec!["p".into(), captain.to_owned()]], String::new())?);
+    }
+    // NIP-65 : le relai de la station, pour que les clients et les amis sachent où joindre ce compte.
+    let entries: Vec<_> = relays.iter().filter(|u| astro_nostr_proto::relay_list::valid_url(u)).map(|u| astro_nostr_proto::relay_list::RelayEntry { url: u.clone(), read: true, write: true }).collect();
+    if !entries.is_empty() {
+        events.push(sign(10_002, astro_nostr_proto::relay_list::tags(&entries), String::new())?);
     }
     let did = json!({
         "@context": ["https://w3id.org/did/v1"],
@@ -316,7 +319,7 @@ mod tests {
         assert_eq!((a.len(), b.len()), (24, 24));
         assert!(a.bytes().all(|c| c.is_ascii_alphanumeric()) && a != b);
         let p = random_pass().unwrap();
-        assert!(p.len() == 4 && p.bytes().all(|c| c.is_ascii_digit()), "{p}");
+        assert!(p.len() == PASS_DIGITS && p.bytes().all(|c| c.is_ascii_digit()), "{p}");
     }
 
     #[test]
@@ -397,7 +400,7 @@ mod tests {
         let zeros = "0".repeat(64);
         let c = create(&root, "carol@exemple.org", &zeros, "en").unwrap();
         let captain = "cd".repeat(32);
-        let ev = birth_events(&c, &zeros, Some(&captain), 1_800_000_000).unwrap();
+        let ev = birth_events(&c, &zeros, Some(&captain), &[], 1_800_000_000).unwrap();
         assert_eq!(ev.iter().map(|e| e.kind).collect::<Vec<_>>(), [kind::METADATA, kind::CONTACTS, kind::DID]);
         for e in &ev {
             assert_eq!(e.pubkey, c.hex);
@@ -408,8 +411,12 @@ mod tests {
         assert_eq!(did["id"], format!("did:nostr:{}", c.hex));
         assert_eq!((did["metadata"]["email"].as_str(), did["metadata"]["language"].as_str(), did["metadata"]["uplanet"].as_str()), (Some("carol@exemple.org"), Some("en"), Some("ORIGIN")));
         // Sans Capitaine (station sans MULTIPASS Capitaine) : pas de kind 3 ; jamais de suivi de soi-même.
-        assert_eq!(birth_events(&c, &zeros, None, 1).unwrap().len(), 2);
-        assert_eq!(birth_events(&c, &zeros, Some(&c.hex), 1).unwrap().len(), 2);
+        assert_eq!(birth_events(&c, &zeros, None, &[], 1).unwrap().len(), 2);
+        assert_eq!(birth_events(&c, &zeros, Some(&c.hex), &[], 1).unwrap().len(), 2);
+        // NIP-65 : le relai de la station est annoncé (lecture + écriture) ; une adresse invalide est écartée.
+        let with_relay = birth_events(&c, &zeros, Some(&captain), &["wss://station.example".to_owned(), "https://pas-un-relai".to_owned()], 1).unwrap();
+        assert_eq!(with_relay.iter().map(|e| e.kind).collect::<Vec<_>>(), [kind::METADATA, kind::CONTACTS, 10_002, kind::DID]);
+        assert_eq!(with_relay[2].tags, vec![vec!["r".to_owned(), "wss://station.example".to_owned()]]);
         let _ = std::fs::remove_dir_all(root);
     }
 }

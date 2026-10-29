@@ -6,6 +6,7 @@
 mod common;
 
 use std::io::Cursor;
+use std::sync::Arc;
 use std::time::Duration;
 
 use astro_dav::BlobStore;
@@ -149,4 +150,108 @@ async fn thumbnails_survive_a_manifest_round_trip() {
     assert_eq!(thumb_status(&b, "/p.jpg").await.0, 404);
     astro_dav::manifest::restore_from_event(&b.db, b.blobs.as_ref(), keys().as_ref(), &event).await.unwrap();
     assert_eq!(thumb_status(&b, "/p.jpg").await, (200, before));
+}
+
+/// JPEG portant un EXIF minimal : GPS 43,6 N · 1,44 E et prise de vue le 2024-07-14 à 15:03:22.
+fn jpeg_with_gps(seed: u8) -> Vec<u8> {
+    fn entry(tag: u16, typ: u16, count: u32, value: u32) -> Vec<u8> {
+        let mut e = tag.to_le_bytes().to_vec();
+        e.extend(typ.to_le_bytes());
+        e.extend(count.to_le_bytes());
+        e.extend(value.to_le_bytes());
+        e
+    }
+    let (exif_ifd, gps_ifd) = (8u32 + 2 + 24 + 4, 8u32 + 2 + 24 + 4 + 2 + 12 + 4);
+    let data = gps_ifd + 2 + 48 + 4;
+    let mut t = b"II*\0".to_vec();
+    t.extend(8u32.to_le_bytes());
+    t.extend(2u16.to_le_bytes());
+    t.extend(entry(0x8769, 4, 1, exif_ifd));
+    t.extend(entry(0x8825, 4, 1, gps_ifd));
+    t.extend(0u32.to_le_bytes());
+    t.extend(1u16.to_le_bytes());
+    t.extend(entry(0x9003, 2, 20, data + 48));
+    t.extend(0u32.to_le_bytes());
+    t.extend(4u16.to_le_bytes());
+    t.extend(entry(1, 2, 2, u32::from(b'N')));
+    t.extend(entry(2, 5, 3, data));
+    t.extend(entry(3, 2, 2, u32::from(b'E')));
+    t.extend(entry(4, 5, 3, data + 24));
+    t.extend(0u32.to_le_bytes());
+    for (d, m, s) in [(43u32, 36u32, 0u32), (1, 26, 2400)] {
+        for (n, den) in [(d, 1u32), (m, 1), (s, 100)] {
+            t.extend(n.to_le_bytes());
+            t.extend(den.to_le_bytes());
+        }
+    }
+    t.extend(b"2024:07:14 15:03:22\0");
+    let plain = jpeg(64, 48, seed);
+    let mut app1 = b"Exif\0\0".to_vec();
+    app1.extend(t);
+    let mut out = vec![0xFF, 0xD8, 0xFF, 0xE1];
+    out.extend(u16::try_from(app1.len() + 2).unwrap().to_be_bytes());
+    out.extend(app1);
+    out.extend_from_slice(&plain[2..]);
+    out
+}
+
+async fn place(b: &Bench, path: &str) -> (Option<f64>, Option<f64>, Option<i64>) {
+    let (owner, path) = (hex(&ALICE), path.to_owned());
+    b.db.readers().read(move |c| Ok(c.query_row("SELECT lat, lon, taken_at FROM ucloud_entries WHERE owner_hex = ?1 AND path = ?2", [owner, path], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap())).await.unwrap()
+}
+
+#[tokio::test]
+async fn the_gps_position_and_shooting_date_are_noted_and_follow_copies_but_never_overwrite() {
+    let b = bench("exifgps").await;
+    let photo = jpeg_with_gps(3);
+    assert_eq!(call(&b.app, "PUT", "/dav/Toulouse.jpg", Some(&alice()), &[("content-type", "image/jpeg")], Body::from(photo.clone())).await.status(), 201);
+    wait_thumb(&b, "/Toulouse.jpg").await;
+    let (lat, lon, taken) = place(&b, "/Toulouse.jpg").await;
+    assert!((lat.unwrap() - 43.6).abs() < 1e-6 && (lon.unwrap() - 1.44).abs() < 1e-6, "{lat:?} {lon:?}");
+    assert_eq!(taken, Some(1_720_969_402));
+
+    // La même photo sous un autre nom (même CID) : la miniature est rattachée et la position suit.
+    assert_eq!(call(&b.app, "PUT", "/dav/Copie.jpg", Some(&alice()), &[("content-type", "image/jpeg")], Body::from(photo)).await.status(), 201);
+    wait_thumb(&b, "/Copie.jpg").await;
+    for _ in 0..50 {
+        if place(&b, "/Copie.jpg").await.0.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(place(&b, "/Copie.jpg").await, place(&b, "/Toulouse.jpg").await);
+
+    // Une photo sans EXIF n'invente rien.
+    assert_eq!(call(&b.app, "PUT", "/dav/Sans.jpg", Some(&alice()), &[("content-type", "image/jpeg")], Body::from(jpeg(64, 48, 9))).await.status(), 201);
+    wait_thumb(&b, "/Sans.jpg").await;
+    assert_eq!(place(&b, "/Sans.jpg").await, (None, None, None));
+}
+
+#[tokio::test]
+async fn photos_received_before_the_exif_reader_existed_are_caught_up_once_each() {
+    use astro_dav::thumb::backfill_exif;
+    use astro_dav::{DavConfig, DavState};
+    let b = bench("backfill").await;
+    for (path, body) in [("/Vieille.jpg", jpeg_with_gps(5)), ("/SansExif.jpg", jpeg(64, 48, 6)), ("/SansExif2.jpg", jpeg(64, 48, 7))] {
+        assert_eq!(call(&b.app, "PUT", &format!("/dav{path}"), Some(&alice()), &[("content-type", "image/jpeg")], Body::from(body)).await.status(), 201);
+        wait_thumb(&b, path).await;
+    }
+    // Simule des photos d'avant : ni position, ni date, ni marqueur de lecture.
+    b.db.writer().execute("UPDATE ucloud_entries SET lat = NULL, lon = NULL, taken_at = NULL, data = json_remove(data, '$.exif_scanned')", vec![]).await.unwrap();
+    assert_eq!(place(&b, "/Vieille.jpg").await, (None, None, None));
+
+    let state = Arc::new(DavState { db: b.db.clone(), blobs: b.blobs.clone(), replay: Arc::new(astro_db::SqliteReplayStore::in_memory().unwrap()), publisher: None, config: DavConfig::new(b"secret".to_vec()), on_upload: None });
+    let stats = backfill_exif(&state, &hex(&ALICE), 10).await.unwrap();
+    assert_eq!((stats.scanned, stats.found, stats.remaining), (3, 1, 0), "{stats:?}");
+    let (lat, lon, taken) = place(&b, "/Vieille.jpg").await;
+    assert!((lat.unwrap() - 43.6).abs() < 1e-6 && (lon.unwrap() - 1.44).abs() < 1e-6);
+    assert_eq!(taken, Some(1_720_969_402));
+    assert_eq!(place(&b, "/SansExif.jpg").await, (None, None, None), "rien d'inventé");
+    // Chaque fichier n'est lu qu'une fois, même sans EXIF.
+    assert_eq!(backfill_exif(&state, &hex(&ALICE), 10).await.unwrap(), Default::default());
+    // Un pas à la fois : la limite est respectée et le reste est annoncé (la photo qui a déjà sa position n'est jamais relue).
+    b.db.writer().execute("UPDATE ucloud_entries SET data = json_remove(data, '$.exif_scanned')", vec![]).await.unwrap();
+    let one = backfill_exif(&state, &hex(&ALICE), 1).await.unwrap();
+    assert_eq!((one.scanned, one.remaining), (1, 1), "{one:?}");
+    assert_eq!(backfill_exif(&state, &hex(&ALICE), 1).await.unwrap().remaining, 0);
 }

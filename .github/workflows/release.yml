@@ -1,6 +1,6 @@
 name: Release
 
-# Un tag `vX.Y.Z` construit les 4 cibles de build-all.sh et publie les archives + SHA256SUMS dans une release GitHub.
+# Un tag `vX.Y.Z` construit les 5 cibles de build-all.sh et publie les archives + SHA256SUMS dans une release GitHub.
 # Un tag avec suffixe (`v0.2.0-beta`, `v0.2.0-rc1`) est marqué « préversion ».
 
 on:
@@ -32,6 +32,11 @@ jobs:
           - target: x86_64-unknown-linux-musl
             apt: musl-tools
             experimental: true
+          # ARM 64 bits statique (smartphone Android sous Termux, Pi, NAS) : zig sert de compilateur C croisé.
+          - target: aarch64-unknown-linux-musl
+            apt: ''
+            zig: true
+            experimental: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.94.0
@@ -43,6 +48,9 @@ jobs:
       - name: Chaîne d'outils croisée
         if: matrix.apt != ''
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential ${{ matrix.apt }}
+      - name: zig et cargo-zigbuild (cible ARM 64 bits statique)
+        if: matrix.zig == true
+        run: pip install ziglang cargo-zigbuild
       - name: Compilation (build-all.sh --strict)
         run: ./build-all.sh --strict --targets ${{ matrix.target }}
       - uses: actions/upload-artifact@v4

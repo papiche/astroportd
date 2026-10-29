@@ -160,7 +160,14 @@ pub async fn generate<B: BlobStore>(st: &Arc<DavState<B>>, owner: &str, path: &s
             let (mut reader, _) = st.blobs.open(&cid).await?;
             let mut plain = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
             uenc::decrypt_stream(&key, &mut reader, &mut plain).await?;
-            let rendered = tokio::task::spawn_blocking(move || render(&plain)).await.map_err(|e| ThumbError::Image(e.to_string()))??;
+            // Le clair est déjà en main : on y lit aussi le GPS et la date de prise de vue (l'EXIF ne survit pas à la miniature).
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+            let (rendered, exif_meta) = tokio::task::spawn_blocking(move || {
+                let found = crate::exif::read(&plain, now);
+                render(&plain).map(|r| (r, found))
+            })
+            .await
+            .map_err(|e| ThumbError::Image(e.to_string()))??;
             let tkey = UencKey::generate()?;
             let mut blob = st.blobs.begin().await?;
             uenc::encrypt_stream(&tkey, Cipher::detect(), &mut rendered.webp.as_slice(), &mut blob).await?;
@@ -178,6 +185,11 @@ pub async fn generate<B: BlobStore>(st: &Arc<DavState<B>>, owner: &str, path: &s
                     }
                     tx.execute("INSERT OR REPLACE INTO ucloud_keyring(owner_hex, cid, key_hex, enc) VALUES (?1, ?2, ?3, 'uenc2')", params![o, meta.cid, k])?;
                     tx.execute("UPDATE ucloud_entries SET data = json_set(data, '$.thumb', json(?3)) WHERE owner_hex = ?1 AND cid = ?2", params![o, c, i])?;
+                    // Jamais d'écrasement : une position ou une date déjà notées (import, saisie) gardent la priorité.
+                    tx.execute(
+                        "UPDATE ucloud_entries SET lat = COALESCE(lat, ?3), lon = COALESCE(lon, ?4), taken_at = COALESCE(taken_at, ?5), data = json_set(data, '$.exif_scanned', 1) WHERE owner_hex = ?1 AND cid = ?2",
+                        params![o, c, exif_meta.lat, exif_meta.lon, exif_meta.taken_at],
+                    )?;
                     Ok(true)
                 })
                 .await?;
@@ -191,13 +203,97 @@ pub async fn generate<B: BlobStore>(st: &Arc<DavState<B>>, owner: &str, path: &s
             return Ok(Some(info));
         }
     };
-    // Rattachement d'une miniature existante à ce chemin (même CID).
+    // Rattachement d'une miniature existante à ce chemin (même CID) : le GPS et la date déjà lus pour une autre copie suivent.
     let (o, p, i) = (owner.to_owned(), path.to_owned(), serde_json::to_string(&info).unwrap_or_default());
-    st.db.writer().execute("UPDATE ucloud_entries SET data = json_set(data, '$.thumb', json(?3)) WHERE owner_hex = ?1 AND path = ?2", vec![o.into(), p.into(), i.into()]).await?;
+    st.db.writer().execute("UPDATE ucloud_entries SET data = json_set(data, '$.thumb', json(?3)) WHERE owner_hex = ?1 AND path = ?2", vec![o.clone().into(), p.clone().into(), i.into()]).await?;
+    st.db
+        .writer()
+        .execute(
+            "UPDATE ucloud_entries SET lat = COALESCE(lat, s.lat), lon = COALESCE(lon, s.lon), taken_at = COALESCE(taken_at, s.taken_at), data = json_set(data, '$.exif_scanned', 1) \
+             FROM (SELECT lat, lon, taken_at FROM ucloud_entries WHERE owner_hex = ?1 AND cid = ?3 AND (lat IS NOT NULL OR taken_at IS NOT NULL) LIMIT 1) s \
+             WHERE ucloud_entries.owner_hex = ?1 AND ucloud_entries.path = ?2",
+            vec![o.into(), p.into(), cid.clone().into()],
+        )
+        .await?;
     if let Some(p) = &st.publisher {
         p.notify(owner);
     }
     Ok(Some(info))
+}
+
+
+/// Bilan d'un passage de rattrapage EXIF.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct BackfillStats {
+    /// Fichiers (CID distincts) lus pendant ce passage.
+    pub scanned: usize,
+    /// Dont une position GPS ou une date de prise de vue a été trouvée.
+    pub found: usize,
+    /// Fichiers qui restent à lire (ce compte).
+    pub remaining: usize,
+}
+
+const BACKFILL_WHERE: &str = "e.owner_hex = ?1 AND e.type = 'file' AND e.cid IS NOT NULL AND e.mime LIKE 'image/%' AND e.lat IS NULL AND e.taken_at IS NULL \
+                              AND json_extract(e.data, '$.exif_scanned') IS NULL AND COALESCE(e.size, 0) <= ?2";
+
+/// Rattrape le GPS et la date de prise de vue des photos reçues **avant** que la station ne les lise à l'envoi : au plus
+/// `limit` fichiers par passage (déchiffrés un à un). Chaque fichier lu est marqué (`exif_scanned`), qu'il porte un EXIF ou
+/// non : il n'est jamais relu. Les valeurs déjà notées ne sont jamais écrasées.
+pub async fn backfill_exif<B: BlobStore>(st: &Arc<DavState<B>>, owner: &str, limit: usize) -> Result<BackfillStats, ThumbError> {
+    let (o, lim) = (owner.to_owned(), i64::try_from(limit).unwrap_or(i64::MAX));
+    let todo: Vec<(String, String, u64)> = st
+        .db
+        .readers()
+        .read(move |c| {
+            let sql = format!(
+                "SELECT e.cid, (SELECT key_hex FROM ucloud_keyring k WHERE k.owner_hex = e.owner_hex AND k.cid = e.cid), MAX(COALESCE(e.size, 0)) FROM ucloud_entries e WHERE {BACKFILL_WHERE} GROUP BY e.cid ORDER BY MAX(e.mtime) DESC LIMIT ?3"
+            );
+            let mut stmt = c.prepare(&sql)?;
+            let rows = stmt.query_map(params![o, i64::try_from(MAX_SOURCE_BYTES).unwrap_or(i64::MAX), lim], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, u64::try_from(r.get::<_, i64>(2)?).unwrap_or(0))))?;
+            Ok(rows.filter_map(Result::ok).filter_map(|(cid, key, size)| key.map(|k| (cid, k, size))).collect())
+        })
+        .await?;
+    let mut stats = BackfillStats::default();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+    for (cid, key_hex, size) in todo {
+        let meta = async {
+            if !is_cid(&cid) {
+                return Ok(crate::exif::ExifMeta::default());
+            }
+            let key = UencKey::from_hex(&key_hex)?;
+            let _permit = SLOTS.acquire().await.map_err(|_| ThumbError::Image("file d'attente fermée".into()))?;
+            let (mut reader, _) = st.blobs.open(&cid).await?;
+            let mut plain = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
+            uenc::decrypt_stream(&key, &mut reader, &mut plain).await?;
+            tokio::task::spawn_blocking(move || crate::exif::read(&plain, now)).await.map_err(|e| ThumbError::Image(e.to_string()))
+        }
+        .await;
+        // Un blob illisible (absent, clé fausse) n'est PAS marqué : il sera retenté plus tard, sans bloquer les autres.
+        let Ok(meta) = meta else { continue };
+        let (o, c) = (owner.to_owned(), cid.clone());
+        st.db
+            .writer()
+            .execute(
+                "UPDATE ucloud_entries SET lat = COALESCE(lat, ?3), lon = COALESCE(lon, ?4), taken_at = COALESCE(taken_at, ?5), data = json_set(data, '$.exif_scanned', 1) WHERE owner_hex = ?1 AND cid = ?2",
+                vec![o.into(), c.into(), meta.lat.into(), meta.lon.into(), meta.taken_at.into()],
+            )
+            .await?;
+        stats.scanned += 1;
+        stats.found += usize::from(!meta.is_empty());
+    }
+    let (o, max) = (owner.to_owned(), i64::try_from(MAX_SOURCE_BYTES).unwrap_or(i64::MAX));
+    stats.remaining = st
+        .db
+        .readers()
+        .read(move |c| Ok(c.query_row(&format!("SELECT COUNT(DISTINCT e.cid) FROM ucloud_entries e WHERE {BACKFILL_WHERE}"), params![o, max], |r| r.get::<_, i64>(0))?))
+        .await
+        .map(|n| usize::try_from(n).unwrap_or(0))?;
+    if stats.found > 0 {
+        if let Some(p) = &st.publisher {
+            p.notify(owner);
+        }
+    }
+    Ok(stats)
 }
 
 #[cfg(test)]

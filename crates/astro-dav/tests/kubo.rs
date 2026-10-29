@@ -286,3 +286,38 @@ async fn webdav_runs_on_kubo_with_range_reads_and_a_replayable_manifest() {
     assert_eq!(call(&app, "DELETE", "/dav/photo.jpg", Some(&a), &[], Body::empty()).await.status(), 204);
     assert_eq!(mock.lock().unwrap().pinned.len(), 1, "il ne reste que le manifeste");
 }
+
+#[test]
+fn providers_are_read_from_the_findprovs_stream() {
+    let ndjson = concat!(
+        r#"{"ID":"","Extra":"","Type":6,"Responses":null}"#, "\n",
+        r#"{"ID":"","Extra":"","Type":4,"Responses":[{"ID":"12D3KooWA","Addrs":[]},{"ID":"12D3KooWB","Addrs":[]}]}"#, "\n",
+        r#"{"ID":"","Extra":"","Type":4,"Responses":[{"ID":"12D3KooWA","Addrs":[]}]}"#, "\n",
+        r#"{"ID":"12D3KooWZ","Extra":"","Type":1,"Responses":null}"#, "\n",
+        r#"{"ID":"","Extra":"","Type":4,"Resp"#, // flux coupé à l'échéance
+    );
+    assert_eq!(astro_dav::kubo::parse_providers(ndjson), ["12D3KooWA", "12D3KooWB"], "dédoublonné, trié, requêtes DHT et ligne tronquée ignorées");
+}
+
+#[tokio::test]
+async fn providers_keeps_what_arrived_before_the_deadline() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let cid = cid_raw_sha256(&Sha256::digest(b"fournisseurs").into());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let expected = format!("POST /api/v0/routing/findprovs?arg={cid}&num-providers=3");
+    tokio::spawn(async move {
+        let (mut s, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 2048];
+        let n = s.read(&mut buf).await.unwrap();
+        let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+        assert!(head.starts_with(&expected), "{head}");
+        let line = r#"{"ID":"","Extra":"","Type":4,"Responses":[{"ID":"12D3KooWA","Addrs":[]}]}"#;
+        s.write_all(format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{line}\n\r\n", line.len() + 1).as_bytes()).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await; // la recherche dure : jamais de fin de flux
+    });
+    let store = astro_dav::kubo::KuboBlobStore::new(&format!("http://{addr}"));
+    let got = store.providers(&cid, 3, std::time::Duration::from_millis(400)).await.unwrap();
+    assert_eq!(got, ["12D3KooWA"]);
+    assert!(store.providers("../x", 3, std::time::Duration::from_millis(100)).await.is_err(), "CID invalide refusé avant toute requête");
+}

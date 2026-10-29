@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS identities (
   src_event    TEXT                    -- DID 30800
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS identities_email ON identities(email) WHERE email IS NOT NULL;
+-- Un email = un MULTIPASS hébergé ici (l'email tient lieu de npub). Seuls les MULTIPASS : la ZenCard et le Capitaine d'un
+-- même membre portent légitimement la même adresse que son MULTIPASS.
+CREATE UNIQUE INDEX IF NOT EXISTS identities_email_multipass ON identities(lower(email)) WHERE email IS NOT NULL AND hosted = 1 AND role = 'multipass';
 CREATE INDEX IF NOT EXISTS identities_hosted ON identities(hex) WHERE hosted = 1;
 
 -- Graphe social N1/N2, projection des kind 3.
@@ -177,6 +180,26 @@ CREATE TABLE IF NOT EXISTS faces (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS faces_owner_name ON faces(owner_hex, name);
 
+-- Annuaire des contacts : index des fiches vCard de `/Contacts` (le chiffré reste la source de vérité ; table rebuildable
+-- par un balayage). `pubkey` = clé Nostr rattachée à la fiche : donnée par la fiche (X-NOSTR-*) ou déduite de l'email d'un
+-- MULTIPASS HÉBERGÉ ici (un email auto-déclaré dans un DID n'est jamais une preuve). `cid` = état indexé (étiquette de la fiche).
+CREATE TABLE IF NOT EXISTS identity_links (
+  owner_hex  TEXT NOT NULL,
+  path       TEXT NOT NULL,            -- /Contacts/<fichier>.vcf
+  uid        TEXT,
+  name       TEXT NOT NULL,            -- FN
+  name_key   TEXT NOT NULL,            -- FN comparable (minuscules, sans accents) : rapproche les visages nommés
+  emails     TEXT NOT NULL DEFAULT '[]',
+  pubkey     TEXT,
+  via        TEXT CHECK (via IN ('vcard','email') OR via IS NULL),
+  g1pub      TEXT,
+  warning    TEXT,                     -- X-NOSTR-* illisible, fiche invalide…
+  cid        TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (owner_hex, path)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS identity_links_name ON identity_links(owner_hex, name_key);
+
 -- Partages FaceCloud déjà effectués (un par photo et destinataire) : état LOCAL, évite les doublons au retraitement.
 CREATE TABLE IF NOT EXISTS face_shares (
   owner_hex     TEXT NOT NULL,
@@ -186,6 +209,25 @@ CREATE TABLE IF NOT EXISTS face_shares (
   at            INTEGER NOT NULL,
   PRIMARY KEY (owner_hex, cid, recipient_hex)
 ) STRICT, WITHOUT ROWID;
+
+-- Invitations à rejoindre la constellation en recevant des photos (lien `/i/<jeton>`). Le jeton (128 bits aléatoires) est la
+-- seule preuve de possession du lien. `items` : fichiers choisis à la création (chemin, CID, nom, type, taille, empreinte) ;
+-- leurs clés restent dans `ucloud_keyring` et ne quittent jamais la station avant la réclamation.
+CREATE TABLE IF NOT EXISTS invites (
+  token        TEXT PRIMARY KEY,
+  owner_hex    TEXT NOT NULL,
+  label        TEXT NOT NULL DEFAULT '',   -- nom du destinataire, tel que l'expéditeur le connaît
+  email        TEXT,                       -- adresse de la fiche de contact, si connue
+  contact_path TEXT,                       -- /Contacts/<fiche>.vcf à relier au MULTIPASS créé
+  items        TEXT NOT NULL,
+  created_at   INTEGER NOT NULL,
+  expires_at   INTEGER NOT NULL,
+  opened_at    INTEGER,                    -- première ouverture de la page publique
+  claimed_at   INTEGER,                    -- réclamation en cours ou faite (usage unique)
+  claimed_by   TEXT,                       -- clé du MULTIPASS créé ; NULL tant que la création n'est pas finie
+  revoked_at   INTEGER
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS invites_owner ON invites(owner_hex, created_at);
 
 -- Mémoire BRO : remplace les collections Qdrant `memory_<hex16>`.
 CREATE TABLE IF NOT EXISTS memory (

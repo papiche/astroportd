@@ -124,7 +124,7 @@ impl<P: Publisher> Broker<P> {
 
     fn say(&self, message: String) {
         if let Some(bus) = &self.activity {
-            bus.publish("p2p", "bro:broker", message, None);
+            bus.publish_to(astro_core::Audience::Captain, "p2p", "bro:broker", message, None);
         }
     }
 

@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 astro-economy.workspace = true
 image.workspace = true
+kamadak-exif.workspace = true
 webp.workspace = true
 astro-nostr-proto.workspace = true
 astro-crypto.workspace = true
@@ -24,6 +25,7 @@ hex.workspace = true
 hmac.workspace = true
 base64.workspace = true
 percent-encoding.workspace = true
+bech32.workspace = true
 quick-xml.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true

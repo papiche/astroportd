@@ -19,6 +19,12 @@
   <form id="f" hidden>
     <label for="email">Votre adresse email</label>
     <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="vous@exemple.org">
+    <label class="check"><input id="guest" type="checkbox"> Je préfère ne pas donner mon email</label>
+    <div id="alias-box" hidden>
+      <label for="alias">Prénom ou pseudo (facultatif)</label>
+      <input id="alias" name="alias" maxlength="40" autocomplete="nickname" placeholder="léa">
+      <p class="muted small">La station vous crée une adresse du type <code>léa-x7k2p9@…</code>. C’est votre identifiant UPlanet (Nostr et IPFS) : elle ne sert pas à recevoir des courriers. Notez bien votre carte ci-après : sans email, elle est votre seul moyen de récupération.</p>
+    </div>
     <label for="lang">Langue</label>
     <select id="lang" name="lang"><option value="fr">Français</option><option value="en">English</option><option value="es">Español</option></select>
     <button id="go">Créer mon MULTIPASS</button>

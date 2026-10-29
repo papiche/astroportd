@@ -212,7 +212,7 @@ impl<E: Embedder, S: Summarizer> MemoryStore<E, S> {
 
     pub(crate) fn announce(&self, source: &str, message: String) {
         if let Some(bus) = &self.activity {
-            bus.publish("bro", source, message, None);
+            bus.publish_to(astro_core::Audience::Captain, "bro", source, message, None);
         }
     }
 

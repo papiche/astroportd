@@ -150,19 +150,19 @@ impl<B: BlobStore> UploadWorker<B> {
         match result {
             Ok((path, size)) => {
                 finish("done", serde_json::json!({ "path": path, "size": size }), None).await;
-                self.activity.publish("bro", "bro:upload", format!("document ajouté à l'uCloud : {path}"), None);
+                self.activity.publish_to(astro_core::Audience::Owner(owner.clone()), "bro", "bro:upload", format!("document ajouté à l'uCloud : {path}"), None);
                 self.tell(&owner, format!("✅ Document ajouté à votre uCloud : {path} ({} Ko).", size.div_ceil(1024))).await;
                 Outcome::Done(path)
             }
             Err(Failure::Transient(why)) if attempts < MAX_ATTEMPTS => {
                 let delay = 60 * attempts * attempts;
                 finish("pending", serde_json::json!({ "retry": why, "attempt": attempts }), Some(at + delay)).await;
-                self.activity.publish("bro", "bro:upload", format!("document : échec passager, nouvel essai dans {delay} s ({why})"), None);
+                self.activity.publish_to(astro_core::Audience::Owner(owner.clone()), "bro", "bro:upload", format!("document : échec passager, nouvel essai dans {delay} s ({why})"), None);
                 Outcome::Retry(why)
             }
             Err(Failure::Transient(why) | Failure::Permanent(why)) => {
                 finish("failed", serde_json::json!({ "error": why }), None).await;
-                self.activity.publish("bro", "bro:upload", format!("document refusé : {why}"), None);
+                self.activity.publish_to(astro_core::Audience::Owner(owner.clone()), "bro", "bro:upload", format!("document refusé : {why}"), None);
                 self.tell(&owner, format!("❌ Document non ajouté : {why}")).await;
                 Outcome::Failed(why)
             }
@@ -202,7 +202,7 @@ impl<B: BlobStore> UploadWorker<B> {
     pub async fn run(self: Arc<Self>, every: Duration, mut stop: watch::Receiver<bool>) {
         let n = self.recover(now()).await;
         if n > 0 {
-            self.activity.publish("bro", "bro:upload", format!("{n} document(s) interrompu(s) repris"), None);
+            self.activity.publish_to(astro_core::Audience::Captain, "bro", "bro:upload", format!("{n} document(s) interrompu(s) repris"), None);
         }
         let mut tick = tokio::time::interval(every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

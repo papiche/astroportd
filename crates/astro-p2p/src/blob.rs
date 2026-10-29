@@ -89,13 +89,24 @@ pub fn serve_blobs<B: BlobStore>(handle: &P2pHandle, store: Arc<B>, opts: ServeO
     Ok(BlobServer { task })
 }
 
-async fn read_request(stream: &mut libp2p::Stream) -> std::io::Result<Option<String>> {
+/// Requête d'un pair : le blob entier (`GET`) ou seulement sa présence (`HAS`, sans corps).
+enum Request {
+    Get(String),
+    Has(String),
+}
+
+async fn read_request(stream: &mut libp2p::Stream) -> std::io::Result<Option<Request>> {
     let mut line = Vec::with_capacity(80);
     let mut byte = [0u8; 1];
     while line.len() < 80 {
         stream.read_exact(&mut byte).await?;
         if byte[0] == b'\n' {
-            return Ok(String::from_utf8(line).ok().and_then(|l| l.strip_prefix("GET ").map(str::to_owned)));
+            let Ok(text) = String::from_utf8(line) else { return Ok(None) };
+            return Ok(match (text.strip_prefix("GET "), text.strip_prefix("HAS ")) {
+                (Some(cid), _) => Some(Request::Get(cid.to_owned())),
+                (_, Some(cid)) => Some(Request::Has(cid.to_owned())),
+                _ => None,
+            });
         }
         line.push(byte[0]);
     }
@@ -103,9 +114,13 @@ async fn read_request(stream: &mut libp2p::Stream) -> std::io::Result<Option<Str
 }
 
 async fn serve_one<B: BlobStore>(mut stream: libp2p::Stream, store: &B, max: u64) -> std::io::Result<()> {
-    let Some(cid) = read_request(&mut stream).await? else {
-        stream.write_all(&[BAD_REQUEST]).await?;
-        return stream.close().await;
+    let (cid, head_only) = match read_request(&mut stream).await? {
+        Some(Request::Get(cid)) => (cid, false),
+        Some(Request::Has(cid)) => (cid, true),
+        None => {
+            stream.write_all(&[BAD_REQUEST]).await?;
+            return stream.close().await;
+        }
     };
     if !cid.starts_with("bafkrei") || !is_cid(&cid) {
         stream.write_all(&[BAD_REQUEST]).await?;
@@ -121,6 +136,9 @@ async fn serve_one<B: BlobStore>(mut stream: libp2p::Stream, store: &B, max: u64
     }
     stream.write_all(&[OK]).await?;
     stream.write_all(&len.to_be_bytes()).await?;
+    if head_only {
+        return stream.close().await;
+    }
     let mut buf = vec![0u8; CHUNK];
     loop {
         let n = reader.read(&mut buf).await?;
@@ -130,6 +148,32 @@ async fn serve_one<B: BlobStore>(mut stream: libp2p::Stream, store: &B, max: u64
         stream.write_all(&buf[..n]).await?;
     }
     stream.close().await
+}
+
+/// Ce pair a-t-il ce blob ? Rend sa taille, ou `None` s'il ne l'a pas. Rien n'est transféré : c'est la sonde de la mesure
+/// de réplication. Un pair d'une version qui ne connaît pas `HAS` répond « requête refusée » : erreur, pas « absent ».
+pub async fn has_blob(handle: &P2pHandle, peer: PeerId, cid: &str, timeout: Duration) -> Result<Option<u64>, String> {
+    if !cid.starts_with("bafkrei") || !is_cid(cid) {
+        return Err("CID non échangeable (seuls les blocs `raw` bafkrei… le sont)".into());
+    }
+    let work = async {
+        let mut control = handle.control();
+        let mut stream = control.open_stream(peer, StreamProtocol::new(PROTOCOL)).await.map_err(|e| format!("ouverture du flux : {e}"))?;
+        stream.write_all(format!("HAS {cid}\n").as_bytes()).await.map_err(|e| e.to_string())?;
+        let mut status = [0u8; 1];
+        stream.read_exact(&mut status).await.map_err(|e| e.to_string())?;
+        match status[0] {
+            OK => {
+                let mut len = [0u8; 8];
+                stream.read_exact(&mut len).await.map_err(|e| e.to_string())?;
+                Ok(Some(u64::from_be_bytes(len)))
+            }
+            NOT_FOUND => Ok(None),
+            REFUSED => Err("le pair refuse de répondre".to_owned()),
+            _ => Err("requête non comprise par le pair (version trop ancienne ?)".to_owned()),
+        }
+    };
+    tokio::time::timeout(timeout, work).await.unwrap_or_else(|_| Err("délai dépassé".to_owned()))
 }
 
 /// Demande `cid` à `peer` et l'enregistre dans `store` après vérification de l'empreinte.

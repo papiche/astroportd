@@ -70,10 +70,55 @@ impl KuboBlobStore {
         serde_json::from_slice(&body).map_err(|e| BlobError::Io(io_err(e)))
     }
 
+    /// Pairs qui détiennent `cid` (`/api/v0/routing/findprovs`), au plus `max`, en `within` au plus.
+    ///
+    /// La réponse est un flux : ce qui est arrivé à l'échéance est conservé (une recherche lente rend des
+    /// fournisseurs partiels, pas une erreur). Seuls les `PeerID` sont rendus.
+    pub async fn providers(&self, cid: &str, max: usize, within: Duration) -> Result<Vec<String>, BlobError> {
+        if !is_cid(cid) {
+            return Err(BlobError::Io(io_err(format!("CID invalide : {cid}"))));
+        }
+        let deadline = tokio::time::Instant::now() + within;
+        let query = format!("/api/v0/routing/findprovs?arg={cid}&num-providers={}", max.max(1));
+        let resp = tokio::time::timeout_at(deadline, self.post(&query, empty())).await.map_err(|_| BlobError::Io(io_err("findprovs : délai dépassé")))??;
+        let mut body = resp.into_body();
+        let mut text = String::new();
+        loop {
+            match tokio::time::timeout_at(deadline, body.frame()).await {
+                Ok(Some(Ok(frame))) => {
+                    if let Some(data) = frame.data_ref() {
+                        text.push_str(&String::from_utf8_lossy(data));
+                    }
+                }
+                Ok(Some(Err(e))) => return Err(BlobError::Io(io_err(e))),
+                _ => break, // fin du flux ou échéance
+            }
+        }
+        Ok(parse_providers(&text))
+    }
+
     /// Le démon répond-il ? (`/api/v0/id`, délai de 1,5 s)
     pub async fn ping(&self) -> bool {
         tokio::time::timeout(Duration::from_millis(1500), self.json("/api/v0/id")).await.is_ok_and(|r| r.is_ok())
     }
+}
+
+/// Extrait les `PeerID` des fournisseurs d'un flux NDJSON de `routing/findprovs` (`Type` 4 = fournisseur trouvé).
+/// Une ligne illisible (flux coupé net à l'échéance) est ignorée.
+pub fn parse_providers(ndjson: &str) -> Vec<String> {
+    let mut found = std::collections::BTreeSet::new();
+    for line in ndjson.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        if v["Type"].as_i64() != Some(4) {
+            continue;
+        }
+        for r in v["Responses"].as_array().into_iter().flatten() {
+            if let Some(id) = r["ID"].as_str().filter(|s| !s.is_empty()) {
+                found.insert(id.to_owned());
+            }
+        }
+    }
+    found.into_iter().collect()
 }
 
 /// Convertit une réponse Kubo en erreur si le statut n'est pas 2xx (le message JSON de Kubo est conservé).

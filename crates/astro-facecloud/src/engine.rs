@@ -56,6 +56,74 @@ pub struct DetectedFace {
 pub trait FaceEngine: Send + Sync + 'static {
     /// Détecte les visages d'une image encodée (JPEG, PNG…).
     fn detect(&self, image: &[u8]) -> impl Future<Output = Result<Vec<DetectedFace>, EngineError>> + Send;
+
+    /// Le moteur peut-il travailler maintenant ? Faux = la file attend (aucune tentative n'est consommée).
+    fn available(&self) -> bool {
+        true
+    }
+}
+
+/// Moteur interchangeable à chaud : le Capitaine bascule entre ONNX local, Brain distant et arrêt sans redémarrer le démon.
+///
+/// Arrêté, il refuse les détections et [`FaceEngine::available`] rend faux : le travailleur laisse les photos en
+/// attente (elles seront analysées dès qu'un moteur revient), au lieu de les compter comme échecs.
+#[derive(Default)]
+pub struct SwitchableEngine {
+    current: std::sync::RwLock<Option<(std::sync::Arc<AnyFaceEngine>, String)>>,
+}
+
+impl SwitchableEngine {
+    /// Moteur initial (ou aucun).
+    pub fn new(initial: Option<(AnyFaceEngine, String)>) -> Self {
+        let me = Self::default();
+        if let Some((engine, label)) = initial {
+            me.set(Some(engine), label);
+        }
+        me
+    }
+
+    /// Remplace le moteur ; `None` l'arrête. Les détections en cours finissent avec l'ancien.
+    pub fn set(&self, engine: Option<AnyFaceEngine>, label: String) {
+        *self.current.write().unwrap_or_else(std::sync::PoisonError::into_inner) = engine.map(|e| (std::sync::Arc::new(e), label));
+    }
+
+    /// Description du moteur en service (`None` : arrêté).
+    pub fn label(&self) -> Option<String> {
+        self.current.read().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map(|(_, l)| l.clone())
+    }
+}
+
+impl FaceEngine for SwitchableEngine {
+    async fn detect(&self, image: &[u8]) -> Result<Vec<DetectedFace>, EngineError> {
+        let engine = self.current.read().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map(|(e, _)| e.clone());
+        match engine {
+            Some(e) => e.detect(image).await,
+            None => Err(EngineError::Backend("moteur FaceID arrêté (réglage du Capitaine)".into())),
+        }
+    }
+
+    fn available(&self) -> bool {
+        self.current.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_some()
+    }
+}
+
+/// Moteur choisi au démarrage : service HTTP (Brain GPU) ou ONNX Runtime local (fonction `onnx`).
+pub enum AnyFaceEngine {
+    /// Service d'inférence distant.
+    Http(Box<HttpFaceEngine>),
+    /// SCRFD + ArcFace dans le processus.
+    #[cfg(feature = "onnx")]
+    Local(crate::onnx::OrtFaceEngine),
+}
+
+impl FaceEngine for AnyFaceEngine {
+    async fn detect(&self, image: &[u8]) -> Result<Vec<DetectedFace>, EngineError> {
+        match self {
+            Self::Http(e) => e.detect(image).await,
+            #[cfg(feature = "onnx")]
+            Self::Local(e) => e.detect(image).await,
+        }
+    }
 }
 
 /// Normalise `v` à une norme de 1. Refuse une dimension ≠ 512, un vecteur nul ou non fini.

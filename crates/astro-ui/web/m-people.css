@@ -1,0 +1,36 @@
+/* Table de tri des visages (chargée avec m-people.js). Mêmes variables que app.css : thème clair et sombre. */
+.pe .bar h2 { margin: 0; }
+.pe-count { font-size: .9rem; }
+.pe-views { display: inline-flex; gap: .25rem; }
+.pe button[aria-pressed="true"] { background: var(--accent); color: light-dark(#fff, #12141a); }
+.pe-main { display: grid; grid-template-columns: minmax(0, 1fr) 17rem; gap: 1rem; align-items: start; }
+.pe-stage { position: relative; background: radial-gradient(circle at 50% 40%, light-dark(#fffdf3, #23262f), light-dark(#ece9db, #14161c)); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.pe-board { display: block; width: 100%; height: min(72vh, 46rem); min-height: 22rem; touch-action: none; cursor: default; }
+.pe-board:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pe-empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 2rem; margin: 0; pointer-events: none; }
+.pe-empty[hidden] { display: none; }
+.pe-side { max-height: min(72vh, 46rem); overflow: auto; display: grid; gap: .45rem; align-content: start; }
+.pe-side h3 { margin: .6rem 0 .1rem; }
+.pe-pochette { display: grid; text-align: left; gap: 0; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r); padding: .45rem .7rem; }
+.pe-pochette.new { border-style: dashed; color: var(--accent); }
+.pe-pochette.trash { border-style: dashed; color: var(--bad); }
+.pe-pochette.over { outline: 3px solid var(--accent); background: light-dark(#eef1ff, #232842); }
+.pe-people, .pe-todo { display: grid; gap: .35rem; }
+.pe-todo button { text-align: left; }
+.pe-maybe { display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+.pe-maybe:empty { display: none; }
+.pe-maybe img { border-radius: 50%; border: 2px solid var(--warn); background: var(--line); }
+.pe-maybe p { margin: 0 0 .4rem; }
+.pe-tray { position: sticky; bottom: .6rem; z-index: 5; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; background: var(--panel); border: 1px solid var(--accent); border-radius: var(--r); padding: .6rem .8rem; margin-top: 1rem; box-shadow: 0 6px 24px #0004; }
+.pe-tray[hidden] { display: none; }
+.pe-tray select { width: auto; max-width: 14rem; font: inherit; padding: .4rem; border-radius: var(--r); border: 1px solid var(--line); background: var(--bg); color: inherit; }
+.pe-tip { position: fixed; z-index: 30; pointer-events: none; background: var(--ink); color: var(--bg); padding: .2rem .55rem; border-radius: .4rem; font-size: .8rem; }
+.pe-tip[hidden] { display: none; }
+.pe-ghost { position: fixed; z-index: 40; pointer-events: none; transform: translate(-50%, -50%); width: 2.6rem; height: 2.6rem; border-radius: 50%; background: var(--accent); color: light-dark(#fff, #12141a); display: grid; place-items: center; font-weight: 700; box-shadow: 0 6px 18px #0006; }
+.pe-name form { display: grid; gap: .5rem; }
+@media (max-width: 52rem) {
+  .pe-main { grid-template-columns: 1fr; }
+  .pe-board { height: 62vh; }
+  .pe-side { max-height: none; }
+}
+@media (prefers-reduced-motion: no-preference) { .pe-pochette { transition: outline-color .15s, background .15s; } }

@@ -13,6 +13,13 @@
 //! | `POST /api/v1/ucloud/share` | lien magique `#clé` + QR |
 //! | `GET /api/v1/faces` | visages reconnus et suggestions « est-ce X ? » |
 //! | `POST /api/v1/faces/{id}/accept` · `/name` | validation d'un visage |
+//! | `GET /api/v1/faces/board` · `POST …/thumbs` · `…/assign` · `…/forget` | table de tri : positions, groupes, vignettes, rangement |
+//! | `GET` · `POST /api/v1/station/coop` | configuration coopérative (Capitaine) : kind 30800, secrets en écriture seule |
+//! | `GET` · `POST /api/v1/station/admin/{section}` | réglages du Capitaine par section (`face` : moteur FaceID ; `kinds` : matrice du relai) |
+//! | `GET /api/v1/account` · `POST …/profile` · `…/token` · `…/keys` | Mon compte : identité, profil, nouveau jeton WebDAV, export des clés |
+//! | `GET /api/v1/contacts` · `POST …/sync` · `…/from-person` · `…/link` | annuaire CardDAV : fiches, personnes sans fiche, rapprochement visage ↔ fiche ↔ MULTIPASS |
+//! | `GET /api/v1/friends` · `POST /api/v1/ucloud/send` | proches réciproques ; envoi de fichiers à des proches |
+//! | `GET /api/v1/replication` | où et par qui les données du compte sont répliquées (stations, amis, fichiers) |
 //! | `POST /api/v1/bro/say` | dialogue avec BRO |
 //!
 //! L'authentification est portée par l'en-tête `Authorization` (Basic ou NIP-98), jamais par un cookie : l'API
@@ -47,6 +54,15 @@ pub struct Principal {
     pub captain: bool,
 }
 
+/// Qui réclame une invitation : une adresse email, ou un invité (adresse générée par la station, `alias` facultatif).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Applicant {
+    /// Adresse fournie.
+    Email(String),
+    /// Sans email : prénom ou pseudo facultatif.
+    Guest(Option<String>),
+}
+
 /// Erreur d'API : statut HTTP et message pour l'humain.
 #[derive(Debug)]
 pub struct ApiError {
@@ -67,6 +83,11 @@ impl ApiError {
         Self { status: StatusCode::NOT_FOUND, message: m.into() }
     }
 
+    /// 401 : identifiants refusés (code PASS faux).
+    pub fn denied(m: impl Into<String>) -> Self {
+        Self { status: StatusCode::UNAUTHORIZED, message: m.into() }
+    }
+
     /// 403 : réservé à un autre rôle (le Capitaine).
     pub fn forbidden(m: impl Into<String>) -> Self {
         Self { status: StatusCode::FORBIDDEN, message: m.into() }
@@ -75,6 +96,11 @@ impl ApiError {
     /// 409 : la ressource existe déjà (email déjà inscrit).
     pub fn conflict(m: impl Into<String>) -> Self {
         Self { status: StatusCode::CONFLICT, message: m.into() }
+    }
+
+    /// 410 : la ressource a existé (lien déjà utilisé, retiré ou expiré).
+    pub fn gone(m: impl Into<String>) -> Self {
+        Self { status: StatusCode::GONE, message: m.into() }
     }
 
     /// 429 : trop de demandes.
@@ -181,6 +207,94 @@ pub trait Backend: Send + Sync + 'static {
     fn consent_accept(&self, _who: &Principal, _version: u32) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("dépôt de médias non disponible sur cette station")) }
     }
+    /// La table de tri des visages : positions PCA, groupes, suggestions, personnes.
+    fn faces_board(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("table de tri non disponible sur cette station")) }
+    }
+    /// Vignettes carrées de visages (`size` pixels) : `{ thumbs: { id: data URL }, failed: [[id, raison]] }`.
+    fn faces_thumbs(&self, _who: &Principal, _ids: Vec<i64>, _size: u32) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("vignettes de visages non disponibles sur cette station")) }
+    }
+    /// Range des visages dans une personne (`pubkey` : sa clé Nostr, facultative).
+    fn faces_assign(&self, _who: &Principal, _ids: Vec<i64>, _name: String, _pubkey: Option<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("FaceCloud non activé")) }
+    }
+    /// « Pas à reconnaître » : oublie ces visages (les photos restent).
+    fn faces_forget(&self, _who: &Principal, _ids: Vec<i64>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("FaceCloud non activé")) }
+    }
+    /// Annuaire : fiches de contact, état de leur liaison à un MULTIPASS, personnes reconnues sans fiche.
+    fn contacts(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("l'annuaire n'est pas disponible sur cette station")) }
+    }
+    /// Relit le carnet d'adresses du compte et rapproche les visages.
+    fn contacts_sync(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("l'annuaire n'est pas disponible sur cette station")) }
+    }
+    /// Crée la fiche d'une personne reconnue.
+    fn contacts_create(&self, _who: &Principal, _name: String, _email: Option<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("l'annuaire n'est pas disponible sur cette station")) }
+    }
+    /// Relie (ou délie) une fiche à un MULTIPASS.
+    fn contacts_link(&self, _who: &Principal, _path: String, _target: Option<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("l'annuaire n'est pas disponible sur cette station")) }
+    }
+    /// « Mon compte » : identité, profil, accès WebDAV, relais annoncés.
+    fn account(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("Mon compte n'est pas disponible sur cette station")) }
+    }
+    /// Modifie le profil (`name`, `about`, `picture`, `lang`).
+    fn account_profile(&self, _who: &Principal, _patch: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("Mon compte n'est pas disponible sur cette station")) }
+    }
+    /// Connexion par code PASS (public) : rend le jeton de session. `ip` : limite de débit par adresse.
+    fn account_unlock(&self, _ip: Option<std::net::IpAddr>, _email: String, _pass: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("connexion par PASS non disponible sur cette station")) }
+    }
+    /// Signe un événement avec la clé du compte (signataire distant : la clé ne quitte jamais la station).
+    fn account_sign(&self, _who: &Principal, _event: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("signature non disponible sur cette station")) }
+    }
+    /// Le Capitaine lève le verrouillage du PASS d'un compte.
+    fn pass_unlock(&self, _who: &Principal, _hex: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("connexion par PASS non disponible sur cette station")) }
+    }
+    /// Change le jeton WebDAV : l'ancien cesse de fonctionner.
+    fn account_token_rotate(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("Mon compte n'est pas disponible sur cette station")) }
+    }
+    /// Exporte les clés secrètes du compte (confirmation explicite).
+    fn account_export_keys(&self, _who: &Principal, _confirm: bool) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("Mon compte n'est pas disponible sur cette station")) }
+    }
+    /// Réglages d'une section d'administration (Capitaine) : `face`, `kinds`…
+    fn admin_get(&self, _who: &Principal, _section: &str) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::not_found("section d'administration inconnue")) }
+    }
+    /// Modifie une section d'administration (Capitaine) ; rend la vue mise à jour.
+    fn admin_set(&self, _who: &Principal, _section: &str, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::not_found("section d'administration inconnue")) }
+    }
+    /// Configuration coopérative de la constellation (Capitaine) : sections, valeurs en clair, secrets masqués.
+    fn coop_config(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("configuration coopérative non disponible sur cette station")) }
+    }
+    /// Modifie la configuration coopérative : `{ clé: valeur | null }` (Capitaine).
+    fn coop_config_set(&self, _who: &Principal, _patch: std::collections::BTreeMap<String, Option<String>>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("configuration coopérative non disponible sur cette station")) }
+    }
+    /// Proches réciproques du compte (double suivi) : `{ friends: [{ hex, label, hosted }] }`.
+    fn friends(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("envoi à des proches non disponible sur cette station")) }
+    }
+    /// Envoie des fichiers (ou dossiers) du uCloud à des proches réciproques.
+    fn ucloud_send(&self, _who: &Principal, _paths: Vec<String>, _friends: Vec<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("envoi à des proches non disponible sur cette station")) }
+    }
+    /// Réplication des données du compte : où et par qui. `{ crawl, routes, mine, peers }`.
+    fn replication(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("réplication non mesurée sur cette station")) }
+    }
     /// L'inscription d'un MULTIPASS est-elle ouverte ? `{ open, constellation, accounts, max_accounts }` (public).
     fn register_info(&self) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("inscription non disponible sur cette station")) }
@@ -188,6 +302,34 @@ pub trait Backend: Send + Sync + 'static {
     /// Crée un MULTIPASS (public). `ip` : adresse du client, pour la limite de débit.
     fn register(&self, _ip: Option<std::net::IpAddr>, _email: String, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("inscription non disponible sur cette station")) }
+    }
+    /// Crée un MULTIPASS invité (public) : pas d'email, adresse générée par la station.
+    fn register_guest(&self, _ip: Option<std::net::IpAddr>, _alias: Option<String>, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("inscription non disponible sur cette station")) }
+    }
+    /// Crée une invitation à recevoir des photos (`{ paths | person, label?, email?, contact_path?, days? }`).
+    fn invite_create(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
+    }
+    /// Invitations du compte : jeton, état, dates.
+    fn invites(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
+    }
+    /// Retire une invitation.
+    fn invite_revoke(&self, _who: &Principal, _token: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
+    }
+    /// Ce que voit le porteur du lien (public) : qui invite, combien de photos.
+    fn invite_preview(&self, _token: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
+    }
+    /// Vignette floutée n° `index` d'une invitation (public) : PNG de quelques pixels.
+    fn invite_thumb(&self, _token: String, _index: usize) -> impl Future<Output = Result<Vec<u8>, ApiError>> + Send {
+        async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
+    }
+    /// Réclame une invitation (public) : crée le MULTIPASS de `email` et range les photos chez lui.
+    fn invite_claim(&self, _ip: Option<std::net::IpAddr>, _token: String, _who: Applicant, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
     }
     /// État des sous-systèmes.
     fn health(&self) -> impl Future<Output = Vec<Subsystem>> + Send;
@@ -214,12 +356,37 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/ucloud/photos", get(ucloud_photos::<B>))
         .route("/api/v1/ucloud/share", post(ucloud_share::<B>))
         .route("/api/v1/faces", get(faces::<B>))
+        .route("/api/v1/faces/board", get(faces_board::<B>))
+        .route("/api/v1/faces/thumbs", post(faces_thumbs::<B>))
+        .route("/api/v1/faces/assign", post(faces_assign::<B>))
+        .route("/api/v1/faces/forget", post(faces_forget::<B>))
         .route("/api/v1/faces/{id}/accept", post(face_accept::<B>))
         .route("/api/v1/faces/{id}/name", post(face_name::<B>))
         .route("/api/v1/bro/say", post(bro_say::<B>))
         .route("/api/v1/consent/private-copy", get(consent::<B>).post(consent_accept::<B>))
         .route("/api/v1/me/footprint", get(footprint::<B>))
         .route("/api/v1/register", get(register_info::<B>).post(register::<B>))
+        .route("/api/v1/replication", get(replication::<B>))
+        .route("/api/v1/invites", get(invites::<B>).post(invite_create::<B>))
+        .route("/api/v1/invites/{token}", axum::routing::delete(invite_revoke::<B>))
+        .route("/api/v1/invite/{token}", get(invite_preview::<B>))
+        .route("/api/v1/invite/{token}/thumb/{index}", get(invite_thumb::<B>))
+        .route("/api/v1/invite/{token}/claim", post(invite_claim::<B>))
+        .route("/api/v1/contacts", get(contacts::<B>))
+        .route("/api/v1/contacts/sync", post(contacts_sync::<B>))
+        .route("/api/v1/contacts/from-person", post(contacts_create::<B>))
+        .route("/api/v1/contacts/link", post(contacts_link::<B>))
+        .route("/api/v1/account", get(account::<B>))
+        .route("/api/v1/account/profile", post(account_profile::<B>))
+        .route("/api/v1/account/token", post(account_token_rotate::<B>))
+        .route("/api/v1/account/unlock", post(account_unlock::<B>))
+        .route("/api/v1/account/sign", post(account_sign::<B>))
+        .route("/api/v1/station/accounts/{hex}/unlock-pass", post(pass_unlock::<B>))
+        .route("/api/v1/account/keys", post(account_keys::<B>))
+        .route("/api/v1/station/admin/{section}", get(admin_get::<B>).post(admin_set::<B>))
+        .route("/api/v1/station/coop", get(coop_get::<B>).post(coop_set::<B>))
+        .route("/api/v1/friends", get(friends::<B>))
+        .route("/api/v1/ucloud/send", post(ucloud_send::<B>))
         .route("/api/v1/station/constellation", get(constellation::<B>))
         .route("/api/v1/station/economy", get(economy::<B>))
         .route("/api/v1/station/accounts", get(accounts::<B>))
@@ -370,6 +537,90 @@ async fn face_name<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: Heade
     }
 }
 
+/// Identifiants de visages : 1 à `max`, strictement positifs, sans doublon.
+#[allow(clippy::result_large_err)]
+fn face_ids(ids: Vec<i64>, max: usize) -> Result<Vec<i64>, Response> {
+    let mut seen = std::collections::HashSet::new();
+    if ids.is_empty() || ids.len() > max || ids.iter().any(|i| *i <= 0) {
+        return Err(reply(Err(ApiError::bad_request(format!("1 à {max} identifiants de visages positifs attendus")))));
+    }
+    Ok(ids.into_iter().filter(|i| seen.insert(*i)).collect())
+}
+
+async fn faces_board<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.faces_board(&p).await),
+        Err(r) => r,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ThumbsBody {
+    ids: Vec<i64>,
+    #[serde(default = "default_thumb")]
+    size: u32,
+}
+
+fn default_thumb() -> u32 {
+    96
+}
+
+async fn faces_thumbs<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<ThumbsBody>) -> Response {
+    let ids = match face_ids(body.ids, 80) {
+        Ok(i) => i,
+        Err(r) => return r,
+    };
+    if !(32..=320).contains(&body.size) {
+        return reply(Err(ApiError::bad_request("taille de vignette de 32 à 320 pixels attendue")));
+    }
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.faces_thumbs(&p, ids, body.size).await),
+        Err(r) => r,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct AssignBody {
+    ids: Vec<i64>,
+    name: String,
+    #[serde(default)]
+    pubkey: Option<String>,
+}
+
+async fn faces_assign<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<AssignBody>) -> Response {
+    let ids = match face_ids(body.ids, 2000) {
+        Ok(i) => i,
+        Err(r) => return r,
+    };
+    let name = body.name.trim().to_owned();
+    if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
+        return reply(Err(ApiError::bad_request("nom de 1 à 80 caractères attendu")));
+    }
+    if body.pubkey.as_deref().is_some_and(|k| k.len() != 64 || !k.bytes().all(|b| b.is_ascii_hexdigit())) {
+        return reply(Err(ApiError::bad_request("clé Nostr de 64 caractères hexadécimaux attendue")));
+    }
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.faces_assign(&p, ids, name, body.pubkey.map(|k| k.to_ascii_lowercase())).await),
+        Err(r) => r,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ForgetBody {
+    ids: Vec<i64>,
+}
+
+async fn faces_forget<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<ForgetBody>) -> Response {
+    let ids = match face_ids(body.ids, 2000) {
+        Ok(i) => i,
+        Err(r) => return r,
+    };
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.faces_forget(&p, ids).await),
+        Err(r) => r,
+    }
+}
+
 async fn footprint<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
     match who(&st, &headers, &method, &uri).await {
         Ok(p) => reply(st.backend.footprint(&p).await),
@@ -461,9 +712,216 @@ async fn bro_say<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderM
 
 #[derive(Deserialize)]
 struct RegisterBody {
+    #[serde(default)]
     email: String,
+    /// Sans email : la station génère l'adresse (`alias` : prénom ou pseudo facultatif).
+    #[serde(default)]
+    guest: bool,
+    #[serde(default)]
+    alias: Option<String>,
     #[serde(default)]
     lang: String,
+}
+
+async fn coop_get<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => match captain_only(&p) {
+            Ok(()) => reply(st.backend.coop_config(&p).await),
+            Err(r) => r,
+        },
+        Err(r) => r,
+    }
+}
+
+async fn contacts<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.contacts(&p).await),
+        Err(r) => r,
+    }
+}
+
+async fn contacts_sync<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.contacts_sync(&p).await),
+        Err(r) => r,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct PersonBody {
+    name: String,
+    #[serde(default)]
+    email: Option<String>,
+}
+
+async fn contacts_create<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<PersonBody>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.contacts_create(&p, body.name, body.email).await),
+        Err(r) => r,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct LinkBody {
+    path: String,
+    #[serde(default)]
+    target: Option<String>,
+}
+
+async fn contacts_link<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<LinkBody>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.contacts_link(&p, body.path, body.target).await),
+        Err(r) => r,
+    }
+}
+
+async fn account<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.account(&p).await),
+        Err(r) => r,
+    }
+}
+
+async fn account_profile<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<Value>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.account_profile(&p, body).await),
+        Err(r) => r,
+    }
+}
+
+async fn account_token_rotate<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.account_token_rotate(&p).await),
+        Err(r) => r,
+    }
+}
+
+#[derive(Deserialize)]
+struct UnlockBody {
+    email: String,
+    pass: String,
+}
+
+/// Connexion par code PASS : publique (c'est la porte d'entrée). Le jeton rendu n'est jamais mis en cache.
+async fn account_unlock<B: Backend>(State(st): State<Arc<UiState<B>>>, req: axum::extract::Request) -> Response {
+    let ip = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|c| c.0.ip());
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), 1024).await else { return reply(Err(ApiError::bad_request("requête trop grande"))) };
+    let Ok(body) = serde_json::from_slice::<UnlockBody>(&bytes) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"email\": \"…\", \"pass\": \"123456\" }"))) };
+    reply(st.backend.account_unlock(ip, body.email, body.pass).await)
+}
+
+async fn account_sign<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<Value>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.account_sign(&p, body).await),
+        Err(r) => r,
+    }
+}
+
+async fn pass_unlock<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(hex): Path<String>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => match captain_only(&p) {
+            Ok(()) if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) => reply(st.backend.pass_unlock(&p, hex.to_ascii_lowercase()).await),
+            Ok(()) => reply(Err(ApiError::bad_request("clé de compte invalide (64 hexadécimaux)"))),
+            Err(r) => r,
+        },
+        Err(r) => r,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct KeysBody {
+    #[serde(default)]
+    confirm: bool,
+}
+
+async fn account_keys<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<KeysBody>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.account_export_keys(&p, body.confirm).await),
+        Err(r) => r,
+    }
+}
+
+fn valid_section(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+}
+
+async fn admin_get<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(section): Path<String>) -> Response {
+    if !valid_section(&section) {
+        return reply(Err(ApiError::not_found("section d'administration inconnue")));
+    }
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => match captain_only(&p) {
+            Ok(()) => reply(st.backend.admin_get(&p, &section).await),
+            Err(r) => r,
+        },
+        Err(r) => r,
+    }
+}
+
+async fn admin_set<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(section): Path<String>, Json(body): Json<Value>) -> Response {
+    if !valid_section(&section) {
+        return reply(Err(ApiError::not_found("section d'administration inconnue")));
+    }
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => match captain_only(&p) {
+            Ok(()) => reply(st.backend.admin_set(&p, &section, body).await),
+            Err(r) => r,
+        },
+        Err(r) => r,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct CoopBody {
+    values: std::collections::BTreeMap<String, Option<String>>,
+}
+
+async fn coop_set<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<CoopBody>) -> Response {
+    if body.values.is_empty() || body.values.len() > 64 || body.values.keys().any(|k| k.len() > 64 || !k.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')) {
+        return reply(Err(ApiError::bad_request("1 à 64 clés en majuscules attendues")));
+    }
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => match captain_only(&p) {
+            Ok(()) => reply(st.backend.coop_config_set(&p, body.values).await),
+            Err(r) => r,
+        },
+        Err(r) => r,
+    }
+}
+
+async fn friends<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.friends(&p).await),
+        Err(r) => r,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SendBody {
+    paths: Vec<String>,
+    friends: Vec<String>,
+}
+
+async fn ucloud_send<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<SendBody>) -> Response {
+    if body.paths.is_empty() || body.paths.len() > 200 || body.paths.iter().any(|p| !p.starts_with('/') || p.len() > 1024 || p.split('/').any(|s| s == "..")) {
+        return reply(Err(ApiError::bad_request("1 à 200 chemins absolus attendus (sans « .. »)")));
+    }
+    if body.friends.is_empty() || body.friends.len() > 50 || body.friends.iter().any(|f| f.len() != 64 || !f.bytes().all(|b| b.is_ascii_hexdigit())) {
+        return reply(Err(ApiError::bad_request("1 à 50 proches (clés Nostr de 64 caractères hexadécimaux) attendus")));
+    }
+    let friends = body.friends.into_iter().map(|f| f.to_ascii_lowercase()).collect();
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.ucloud_send(&p, body.paths, friends).await),
+        Err(r) => r,
+    }
+}
+
+/// Réplication des données du compte connecté.
+async fn replication<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.replication(&p).await),
+        Err(r) => r,
+    }
 }
 
 /// Inscription ouverte ? (aucun compte requis : c'est la porte d'entrée.)
@@ -476,17 +934,113 @@ async fn register<B: Backend>(State(st): State<Arc<UiState<B>>>, req: axum::extr
     let ip = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|c| c.0.ip());
     let Ok(bytes) = axum::body::to_bytes(req.into_body(), 2048).await else { return reply(Err(ApiError::bad_request("requête trop grande"))) };
     let Ok(body) = serde_json::from_slice::<RegisterBody>(&bytes) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"email\": \"…\", \"lang\": \"fr\" }"))) };
+    if body.guest {
+        return reply(st.backend.register_guest(ip, body.alias, body.lang).await);
+    }
     reply(st.backend.register(ip, body.email, body.lang).await)
+}
+
+/// Origine publique du lien : celle déclarée par la station, sinon l'en-tête `Host`.
+fn origin_of<B>(st: &UiState<B>, headers: &HeaderMap) -> String {
+    st.public_origin.clone().or_else(|| headers.get(header::HOST).and_then(|h| h.to_str().ok()).map(|h| format!("http://{h}"))).unwrap_or_default()
+}
+
+/// Ajoute au jeton d'une invitation son adresse `/i/<jeton>` et le QR de cette adresse.
+fn with_invite_link(mut v: Value, origin: &str) -> Value {
+    if let Some(token) = v.get("token").and_then(Value::as_str).map(str::to_owned) {
+        let url = format!("{}/i/{token}", origin.trim_end_matches('/'));
+        let svg = crate::qr::svg(&url);
+        if let Some(o) = v.as_object_mut() {
+            if let Some(svg) = svg {
+                o.insert("qr_svg".into(), Value::String(svg));
+            }
+            o.insert("url".into(), Value::String(url));
+        }
+    }
+    v
+}
+
+async fn invite_create<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<Value>) -> Response {
+    let origin = origin_of(&st, &headers);
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.invite_create(&p, body).await.map(|v| with_invite_link(v, &origin))),
+        Err(r) => r,
+    }
+}
+
+async fn invites<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
+    let origin = origin_of(&st, &headers);
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.invites(&p).await.map(|mut v| {
+            if let Some(list) = v.get_mut("invites").and_then(Value::as_array_mut) {
+                for i in list.iter_mut() {
+                    let url = i.get("token").and_then(Value::as_str).map(|t| format!("{}/i/{t}", origin.trim_end_matches('/')));
+                    if let (Some(o), Some(url)) = (i.as_object_mut(), url) {
+                        o.insert("url".into(), Value::String(url));
+                    }
+                }
+            }
+            v
+        })),
+        Err(r) => r,
+    }
+}
+
+async fn invite_revoke<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(token): Path<String>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.invite_revoke(&p, token).await),
+        Err(r) => r,
+    }
+}
+
+/// Public : le jeton du lien est la seule preuve. Jamais mis en cache ni indexé.
+async fn invite_preview<B: Backend>(State(st): State<Arc<UiState<B>>>, Path(token): Path<String>) -> Response {
+    reply(st.backend.invite_preview(token).await)
+}
+
+async fn invite_thumb<B: Backend>(State(st): State<Arc<UiState<B>>>, Path((token, index)): Path<(String, usize)>) -> Response {
+    match st.backend.invite_thumb(token, index).await {
+        Ok(png) => private((StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response()),
+        Err(e) => reply(Err(e)),
+    }
+}
+
+#[derive(Deserialize)]
+struct ClaimBody {
+    #[serde(default)]
+    email: String,
+    #[serde(default)]
+    guest: bool,
+    #[serde(default)]
+    alias: Option<String>,
+    #[serde(default = "default_lang")]
+    lang: String,
+}
+
+fn default_lang() -> String {
+    "fr".into()
+}
+
+/// Crée le MULTIPASS du porteur du lien. Les secrets de la réponse ne sont jamais remis une seconde fois : `no-store`.
+async fn invite_claim<B: Backend>(State(st): State<Arc<UiState<B>>>, Path(token): Path<String>, req: axum::extract::Request) -> Response {
+    let ip = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|c| c.0.ip());
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), 2048).await else { return reply(Err(ApiError::bad_request("requête trop grande"))) };
+    let Ok(body) = serde_json::from_slice::<ClaimBody>(&bytes) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"email\": \"…\", \"lang\": \"fr\" }"))) };
+    let who = if body.guest { Applicant::Guest(body.alias) } else { Applicant::Email(body.email) };
+    reply(st.backend.invite_claim(ip, token, who, body.lang).await)
 }
 
 /// Flux SSE : d'abord ce que le client a manqué (`Last-Event-ID`), puis le direct.
 async fn activity_stream<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    if let Err(r) = who(&st, &headers, &method, &uri).await {
-        return r;
-    }
+    let principal = match who(&st, &headers, &method, &uri).await {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
     let after = headers.get("last-event-id").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
     let (backlog, rx) = st.activity.subscribe(after);
-    let sse = Sse::new(event_stream(backlog, rx)).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("ping"));
+    // Un événement personnel n'est ni rejoué ni diffusé à un autre compte (virement, e-mail d'un nouveau membre…).
+    let backlog: Vec<_> = backlog.into_iter().filter(|a| a.audience.admits(&principal.hex, principal.captain)).collect();
+    let sse = Sse::new(event_stream(backlog, rx, principal)).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("ping"));
     private(sse.into_response())
 }
 
@@ -496,16 +1050,19 @@ fn to_event(a: &astro_core::Activity) -> Event {
     Event::default().id(a.id.to_string()).event(a.kind.clone()).data(serde_json::to_string(a).unwrap_or_default())
 }
 
-fn event_stream(backlog: Vec<Arc<astro_core::Activity>>, rx: Live) -> impl Stream<Item = Result<Event, Infallible>> {
-    stream::unfold((backlog.into_iter(), rx), |(mut backlog, mut rx)| async move {
+fn event_stream(backlog: Vec<Arc<astro_core::Activity>>, rx: Live, who: Principal) -> impl Stream<Item = Result<Event, Infallible>> {
+    stream::unfold((backlog.into_iter(), rx, who), |(mut backlog, mut rx, who)| async move {
         if let Some(a) = backlog.next() {
-            return Some((Ok(to_event(&a)), (backlog, rx)));
+            return Some((Ok(to_event(&a)), (backlog, rx, who)));
         }
-        match rx.recv().await {
-            Ok(a) => Some((Ok(to_event(&a)), (backlog, rx))),
-            // Le client lisait trop lentement : on le dit plutôt que de laisser croire à un flux complet.
-            Err(RecvError::Lagged(n)) => Some((Ok(Event::default().event("lag").data(n.to_string())), (backlog, rx))),
-            Err(RecvError::Closed) => None,
+        loop {
+            match rx.recv().await {
+                Ok(a) if a.audience.admits(&who.hex, who.captain) => return Some((Ok(to_event(&a)), (backlog, rx, who))),
+                Ok(_) => {}
+                // Le client lisait trop lentement : on le dit plutôt que de laisser croire à un flux complet.
+                Err(RecvError::Lagged(n)) => return Some((Ok(Event::default().event("lag").data(n.to_string())), (backlog, rx, who))),
+                Err(RecvError::Closed) => return None,
+            }
         }
     })
 }
@@ -601,7 +1158,7 @@ mod tests {
     #[tokio::test]
     async fn every_api_route_but_health_requires_authentication() {
         let bus = ActivityBus::new();
-        for (method, uri) in [(Method::GET, "/api/v1/me"), (Method::GET, "/api/v1/dashboard"), (Method::GET, "/api/v1/ucloud/list"), (Method::GET, "/api/v1/ucloud/photos"), (Method::GET, "/api/v1/faces"), (Method::GET, "/api/v1/activity")] {
+        for (method, uri) in [(Method::GET, "/api/v1/friends"), (Method::GET, "/api/v1/replication"), (Method::GET, "/api/v1/me"), (Method::GET, "/api/v1/dashboard"), (Method::GET, "/api/v1/ucloud/list"), (Method::GET, "/api/v1/ucloud/photos"), (Method::GET, "/api/v1/faces"), (Method::GET, "/api/v1/activity")] {
             let (s, _, h) = call(app(&bus), method, uri, false, None).await;
             assert_eq!(s, StatusCode::UNAUTHORIZED, "{uri}");
             assert_eq!(h[header::WWW_AUTHENTICATE], "Nostr realm=\"astroportd\"", "pas de Basic annoncé : pas de fenêtre native du navigateur");
@@ -723,6 +1280,27 @@ mod tests {
         }
         let (s, v, _) = call(router(Arc::new(Broken), bus, None), Method::GET, "/health", false, None).await;
         assert_eq!((s, v["status"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("down")));
+    }
+
+    #[tokio::test]
+    async fn personal_events_reach_only_their_audience_even_for_the_captain() {
+        use astro_core::Audience;
+        let bus = ActivityBus::new();
+        bus.publish_to(Audience::Owner("bb".into()), "economy", "t", "virement de bob", None);
+        bus.publish_to(Audience::Captain, "system", "t", "email de nouveau membre", None);
+        bus.publish_to(Audience::Owner(ALICE.into()), "economy", "t", "virement d'alice", None);
+        bus.publish("system", "t", "pour tous", None);
+        for (auth, expected_in, expected_out) in [("Basic ok", ["virement d'alice", "pour tous"], ["virement de bob", "email de nouveau membre"]), ("Basic cap", ["virement d'alice", "email de nouveau membre"], ["virement de bob", ""])] {
+            let req = Request::builder().uri("/api/v1/activity").header(header::AUTHORIZATION, auth).body(Body::empty()).unwrap();
+            let mut body = app(&bus).oneshot(req).await.unwrap().into_body();
+            let mut seen = String::new();
+            while !(seen.contains(expected_in[0]) && seen.contains(expected_in[1])) {
+                seen.push_str(std::str::from_utf8(&body.frame().await.unwrap().unwrap().into_data().unwrap()).unwrap());
+            }
+            for out in expected_out.iter().filter(|s| !s.is_empty()) {
+                assert!(!seen.contains(out), "{auth} ne doit pas voir « {out} » : {seen}");
+            }
+        }
     }
 
     #[tokio::test]

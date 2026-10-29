@@ -37,7 +37,7 @@ impl Default for CrawlConfig {
     fn default() -> Self {
         Self {
             relays: Vec::new(),
-            kinds: vec![0, 1, 3, 30_023, 30_800, 30_850, 30_851, 30_852],
+            kinds: vec![0, 1, 3, 1063, 10_002, 30_023, 30_800, 30_850, 30_851, 30_852],
             page_size: 500,
             max_pages: 20,
             overlap_secs: 3600,
@@ -81,17 +81,74 @@ impl CrawlStats {
     }
 }
 
+/// Relais à interroger, relus à chaque passage (la constellation change : une station arrive, une autre disparaît).
+pub type RelaySource = Arc<dyn Fn() -> Vec<String> + Send + Sync>;
+
+/// Bilan d'un passage de la boucle continue.
+#[derive(Debug, Clone)]
+pub struct PassReport {
+    /// Secondes UNIX de fin.
+    pub at: u64,
+    /// Durée du passage.
+    pub millis: u64,
+    /// Relais interrogés.
+    pub relays: usize,
+    /// Résultat : bilan, ou l'erreur qui a interrompu le passage.
+    pub result: Result<CrawlStats, String>,
+}
+
+/// Appelé après chaque passage de la boucle continue.
+pub type PassHook = Arc<dyn Fn(&PassReport) + Send + Sync>;
+
+/// Scope et clé du dernier bilan dans `kv` (lu par l'interface).
+pub const STATUS_SCOPE: &str = "crawl_status";
+/// Clé du dernier passage.
+pub const STATUS_KEY: &str = "last";
+
 /// Moteur de crawl séquentiel.
 pub struct Crawler<C: RelayClient> {
     db: Arc<Db>,
     client: C,
     config: CrawlConfig,
+    source: Option<RelaySource>,
+    hook: Option<PassHook>,
+    extra_keys: Vec<String>,
 }
 
 impl<C: RelayClient> Crawler<C> {
     /// Crée un crawler.
     pub fn new(db: Arc<Db>, client: C, config: CrawlConfig) -> Self {
-        Self { db, client, config }
+        Self { db, client, config, source: None, hook: None, extra_keys: Vec::new() }
+    }
+
+    /// Ajoute aux relais fixes ceux que `source` donne à chaque passage.
+    pub fn with_relay_source(mut self, source: RelaySource) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    /// Clés suivies en plus des membres hébergés et de leurs proches (la clé coopérative, dont le kind 30800 porte la
+    /// configuration de la constellation) : chaque passage de la boucle continue les synchronise.
+    pub fn with_extra_keys(mut self, keys: Vec<String>) -> Self {
+        self.extra_keys = keys;
+        self
+    }
+
+    /// Fonction appelée après chaque passage de [`Crawler::run_forever`] (journal d'activité, alertes).
+    pub fn with_hook(mut self, hook: PassHook) -> Self {
+        self.hook = Some(hook);
+        self
+    }
+
+    /// Relais fixes puis relais découverts, sans doublon.
+    pub fn current_relays(&self) -> Vec<String> {
+        let mut all = self.config.relays.clone();
+        for r in self.source.as_ref().map(|f| f()).unwrap_or_default() {
+            if !all.contains(&r) {
+                all.push(r);
+            }
+        }
+        all
     }
 
     /// Clés à synchroniser : MULTIPASS hébergés ∪ N1 ∪ N2, triées.
@@ -119,9 +176,10 @@ impl<C: RelayClient> Crawler<C> {
             }
         }
         let mut stats = CrawlStats::default();
+        let relays = self.current_relays();
         for key in &keys {
             stats.keys += 1;
-            for relay in &self.config.relays {
+            for relay in &relays {
                 match self.sync_key(relay, key).await {
                     Ok(s) => stats.merge(s),
                     Err(e) => {
@@ -236,18 +294,63 @@ impl<C: RelayClient> Crawler<C> {
         Ok(())
     }
 
+    /// Un passage de la boucle continue : crawl jusqu'à stabilité (3 tours), bilan enregistré dans `kv` et transmis au crochet.
+    /// Une erreur n'est jamais avalée : elle est dans le bilan.
+    pub async fn pass(&self) -> PassReport {
+        let started = std::time::Instant::now();
+        let relays = self.current_relays().len();
+        let result = self.run_until_stable(&self.extra_keys, 3).await.map_err(|e| e.to_string());
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let report = PassReport { at, millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX), relays, result };
+        let json = match &report.result {
+            Ok(s) => serde_json::json!({
+                "at": at, "ms": report.millis, "relays": relays, "keys": s.keys, "fetched": s.fetched, "inserted": s.inserted,
+                "duplicates": s.duplicates, "superseded": s.superseded, "rejected": s.rejected,
+                "errors": s.errors.iter().map(|(relay, key, reason)| serde_json::json!({ "relay": relay, "key": key, "reason": reason })).collect::<Vec<_>>(),
+            }),
+            Err(e) => serde_json::json!({ "at": at, "ms": report.millis, "relays": relays, "error": e }),
+        };
+        let _ = self
+            .db
+            .writer()
+            .execute(
+                "INSERT INTO kv(scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                vec![STATUS_SCOPE.to_owned().into(), STATUS_KEY.to_owned().into(), json.to_string().into(), i64::try_from(at).unwrap_or(i64::MAX).into()],
+            )
+            .await;
+        if let Some(hook) = &self.hook {
+            hook(&report);
+        }
+        report
+    }
+
     /// Boucle de planification : un passage toutes les `every`, jusqu'au signal d'arrêt.
-    pub async fn run_forever(self: Arc<Self>, every: Duration, mut shutdown: watch::Receiver<bool>) {
+    pub async fn run_forever(self: Arc<Self>, every: Duration, shutdown: watch::Receiver<bool>) {
+        self.run_forever_after(Duration::ZERO, every, shutdown).await;
+    }
+
+    /// Comme [`Crawler::run_forever`], le premier passage n'ayant lieu qu'après `first` (le démarrage n'est pas ralenti).
+    pub async fn run_forever_after(self: Arc<Self>, first: Duration, every: Duration, mut shutdown: watch::Receiver<bool>) {
+        let mut wait = first;
         loop {
-            let _ = self.run_until_stable(&[], 3).await;
             tokio::select! {
-                () = tokio::time::sleep(every) => {}
+                () = tokio::time::sleep(wait) => {}
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        return;
+                    }
+                    continue;
+                }
+            }
+            tokio::select! {
+                _ = self.pass() => {}
                 changed = shutdown.changed() => {
                     if changed.is_err() || *shutdown.borrow() {
                         return;
                     }
                 }
             }
+            wait = every;
         }
     }
 }

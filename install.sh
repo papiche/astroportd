@@ -28,7 +28,7 @@ Usage : install.sh [options]
 
   --version vX.Y.Z   version à installer (défaut : la dernière release)
   --prefix DIR       dossier d'installation ; le binaire va dans DIR/bin (défaut : ~/.local)
-  --static           binaire statique musl (sans dépendance à la glibc) — x86_64 uniquement
+  --static           binaire statique musl (sans dépendance à la glibc) — x86_64 et aarch64 ; choisi tout seul sous Android (Termux)
   --no-init          n'appelle pas `astroportd init` à la fin
   --yes, -y          mode non interactif : accepte les réponses par défaut
   --mode origin|zen  constellation à rejoindre (transmis à `astroportd init`)
@@ -76,9 +76,19 @@ case "$machine" in
   *) die "architecture non supportée : $machine (supportées : x86_64, aarch64, armv7l)" ;;
 esac
 
+# Android (Termux) n'a pas la glibc : seul le binaire statique y tourne.
+if [ -n "${TERMUX_VERSION:-}" ] || [ "$(uname -o 2>/dev/null)" = "Android" ]; then
+  [ "$TARGET" = "aarch64-unknown-linux-gnu" ] || die "Android : seul l'ARM 64 bits (aarch64) est supporté (architecture détectée : $machine)."
+  say "Android (Termux) détecté : utilisation du binaire statique ARM 64 bits."
+  STATIC=1
+fi
+
 if [ "$STATIC" = 1 ]; then
-  [ "$TARGET" = "x86_64-unknown-linux-gnu" ] || die "--static n'existe que pour x86_64 (architecture détectée : $machine)."
-  TARGET="x86_64-unknown-linux-musl"
+  case "$TARGET" in
+    x86_64-unknown-linux-gnu) TARGET="x86_64-unknown-linux-musl" ;;
+    aarch64-unknown-linux-gnu) TARGET="aarch64-unknown-linux-musl" ;;
+    *) die "--static n'existe que pour x86_64 et aarch64 (architecture détectée : $machine)." ;;
+  esac
 elif [ "$TARGET" = "x86_64-unknown-linux-gnu" ] && command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
   say "Système musl (Alpine ?) détecté : utilisation du binaire statique."
   TARGET="x86_64-unknown-linux-musl"

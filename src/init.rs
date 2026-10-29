@@ -152,7 +152,7 @@ fn write_private(path: &Path, content: &str) -> Res {
 }
 
 /// Lignes `clé = valeur` d'un `station.conf` (absent ou illisible : liste vide).
-fn read_conf(path: &Path) -> Vec<(String, String)> {
+pub fn read_conf(path: &Path) -> Vec<(String, String)> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     text.lines().filter(|l| !l.trim_start().starts_with('#')).filter_map(|l| l.split_once('=')).map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned())).collect()
 }

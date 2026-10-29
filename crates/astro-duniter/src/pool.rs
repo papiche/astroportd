@@ -55,14 +55,17 @@ impl PoolConfig {
 }
 
 struct State<C> {
-    active: Option<(usize, Arc<C>)>,
-    down_until: Vec<Option<Instant>>,
+    active: Option<(String, Arc<C>)>,
+    /// Nœuds mis de côté, par adresse (la liste peut changer en marche).
+    down_until: std::collections::HashMap<String, Instant>,
 }
 
 /// Pool de nœuds : se comporte comme une [`Chain`] unique et résiliente.
 pub struct RpcPool<K: Connector> {
     connector: K,
     cfg: PoolConfig,
+    /// Nœuds par ordre de préférence ; remplaçable en marche ([`RpcPool::set_urls`]).
+    urls: std::sync::RwLock<Vec<String>>,
     state: Mutex<State<K::Chain>>,
     ed: AtomicU64,
 }
@@ -70,47 +73,62 @@ pub struct RpcPool<K: Connector> {
 impl<K: Connector> RpcPool<K> {
     /// Crée le pool (aucune connexion avant le premier appel).
     pub fn new(connector: K, cfg: PoolConfig) -> Self {
-        let n = cfg.urls.len();
-        Self { connector, cfg, state: Mutex::new(State { active: None, down_until: vec![None; n] }), ed: AtomicU64::new(100) }
+        let urls = std::sync::RwLock::new(cfg.urls.clone());
+        Self { connector, cfg, urls, state: Mutex::new(State { active: None, down_until: std::collections::HashMap::new() }), ed: AtomicU64::new(100) }
     }
 
-    fn mark_down(&self, idx: usize) {
+    /// Nœuds actuels, par ordre de préférence.
+    pub fn urls(&self) -> Vec<String> {
+        self.urls.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Remplace la liste des nœuds (découverte périodique). La connexion active est conservée tant qu'elle fonctionne ;
+    /// à la prochaine bascule, c'est la nouvelle liste qui est parcourue. Une liste vide est ignorée : on ne se prive
+    /// jamais de tous les nœuds.
+    pub fn set_urls(&self, urls: Vec<String>) {
+        if urls.is_empty() {
+            return;
+        }
         let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if st.active.as_ref().is_some_and(|(i, _)| *i == idx) {
+        st.down_until.retain(|u, _| urls.contains(u));
+        *self.urls.write().unwrap_or_else(|e| e.into_inner()) = urls;
+    }
+
+    fn mark_down(&self, url: &str) {
+        let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if st.active.as_ref().is_some_and(|(u, _)| u == url) {
             st.active = None;
         }
-        if let Some(slot) = st.down_until.get_mut(idx) {
-            *slot = Some(Instant::now() + self.cfg.cooldown);
-        }
+        st.down_until.insert(url.to_owned(), Instant::now() + self.cfg.cooldown);
     }
 
     /// Connexion active, ou première connexion réussie parmi les nœuds non mis de côté.
-    async fn acquire(&self) -> Result<(usize, Arc<K::Chain>), ChainError> {
+    async fn acquire(&self) -> Result<(String, Arc<K::Chain>), ChainError> {
         if let Some((i, c)) = self.state.lock().unwrap_or_else(|e| e.into_inner()).active.clone() {
             return Ok((i, c));
         }
         let mut last = ChainError::Connection("aucun nœud configuré".into());
         let mut tried_any = false;
-        for (idx, url) in self.cfg.urls.iter().enumerate() {
+        for url in self.urls() {
             let available = {
                 let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
-                st.down_until.get(idx).copied().flatten().is_none_or(|t| Instant::now() >= t)
+                st.down_until.get(&url).is_none_or(|t| Instant::now() >= *t)
             };
             if !available {
                 continue;
             }
             tried_any = true;
-            match self.connector.connect(url).await {
+            match self.connector.connect(&url).await {
                 Ok(chain) => {
                     self.ed.store(chain.existential_deposit().0, Ordering::Relaxed);
                     let chain = Arc::new(chain);
                     let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
-                    st.down_until[idx] = None;
-                    st.active = Some((idx, chain.clone()));
-                    return Ok((idx, chain));
+                    st.down_until.remove(&url);
+                    st.active = Some((url.clone(), chain.clone()));
+                    return Ok((url, chain));
                 }
                 Err(e) => {
-                    self.mark_down(idx);
+                    self.mark_down(&url);
                     last = e;
                 }
             }
@@ -128,11 +146,11 @@ impl<K: Connector> RpcPool<K> {
         Fut: Future<Output = Result<T, ChainError>>,
     {
         let mut last = ChainError::Connection("aucun nœud".into());
-        for _ in 0..self.cfg.urls.len().max(1) {
-            let (idx, chain) = self.acquire().await?;
+        for _ in 0..self.urls().len().max(1) {
+            let (url, chain) = self.acquire().await?;
             match op(chain).await {
                 Err(ChainError::Connection(e)) => {
-                    self.mark_down(idx);
+                    self.mark_down(&url);
                     last = ChainError::Connection(e);
                 }
                 other => return other,
@@ -150,11 +168,11 @@ impl<K: Connector> Chain for RpcPool<K> {
     async fn transfer(&self, from: &Ed25519Signer, to: &Account, amount: Amount, mode: TransferMode, memo: Option<&str>) -> Result<TxOutcome, ChainError> {
         // Seule une erreur `Connection` (avant envoi) autorise de passer au nœud suivant.
         let mut last = ChainError::Connection("aucun nœud".into());
-        for _ in 0..self.cfg.urls.len().max(1) {
-            let (idx, chain) = self.acquire().await?;
+        for _ in 0..self.urls().len().max(1) {
+            let (url, chain) = self.acquire().await?;
             match chain.transfer(from, to, amount, mode, memo).await {
                 Err(ChainError::Connection(e)) => {
-                    self.mark_down(idx);
+                    self.mark_down(&url);
                     last = ChainError::Connection(e);
                 }
                 other => return other,
@@ -169,11 +187,11 @@ impl<K: Connector> Chain for RpcPool<K> {
                 return Ok(());
             }
             // Nœud injoignable ou flux coupé : on le met de côté et on rebascule après une pause.
-            if let Ok((idx, chain)) = self.acquire().await {
+            if let Ok((url, chain)) = self.acquire().await {
                 if chain.watch_transfers(out.clone()).await.is_ok() {
                     return Ok(());
                 }
-                self.mark_down(idx);
+                self.mark_down(&url);
             }
             tokio::time::sleep(self.cfg.reconnect_delay).await;
         }
@@ -296,6 +314,27 @@ mod tests {
             assert_eq!(got, Err(err));
             assert_eq!(log.transfers.load(Ordering::SeqCst), 1, "un seul envoi : pas de double paiement");
         }
+    }
+
+    #[tokio::test]
+    async fn the_node_list_is_replaced_while_running_keeping_the_working_connection_and_using_new_nodes_on_failover() {
+        let (p, log) = pool(&[("a", Node::Up { transfer: ok_tx(), watch_fails: false }), ("b", Node::Up { transfer: ok_tx(), watch_fails: false })]);
+        assert!(p.balance(&Account([1; 32])).await.is_ok());
+        assert_eq!(*log.connects.lock().unwrap(), ["a"]);
+        // Découverte : « a » disparaît de la liste, « c » (meilleur) apparaît. La connexion qui marche n'est pas coupée.
+        p.connector.nodes.lock().unwrap().insert("c".into(), Node::Up { transfer: ok_tx(), watch_fails: false });
+        p.set_urls(vec!["c".into(), "b".into()]);
+        assert_eq!(p.urls(), ["c", "b"]);
+        assert!(p.balance(&Account([1; 32])).await.is_ok());
+        assert_eq!(*log.connects.lock().unwrap(), ["a"], "aucune reconnexion inutile");
+        // « a » tombe : la bascule suit la NOUVELLE liste, dans son ordre.
+        p.connector.nodes.lock().unwrap().insert("a".into(), Node::Down);
+        p.mark_down("a");
+        assert!(p.balance(&Account([1; 32])).await.is_ok());
+        assert_eq!(*log.connects.lock().unwrap(), ["a", "c"]);
+        // Une liste vide est ignorée : on ne se prive jamais de tous les nœuds.
+        p.set_urls(vec![]);
+        assert_eq!(p.urls(), ["c", "b"]);
     }
 
     #[tokio::test]

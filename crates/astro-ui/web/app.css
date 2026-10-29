@@ -92,3 +92,5 @@ nav a[hidden], #out[hidden] { display: none; }
 .toast.ok::before { content: "✓ "; }
 @keyframes up { from { opacity: 0; transform: translateY(.6rem); } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+fieldset.coop-s { border: 1px solid var(--line); border-radius: var(--r); margin: 0 0 1rem; padding: .4rem 1rem 1rem; display: grid; gap: .2rem 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+fieldset.coop-s legend { padding: 0 .4rem; font-weight: 600; }

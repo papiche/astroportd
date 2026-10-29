@@ -18,7 +18,11 @@
     <a href="#/" data-r="home">Tableau de bord</a>
     <a href="#/station" data-r="station" hidden>Station</a>
     <a href="#/cloud" data-r="cloud">uCloud</a>
-    <a href="#/bro" data-r="bro">Visages &amp; BRO</a>
+    <a href="#/people" data-r="people">Personnes</a>
+    <a href="#/contacts" data-r="contacts">Contacts</a>
+    <a href="#/replication" data-r="replication">Réplication</a>
+    <a href="#/bro" data-r="bro">BRO</a>
+    <a href="#/account" data-r="account">Mon compte</a>
   </nav>
   <button id="out" type="button" hidden>Déconnexion</button>
 </header>
@@ -27,9 +31,9 @@
 <dialog id="login" aria-labelledby="login-t">
   <form method="dialog" id="login-f">
     <h2 id="login-t">Connexion</h2>
-    <p class="muted">Adresse email (ou clé) et jeton de la station (<code>astroportd token</code>).</p>
+    <p class="muted">Adresse email (ou clé), puis votre code PASS (4 à 6 chiffres) ou le jeton de la station.</p>
     <label>Identifiant <input name="u" autocomplete="username" required></label>
-    <label>Jeton <input name="p" type="password" autocomplete="current-password" required></label>
+    <label>PASS ou jeton <input name="p" type="password" autocomplete="current-password" required></label>
     <p class="muted">Pas de compte ? <a href="/register">Créer mon MULTIPASS</a></p>
     <p id="login-e" class="err" role="alert"></p>
     <menu>

@@ -70,6 +70,15 @@ fn numbered(name: &str, n: u32) -> String {
 /// Dépose `reader` sous `dir/name` dans l'uCloud de `owner`. `dir` est créé s'il n'existe pas ; si le nom est pris,
 /// un numéro est ajouté (un document rapatrié n'écrase jamais un fichier existant).
 pub async fn ingest<B: BlobStore, R: AsyncRead + Unpin>(st: &Arc<DavState<B>>, owner: &str, dir: &str, name: &str, mime_hint: Option<&str>, reader: R) -> Result<Ingested, IngestError> {
+    ingest_with(st, owner, dir, name, mime_hint, reader, false).await
+}
+
+/// Comme [`ingest`], mais écrit EXACTEMENT sous `dir/name` : un fichier existant est remplacé (fiche de contact mise à jour).
+pub async fn replace<B: BlobStore, R: AsyncRead + Unpin>(st: &Arc<DavState<B>>, owner: &str, dir: &str, name: &str, mime_hint: Option<&str>, reader: R) -> Result<Ingested, IngestError> {
+    ingest_with(st, owner, dir, name, mime_hint, reader, true).await
+}
+
+async fn ingest_with<B: BlobStore, R: AsyncRead + Unpin>(st: &Arc<DavState<B>>, owner: &str, dir: &str, name: &str, mime_hint: Option<&str>, reader: R, replace: bool) -> Result<Ingested, IngestError> {
     let account = crate::auth::lookup_by_hex(&st.db, owner).await.ok_or(IngestError::NoAccount)?;
     let limits = st.limits_for(&account).await;
     let dir = vfs::normalize_path(dir)?;
@@ -82,6 +91,13 @@ pub async fn ingest<B: BlobStore, R: AsyncRead + Unpin>(st: &Arc<DavState<B>>, o
             None => vfs::mkdir_tx(tx, &o, &d, now())?,
             Some(e) if e.kind == EntryKind::File => return Err(VfsError::NotCollection),
             Some(_) => {}
+        }
+        if replace {
+            let full = if d == "/" { format!("/{n}") } else { format!("{d}/{n}") };
+            return match vfs::get_entry(tx, &o, &full)? {
+                Some(e) if e.kind == EntryKind::Dir => Err(VfsError::IsCollection),
+                _ => Ok(full),
+            };
         }
         for i in 1..=999u32 {
             let candidate = if i == 1 { n.clone() } else { numbered(&n, i) };
@@ -108,7 +124,12 @@ pub async fn ingest<B: BlobStore, R: AsyncRead + Unpin>(st: &Arc<DavState<B>>, o
     let file = NewFile { cid: meta.cid.clone(), size_cid: meta.size, size_plain: size, sha_plain, mime: mime.clone(), key_hex: key.to_hex(), now: now() };
     let (o, p) = (owner.to_owned(), path.clone());
     match vfs_tx(&st.db, move |tx| vfs::commit_file_tx(tx, &o, &p, &file, limits)).await {
-        Ok(_) => {}
+        Ok(old) => {
+            // Remplacement : l'ancien blob n'est plus référencé par personne, il est libéré.
+            if let Some(prev) = old.and_then(|e| e.cid) {
+                crate::server::release_blobs(st, vec![prev]).await;
+            }
+        }
         Err(e) => {
             let _ = st.blobs.remove(&meta.cid).await;
             return Err(match e {

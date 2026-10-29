@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Empty};
+use http_body_util::{BodyExt, Full};
 use hyper::Request;
 use hyper::header::{self, HeaderValue};
 use hyper_util::rt::TokioIo;
@@ -154,6 +154,26 @@ async fn resolve(host: &str, port: u16, allow_private: bool) -> Result<SocketAdd
 
 /// Télécharge `url`. Le corps est rendu en flux : rien n'est lu en mémoire ni écrit sur disque ici.
 pub async fn fetch(url: &str, limits: &FetchLimits) -> Result<Fetched, FetchError> {
+    fetch_inner(url, limits, None).await
+}
+
+/// Envoie `json` en `POST` à `url` (service d'indexation configuré par l'opérateur : GraphQL) et rend la réponse,
+/// bornée par `limits.max_bytes`. Mêmes garde-fous que [`fetch`] ; aucune redirection n'est suivie (un `POST` n'est
+/// jamais rejoué ailleurs).
+pub async fn post_json(url: &str, json: &str, limits: &FetchLimits) -> Result<Vec<u8>, FetchError> {
+    let mut once = limits.clone();
+    once.max_redirects = 0;
+    let got = fetch_inner(url, &once, Some(Bytes::from(json.to_owned()))).await?;
+    let mut out = Vec::new();
+    let mut body = got.body;
+    body.read_to_end(&mut out).await.map_err(|e| FetchError::Connect(e.to_string()))?;
+    if out.len() as u64 > limits.max_bytes {
+        return Err(FetchError::TooLarge(out.len() as u64));
+    }
+    Ok(out)
+}
+
+async fn fetch_inner(url: &str, limits: &FetchLimits, post: Option<Bytes>) -> Result<Fetched, FetchError> {
     let mut current = Url::parse(url).map_err(|e| FetchError::BadUrl(e.to_string()))?;
     let tls = tls_config(&limits.extra_roots)?;
     for hop in 0..=limits.max_redirects {
@@ -185,12 +205,16 @@ pub async fn fetch(url: &str, limits: &FetchLimits) -> Result<Fetched, FetchErro
                 None => current.path().to_owned(),
             };
             let host_header = if current.port().is_some() { format!("{host}:{port}") } else { host.clone() };
-            let req = Request::get(target)
+            let builder = match &post {
+                Some(_) => Request::post(target).header(header::CONTENT_TYPE, "application/json"),
+                None => Request::get(target),
+            };
+            let req = builder
                 .header(header::HOST, host_header)
                 .header(header::USER_AGENT, HeaderValue::from_static("astroportd"))
-                .header(header::ACCEPT, "*/*")
+                .header(header::ACCEPT, if post.is_some() { "application/json" } else { "*/*" })
                 .header(header::ACCEPT_ENCODING, "identity")
-                .body(Empty::<Bytes>::new())
+                .body(Full::new(post.clone().unwrap_or_default()))
                 .map_err(|e| FetchError::BadUrl(e.to_string()))?;
             let resp = sender.send_request(req).await.map_err(|e| FetchError::Connect(e.to_string()))?;
             Ok::<_, FetchError>((resp, conn))

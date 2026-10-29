@@ -100,7 +100,13 @@ impl WsClient {
         Ok(Connector::Rustls(Arc::new(config)))
     }
 
-    async fn fetch_inner(&self, relay: &str, filter: &Filter) -> Result<Vec<Event>, ClientError> {
+    /// Comme [`RelayClient::fetch`], mais la connexion se fait à `connect` (par exemple l'extrémité locale d'un tunnel
+    /// `ipfs p2p`) et la réponse au défi NIP-42 déclare le relai `auth_as` : c'est l'adresse que le relai distant connaît.
+    pub async fn fetch_as(&self, connect: &str, auth_as: &str, filter: &Filter) -> Result<Vec<Event>, ClientError> {
+        tokio::time::timeout(self.timeout, self.fetch_inner(connect, auth_as, filter)).await.map_err(|_| ClientError::Timeout)?
+    }
+
+    async fn fetch_inner(&self, relay: &str, auth_as: &str, filter: &Filter) -> Result<Vec<Event>, ClientError> {
         let (mut ws, _) = connect_async_tls_with_config(relay, None, false, Some(self.connector()?)).await.map_err(|e| ClientError::Connection(e.to_string()))?;
         let req = ClientMessage::Req { sub_id: "crawl".into(), filters: vec![filter.clone()] };
         send(&mut ws, req.to_json()).await?;
@@ -118,7 +124,7 @@ impl WsClient {
                 }
                 RelayMessage::Closed { message, .. } if message.starts_with("auth-required") && !authenticated => {
                     let (Some(signer), Some(challenge)) = (&self.signer, &challenge) else { return Err(ClientError::AuthRequired) };
-                    authenticate(&mut ws, signer, relay, challenge).await?;
+                    authenticate(&mut ws, signer, auth_as, challenge).await?;
                     authenticated = true;
                     events.clear();
                     send(&mut ws, ClientMessage::Req { sub_id: "crawl".into(), filters: vec![filter.clone()] }.to_json()).await?;
@@ -155,7 +161,7 @@ impl WsClient {
 
 impl RelayClient for WsClient {
     async fn fetch(&self, relay: &str, filter: &Filter) -> Result<Vec<Event>, ClientError> {
-        tokio::time::timeout(self.timeout, self.fetch_inner(relay, filter)).await.map_err(|_| ClientError::Timeout)?
+        tokio::time::timeout(self.timeout, self.fetch_inner(relay, relay, filter)).await.map_err(|_| ClientError::Timeout)?
     }
 }
 

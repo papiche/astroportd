@@ -7,6 +7,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+pub mod coop;
 mod key;
 pub mod keys;
 pub mod nip44;

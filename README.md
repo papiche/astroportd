@@ -40,9 +40,10 @@ sur un serveur GPU.
   authentifiés (NIP-42) du cercle, et le N¹ d'un auteur se lit dans sa liste de contacts, même s'il vit sur **une autre
   station** de la constellation.
 
-> **À savoir.** La reconnaissance faciale passe par un service HTTP d'inférence (`--face-engine`) : le binaire n'embarque
-> pas de modèle. Sans lui, uCloud fonctionne mais sans visages. Pas de partage « automatique » vers un ami qui ne vous
-> suit pas en retour : c'est le lien secret qui sert alors.
+> **À savoir.** La reconnaissance faciale passe soit par un service HTTP d'inférence (`--face-engine`), soit, sur une
+> station autonome, par une inférence **locale** (`--face-models`, binaire compilé avec `--features onnx` : SCRFD +
+> ArcFace par ONNX Runtime, modèles à fournir). Sans l'un ni l'autre, uCloud fonctionne mais sans visages. Pas de partage
+> « automatique » vers un ami qui ne vous suit pas en retour : c'est le lien secret qui sert alors.
 
 Pas à pas : [étape 8 du guide](docs/GUIDE.md#etape-8).
 
@@ -246,8 +247,8 @@ Le workspace compte **16 crates** (+ le binaire `astroportd`, qui est aussi une 
 | **`astro-db`** | `uplanet.db` : schéma, acteur d'écriture unique, pool de lecteurs WAL, recherche vectorielle `sqlite-vec` (mémoire 1024D, visages 512D), stockage des événements (remplaçables, NIP-09, NIP-40), migrations légères. Base créée en `0600`. |
 | **`astro-relay`** | Relai Nostr WebSocket en **pare-feu social** : lecture publique des kinds publics, tout le reste réservé au cercle N1/N2 authentifié (NIP-42) ; NIP-11 ; anti-abus (débit, tailles). |
 | **`astro-sync`** | `Projector` (événement → requêtes SQL, pur et indépendant de l'ordre), `replay`, `Crawler` N² clé par clé, client WebSocket (`ws://`, `wss://` rustls), envoi de messages chiffrés. |
-| **`astro-dav`** | WebDAV classe 1+2 sur uCloud chiffré (GET/Range, PUT en flux, PROPFIND, MKCOL, MOVE, COPY, LOCK, PROPPATCH), manifeste ancré sur Nostr/IPFS, liens d'invité `/s/<slug>#clé`, **miniatures WebP**, dépôt hors WebDAV (`ingest`), magasin de blobs (disque / Kubo), **films et séries** (`media` : métadonnées TMDB, sondage, plan H.264/AAC, événement NIP-71, attestation de copie privée). |
-| **`astro-facecloud`** | Reconnaissance de visages : file de photos, moteur d'inférence (Brain HTTP), seuils 0,82 / 0,55, partage automatique aux amis réciproques, validation « est-ce X ? ». |
+| **`astro-dav`** | WebDAV classe 1+2 sur uCloud chiffré (GET/Range, PUT en flux, PROPFIND, MKCOL, MOVE, COPY, LOCK, PROPPATCH), manifeste ancré sur Nostr/IPFS, liens d'invité `/s/<slug>#clé` (lecture seule) et **invitations** `/i/<jeton>` (le destinataire crée son MULTIPASS et reçoit les photos), **miniatures WebP**, dépôt hors WebDAV (`ingest`), magasin de blobs (disque / Kubo), **CardDAV** (`carddav` : carnet `/Contacts` chiffré, vCard 3.0/4.0 avec `X-NOSTR-PUBKEY`/`X-G1-PUBKEY`), **films et séries** (`media` : métadonnées TMDB, sondage, plan H.264/AAC, événement NIP-71, attestation de copie privée). |
+| **`astro-facecloud`** | Reconnaissance de visages : file de photos, moteur d'inférence (Brain HTTP ou ONNX local, commutable à chaud), seuils 0,82 / 0,55, partage automatique aux amis réciproques, validation « est-ce X ? ». |
 | **`astro-bro`** | Agent personnel **BRO LifeOS** : mémoire sémantique `bge-m3` 1024D (4 emplacements), **cycle RÊVE** (condensation à 150 souvenirs), garde-fous anti-secrets, bus de commandes par messages privés, **courtier autonome** de GPU. |
 | **`astro-p2p`** | Maillage libp2p (TCP/QUIC, Noise, Yamux, réseau privé par `swarm.key`, circuit relay, DCUtR), tunnels DRAGON `/x/<service>-<PeerID>` avec **garde par flux et watchdog de session**, échange de blobs, **routage intelligent** (Power-Score, `power`/`closest`/`random`). |
 | **`astro-duniter`** | Client Duniter v2s natif (subxt) : soldes, virements avec mémo, surveillance des transferts, bascule entre nœuds *avant* envoi seulement, signature hors ligne. |
@@ -457,7 +458,7 @@ courtier), économie 3×1/3 et baux, cycle de vie, maillage P2P et tunnels gard�
   constellation), pas encore disponible ;
 - le client Duniter (`subxt`) n'a été éprouvé que hors ligne : son comportement sur un nœud réel reste à valider ;
 - une nuit de 20h12 manquée n'est rejouée qu'au démarrage et seulement pour la veille et le jour courant ;
-- l'inférence faciale passe par un « Brain » HTTP : pas de modèle ONNX embarqué ;
+- l'inférence faciale a deux moteurs : un « Brain » HTTP, ou l'inférence **locale** (SCRFD + ArcFace par ONNX Runtime, `--face-models`, binaire compilé avec `--features onnx`, `astroportd face-check` pour diagnostiquer). Le binaire publié sans la fonction `onnx`, et les binaires statiques (musl, `libonnxruntime` introuvable), n'ont que le Brain HTTP ; les modèles ne sont jamais embarqués dans le binaire ;
 - le tarif d'un bail est jugé au tarif en vigueur à la date du virement (`tariffs_history`, jamais purgée) ; le
   compteur de calcul GPU (1 h/jour, 7 h/semaine ISO) est persisté dans `kv` (`gpu_meter`, `<PeerID>:<AAAA-MM-JJ>` =
   secondes) : un redémarrage ne le remet pas à zéro ;

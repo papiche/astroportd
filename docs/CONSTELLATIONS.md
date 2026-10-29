@@ -190,7 +190,13 @@ ssh -p 2222 utilisateur@127.0.0.1
 - Les **vidéos** (copie privée) ne sont livrées qu'à l'auteur et à son N¹, jamais à tout le cercle N².
 - Le relai Nostr réserve ses contenus privés au cercle N¹/N² authentifié (NIP-42).
 
-La reconnaissance faciale passe par un service HTTP (`--face-engine`) ; il n'y a pas de modèle embarqué dans le binaire.
+La reconnaissance faciale passe par un service HTTP (`--face-engine`) ou par une inférence locale (`--face-models`, voir le guide) ; aucun modèle n'est embarqué dans le binaire.
+
+### Synchronisation N¹/N² et réplication
+
+Une station en marche tire en tâche de fond (`--crawl-every`, 900 s par défaut ; `--no-crawl` pour la couper) les profils et événements publics de ses membres, de leurs amis (N¹) et des amis de leurs amis (N²), depuis les relais des autres stations de la constellation. Ces relais se joignent **par le maillage P2P** (le tunnel `/x/strfry-<PeerID>`, le même que celui de DRAGON) : aucun port public n'est nécessaire. Quand un pair annonce aussi une adresse publique (`myRELAY` dans son `12345.json`), elle ne sert que de **repli** après un échec de connexion, et l'écran « Réplication » dit par quelle voie chaque station a été jointe.
+
+L'écran **Réplication** de l'interface montre, pour vos derniers événements et vos derniers fichiers, **où** ils existent aussi (quelles stations) et **par qui** (vos proches, vos proches de proches, ou d'autres stations). Une station qui ne répond pas est marquée « injoignable », jamais comptée comme « 0 copie ». La mesure des fichiers demande `--kubo` (recherche des fournisseurs d'un CID).
 
 ---
 

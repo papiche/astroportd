@@ -142,7 +142,7 @@ impl StationServices {
         match result {
             Ok(Ok(b)) => Ok(BalanceView { g1_cents: b.total.0, zen_cents: zen_of_g1(b.total.0) }),
             Ok(Err(e)) => {
-                self.activity.publish("economy", "station:balance", format!("lecture du solde impossible : {e}"), None);
+                self.activity.publish_to(astro_core::Audience::Owner(owner.to_owned()), "economy", "station:balance", format!("lecture du solde impossible : {e}"), None);
                 Err(format!("lecture du solde impossible : {e}"))
             }
             Err(_) => Err(format!("le nœud Duniter ne répond pas ({} s)", BALANCE_TIMEOUT.as_secs())),
@@ -207,7 +207,7 @@ impl Services for StationServices {
             .execute("INSERT INTO tasks(kind, payload, status, created_at) VALUES ('bro.upload', ?1, 'pending', ?2)", vec![Value::Text(payload), Value::Integer(now_secs())])
             .await
             .map_err(|e| format!("base : {e}"))?;
-        self.activity.publish("bro", "bro:upload", format!("document mis en file (n° {})", out.last_insert_rowid), None);
+        self.activity.publish_to(astro_core::Audience::Owner(owner_hex.to_owned()), "bro", "bro:upload", format!("document mis en file (n° {})", out.last_insert_rowid), None);
         Ok(match name {
             Some(n) => format!("Document « {n} » mis en file (n° {}).", out.last_insert_rowid),
             None => format!("Document mis en file (n° {}).", out.last_insert_rowid),

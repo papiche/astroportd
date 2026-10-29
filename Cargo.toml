@@ -22,6 +22,10 @@ astro-economy.workspace = true
 astro-core.workspace = true
 astro-duniter.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+getrandom.workspace = true
+image.workspace = true
+bech32.workspace = true
 rusqlite.workspace = true
 zeroize.workspace = true
 base64.workspace = true
@@ -43,6 +47,10 @@ clap.workspace = true
 hex.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "signal", "process"] }
+
+[features]
+# Moteur FaceID local (SCRFD + ArcFace) par ONNX Runtime : `astroportd serve --face-models DIR`. Désactivé par défaut.
+onnx = ["astro-facecloud/onnx"]
 
 [dev-dependencies]
 rcgen.workspace = true
@@ -103,6 +111,8 @@ tokio = { version = "1", default-features = false, features = ["io-util", "rt", 
 thiserror = "2"
 zeroize = { version = "1", features = ["derive"] }
 aes-gcm = { version = "0.10", features = ["zeroize"] }
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
 chacha20poly1305 = "0.10"
 getrandom = "0.3"
 sha2 = "0.10"
@@ -150,6 +160,9 @@ libp2p = { version = "0.56", default-features = false, features = ["tokio", "tcp
 libp2p-stream = "0.4.0-alpha"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+kamadak-exif = "0.6"
+# ONNX Runtime chargé À L'EXÉCUTION (libonnxruntime.so) : aucune bibliothèque téléchargée à la compilation, la compilation croisée reste simple.
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "load-dynamic"] }
 webp = { version = "0.3", default-features = false }
 wasmtime = { version = "36", default-features = false, features = ["runtime", "cranelift", "std", "wat"] }
 regex = { version = "1", default-features = false, features = ["std", "unicode-case", "unicode-perl", "perf"] }
@@ -179,3 +192,12 @@ codegen-units = 1
 # Pas de `panic = "abort"` : l'écrivain SQLite et le pool de lecture attrapent les paniques (catch_unwind) pour rester vivants.
 strip = true
 opt-level = "s"
+
+# Le calcul numérique (voisins mutuels des visages, PCA, décodage d'images) est limité par le processeur : « s » (taille)
+# le ralentit nettement. Seuls ces paquets sont optimisés pour la vitesse ; le reste du binaire reste compact.
+[profile.release.package.astro-facecloud]
+opt-level = 3
+[profile.release.package.image]
+opt-level = 3
+[profile.release.package.ort]
+opt-level = 3

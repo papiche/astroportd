@@ -77,6 +77,8 @@ pub struct Registered {
     pub token: String,
     /// `ORIGIN` ou `ẐEN`.
     pub constellation: &'static str,
+    /// Compte invité : adresse générée par la station, pas un email réel.
+    pub guest: bool,
 }
 
 /// Le service d'inscription.
@@ -85,6 +87,8 @@ pub struct Registrar {
     nostr_root: PathBuf,
     uplanet_name: String,
     captain_hex: Option<String>,
+    relays: Vec<String>,
+    station_domain: Option<String>,
     token_of: TokenFn,
     publish: Option<PublishFn>,
     activity: Option<ActivityBus>,
@@ -99,15 +103,69 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
+fn create_error(e: MultipassError) -> RegisterError {
+    match e {
+        MultipassError::Exists(_) | MultipassError::IdentityConflict(_) => RegisterError::Conflict(e.to_string()),
+        MultipassError::BadEmail(_) | MultipassError::BadSecrets => RegisterError::Invalid(e.to_string()),
+        other => RegisterError::Internal(other.to_string()),
+    }
+}
+
+/// Alias d'une adresse générée : minuscules ASCII sans accent, lettres et chiffres, 20 caractères au plus ; `membre` à défaut.
+fn guest_alias(raw: Option<&str>) -> String {
+    let mut out = String::new();
+    for c in raw.unwrap_or("").chars().flat_map(char::to_lowercase) {
+        let c = match c {
+            'à' | 'â' | 'ä' | 'á' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'î' | 'ï' | 'í' => 'i',
+            'ô' | 'ö' | 'ó' => 'o',
+            'ù' | 'û' | 'ü' | 'ú' => 'u',
+            'ç' => 'c',
+            'ñ' => 'n',
+            c => c,
+        };
+        if c.is_ascii_alphanumeric() && out.len() < 20 {
+            out.push(c);
+        }
+    }
+    if out.is_empty() { "membre".to_owned() } else { out }
+}
+
+/// 6 caractères aléatoires (minuscules et chiffres), tirés sans biais.
+fn random_suffix() -> Result<String, getrandom::Error> {
+    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut out = String::with_capacity(6);
+    let mut buf = [0u8; 32];
+    while out.len() < 6 {
+        getrandom::fill(&mut buf)?;
+        // 36 caractères : on rejette au-delà de 252 (= 36 × 7) pour que chacun soit équiprobable.
+        out.extend(buf.iter().filter(|b| **b < 252).map(|b| ALPHABET[usize::from(*b) % ALPHABET.len()] as char).take(6 - out.len()));
+    }
+    Ok(out)
+}
+
 impl Registrar {
     /// Service d'inscription de la constellation `uplanet_name`, dossiers de comptes `nostr_root`.
     pub fn new(db: Arc<Db>, nostr_root: PathBuf, uplanet_name: String, token_of: TokenFn, limits: Limits) -> Self {
-        Self { db, nostr_root, uplanet_name, captain_hex: None, token_of, publish: None, activity: None, limits, recent: Mutex::default(), gate: tokio::sync::Mutex::new(()) }
+        Self { db, nostr_root, uplanet_name, captain_hex: None, relays: Vec::new(), station_domain: None, token_of, publish: None, activity: None, limits, recent: Mutex::default(), gate: tokio::sync::Mutex::new(()) }
     }
 
     /// Clé du Capitaine, que chaque nouveau MULTIPASS suit.
     pub fn with_captain(mut self, hex: Option<String>) -> Self {
         self.captain_hex = hex;
+        self
+    }
+
+    /// Relais annoncés (NIP-65, kind 10002) dans l'événement de naissance de chaque nouveau MULTIPASS.
+    pub fn with_relays(mut self, relays: Vec<String>) -> Self {
+        self.relays = relays;
+        self
+    }
+
+    /// Domaine de la station (`--domain`) : repli pour les adresses générées si la configuration coopérative n'en donne pas.
+    pub fn with_station_domain(mut self, domain: Option<String>) -> Self {
+        self.station_domain = domain;
         self
     }
 
@@ -161,6 +219,35 @@ impl Registrar {
             return Err(RegisterError::Closed);
         }
         let email = multipass::normalize_email(email).map_err(|e| RegisterError::Invalid(e.to_string()))?;
+        self.create(ip, vec![email], lang, false).await
+    }
+
+    /// Crée un MULTIPASS **invité** pour quelqu'un qui préfère ne pas donner son email : l'adresse `<alias>-<6 caractères>@<domaine>`
+    /// est un identifiant UPlanet (nostr et IPFS) ; la station ne crée aucune boîte aux lettres (le domaine étant celui de la zone OVH, une messagerie SMTP/IMAP pourra la servir plus tard). L'unicité est contrôlée (nouveau tirage en cas de collision).
+    pub async fn register_guest(&self, ip: Option<IpAddr>, alias: Option<&str>, lang: &str) -> Result<Registered, RegisterError> {
+        if !self.limits.open {
+            return Err(RegisterError::Closed);
+        }
+        let (domain, base) = (self.mail_domain().await, guest_alias(alias));
+        let mut candidates = Vec::new();
+        for _ in 0..5 {
+            let email = format!("{base}-{}@{domain}", random_suffix().map_err(|e| RegisterError::Internal(e.to_string()))?);
+            candidates.push(multipass::normalize_email(&email).map_err(|e| RegisterError::Internal(e.to_string()))?);
+        }
+        self.create(ip, candidates, lang, true).await
+    }
+
+    /// Domaine des adresses générées : la zone OVH (`OVH_ZONE`) de la configuration coopérative, sinon le domaine de la station
+    /// (`--domain`), sinon `uplanet.local`.
+    pub async fn mail_domain(&self) -> String {
+        if let Some(d) = crate::coop_config::domain(&self.db, &self.uplanet_name).await {
+            return d;
+        }
+        self.station_domain.clone().filter(|d| crate::coop_config::valid_domain(d)).unwrap_or_else(|| "uplanet.local".to_owned())
+    }
+
+    /// Crée le compte avec la première des adresses `emails` qui est libre.
+    async fn create(&self, ip: Option<IpAddr>, emails: Vec<String>, lang: &str, guest: bool) -> Result<Registered, RegisterError> {
         let _one_at_a_time = self.gate.lock().await;
         if self.limits.max_accounts > 0 && self.hosted_accounts().await? >= self.limits.max_accounts {
             return Err(RegisterError::Full);
@@ -169,22 +256,27 @@ impl Registrar {
         let at = now();
         self.throttle(ip, at)?;
 
-        let (root, name, lang) = (self.nostr_root.clone(), self.uplanet_name.clone(), lang.to_owned());
-        let mail = email.clone();
-        let account = tokio::task::spawn_blocking(move || multipass::create(&root, &mail, &name, &lang))
-            .await
-            .map_err(|e| RegisterError::Internal(e.to_string()))?
-            .map_err(|e| match e {
-                MultipassError::Exists(_) | MultipassError::IdentityConflict(_) => RegisterError::Conflict(e.to_string()),
-                MultipassError::BadEmail(_) | MultipassError::BadSecrets => RegisterError::Invalid(e.to_string()),
-                other => RegisterError::Internal(other.to_string()),
-            })?;
+        let mut created = None;
+        let last = emails.len().saturating_sub(1);
+        for (i, email) in emails.into_iter().enumerate() {
+            let (root, name, lang) = (self.nostr_root.clone(), self.uplanet_name.clone(), lang.to_owned());
+            let result = tokio::task::spawn_blocking(move || multipass::create(&root, &email, &name, &lang)).await.map_err(|e| RegisterError::Internal(e.to_string()))?;
+            match result {
+                Ok(account) => {
+                    created = Some(account);
+                    break;
+                }
+                Err(MultipassError::Exists(_) | MultipassError::IdentityConflict(_)) if i < last => {}
+                Err(e) => return Err(create_error(e)),
+            }
+        }
+        let account = created.ok_or_else(|| RegisterError::Internal("aucune adresse libre".into()))?;
 
-        let events = multipass::birth_events(&account, &self.uplanet_name, self.captain_hex.as_deref(), at).map_err(|e| RegisterError::Internal(e.to_string()))?;
-        if let Err(e) = self.store(&account.hex, &events).await {
+        let events = multipass::birth_events(&account, &self.uplanet_name, self.captain_hex.as_deref(), &self.relays, at).map_err(|e| RegisterError::Internal(e.to_string()))?;
+        if let Err(e) = self.store(&account.hex, &events, guest).await {
             // Base refusée : on retire le dossier, l'adresse pourra se réinscrire.
             let _ = std::fs::remove_dir_all(&account.dir);
-            return Err(RegisterError::Internal(e));
+            return Err(if e.contains("UNIQUE") { RegisterError::Conflict(format!("{} a déjà un MULTIPASS", account.email)) } else { RegisterError::Internal(e) });
         }
         if let Some(publish) = self.publish.clone() {
             let activity = self.activity.clone();
@@ -193,26 +285,31 @@ impl Registrar {
                 for e in events {
                     if let Err(why) = publish(e).await {
                         if let Some(bus) = &activity {
-                            bus.publish("alert", "register", format!("MULTIPASS {who} : événement de naissance non publié ({why})"), None);
+                            bus.publish_to(astro_core::Audience::Captain, "alert", "register", format!("MULTIPASS {who} : événement de naissance non publié ({why})"), None);
                         }
                     }
                 }
             });
         }
         if let Some(bus) = &self.activity {
-            bus.publish("system", "register", format!("nouveau MULTIPASS {} ({})", account.email, self.constellation()), None);
+            bus.publish_to(astro_core::Audience::Captain, "system", "register", format!("nouveau MULTIPASS {}{} ({})", account.email, if guest { " [invité]" } else { "" }, self.constellation()), None);
         }
         let token = (self.token_of)(&account.hex);
-        Ok(Registered { account, token, constellation: self.constellation() })
+        Ok(Registered { account, token, constellation: self.constellation(), guest })
     }
 
     /// Compte hébergé, événements de naissance et leur projection : une transaction.
-    async fn store(&self, hex: &str, events: &[Event]) -> Result<(), String> {
+    async fn store(&self, hex: &str, events: &[Event], guest: bool) -> Result<(), String> {
         let (hex, events) = (hex.to_owned(), events.to_vec());
         self.db
             .writer()
             .transaction(move |tx| {
                 astro_db::apply_statements(tx, &[Projector::mark_hosted(&hex, "multipass")])?;
+                // Un compte (re)créé repart à la génération 0 du jeton (celle que `token_of` calcule).
+                tx.execute("DELETE FROM kv WHERE scope = 'token_epoch' AND key = ?1", [&hex])?;
+                if guest {
+                    tx.execute("INSERT OR REPLACE INTO kv(scope, key, value, updated_at) VALUES ('guest', ?1, '1', ?2)", rusqlite::params![hex, i64::try_from(now()).unwrap_or(0)])?;
+                }
                 for e in &events {
                     astro_db::events::insert_event(tx, e)?;
                     astro_db::apply_statements(tx, &Projector::plan(e).map_err(|err| astro_db::DbError::Corrupt(err.to_string()))?)?;
@@ -297,6 +394,48 @@ mod tests {
         let err = r.register(None, "z@exemple.org", "fr").await.err();
         assert!(matches!(err, Some(RegisterError::Internal(_))), "{err:?}");
         assert!(!dir.join("nostr/z@exemple.org").exists(), "le dossier du compte est retiré");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    #[tokio::test]
+    async fn a_guest_gets_a_unique_generated_address_on_the_ovh_zone_then_the_station_domain() {
+        let (dir, db, r) = setup("guest", Limits::default());
+        let r = r.with_station_domain(Some("station.exemple.org".into()));
+        // Sans zone OVH : le domaine de la station.
+        let a = r.register_guest(None, Some("Léa Martin!"), "fr").await.unwrap();
+        assert!(a.guest && a.account.email.starts_with("leamartin-") && a.account.email.ends_with("@station.exemple.org"), "{}", a.account.email);
+        let suffix = a.account.email.trim_start_matches("leamartin-").trim_end_matches("@station.exemple.org");
+        assert!(suffix.len() == 6 && suffix.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()), "{suffix}");
+        assert_eq!(a.account.pass.len(), 6, "PASS à 6 chiffres pour un compte neuf");
+        // Avec la zone OVH de la configuration coopérative : elle l'emporte.
+        let (secret, hex) = crate::coop_config::coop_keys(&"0".repeat(64)).unwrap();
+        let ev = astro_nostr_proto::UnsignedEvent { created_at: 10, kind: crate::coop_config::KIND, tags: vec![vec!["d".into(), crate::coop_config::D_TAG.into()]], content: r#"{"OVH_ZONE":"CopylaRadio.com"}"#.into() }.sign(&secret).unwrap();
+        db.writer().transaction(move |tx| astro_db::events::insert_event(tx, &ev).map(|_| ())).await.unwrap();
+        let _ = hex;
+        let b = r.register_guest(None, None, "fr").await.unwrap();
+        assert!(b.account.email.starts_with("membre-") && b.account.email.ends_with("@copylaradio.com"), "{}", b.account.email);
+        assert_ne!(a.account.email, b.account.email);
+        // Marqué « invité » en base ; un compte à email réel ne l'est pas.
+        let real = r.register(None, "vrai@exemple.org", "fr").await.unwrap();
+        assert!(!real.guest);
+        let (g, h) = (a.account.hex.clone(), real.account.hex.clone());
+        let flags: (i64, i64) = db.readers().read(move |c| Ok((c.query_row("SELECT COUNT(*) FROM kv WHERE scope = 'guest' AND key = ?1", [&g], |r| r.get(0))?, c.query_row("SELECT COUNT(*) FROM kv WHERE scope = 'guest' AND key = ?1", [&h], |r| r.get(0))?))).await.unwrap();
+        assert_eq!(flags, (1, 0));
+        // Un domaine invalide dans la configuration est ignoré (repli sur la station) ; sans aucun domaine : uplanet.local.
+        assert!(crate::coop_config::valid_domain("copylaradio.com") && !crate::coop_config::valid_domain("pas un domaine") && !crate::coop_config::valid_domain("localhost"));
+        let (_d2, _db2, bare) = setup("guest-bare", Limits::default());
+        assert!(bare.register_guest(None, None, "fr").await.unwrap().account.email.ends_with("@uplanet.local"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn one_email_is_one_multipass_even_if_the_folder_check_were_bypassed() {
+        let (dir, db, r) = setup("unique", Limits::default());
+        r.register(None, "Pierre@Exemple.org", "fr").await.unwrap();
+        // L'index unique de la base refuse un second MULTIPASS hébergé de même adresse (casse comprise)…
+        let dup = db.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, 'multipass', 'PIERRE@exemple.org', 1)", vec!["ee".repeat(32).into()]).await;
+        assert!(dup.is_err(), "doublon refusé");
+        // …mais la ZenCard ou le Capitaine du même membre peuvent porter la même adresse.
+        db.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, 'zencard', 'pierre@exemple.org', 1)", vec!["ff".repeat(32).into()]).await.unwrap();
         let _ = std::fs::remove_dir_all(dir);
     }
 }

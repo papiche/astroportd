@@ -161,7 +161,7 @@ impl LeaseGate {
             };
             if let (Some(bus), true) = (activity, announce || !ok) {
                 let short: String = peer_s.chars().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect();
-                bus.publish("p2p", "p2p:gate", format!("flux {service} {} pour …{short} ({note})", match (ok, announce) { (true, _) => "ouvert", (false, true) => "refusé", (false, false) => "coupé" }), None);
+                bus.publish_to(astro_core::Audience::Captain, "p2p", "p2p:gate", format!("flux {service} {} pour …{short} ({note})", match (ok, announce) { (true, _) => "ouvert", (false, true) => "refusé", (false, false) => "coupé" }), None);
             }
             ok
         })

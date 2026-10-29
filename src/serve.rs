@@ -82,9 +82,16 @@ pub struct ServeArgs {
     /// API RPC d'IPFS Kubo ; sans elle les blobs restent sur disque.
     #[arg(long)]
     kubo: Option<String>,
-    /// URL du moteur d'inférence faciale : active FaceCloud.
-    #[arg(long)]
+    /// URL du moteur d'inférence faciale (Brain GPU) : active FaceCloud.
+    #[arg(long, conflicts_with = "face_models")]
     face_engine: Option<String>,
+    /// Dossier des modèles ONNX d'InsightFace (`det_10g.onnx` et `w600k_r50.onnx`) : active FaceCloud avec une
+    /// inférence **locale** (binaire compilé avec `--features onnx`, bibliothèque `libonnxruntime` via `ORT_DYLIB_PATH`).
+    #[arg(long)]
+    face_models: Option<PathBuf>,
+    /// Fils de calcul par modèle pour l'inférence locale (0 = au choix d'ONNX Runtime).
+    #[arg(long, default_value_t = 0)]
+    face_threads: usize,
     /// Relais où publier les partages FaceCloud (répétable).
     #[arg(long = "relay")]
     relays: Vec<String>,
@@ -128,9 +135,34 @@ pub struct ServeArgs {
     /// Modèle de résumé du cycle RÊVE.
     #[arg(long, default_value = "llama3.2")]
     chat_model: String,
-    /// Nœud RPC Duniter v2s (`wss://…`) pour les soldes ; répétable (bascule automatique).
+    /// Nœud RPC Duniter v2s (`wss://…`) pour les soldes ; répétable (bascule automatique). Sans lui, les nœuds sont
+    /// **découverts automatiquement** (amorces, pairs, fichier réseau officiel, annonces on-chain ; sondés puis triés par latence).
     #[arg(long = "duniter-rpc")]
     duniter_rpc: Vec<String>,
+    /// Ne pas joindre la Ğ1 : ni soldes, ni écoute des virements, ni découverte de nœuds (station sans ẐEN).
+    #[arg(long)]
+    no_duniter: bool,
+    /// Indexeur squid (GraphQL, `https://…/v1/graphql`) d'un nœud Duniter v2s : sert au contrôle primal des virements reçus
+    /// (un virement n'est compté en Ẑen que s'il vient de cette UPlanet). Sans lui, il est découvert automatiquement.
+    #[arg(long = "squid-url")]
+    squid_url: Option<String>,
+    /// Ne pas transformer les réactions Nostr `+N` en virements de Ẑen (par défaut, la réaction d'un MULTIPASS hébergé ici
+    /// envoie N Ẑen au MULTIPASS de l'auteur, si son portefeuille vient de cette UPlanet).
+    #[arg(long)]
+    no_zen_reactions: bool,
+    /// Ẑen au plus par réaction `+N`.
+    #[arg(long, default_value_t = 100)]
+    zen_per_reaction: u64,
+    /// Ẑen au plus par donateur et par jour.
+    #[arg(long, default_value_t = 500)]
+    zen_per_day: u64,
+    /// Désactive la synchronisation continue N¹/N² : sans elle, la station ne réplique plus les profils et événements
+    /// de ses amis et de leurs amis (relais des stations de la constellation, joints par le maillage P2P).
+    #[arg(long)]
+    no_crawl: bool,
+    /// Période de la synchronisation N¹/N², en secondes.
+    #[arg(long, default_value_t = 900)]
+    crawl_every: u64,
     /// Loyer hebdomadaire d'un MULTIPASS en centimes de Ẑen (jauge d'autonomie du tableau de bord).
     #[arg(long, default_value_t = 100)]
     weekly_rent: u64,
@@ -339,7 +371,23 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     let circle = Arc::new(DbCircle::new());
     circle.refresh(&db).await?;
     let _refresher = circle.spawn_refresher(db.clone(), Duration::from_secs(15));
-    let relay = Relay::new(db.clone(), circle, RelayConfig { projection: Some(Arc::new(Projector::plan_lossy)), ..RelayConfig::default() });
+    let conf_path = a.db.parent().map_or_else(|| PathBuf::from("station.conf"), |d| d.join("station.conf"));
+    let policy = astroportd::station_admin::KindsControl::initial_policy(&db, &conf_path).await;
+    let relay = Relay::new(db.clone(), circle, RelayConfig { projection: Some(Arc::new(Projector::plan_lossy)), policy, ..RelayConfig::default() });
+    let kinds_control = Arc::new(astroportd::station_admin::KindsControl::new(db.clone(), &conf_path, relay.clone()));
+    // Le relai est aussi offert au maillage (`/x/strfry-<PeerID>`, le nom de DRAGON) par une écoute locale : les autres
+    // stations le joignent par `ipfs p2p`, sans port public ni domaine. La politique de lecture (NIP-42) reste celle du relai.
+    if let Some(handle) = &p2p_handle {
+        if a.p2p_expose.iter().any(|s| s.split_once('=').is_some_and(|(n, _)| n == astro_sync::peers::RELAY_SERVICE)) {
+            println!("P2P : le service « {} » est déjà exposé par --p2p-expose", astro_sync::peers::RELAY_SERVICE);
+        } else {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let local = listener.local_addr()?;
+            tokio::spawn(astro_relay::serve(listener, relay.clone()));
+            p2p_guards.push(Box::new(expose(handle, astro_sync::peers::RELAY_SERVICE, local.to_string(), ExposeOpts::default())?));
+            println!("P2P : relai Nostr offert au maillage (/x/{}-{})", astro_sync::peers::RELAY_SERVICE, handle.peer_id());
+        }
+    }
     let mut dav_config = DavConfig::new(station_secret);
     dav_config.lease_node = (!node_hex.is_empty()).then(|| node_hex.clone()); // un bail de disque relève le quota
     if let Some(domain) = a.domains.first() {
@@ -347,39 +395,151 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     }
     let (stop, stop_rx) = tokio::sync::watch::channel(false);
     let stop_watch = stop_rx.clone();
-    let mut worker = None;
-    let mut on_upload = None;
-    if let Some(engine_url) = &a.face_engine {
-        let mut client = WsClient::new(Duration::from_secs(30));
+    let worker;
+    let on_upload;
+    let share_fn: Option<astroportd::identity_links::ShareFn>;
+    let contacts_cell: astroportd::identity_links::HookCell = Arc::default();
+    let thumbs_fn: Option<astroportd::ui_backend::ThumbFn>;
+    // Client de relais commun (lecture, publication) : le maillage P2P d'abord, l'adresse publique en repli. Les enveloppes
+    // d'envoi à un ami partent vers la station d'accueil de l'ami (MeshOutbox), puis vers les relais de `--relay`.
+    let relay_client = {
+        let mut ws = WsClient::new(Duration::from_secs(30));
         if let Some(s) = signer.clone() {
-            client = client.with_signer(s);
+            ws = ws.with_signer(s);
         }
+        Arc::new(astroportd::p2p_relay::P2pRelayClient::new(ws, p2p_handle.clone()))
+    };
+    let mesh_outbox = Arc::new(astroportd::mesh_outbox::MeshOutbox::new(db.clone(), relay_client.clone(), a.relays.clone(), a.swarm_dir.clone().or_else(default_swarm_dir)));
+    let sharing_keys = keys.clone();
+    let account_keys = keys.clone();
+    let invites_keys = keys.clone();
+    let inbox_keys = keys.clone();
+    // Sans option : si les deux modèles sont aux emplacements habituels (et le binaire compilé avec `onnx`), l'inférence locale
+    // s'active toute seule ; `astroportd face-check` dit ce qui manque.
+    // Moteur FaceID : une option de ligne de commande l'impose (réglage figé dans l'interface) ; sinon le choix du Capitaine
+    // (enregistré) l'emporte ; sinon, si les deux modèles sont aux emplacements habituels (binaire compilé avec `onnx`),
+    // l'inférence locale s'active toute seule ; `astroportd face-check` dit ce qui manque. Le Capitaine peut ensuite
+    // basculer à chaud (ONNX local, Brain distant, arrêt) sans redémarrer.
+    use astroportd::station_admin::{FaceControl, FaceMode, load_local_engine, local_models_found};
+    let auto_models = if a.face_engine.is_none() && a.face_models.is_none() { local_models_found(&a.db) } else { None };
+    let (initial_mode, locked) = match (&a.face_engine, &a.face_models) {
+        (Some(url), _) => (FaceMode::Remote(url.clone()), Some("--face-engine".to_owned())),
+        (None, Some(_)) => (FaceMode::Local, Some("--face-models".to_owned())),
+        (None, None) => match FaceControl::stored(&db).await {
+            Some(mode) => (mode, None),
+            None if auto_models.is_some() => {
+                println!("FaceCloud : modèles trouvés : inférence locale activée automatiquement");
+                (FaceMode::Local, None)
+            }
+            None => (FaceMode::Off, None),
+        },
+    };
+    let initial_engine: Option<(astro_facecloud::AnyFaceEngine, String)> = match &initial_mode {
+        FaceMode::Off => None,
+        FaceMode::Remote(url) => Some((astro_facecloud::AnyFaceEngine::Http(Box::new(HttpFaceEngine::new(url, Duration::from_secs(120)))), format!("moteur {url}"))),
+        FaceMode::Local => match a.face_models.clone().or(auto_models) {
+            Some(dir) => match load_local_engine(&dir, a.face_threads).await {
+                Ok(engine) => Some((engine, format!("inférence locale ONNX ({})", dir.display()))),
+                Err(e) if locked.is_some() => return Err(e.into()),
+                Err(e) => {
+                    eprintln!("FaceCloud : {e} : moteur arrêté (réglable dans l'interface du Capitaine)");
+                    None
+                }
+            },
+            None => {
+                eprintln!("FaceCloud : inférence locale choisie mais modèles introuvables : moteur arrêté");
+                None
+            }
+        },
+    };
+    let face_label = initial_engine.as_ref().map(|(_, l)| l.clone());
+    let face_switch = Arc::new(astro_facecloud::SwitchableEngine::new(initial_engine));
+    let face_control = Arc::new(FaceControl::new(db.clone(), face_switch.clone(), a.face_threads, a.db.parent().map(PathBuf::from).unwrap_or_default(), locked, initial_mode));
+    {
         let face = Arc::new(FaceCloud::new(
             db.clone(),
             blobs.clone(),
-            Arc::new(HttpFaceEngine::new(engine_url, Duration::from_secs(120))),
-            Arc::new(RelayOutbox::new(client, a.relays.clone())),
+            face_switch,
+            mesh_outbox.clone(),
             keys,
             Some(publisher.clone()),
             FaceConfig::default(),
         ));
-        on_upload = Some(face.upload_hook());
+        on_upload = Some(astroportd::identity_links::upload_hook(contacts_cell.clone(), Some(face.upload_hook())));
+        let for_share = face.clone();
+        share_fn = Some(Arc::new(move |owner: String, friend: String| {
+            let face = for_share.clone();
+            Box::pin(async move {
+                match face.share_backlog(&owner, &friend).await {
+                    Ok((shared, skipped)) => println!("annuaire : {shared} photo(s) partagée(s) avec la personne reliée ({skipped} écartée(s) : amitié non réciproque, déjà partagé…)"),
+                    Err(e) => eprintln!("annuaire : partage impossible : {e}"),
+                }
+            })
+        }));
+        let for_thumbs = face.clone();
+        thumbs_fn = Some(Arc::new(move |owner: String, ids: Vec<i64>, size: u32| {
+            let face = for_thumbs.clone();
+            Box::pin(async move { face.face_thumbs(&owner, &ids, size).await.map(|b| (b.thumbs, b.failed)).map_err(|e| e.to_string()) })
+        }));
         worker = Some(tokio::spawn(face.run_worker(Duration::from_secs(5), stop_rx)));
-        println!("FaceCloud actif (moteur {engine_url})");
+        println!("FaceCloud actif ({})", face_label.as_deref().unwrap_or("moteur arrêté : réglable par le Capitaine"));
     }
+    let inbox_blobs = blobs.clone();
     let dav = Arc::new(DavState { db: db.clone(), blobs, replay, publisher: Some(publisher.clone()), config: dav_config, on_upload });
+    // Annuaire : fiches vCard de /Contacts ↔ visages ↔ MULTIPASS (CardDAV est servi par le routeur WebDAV).
+    let links = Arc::new(astroportd::identity_links::IdentityLinks::new(db.clone(), dav.clone(), share_fn, Some(activity.clone())));
+    let _ = contacts_cell.set(links.clone());
+
 
     // BRO LifeOS : mémoire sémantique (Ollama), services de la station, bus de commandes par messages privés.
     let ollama = a.ollama.as_deref().map(|url| Arc::new(OllamaClient::new(url, &a.embed_model, &a.chat_model, Duration::from_secs(60))));
     let memory = ollama.as_ref().map(|o| Arc::new(MemoryStore::new(db.clone(), o.clone(), o.clone(), Some(activity.clone()))));
     let hardware = tokio::task::spawn_blocking(Hardware::detect).await?;
-    let chain = (!a.duniter_rpc.is_empty()).then(|| Arc::new(RpcPool::new(SubxtConnector, PoolConfig { urls: a.duniter_rpc.clone(), cooldown: Duration::from_secs(60), reconnect_delay: Duration::from_secs(2) })));
+    // Constellation = secret partagé de la swarm.key (ẐEN) ou 64 zéros (ORIGIN).
+    let uplanet_name = match &a.swarm_key {
+        Some(path) => std::fs::read_to_string(path)?.lines().map(str::trim).rfind(|l| !l.is_empty()).map(str::to_owned).ok_or("swarm.key vide")?,
+        None => astroportd::init::ORIGIN_UPLANETNAME.to_owned(),
+    };
+    // Nœuds Duniter : ceux donnés, sinon découverts (cache d'une heure dans la base ; échec = amorces, dit au démarrage).
+    let discovered = if a.no_duniter || (!a.duniter_rpc.is_empty() && a.squid_url.is_some()) {
+        None
+    } else {
+        let found = tokio::time::timeout(Duration::from_secs(40), astroportd::duniter_nodes::nodes(&db, Arc::new(astroportd::duniter_nodes::RealHttp::default()))).await.ok();
+        match &found {
+            Some(n) if n.degraded => eprintln!("Ğ1 : découverte des nœuds sans réponse : amorces utilisées sans sonde ({} RPC, {} squid)", n.rpc.len(), n.squid.len()),
+            Some(n) => println!("Ğ1 : {} nœud(s) RPC et {} indexeur(s) découverts (le plus rapide : {} en {} ms)", n.rpc.len(), n.squid.len(), n.rpc.first().map_or("—", |r| r.url.as_str()), n.rpc.first().map_or(0, |r| r.latency_ms)),
+            None => eprintln!("Ğ1 : découverte des nœuds trop lente (40 s) : amorces utilisées sans sonde"),
+        }
+        found.or_else(|| Some(astroportd::duniter_nodes::Nodes { rpc: astroportd::duniter_nodes::BOOTSTRAP_RPC.iter().map(|u| astroportd::duniter_nodes::Scored { url: (*u).to_owned(), latency_ms: 9999, height: 0 }).collect(), squid: astroportd::duniter_nodes::BOOTSTRAP_SQUID.iter().map(|u| astroportd::duniter_nodes::Scored { url: (*u).to_owned(), latency_ms: 9999, height: 0 }).collect(), degraded: true }))
+    };
+    let rpc_urls: Vec<String> = if !a.duniter_rpc.is_empty() { a.duniter_rpc.clone() } else { discovered.as_ref().map(astroportd::duniter_nodes::Nodes::rpc_urls).unwrap_or_default() };
+    let squid_urls: Vec<String> = match &a.squid_url {
+        Some(u) => vec![u.clone()],
+        None => discovered.as_ref().map(astroportd::duniter_nodes::Nodes::squid_urls).unwrap_or_default(),
+    };
+    let chain = (!a.no_duniter && !rpc_urls.is_empty()).then(|| Arc::new(RpcPool::new(SubxtConnector, PoolConfig { urls: rpc_urls, cooldown: Duration::from_secs(60), reconnect_delay: Duration::from_secs(2) })));
+    let funds_chain = chain.clone();
     let peer_id = p2p_handle.as_ref().map(|h| h.peer_id().to_string()).or_else(|| station.discovered.as_ref().map(|d| d.node.peer_id.clone()));
     let services_peer = peer_id.clone();
     let info = StationInfo { node_hex: node_hex.clone(), peer_id, domain: a.domains.first().cloned(), started: std::time::Instant::now() };
     let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: station.nostr_dir.clone(), chain, hardware, p2p: p2p_handle.clone(), weekly_rent_cents: a.weekly_rent, activity: activity.clone(), swarm_dir: a.swarm_dir.clone().or_else(default_swarm_dir), origin: a.lat.zip(a.lon), exposed: a.p2p_expose.iter().filter_map(|s| s.split_once('=').map(|(n, _)| n.to_owned())).collect() }));
     println!("matériel : {}", station::hardware_text(&hardware, None));
     let mut background: Vec<tokio::task::JoinHandle<()>> = vec![tokio::spawn(watch_relay(relay.subscribe(), activity.clone(), stop_watch.clone()))];
+    {
+        let (links, mut stop) = (links.clone(), stop_watch.clone());
+        background.push(tokio::spawn(async move {
+            loop {
+                let n = links.sync_all().await;
+                if n > 0 {
+                    println!("annuaire : {n} carnet(s) relu(s)");
+                }
+                tokio::select! {
+                    () = tokio::time::sleep(Duration::from_secs(900)) => {}
+                    _ = stop.changed() => return,
+                }
+            }
+        }));
+    }
     let mut notify: Option<Notify> = None;
     if let Some(secret) = &station.node_secret {
         let mut client = WsClient::new(Duration::from_secs(30));
@@ -425,7 +585,189 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
             _ => return Err("--auto-lease exige la clé Nostr du NODE (--game-dir)".into()),
         }
     }
+    // Envoi de fichiers aux proches et réception de ceux qu'ils envoient depuis d'autres stations (blob rapatrié par le maillage).
+    let sharing = Arc::new(astroportd::sharing::Sharing::new(db.clone(), sharing_keys, mesh_outbox.clone(), Some(publisher.clone()), services_peer.clone()));
+    {
+        let mut inbox = astroportd::share_inbox::ShareInbox::new(db.clone(), inbox_blobs, inbox_keys, Some(publisher.clone()), activity.clone(), notify.clone());
+        if let Some(handle) = p2p_handle.clone() {
+            let local = local.clone();
+            inbox = inbox.with_prefetch(Arc::new(move |cid: String, peer: String| {
+                let (handle, local) = (handle.clone(), local.clone());
+                Box::pin(async move {
+                    let peer: astro_p2p::PeerId = peer.parse().map_err(|e| format!("PeerID illisible : {e}"))?;
+                    astro_p2p::blob::fetch_blob(&handle, &[peer], &cid, local.as_ref(), 1 << 30, Duration::from_secs(120)).await.map(|_| ()).map_err(|e| e.to_string())
+                })
+            }));
+        }
+        background.push(tokio::spawn(Arc::new(inbox).run(Duration::from_secs(20), stop_watch.clone())));
+        println!("partage : fichiers des proches reçus par le maillage (un passage toutes les 20 s)");
+    }
+    // Rattrapage du GPS et de la date de prise de vue des photos reçues avant que la station ne les lise : 25 fichiers par
+    // compte et par passage, chacun lu une seule fois ; le rythme s'accélère tant qu'il en reste.
+    {
+        let (dav, db, bus, mut stop) = (dav.clone(), db.clone(), activity.clone(), stop_watch.clone());
+        background.push(tokio::spawn(async move {
+            let mut wait = Duration::from_secs(30);
+            loop {
+                tokio::select! {
+                    () = tokio::time::sleep(wait) => {}
+                    _ = stop.changed() => return,
+                }
+                let owners: Vec<String> = db.readers().read(|c| Ok(c.prepare("SELECT hex FROM identities WHERE hosted = 1 AND role IN ('multipass','captain','zencard')")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?)).await.unwrap_or_default();
+                let (mut scanned, mut found, mut remaining) = (0, 0, 0);
+                for owner in owners {
+                    match astro_dav::thumb::backfill_exif(&dav, &owner, 25).await {
+                        Ok(s) => (scanned, found, remaining) = (scanned + s.scanned, found + s.found, remaining + s.remaining),
+                        Err(e) => {
+                            bus.publish_to(astro_core::Audience::Captain, "alert", "exif", format!("rattrapage EXIF impossible : {e}"), None);
+                        }
+                    }
+                }
+                if scanned > 0 {
+                    bus.publish_to(astro_core::Audience::Captain, "system", "exif", format!("rattrapage EXIF : {scanned} photo(s) lue(s), {found} avec position ou date, {remaining} restante(s)"), None);
+                }
+                wait = if remaining > 0 { Duration::from_secs(20) } else { Duration::from_secs(900) };
+            }
+        }));
+    }
     // Documents demandés par `#upload` : rapatriés, chiffrés et déposés dans /Uploads (le demandeur est prévenu).
+    // Synchronisation continue N¹/N² : les profils et événements des amis et de leurs amis, depuis les relais des stations
+    // de la constellation (joints par le maillage P2P, adresse publique en repli).
+    if !a.no_crawl {
+        let client = astroportd::p2p_relay::SharedRelayClient(relay_client.clone());
+        let swarm = a.swarm_dir.clone().or_else(default_swarm_dir);
+        let own = services_peer.clone();
+        let source: astro_sync::RelaySource = Arc::new(move || {
+            let peers = swarm.as_deref().map(astro_sync::read_peers).unwrap_or_default();
+            peers.iter().filter(|p| Some(&p.node_id) != own.as_ref()).map(astro_sync::Peer::target).collect()
+        });
+        let (hook_db, hook_bus, hook_client) = (db.clone(), activity.clone(), client.clone());
+        let hook: astro_sync::PassHook = Arc::new(move |r| {
+            match &r.result {
+                Ok(s) => {
+                    if s.inserted > 0 {
+                        hook_bus.publish("relay", "crawl", format!("synchronisation N² : {} nouvel(s) événement(s) répliqué(s) ({} membres, {} relais)", s.inserted, s.keys, r.relays), None);
+                    }
+                    if let Some((relay, key, why)) = s.errors.first() {
+                        hook_bus.publish_to(astro_core::Audience::Captain, "alert", "crawl", format!("synchronisation N² : {} échec(s), par exemple {relay} pour …{} : {why}", s.errors.len(), key.chars().take(8).collect::<String>()), None);
+                    }
+                }
+                Err(e) => {
+                    hook_bus.publish_to(astro_core::Audience::Captain, "alert", "crawl", format!("synchronisation N² interrompue : {e}"), None);
+                }
+            }
+            let routes = serde_json::Value::Array(hook_client.0.routes().iter().map(astroportd::p2p_relay::RouteState::to_json).collect());
+            let db = hook_db.clone();
+            tokio::spawn(async move {
+                let _ = db
+                    .writer()
+                    .execute("INSERT INTO kv(scope, key, value, updated_at) VALUES ('crawl_status', 'routes', ?1, strftime('%s','now')) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", vec![routes.to_string().into()])
+                    .await;
+            });
+        });
+        let config = astro_sync::CrawlConfig { relays: a.relays.clone(), ..astro_sync::CrawlConfig::default() };
+        let coop_keys: Vec<String> = astroportd::coop_config::coop_keys(&uplanet_name).map(|(_, hex)| vec![hex]).unwrap_or_default();
+        let crawler = Arc::new(astro_sync::Crawler::new(db.clone(), client.clone(), config).with_relay_source(source).with_hook(hook).with_extra_keys(coop_keys));
+        // Mesure de la réplication des données des membres hébergés : où et par qui (événements ; fichiers si kubo est joint).
+        {
+            let swarm = a.swarm_dir.clone().or_else(default_swarm_dir);
+            let peers_fn: astro_sync::replication::PeersFn = Arc::new(move || swarm.as_deref().map(astro_sync::read_peers).unwrap_or_default());
+            // Qui détient un fichier : le maillage interne d'abord (sonde `HAS` du protocole de blobs, sans kubo), kubo pour les
+            // CID qu'il ne sait pas échanger (`bafybei…` : fichiers en plusieurs blocs) quand `--kubo` est donné.
+            let kubo = a.kubo.as_deref().map(|url| Arc::new(astro_dav::kubo::KuboBlobStore::new(url)));
+            let mesh = p2p_handle.clone();
+            let providers: Option<astro_sync::replication::ProviderFn> = (mesh.is_some() || kubo.is_some()).then(|| {
+                let swarm = a.swarm_dir.clone().or_else(default_swarm_dir);
+                let f: astro_sync::replication::ProviderFn = Arc::new(move |cid: String| {
+                    let (kubo, mesh, swarm) = (kubo.clone(), mesh.clone(), swarm.clone());
+                    Box::pin(async move {
+                        if let (Some(handle), true) = (&mesh, cid.starts_with("bafkrei")) {
+                            let peers = swarm.as_deref().map(astro_sync::read_peers).unwrap_or_default();
+                            let probes = peers.into_iter().filter_map(|p| p.node_id.parse::<astro_p2p::PeerId>().ok().map(|id| (p.node_id, id))).map(|(name, id)| {
+                                let (handle, cid) = (handle.clone(), cid.clone());
+                                async move { (name, astro_p2p::blob::has_blob(&handle, id, &cid, Duration::from_secs(4)).await) }
+                            });
+                            let mut found = Vec::new();
+                            for (name, r) in futures_util::future::join_all(probes).await {
+                                if matches!(r, Ok(Some(_))) {
+                                    found.push(name);
+                                }
+                            }
+                            return Ok(found);
+                        }
+                        match &kubo {
+                            Some(k) => k.providers(&cid, 20, Duration::from_secs(8)).await.map_err(|e| e.to_string()),
+                            None => Err("CID en plusieurs blocs : non échangeable par le maillage, et kubo n'est pas joint (--kubo)".to_owned()),
+                        }
+                    })
+                });
+                f
+            });
+            let measured = providers.is_some();
+            let config = astro_sync::ReplicationConfig { own_node_id: services_peer.clone(), ..astro_sync::ReplicationConfig::default() };
+            let replicator = Arc::new(astro_sync::Replicator::new(db.clone(), client.clone(), peers_fn, providers, config));
+            let alert_bus = activity.clone();
+            let on_pass: Arc<dyn Fn(Result<usize, String>) + Send + Sync> = Arc::new(move |r| {
+                if let Err(e) = r {
+                    alert_bus.publish_to(astro_core::Audience::Captain, "alert", "replication", format!("mesure de la réplication impossible : {e}"), None);
+                }
+            });
+            println!("réplication : mesure par membre toutes les {} s ({})", (a.crawl_every * 2).max(60), if measured { "événements et fichiers" } else { "événements seulement : --kubo absent" });
+            background.push(tokio::spawn(replicator.run_forever(Duration::from_secs(120), Duration::from_secs((a.crawl_every * 2).max(60)), on_pass, stop_watch.clone())));
+        }
+        println!("synchronisation N¹/N² : un passage toutes les {} s (premier dans 60 s)", a.crawl_every);
+        background.push(tokio::spawn(crawler.run_forever_after(Duration::from_secs(60), Duration::from_secs(a.crawl_every.max(30)), stop_watch.clone())));
+    }
+    // Virements Ğ1 reçus : le titulaire est prévenu dès le bloc (flux personnel + message privé de BRO).
+    if let Some(chain) = funds_chain {
+        match astroportd::funds::master_wallet(&uplanet_name) {
+            Ok(master) => {
+                let indexer = (!squid_urls.is_empty()).then(|| Arc::new(astroportd::funds::SquidPrimal::new(squid_urls.clone())));
+                // Les listes issues de la découverte se renouvellent toutes les heures : nœuds RPC (le pool garde sa connexion qui
+                // marche et suit la nouvelle liste à la prochaine bascule) et indexeurs squid. Une liste imposée par option ne bouge pas.
+                let (auto_rpc, auto_squid) = (a.duniter_rpc.is_empty(), a.squid_url.is_none());
+                if !a.no_duniter && (auto_rpc || (auto_squid && indexer.is_some())) {
+                    let (pool, handle, db, mut stop) = (chain.clone(), indexer.as_ref().map(|ix| ix.urls_handle()), db.clone(), stop_watch.clone());
+                    background.push(tokio::spawn(async move {
+                        loop {
+                            tokio::select! {
+                                () = tokio::time::sleep(Duration::from_secs(astroportd::duniter_nodes::CACHE_TTL_SECS.unsigned_abs() + 60)) => {}
+                                _ = stop.changed() => return,
+                            }
+                            let fresh = astroportd::duniter_nodes::nodes(&db, Arc::new(astroportd::duniter_nodes::RealHttp::default())).await;
+                            if fresh.degraded {
+                                continue; // aucune réponse : on garde les listes qui marchent
+                            }
+                            if auto_rpc {
+                                pool.set_urls(fresh.rpc_urls());
+                            }
+                            if let (true, Some(h)) = (auto_squid, &handle) {
+                                *h.write().unwrap_or_else(|e| e.into_inner()) = fresh.squid_urls();
+                            }
+                        }
+                    }));
+                }
+                // Réactions `+N` : le MULTIPASS hébergé ici qui réagit envoie N Ẑen (virement Ğ1) à l'auteur, sans toucher au relai.
+                if !a.no_zen_reactions {
+                    let zen = Arc::new(astroportd::zen_react::ZenReactions::new(
+                        db.clone(),
+                        chain.clone(),
+                        secrets_dir.clone(),
+                        indexer.clone(),
+                        master.clone(),
+                        activity.clone(),
+                        notify.clone(),
+                        astroportd::zen_react::ZenLimits { per_reaction: a.zen_per_reaction, per_day: a.zen_per_day },
+                    ));
+                    background.push(tokio::spawn(zen.run(relay.subscribe(), stop_watch.clone())));
+                    println!("Ẑen : les réactions +N des MULTIPASS hébergés ici envoient N Ẑen (plafonds : {} par réaction, {} par jour)", a.zen_per_reaction, a.zen_per_day);
+                }
+                let watch = Arc::new(astroportd::funds::FundsWatch::new(db.clone(), activity.clone(), master, indexer, notify.clone(), station.nostr_dir.clone()));
+                background.push(tokio::spawn(watch.run(chain, stop_watch.clone())));
+            }
+            Err(e) => eprintln!("Ğ1 : portefeuille maître de la constellation introuvable ({e}) : écoute des virements inactive"),
+        }
+    }
     background.push(tokio::spawn(Arc::new(UploadWorker::new(dav.clone(), activity.clone(), notify)).run(Duration::from_secs(10), stop_watch.clone())));
     println!("BRO : traitement des #upload actif (dépôt dans /Uploads)");
     if let Some(m) = &memory {
@@ -519,11 +861,7 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
             Box::pin(async move { p.record_consent(&owner).await.map(|_| ()).map_err(|e| e.to_string()) })
         })
     };
-    // Inscription d'un MULTIPASS : constellation = secret partagé de la swarm.key (ẐEN) ou 64 zéros (ORIGIN).
-    let uplanet_name = match &a.swarm_key {
-        Some(path) => std::fs::read_to_string(path)?.lines().map(str::trim).rfind(|l| !l.is_empty()).map(str::to_owned).ok_or("swarm.key vide")?,
-        None => astroportd::init::ORIGIN_UPLANETNAME.to_owned(),
-    };
+    // Inscription d'un MULTIPASS : `uplanet_name` (voir plus haut) désigne la constellation.
     let registrar = {
         let secret = station.secret.clone();
         let publisher = event_publisher.clone();
@@ -534,13 +872,64 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
         let captain = station.discovered.as_ref().and_then(|d| d.captain()).map(|m| m.hex.clone());
         let limits = astroportd::register::Limits { open: !a.no_register, max_accounts: a.max_accounts, per_ip_per_hour: a.register_per_hour };
         Arc::new(
-            astroportd::register::Registrar::new(db.clone(), secrets_dir.clone(), uplanet_name, Arc::new(move |hex| astro_dav::auth::derive_dav_token(&secret, hex)), limits)
+            astroportd::register::Registrar::new(db.clone(), secrets_dir.clone(), uplanet_name.clone(), Arc::new(move |hex| astro_dav::auth::derive_dav_token(&secret, hex)), limits)
                 .with_captain(captain)
+                .with_station_domain(a.domains.first().cloned())
+                .with_relays(a.domains.first().map(|d| format!("wss://{d}")).into_iter().collect())
                 .with_publisher(publish, Some(activity.clone())),
         )
     };
     println!("inscription web des MULTIPASS : {} (constellation {}, max {} comptes, {} par heure et par adresse) → /register", if a.no_register { "fermée" } else { "ouverte" }, registrar.constellation(), a.max_accounts, a.register_per_hour);
-    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, ollama, a.face_engine.is_some()).with_consent(consent_fn).with_registrar(registrar));
+    // Invitations : le lien `/i/<jeton>` crée le MULTIPASS du destinataire, l'abonne à l'expéditeur et range les photos.
+    let invites = {
+        let relays = event_publisher.clone();
+        let publish: astroportd::register::PublishFn = Arc::new(move |e| {
+            let p = relays.clone();
+            Box::pin(async move { astro_bro::broker::Publisher::publish(&*p, e).await })
+        });
+        Arc::new(astroportd::invites::Invites::new(db.clone(), dav.blobs.clone(), invites_keys, registrar.clone(), publish).with_links(links.clone()).with_publisher(publisher.clone()).with_activity(activity.clone()))
+    };
+    let account_publish: astroportd::register::PublishFn = {
+        let publisher = event_publisher.clone();
+        Arc::new(move |e| {
+            let p = publisher.clone();
+            Box::pin(async move { astro_bro::broker::Publisher::publish(&*p, e).await })
+        })
+    };
+    let account_origin = a.domains.first().map(|d| format!("https://{d}"));
+    let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_consent(consent_fn).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone())))
+        .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control }).handler());
+    if let Some(f) = thumbs_fn {
+        ui = ui.with_face_thumbs(f);
+    }
+    {
+        let (for_coop_get, for_coop_set) = (db.clone(), (db.clone(), event_publisher.clone()));
+        let coop_name = uplanet_name.clone();
+        let coop_name2 = uplanet_name.clone();
+        let coop_get: astroportd::ui_backend::CoopGetFn = Arc::new(move || {
+            let (db, name) = (for_coop_get.clone(), coop_name.clone());
+            Box::pin(async move {
+                let (_, hex) = astroportd::coop_config::coop_keys(&name)?;
+                Ok(astroportd::coop_config::view(astroportd::coop_config::load(&db, &hex).await.as_ref(), &name, &hex))
+            })
+        });
+        let coop_set: astroportd::ui_backend::CoopSetFn = Arc::new(move |patch| {
+            let ((db, publisher), name) = (for_coop_set.clone(), coop_name2.clone());
+            Box::pin(async move { astroportd::coop_config::save(&db, &publisher, &name, &patch).await })
+        });
+        ui = ui.with_coop(coop_get, coop_set);
+        let (for_friends, for_send) = (sharing.clone(), sharing.clone());
+        let friends: astroportd::ui_backend::FriendsFn = Arc::new(move |owner: String| {
+            let sharing = for_friends.clone();
+            Box::pin(async move { sharing.friends(&owner).await.map(|f| serde_json::json!({ "friends": f.iter().map(|x| serde_json::json!({ "hex": x.hex, "label": x.label, "hosted": x.hosted })).collect::<Vec<_>>() })) })
+        });
+        let send: astroportd::ui_backend::SendFn = Arc::new(move |owner: String, paths: Vec<String>, to: Vec<String>| {
+            let sharing = for_send.clone();
+            Box::pin(async move { sharing.send(&owner, &paths, &to).await })
+        });
+        ui = ui.with_sharing(friends, send);
+    }
+    let ui = Arc::new(ui);
 
     // Reverse proxy : les routes gardées exigent un compte de la station (Basic ou NIP-98).
     let gate: Gate = {

@@ -156,7 +156,9 @@ mod tests {
         wrap.verify().unwrap();
         assert_eq!(wrap.tags, vec![vec!["p".to_owned(), bob_pk]]);
         assert_ne!(wrap.pubkey, astro_nostr_proto::pubkey_of(&alice).unwrap(), "clé jetable : l'expéditeur n'apparaît pas");
-        assert!(!wrap.content.contains("ipfs") && !wrap.content.contains("cid"));
+        // Les octets chiffrés (pas leur écriture base64, où trois lettres tombent parfois sur « cid » par hasard).
+        let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &wrap.content).unwrap();
+        assert!(!raw.windows(4).any(|w| w == b"ipfs") && !raw.windows(3).any(|w| w == b"cid"));
         assert!(wrap.created_at <= NOW && NOW - wrap.created_at < JITTER_SECS, "horodatage brouillé vers le passé");
         let open = unwrap(&bob, &wrap).unwrap();
         assert_eq!(open.sender, astro_nostr_proto::pubkey_of(&alice).unwrap());

@@ -35,6 +35,38 @@ pub fn derive_dav_token(station_secret: &[u8], owner_hex: &str) -> String {
     URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())[..32].to_owned()
 }
 
+/// Génération du jeton d'un compte : 0 tant qu'il n'a jamais été changé.
+pub async fn token_epoch(db: &Db, owner_hex: &str) -> u32 {
+    let owner = owner_hex.to_owned();
+    db.readers()
+        .read(move |c| Ok(rusqlite::OptionalExtension::optional(c.query_row("SELECT CAST(value AS INTEGER) FROM kv WHERE scope = 'token_epoch' AND key = ?1", [&owner], |r| r.get::<_, i64>(0)))?))
+        .await
+        .ok()
+        .flatten()
+        .map_or(0, |n| u32::try_from(n).unwrap_or(0))
+}
+
+/// Jeton Basic en vigueur : [`derive_dav_token`] de la génération courante (un changement de jeton invalide l'ancien).
+pub async fn account_token(db: &Db, station_secret: &[u8], owner_hex: &str) -> String {
+    match token_epoch(db, owner_hex).await {
+        0 => derive_dav_token(station_secret, owner_hex),
+        n => derive_dav_token(station_secret, &format!("{owner_hex}#{n}")),
+    }
+}
+
+/// Change le jeton d'un compte : l'ancien cesse de fonctionner tout de suite. Rend le nouveau.
+pub async fn rotate_token(db: &Db, station_secret: &[u8], owner_hex: &str) -> Result<String, astro_db::DbError> {
+    let owner = owner_hex.to_owned();
+    db.writer()
+        .execute(
+            "INSERT INTO kv(scope, key, value, updated_at) VALUES ('token_epoch', ?1, '1', strftime('%s','now')) \
+             ON CONFLICT(scope, key) DO UPDATE SET value = CAST(value AS INTEGER) + 1, updated_at = excluded.updated_at",
+            vec![owner.into()],
+        )
+        .await?;
+    Ok(account_token(db, station_secret, owner_hex).await)
+}
+
 /// Comparaison en temps constant.
 pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     let mut diff = a.len() ^ b.len();
@@ -104,6 +136,22 @@ mod tests {
         assert_eq!(t, derive_dav_token(s1, "aa"));
         assert_ne!(t, derive_dav_token(s1, "bb"));
         assert_ne!(t, derive_dav_token(s2, "aa"));
+    }
+
+    #[tokio::test]
+    async fn rotating_the_token_invalidates_the_previous_one() {
+        let dir = std::env::temp_dir().join(format!("astro-dav-rotate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Db::open(&dir.join("u.db"), 1).unwrap();
+        let secret = b"secret-station";
+        let first = account_token(&db, secret, "aa").await;
+        assert_eq!(first, derive_dav_token(secret, "aa"), "génération 0 : jeton historique inchangé");
+        let second = rotate_token(&db, secret, "aa").await.unwrap();
+        let third = rotate_token(&db, secret, "aa").await.unwrap();
+        assert!(first != second && second != third && first != third);
+        assert_eq!(account_token(&db, secret, "aa").await, third);
+        assert_eq!(account_token(&db, secret, "bb").await, derive_dav_token(secret, "bb"), "les autres comptes ne bougent pas");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

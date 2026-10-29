@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0b5fff">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<title>Invitation</title>
+<link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/register.css">
+<link rel="stylesheet" href="/ui/invite.css">
+</head>
+<body>
+<a class="skip" href="#main" data-t="skip">Aller au contenu</a>
+<main id="main">
+  <h1 id="title" data-t="loading">Chargement…</h1>
+  <p id="lead" class="lead" role="status"></p>
+  <div id="thumbs" class="thumbs" aria-hidden="true"></div>
+
+  <form id="f" hidden>
+    <label for="email" data-t="email">Votre adresse email</label>
+    <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="vous@exemple.org">
+    <label class="check"><input id="guest" type="checkbox"> <span data-t="guest">Je préfère ne pas donner mon email</span></label>
+    <p id="guest-note" class="muted small" hidden data-t="guestnote">La station vous crée une adresse du type prénom-x7k2p9@… C’est votre identifiant UPlanet : elle ne sert pas à recevoir des courriers. Notez bien votre carte ensuite : sans email, elle est votre seul moyen de récupération.</p>
+    <button id="go" data-t="go">Recevoir mes photos</button>
+    <p id="err" class="err" role="alert"></p>
+    <p class="muted small" data-t="privacy">Un compte privé est créé pour vous sur cette station. Vos photos sont chiffrées ; seules les personnes avec qui vous les partagez peuvent les voir.</p>
+  </form>
+
+  <section id="done" hidden aria-labelledby="done-t">
+    <h2 id="done-t" tabindex="-1" data-t="ready">Votre compte est prêt</h2>
+    <p id="got" class="lead"></p>
+    <p id="warns" class="muted"></p>
+    <p class="warn"><strong data-t="note">Notez ces informations maintenant.</strong> <span data-t="once">Elles ne seront plus jamais affichées : sans elles, un compte perdu ne se récupère pas.</span></p>
+    <dl id="card"></dl>
+    <p class="row">
+      <button id="save" type="button" data-t="save">Télécharger ma carte (.txt)</button>
+      <button id="open" type="button" class="primary" data-t="open">Ouvrir mon espace</button>
+    </p>
+  </section>
+
+  <p class="muted small"><a href="/" data-t="have">J’ai déjà un MULTIPASS</a></p>
+</main>
+<script src="/ui/invite.js"></script>
+</body>
+</html>

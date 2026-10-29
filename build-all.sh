@@ -13,6 +13,8 @@
 #   aarch64-unknown-linux-gnu      Raspberry Pi 4/5, Pi Zero 2 W en 64 bits       (gcc-aarch64-linux-gnu)
 #   armv7-unknown-linux-gnueabihf  Raspberry Pi 2/3, Pi OS 32 bits                (gcc-arm-linux-gnueabihf)
 #   x86_64-unknown-linux-musl      binaire statique, sans dépendance à la glibc   (musl-tools)
+#   aarch64-unknown-linux-musl     binaire statique ARM 64 bits : smartphone Android (Termux), Pi, NAS
+#                                                                                 (zig : pip install ziglang cargo-zigbuild)
 #
 # Une cible dont le compilateur C croisé ou le `rustup target` manque est SAUTÉE en le disant (jamais en silence) :
 # le récapitulatif final la liste avec la commande d'installation.
@@ -20,7 +22,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-ALL_TARGETS=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf x86_64-unknown-linux-musl)
+ALL_TARGETS=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf x86_64-unknown-linux-musl aarch64-unknown-linux-musl)
 PROFILE=release
 STRICT=0
 RUN_TESTS=0
@@ -29,7 +31,7 @@ TARGETS=("${ALL_TARGETS[@]}")
 BIN=astroportd
 OUT=dist
 
-usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -54,12 +56,25 @@ cross_gcc() {
   esac
 }
 
+# Cibles compilées avec zig comme compilateur C/éditeur de liens (pas de chaîne gcc croisée musl pour l'ARM 64 bits).
+uses_zigbuild() {
+  case "$1" in
+    aarch64-unknown-linux-musl) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+zig_ready() { # cargo-zigbuild présent, et zig (binaire ou paquet Python ziglang)
+  command -v cargo-zigbuild >/dev/null 2>&1 && { command -v zig >/dev/null 2>&1 || python3 -c 'import ziglang' >/dev/null 2>&1; }
+}
+
 # Paquet Debian/Ubuntu qui fournit ce compilateur.
 install_hint() {
   case "$1" in
     aarch64-unknown-linux-gnu) echo "sudo apt install gcc-aarch64-linux-gnu && rustup target add $1" ;;
     armv7-unknown-linux-gnueabihf) echo "sudo apt install gcc-arm-linux-gnueabihf && rustup target add $1" ;;
     x86_64-unknown-linux-musl) echo "sudo apt install musl-tools && rustup target add $1" ;;
+    aarch64-unknown-linux-musl) echo "pip install ziglang cargo-zigbuild && rustup target add $1" ;;
     *) echo "rustup target add $1" ;;
   esac
 }
@@ -69,11 +84,12 @@ install_hint() {
 cross_env() {
   local t="$1" gcc var up
   gcc="$(cross_gcc "$t")"
-  [ -z "$gcc" ] && return 0
   up="$(echo "$t" | tr 'a-z-' 'A-Z_')"
   var="$(echo "$t" | tr '-' '_')"
-  export "CARGO_TARGET_${up}_LINKER=$gcc"
-  export "CC_${var}=$gcc"
+  if [ -n "$gcc" ]; then
+    export "CARGO_TARGET_${up}_LINKER=$gcc"
+    export "CC_${var}=$gcc"
+  fi
   # musl n'a pas les alias BSD u_int8_t/u_int16_t/u_int64_t que sqlite-vec (C) utilise : on les redirige vers <stdint.h>.
   case "$t" in
     *-musl) export "CFLAGS_${var}=-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t" ;;
@@ -84,6 +100,10 @@ target_state() { # ok | "raison"
   local t="$1" gcc
   if ! rustup target list --installed 2>/dev/null | grep -qx "$t"; then
     echo "cible rustup absente"; return
+  fi
+  if uses_zigbuild "$t"; then
+    zig_ready || { echo "zig / cargo-zigbuild absent"; return; }
+    echo ok; return
   fi
   gcc="$(cross_gcc "$t")"
   if [ -n "$gcc" ] && ! command -v "$gcc" >/dev/null 2>&1; then
@@ -122,7 +142,9 @@ for t in "${TARGETS[@]}"; do
     continue
   fi
   echo "▶ $t ($PROFILE)"
-  if ( cross_env "$t"; cargo build "${CARGO_FLAGS[@]}" --target "$t" ); then
+  build=(cargo build)
+  uses_zigbuild "$t" && build=(cargo zigbuild)
+  if ( cross_env "$t"; "${build[@]}" "${CARGO_FLAGS[@]}" --target "$t" ); then
     src="target/$t/$PROFILE/$BIN"
     name="$BIN-$VERSION-$t"
     stage="$OUT/$name"

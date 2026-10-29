@@ -2,8 +2,11 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+pub mod adopt;
 pub mod auth;
 pub mod blob;
+pub mod carddav;
+pub mod exif;
 pub mod ingest;
 pub mod kubo;
 pub mod locks;
@@ -13,6 +16,7 @@ pub mod parse;
 pub mod server;
 pub mod share;
 pub mod thumb;
+pub mod vcard;
 pub mod vfs;
 pub mod xml;
 

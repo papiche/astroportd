@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use astro_crypto::uenc;
 use astro_crypto::{KeySource, UencKey};
 use astro_crypto::nip59::{Rumor, gift_wrap};
-use astro_dav::vfs::{self, VfsError, vfs_tx};
+use astro_dav::vfs::{self, VfsError};
 use astro_dav::{BlobStore, ManifestPublisher};
 use astro_db::{Db, DbError, VectorTable};
 use astro_nostr_proto::{Event, kind};
@@ -177,6 +177,10 @@ pub struct FaceCloud<B: BlobStore, E: FaceEngine, O: Outbox> {
     pub(crate) config: FaceConfig,
     /// Une seule inférence à la fois : le matériel hôte ne doit jamais être saturé.
     gpu: Semaphore,
+    /// Vignettes de visages déjà calculées (mémoire seulement : jamais de clair sur disque).
+    pub(crate) thumbs: crate::thumbs::ThumbCache,
+    /// Décodages de photos simultanés au plus (la mémoire d'une petite station est comptée).
+    pub(crate) decode: Semaphore,
 }
 
 pub(crate) fn now() -> i64 {
@@ -186,10 +190,10 @@ pub(crate) fn now() -> i64 {
 impl<B: BlobStore, E: FaceEngine, O: Outbox> FaceCloud<B, E, O> {
     /// Assemble le service.
     pub fn new(db: Arc<Db>, blobs: Arc<B>, engine: Arc<E>, outbox: Arc<O>, keys: Arc<dyn KeySource>, publisher: Option<ManifestPublisher>, config: FaceConfig) -> Self {
-        Self { db, blobs, engine, outbox, keys, publisher, config, gpu: Semaphore::new(1) }
+        Self { db, blobs, engine, outbox, keys, publisher, config, gpu: Semaphore::new(1), thumbs: crate::thumbs::ThumbCache::new(), decode: Semaphore::new(2) }
     }
 
-    async fn photo(&self, owner: &str, path: &str) -> Result<Photo, FaceError> {
+    pub(crate) async fn photo(&self, owner: &str, path: &str) -> Result<Photo, FaceError> {
         let (o, p) = (owner.to_owned(), path.to_owned());
         self.db
             .readers()
@@ -207,7 +211,7 @@ impl<B: BlobStore, E: FaceEngine, O: Outbox> FaceCloud<B, E, O> {
             .ok_or(FaceError::Invalid("photo introuvable (entrée ou clé absente)"))
     }
 
-    async fn read_plain(&self, photo: &Photo) -> Result<Vec<u8>, FaceError> {
+    pub(crate) async fn read_plain(&self, photo: &Photo) -> Result<Vec<u8>, FaceError> {
         let key = UencKey::from_hex(&photo.key_hex)?;
         let (mut reader, _) = self.blobs.open(&photo.cid).await?;
         let mut plain = Vec::with_capacity(usize::try_from(photo.size).unwrap_or(0));
@@ -367,6 +371,34 @@ impl<B: BlobStore, E: FaceEngine, O: Outbox> FaceCloud<B, E, O> {
         crate::review::accept_suggestion(&self.db, owner, face_id).await
     }
 
+    /// Partage les photos déjà analysées où figure `friend` (visages rangés avec sa clé) : appelé quand une personne vient
+    /// d'être reliée à un MULTIPASS (fiche contact, rapprochement). Chaque envoi reste soumis à la réciprocité N¹ et au
+    /// registre des partages (jamais deux fois). Rend `(partagées, écartées)`.
+    pub async fn share_backlog(&self, owner: &str, friend: &str) -> Result<(usize, usize), FaceError> {
+        if !self.config.share_enabled || owner == friend {
+            return Ok((0, 0));
+        }
+        let (o, f) = (owner.to_owned(), friend.to_owned());
+        let paths: Vec<String> = self
+            .db
+            .readers()
+            .read(move |c| {
+                let mut stmt = c.prepare("SELECT DISTINCT ucloud_path FROM faces WHERE owner_hex = ?1 AND pubkey = ?2 AND ref IS NULL AND ucloud_path IS NOT NULL ORDER BY ucloud_path LIMIT 500")?;
+                let rows = stmt.query_map(params![o, f], |r| r.get(0))?;
+                Ok(rows.collect::<Result<_, _>>()?)
+            })
+            .await?;
+        let mut report = PhotoReport::default();
+        for path in &paths {
+            let Ok(photo) = self.photo(owner, path).await else { continue };
+            if photo.origin == "facecloud-share" {
+                continue; // copie reçue d'un ami : jamais renvoyée
+            }
+            self.share_with(owner, path, &photo, friend, &mut report).await?;
+        }
+        Ok((report.shares.len(), report.skipped.len()))
+    }
+
     /// `owner` et `friend` se suivent-ils mutuellement ?
     async fn reciprocal(&self, owner: &str, friend: &str) -> Result<bool, FaceError> {
         let (o, f) = (owner.to_owned(), friend.to_owned());
@@ -456,34 +488,8 @@ impl<B: BlobStore, E: FaceEngine, O: Outbox> FaceCloud<B, E, O> {
 
     /// Copie silencieuse dans `/Partages/De_<nom>/` d'un ami hébergé ici : même blob, même clé, aucun ré-encodage.
     async fn share_local(&self, owner: &str, path: &str, photo: &Photo, friend: &str, sender_label: &str) -> Result<(), FaceError> {
-        let (friend_owned, owner_owned, photo_cid, key, mime, size, sha) = (friend.to_owned(), owner.to_owned(), photo.cid.clone(), photo.key_hex.clone(), photo.mime.clone(), photo.size, photo.sha_plain.clone());
-        let dir = format!("/Partages/De_{sender_label}");
-        let file_name = vfs::name_of(path).to_owned();
-        vfs_tx(&self.db, move |tx| {
-            for d in ["/Partages", dir.as_str()] {
-                match vfs::mkdir_tx(tx, &friend_owned, d, now()) {
-                    Ok(()) | Err(VfsError::Exists) => {}
-                    Err(e) => return Err(e),
-                }
-            }
-            let mut target = format!("{dir}/{file_name}");
-            if vfs::get_entry(tx, &friend_owned, &target)?.is_some() {
-                let tail = &photo_cid[photo_cid.len().saturating_sub(8)..];
-                target = match file_name.rsplit_once('.') {
-                    Some((stem, ext)) => format!("{dir}/{stem}_{tail}.{ext}"),
-                    None => format!("{dir}/{file_name}_{tail}"),
-                };
-            }
-            let data = serde_json::json!({ "type": "file", "cid": photo_cid, "enc": "uenc2", "mime": mime, "size_plain": size, "sha256_plain": sha, "mtime": now(), "shared_by": owner_owned }).to_string();
-            tx.execute(
-                "INSERT OR REPLACE INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, sha_orig, sha_plain, origin, data) \
-                 VALUES (?1, ?2, ?3, 'file', ?4, ?5, ?6, ?7, ?8, ?8, 'facecloud-share', ?9)",
-                params![friend_owned, target, vfs::parent_of(&target), photo_cid, mime, i64::try_from(size).unwrap_or(0), now(), sha, data],
-            )?;
-            tx.execute("INSERT OR REPLACE INTO ucloud_keyring(owner_hex, cid, key_hex, enc) VALUES (?1, ?2, ?3, 'uenc2')", params![friend_owned, photo_cid, key])?;
-            Ok(())
-        })
-        .await?;
+        let file = astro_dav::adopt::SharedFile { cid: photo.cid.clone(), key_hex: photo.key_hex.clone(), mime: photo.mime.clone(), size: photo.size, sha_plain: photo.sha_plain.clone(), name: vfs::name_of(path).to_owned() };
+        astro_dav::adopt::adopt_shared_file(&self.db, friend, owner, sender_label, &file, "facecloud-share").await?;
         if let Some(p) = &self.publisher {
             p.notify(friend);
         }

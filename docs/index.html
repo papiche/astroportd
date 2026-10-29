@@ -442,7 +442,12 @@ curl http://127.0.0.1:8080/health</code></pre></div>
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <p>FaceCloud s'active quand la station sait où faire l'inférence faciale : un service HTTP de reconnaissance (modèle InsightFace) :</p>
 <div class="code"><pre><code>astroportd serve ... --face-engine http://127.0.0.1:8000 --relay ws://127.0.0.1:7777</code></pre></div>
-<p><code>--relay</code> indique où publier les partages vers les amis qui sont sur <strong>une autre station</strong> (message chiffré, enveloppé NIP-59). Sans <code>--face-engine</code>, uCloud fonctionne mais sans reconnaissance.</p>
+<p><code>--relay</code> indique où publier les partages vers les amis qui sont sur <strong>une autre station</strong> (message chiffré, enveloppé NIP-59). Sans <code>--face-engine</code> ni <code>--face-models</code>, uCloud fonctionne mais sans reconnaissance.</p>
+<p><strong>Sans service HTTP (facultatif).</strong> Une station autonome peut exécuter la détection (SCRFD) et l'empreinte 512D (ArcFace) dans le binaire, par ONNX Runtime :</p>
+<div class="code"><pre><code>cargo build --release --features onnx
+export ORT_DYLIB_PATH=/chemin/vers/libonnxruntime.so
+astroportd serve ... --face-models ~/modeles/buffalo_l   # det_10g.onnx + w600k_r50.onnx</code></pre></div>
+<p>Les deux modèles ne sont <strong>pas</strong> fournis : ce sont ceux du paquet InsightFace <code>buffalo_l</code>, publiés pour la recherche non commerciale (vérifiez la licence avant tout usage commercial). L'écran <strong>Personnes</strong> (« table de tri ») montre les visages sur une table lumineuse : on <strong>glisse</strong> une pastille, une grappe ou une sélection au lasso sur la pochette d'une personne.</p>
 <p>Déposez vos photos par WebDAV, par exemple avec <code>curl</code> :</p>
 <div class="code"><pre><code>curl -u vous@exemple.org:JETON -T photo.jpg https://votre-domaine/dav/Photos/photo.jpg</code></pre></div>
 </div>

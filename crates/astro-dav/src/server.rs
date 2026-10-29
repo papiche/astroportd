@@ -26,7 +26,7 @@ use tokio::io::{AsyncRead, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use zeroize::Zeroizing;
 
-use crate::auth::{Account, Tier, ct_eq, derive_dav_token, lookup_by_hex, lookup_by_login, parse_basic};
+use crate::auth::{Account, Tier, account_token, ct_eq, lookup_by_hex, lookup_by_login, parse_basic};
 use crate::blob::{BlobStore, BlobWriter, is_cid};
 use crate::locks::{self, blocked, parse_timeout, token_of_header, tokens_in_if};
 use crate::parse::{MAX_XML, parse_lockinfo, parse_propertyupdate};
@@ -135,6 +135,7 @@ impl<B: BlobStore> DavState<B> {
 /// Routeur WebDAV : toutes les méthodes, sous `config.mount`.
 pub fn router<B: BlobStore>(state: Arc<DavState<B>>) -> Router {
     Router::new()
+        .route("/.well-known/carddav", any(wellknown_carddav::<B>))
         .route("/s/{slug}", axum::routing::get(crate::share::page::<B>))
         .route("/s/{slug}/m", axum::routing::get(crate::share::manifest::<B>))
         .route("/s/{slug}/b/{cid}", axum::routing::get(crate::share::blob::<B>))
@@ -142,11 +143,11 @@ pub fn router<B: BlobStore>(state: Arc<DavState<B>>) -> Router {
         .with_state(state)
 }
 
-fn now_secs() -> i64 {
+pub(crate) fn now_secs() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
 }
 
-fn reply(code: StatusCode, msg: &str) -> Response {
+pub(crate) fn reply(code: StatusCode, msg: &str) -> Response {
     (code, [(header::CONTENT_TYPE, "text/plain; charset=utf-8")], msg.to_owned()).into_response()
 }
 
@@ -175,10 +176,10 @@ fn vfs_error(e: &VfsError) -> Response {
 }
 
 /// Authentification établie.
-struct Auth {
-    account: Account,
+pub(crate) struct Auth {
+    pub(crate) account: Account,
     /// Tag `payload` NIP-98 à confronter au corps après un téléversement en flux.
-    payload: Option<String>,
+    pub(crate) payload: Option<String>,
 }
 
 // L'erreur est la réponse HTTP elle-même, renvoyée telle quelle : la boxer n'apporterait rien.
@@ -191,7 +192,7 @@ async fn authenticate<B: BlobStore>(st: &DavState<B>, headers: &HeaderMap, metho
             let (user, pass) = parse_basic(value).ok_or_else(unauthorized)?;
             let account = lookup_by_login(&st.db, &user).await;
             // Le jeton est calculé même pour un compte inconnu : pas de différence de temps observable.
-            let expected = derive_dav_token(&st.config.station_secret, account.as_ref().map_or("-", |a| a.owner.as_str()));
+            let expected = account_token(&st.db, &st.config.station_secret, account.as_ref().map_or("-", |a| a.owner.as_str())).await;
             match account {
                 Some(a) if ct_eq(expected.as_bytes(), pass.as_bytes()) => Ok(Auth { account: a, payload: None }),
                 _ => Err(unauthorized()),
@@ -221,6 +222,16 @@ async fn authenticate<B: BlobStore>(st: &DavState<B>, headers: &HeaderMap, metho
     }
 }
 
+/// `/.well-known/carddav` (RFC 6764) : renvoie vers le montage WebDAV, où `PROPFIND /` annonce le principal.
+async fn wellknown_carddav<B: BlobStore>(State(st): State<Arc<DavState<B>>>) -> Response {
+    let mount = st.config.mount.trim_end_matches('/');
+    let mut r = reply(StatusCode::MOVED_PERMANENTLY, "");
+    if let Ok(v) = HeaderValue::from_str(&format!("{mount}/")) {
+        r.headers_mut().insert(header::LOCATION, v);
+    }
+    r
+}
+
 /// Chemin du VFS d'une URL de requête (hors préfixe de montage).
 #[allow(clippy::result_large_err)]
 fn vfs_path(mount: &str, url_path: &str) -> Result<String, Response> {
@@ -242,9 +253,9 @@ async fn dispatch<B: BlobStore>(State(st): State<Arc<DavState<B>>>, req: Request
     if method == "OPTIONS" {
         let mut r = reply(StatusCode::OK, "");
         let h = r.headers_mut();
-        h.insert("DAV", HeaderValue::from_static("1, 2"));
+        h.insert("DAV", HeaderValue::from_static("1, 2, addressbook"));
         h.insert("MS-Author-Via", HeaderValue::from_static("DAV"));
-        h.insert(header::ALLOW, HeaderValue::from_static("OPTIONS, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, PROPFIND, PROPPATCH, LOCK, UNLOCK"));
+        h.insert(header::ALLOW, HeaderValue::from_static("OPTIONS, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, PROPFIND, PROPPATCH, REPORT, LOCK, UNLOCK"));
         return r;
     }
     let path = match vfs_path(&st.config.mount, req.uri().path()) {
@@ -255,6 +266,9 @@ async fn dispatch<B: BlobStore>(State(st): State<Arc<DavState<B>>>, req: Request
         Ok(a) => a,
         Err(r) => return r,
     };
+    if crate::carddav::is_carddav_path(&path) {
+        return crate::carddav::handle(&st, &auth, &method, &path, req).await;
+    }
     let owner = auth.account.owner.clone();
     let has_body = !HttpBody::is_end_stream(req.body());
     let headers = req.headers().clone();
@@ -392,7 +406,7 @@ async fn get_thumb<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, head
     (StatusCode::OK, [(header::CONTENT_TYPE, "image/webp".to_owned()), (header::CONTENT_LENGTH, webp.len().to_string())], cache, webp).into_response()
 }
 
-async fn get<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, headers: &HeaderMap, head_only: bool) -> Response {
+pub(crate) async fn get<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, headers: &HeaderMap, head_only: bool) -> Response {
     let owner = auth.account.owner.clone();
     let p = path.to_owned();
     let found = st
@@ -484,12 +498,14 @@ async fn propfind<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, heade
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:error xmlns:D=\"DAV:\"><D:propfind-finite-depth/></D:error>\n".to_owned(),
         )
             .into_response(),
-        Ok(Some(entries)) => (
-            StatusCode::MULTI_STATUS,
-            [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
-            xml::multistatus(&st.config.mount, &entries, &active, now_secs()),
-        )
-            .into_response(),
+        Ok(Some(entries)) => {
+            let mut body = xml::multistatus(&st.config.mount, &entries, &active, now_secs());
+            if path == "/" {
+                // Découverte CardDAV : où est mon principal, donc mon carnet d'adresses.
+                body = crate::carddav::announce_principal(st, &auth.account.owner, body).await;
+            }
+            (StatusCode::MULTI_STATUS, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response()
+        }
         Ok(None) => reply(StatusCode::NOT_FOUND, "introuvable"),
         Err(_) => reply(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne"),
     }
@@ -520,7 +536,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for Measure<R> {
     }
 }
 
-async fn put<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, req: Request) -> Response {
+pub(crate) async fn put<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, req: Request) -> Response {
     let limits = st.limits_for(&auth.account).await;
     let owner = auth.account.owner.clone();
     if path == "/" {
@@ -597,7 +613,7 @@ async fn put<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, req: Reque
 }
 
 /// Supprime les blobs qu'aucune entrée ne référence plus.
-async fn release_blobs<B: BlobStore>(st: &DavState<B>, cids: Vec<String>) {
+pub(crate) async fn release_blobs<B: BlobStore>(st: &DavState<B>, cids: Vec<String>) {
     for cid in cids {
         let c = cid.clone();
         let in_use = st.db.readers().read(move |conn| vfs::cid_in_use(conn, &c).map_err(|_| astro_db::DbError::Aborted)).await.unwrap_or(true);
@@ -618,7 +634,7 @@ async fn mkcol<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, has_body
     }
 }
 
-async fn delete<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str) -> Response {
+pub(crate) async fn delete<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str) -> Response {
     let (o, p) = (auth.account.owner.clone(), path.to_owned());
     match vfs_tx(&st.db, move |tx| vfs::delete_tree_tx(tx, &o, &p)).await {
         Ok(cids) => {

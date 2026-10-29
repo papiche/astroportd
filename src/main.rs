@@ -48,6 +48,12 @@ enum Command {
     Init(Box<init::InitArgs>),
     /// Affiche (et avec `--verify` contrôle) la correspondance SSH ↔ IPFSNODEID ↔ Ğ1 ↔ Nostr de la station.
     Ylevel(init::YlevelArgs),
+    /// Vérifie l'inférence faciale locale (SCRFD + ArcFace par ONNX Runtime) : fonction compilée, modèles, bibliothèque, chargement.
+    FaceCheck {
+        /// Dossier des modèles `det_10g.onnx` et `w600k_r50.onnx` (défaut : les emplacements habituels).
+        #[arg(long)]
+        models: Option<PathBuf>,
+    },
     /// Génère une clé de réseau privé `swarm.key` pour une constellation (à copier sur chaque station).
     SwarmKey,
     /// Diagnostic : permissions 0600, base WAL, certificats ACME, horloge solaire. Code 1 si une vérification échoue.
@@ -59,6 +65,9 @@ enum Command {
         /// Dossier `~/.zen/game` (défaut : `$ASTRO_GAME_DIR`, sinon `$HOME/.zen/game`).
         #[arg(long)]
         game_dir: Option<PathBuf>,
+        /// Base de la station (défaut : `~/.zen/astroportd/uplanet.db`) : sert à connaître la génération du jeton après un changement.
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Publie la grille tarifaire du nœud (kind 30850, `d = tariffs`) : paliers de disque et part de GPU 1/24.
     Tariff {
@@ -349,11 +358,16 @@ async fn run(cli: Cli) -> Result<(), Failure> {
         Command::Doctor(args) => doctor::run(args),
         Command::Init(args) => init::init(*args),
         Command::Ylevel(args) => init::ylevel_cmd(args),
-        Command::Token { account, game_dir } => {
+        Command::Token { account, game_dir, db } => {
             let station = identity::resolve(game_dir.as_deref(), true)?;
             let found = station.discovered.as_ref().ok_or("identités locales introuvables (--game-dir)")?;
             let m = found.multipasses.iter().find(|m| m.email.eq_ignore_ascii_case(&account) || m.hex == account.to_ascii_lowercase()).ok_or_else(|| format!("compte « {account} » non hébergé ici"))?;
-            println!("identifiant : {}\njeton       : {}", m.email, astro_dav::auth::derive_dav_token(&station.secret, &m.hex));
+            let db_path = db.or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".zen/astroportd/uplanet.db"))).filter(|p| p.is_file());
+            let token = match db_path {
+                Some(path) => astro_dav::auth::account_token(&Db::open(&path, 1)?, &station.secret, &m.hex).await,
+                None => astro_dav::auth::derive_dav_token(&station.secret, &m.hex), // aucune base : génération 0
+            };
+            println!("identifiant : {}\njeton       : {token}", m.email);
             Ok(())
         }
         Command::Tariff { disk10, disk128, disk256, gpu, game_dir, db, relays } => tariff([(Resource::Disk10, disk10), (Resource::Disk128, disk128), (Resource::Disk256, disk256), (Resource::Gpu1of24, gpu)], game_dir, db, relays).await,
@@ -382,6 +396,7 @@ async fn run(cli: Cli) -> Result<(), Failure> {
             print!("{}", astro_p2p::generate_swarm_key()?);
             Ok(())
         }
+        Command::FaceCheck { models } => face_check(models),
         Command::Replay { db, page_size, from, hosted, rounds, blobs, secrets, game_dir } => {
             let db = Arc::new(Db::open(&db, 2)?);
             if let Some(relay) = from {
@@ -770,4 +785,43 @@ async fn media_cmd(args: MediaArgs) -> Result<(), Failure> {
     printer.abort();
     db.writer().shutdown().await?;
     result
+}
+
+/// `astroportd face-check` : dit ce qui manque pour activer l'inférence faciale locale, et le comment.
+#[cfg(feature = "onnx")]
+fn face_check(models: Option<PathBuf>) -> Result<(), Failure> {
+    use astro_facecloud::onnx;
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let data = home.as_ref().map(|h| h.join(".zen/astroportd"));
+    println!("Inférence faciale locale (SCRFD + ArcFace, ONNX Runtime)");
+    println!("  ✔ fonction `onnx` compilée dans ce binaire");
+    let dir = models.or_else(|| onnx::find_models(data.as_deref(), home.as_deref()));
+    match &dir {
+        Some(d) => println!("  ✔ modèles : {}", d.display()),
+        None => {
+            println!("  ✘ modèles introuvables ({} et {} attendus)", onnx::DETECTOR_FILE, onnx::RECOGNIZER_FILE);
+            for d in onnx::default_model_dirs(data.as_deref(), home.as_deref()) {
+                println!("      cherché : {}", d.display());
+            }
+            println!("      → placez-les dans {} ou passez --face-models DIR (paquet InsightFace buffalo_l : licence de recherche non commerciale)", data.as_ref().map_or_else(|| "~/.zen/astroportd/models".into(), |d| d.join("models").display().to_string()));
+        }
+    }
+    let lib = onnx::find_library(std::env::var("ORT_DYLIB_PATH").ok().as_deref(), home.as_deref());
+    match &lib {
+        Some(l) => println!("  ✔ bibliothèque ONNX Runtime : {}", l.display()),
+        None => println!("  ✘ libonnxruntime.so introuvable → installez-la (pip install onnxruntime, ou le paquet de votre distribution) ou définissez ORT_DYLIB_PATH"),
+    }
+    let (Some(d), Some(_)) = (dir, lib) else { return Err("l'inférence locale n'est pas prête (voir ci-dessus)".into()) };
+    let started = std::time::Instant::now();
+    onnx::OrtFaceEngine::load(&d, 0)?;
+    println!("  ✔ modèles chargés en {:.1} s : `astroportd serve ...` les utilise tout seul (sans --face-engine), ou --face-models {}", started.elapsed().as_secs_f32(), d.display());
+    Ok(())
+}
+
+#[cfg(not(feature = "onnx"))]
+fn face_check(_: Option<PathBuf>) -> Result<(), Failure> {
+    println!("Inférence faciale locale (SCRFD + ArcFace, ONNX Runtime)");
+    println!("  ✘ ce binaire est compilé sans la fonction `onnx` → cargo build --release --features onnx");
+    println!("    (ou utilisez un service d'inférence : serve --face-engine http://…)");
+    Err("l'inférence locale n'est pas disponible dans ce binaire".into())
 }

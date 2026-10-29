@@ -1,0 +1,8 @@
+/* Réplication (chargée avec m-replication.js). */
+.rp-hero { display: flex; gap: 1.2rem; align-items: center; grid-column: 1 / -1; }
+.rp-ring { width: 8.5rem; height: 8.5rem; flex: none; }
+.rp-bg { fill: none; stroke: var(--line); stroke-width: 9; }
+.rp-fg { fill: none; stroke: var(--ok); stroke-width: 9; stroke-linecap: round; }
+.rp-txt { fill: var(--ink); font: 600 20px system-ui; }
+@media (max-width: 36rem) { .rp-hero { flex-direction: column; align-items: flex-start; } }
+@media (prefers-reduced-motion: no-preference) { .rp-fg { transition: stroke-dasharray .6s; } }

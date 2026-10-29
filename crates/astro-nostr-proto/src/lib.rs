@@ -8,6 +8,7 @@
 
 pub mod filter;
 pub mod message;
+pub mod relay_list;
 
 pub use filter::{Filter, FilterError};
 pub use message::{ClientMessage, MessageError, RelayMessage};

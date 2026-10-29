@@ -26,6 +26,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config ffmpeg
       - name: Clippy (aucun avertissement toléré)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Clippy avec l'inférence locale (fonction onnx : compilation seule, libonnxruntime est chargée à l'exécution)
+        run: cargo clippy -p astroportd -p astro-facecloud --all-targets --features onnx --locked -- -D warnings
       - name: Tests
         run: cargo test --workspace --locked
       - name: Scripts shell

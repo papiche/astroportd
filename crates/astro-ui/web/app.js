@@ -24,10 +24,11 @@ const zen = c => (c == null ? '—' : (c / 100).toFixed(2));
 const enc = p => p.split('/').map(encodeURIComponent).join('/');
 const toast = (msg, ok) => { const t = h('div', { class: 'toast' + (ok ? ' ok' : '') }, msg), box = $('#toasts'); box.append(t); while (box.children.length > 4) box.firstChild.remove(); setTimeout(() => t.remove(), 4500); };
 const lastName = p => p.slice(p.lastIndexOf('/') + 1);
+const ext = () => window.nostr && !window.nostr.astro; // l'extension du navigateur, pas notre signataire distant
 async function authHeader(method, url) {
 const basic = store.get('basic');
 if (basic) return 'Basic ' + basic;
-if (store.get('nip07') && window.nostr) {
+if (store.get('nip07') && ext()) {
 const ev = await window.nostr.signEvent({ kind: 27235, created_at: Math.floor(Date.now() / 1000), tags: [['u', url], ['method', method]], content: '' });
 return 'Nostr ' + b64(JSON.stringify(ev));
 }
@@ -40,11 +41,17 @@ const d = $('#login'), f = $('#login-f'), er = $('#login-e'), nip = $('#login-n'
 const ok = () => { d.close(); f.reset(); loginP = null; $('#out').hidden = false; done(); };
 const probe = async a => (await fetch('/api/v1/me', { headers: a ? { Authorization: a } : {} })).ok;
 er.textContent = '';
-nip.hidden = !window.nostr;
+nip.hidden = !ext();
 d.oncancel = ev => ev.preventDefault();
 f.onsubmit = async ev => {
 ev.preventDefault();
-const basic = b64(f.u.value.trim() + ':' + f.p.value);
+let u = f.u.value.trim(), p = f.p.value;
+if (/^\d{4,6}$/.test(p)) { // code PASS : la station le vérifie (essais limités) et rend le jeton
+const r = await fetch('/api/v1/account/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: u, pass: p }) }), j = await r.json().catch(() => ({}));
+if (!r.ok) return er.textContent = j.error || 'Connexion refusée.';
+u = j.email; p = j.token;
+}
+const basic = b64(u + ':' + p);
 if (await probe('Basic ' + basic)) { store.set('basic', basic); store.set('nip07', null); ok(); } else er.textContent = 'Identifiant ou jeton refusé.';
 };
 nip.onclick = async () => {
@@ -52,7 +59,7 @@ store.set('basic', null); store.set('nip07', '1');
 try { if (await probe(await authHeader('GET', new URL('/api/v1/me', location.origin).href))) return ok(); } catch { /* refus de l'extension */ }
 store.set('nip07', null); er.textContent = 'Extension Nostr refusée ou compte inconnu.'; store.set('nip07_off', '1');
 };
-if (window.nostr && !store.get('nip07_off')) nip.onclick().then(() => { if (loginP) { store.set('nip07_off', '1'); d.showModal(); } });
+if (ext() && !store.get('nip07_off')) nip.onclick().then(() => { if (loginP) { store.set('nip07_off', '1'); d.showModal(); } });
 else d.showModal();
 });
 return loginP;
@@ -200,8 +207,10 @@ h('section', { class: 'card wide' }, h('h2', {}, 'Comptes hébergés ', h('small
 ac.accounts.length ? table('MULTIPASS et ZenCards de la station', ['Compte', 'Cycle de vie', 'Disque', 'Fichiers', 'Secours'],
 ac.accounts.map(a => [a.email || a.hex.slice(0, 12), [pill(tone(a.status)), ' ', LIFE[a.status] || a.status || 'inconnu', a.grace_ends_at ? ` (jusqu'au ${day(a.grace_ends_at)})` : ''],
 [h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: a.quota_bytes ? Math.min(a.used_bytes / a.quota_bytes, 1) : 0, 'aria-label': 'Disque' }), ` ${bytes(a.used_bytes)} / ${bytes(a.quota_bytes)}`], String(a.files),
-h('button', { class: 'ghost', onclick: () => token(a) }, 'Jeton de secours')]))
-: h('p', { class: 'muted' }, 'Aucun compte hébergé.'))));
+[h('button', { class: 'ghost', onclick: () => token(a) }, 'Jeton de secours'), a.pass_locked_until ? [' ', h('button', { onclick: async () => { await api(`/api/v1/station/accounts/${a.hex}/unlock-pass`, { method: 'POST' }); toast('PASS déverrouillé', 1); draw(); } }, 'Déverrouiller le PASS')] : null]]))
+: h('p', { class: 'muted' }, 'Aucun compte hébergé.')),
+h('section', { class: 'card wide' }, h('h2', {}, 'Configuration coopérative'), h('p', { class: 'muted' }, 'Paramètres partagés par toute la constellation (OpenCollective, Mailjet, règle 3×1/3…). Les secrets sont chiffrés et ne s\'affichent jamais.'), h('button', { onclick: () => { location.hash = '#/coop'; } }, 'Modifier la configuration')),
+h('section', { class: 'card wide' }, h('h2', {}, 'Options de la station'), h('p', { class: 'muted' }, 'Moteur de reconnaissance des visages (local, Brain GPU ou arrêt) et règles du relai par kind, sans redémarrer.'), h('button', { onclick: () => { location.hash = '#/options'; } }, 'Ouvrir les options'))));
 };
 await draw();
 every(30000, () => draw().catch(() => {}));
@@ -242,7 +251,7 @@ return load();
 }
 const r = await api('/api/v1/ucloud/list?path=' + encodeURIComponent(path));
 dav = r.dav || dav;
-const sel = new Set(), btn = h('button', { disabled: true, onclick: () => share([...sel]) }, 'Partager la sélection');
+const sel = new Set(), btn = h('button', { disabled: true, onclick: () => share([...sel]) }, 'Partager la sélection'), send = h('button', { disabled: true, class: 'ghost', onclick: () => import('/ui/m-send.js').then(m => m.default([...sel], K)) }, 'Envoyer à des proches');
 const parts = path.split('/').filter(Boolean), crumbs = h('span', { class: 'crumbs' }, h('a', { href: '#/cloud' }, 'uCloud'));
 parts.forEach((n, i) => crumbs.append(' / ', h('a', { href: '#/cloud?p=' + encodeURIComponent('/' + parts.slice(0, i + 1).join('/')) }, n)));
 const media = r.entries.filter(x => x.type === 'file' && kindOf(x.mime) !== 'file');
@@ -250,50 +259,15 @@ const li = x => {
 const dir = x.type === 'dir', k = kindOf(x.mime);
 const act = dir ? () => go(x.path) : k !== 'file' ? () => open(media, media.indexOf(x)) : async () => { const u = await blobUrl(x.path); h('a', { href: u, download: x.name }).click(); };
 return h('li', {},
-h('input', { type: 'checkbox', 'aria-label': 'Sélectionner ' + x.name, onchange: ev => { ev.target.checked ? sel.add(x.path) : sel.delete(x.path); btn.disabled = !sel.size; } }),
+h('input', { type: 'checkbox', 'aria-label': 'Sélectionner ' + x.name, onchange: ev => { ev.target.checked ? sel.add(x.path) : sel.delete(x.path); btn.disabled = send.disabled = !sel.size; } }),
 h('span', { 'aria-hidden': 'true' }, dir ? '📁' : k === 'image' ? '🖼' : k === 'video' ? '🎬' : '📄'),
 h('button', { class: 'link', onclick: act }, x.name), h('span', { class: 'muted' }, dir ? '' : bytes(x.size)), h('span', { class: 'muted' }, when(x.mtime)));
 };
-root.replaceChildren(tabs, h('div', { class: 'bar' }, crumbs, h('span', { class: 'sp' }), btn),
+root.replaceChildren(tabs, h('div', { class: 'bar' }, crumbs, h('span', { class: 'sp' }), send, btn),
 r.entries.length ? h('ul', { class: 'files' }, r.entries.map(li)) : h('p', { class: 'muted' }, 'Dossier vide.'));
 }
-function crop(f) {
-const c = h('canvas', { width: 160, height: 160, role: 'img', 'aria-label': f.name || 'visage' });
-return lazy(h('div', { class: 'tile' }, c), async () => {
-try {
-const k = f.thumb ? f.thumb.w / f.thumb.ow : 1, [x1, y1, x2, y2] = f.bbox, small = f.thumb && (x2 - x1) * k >= 48;
-const bmp = new Image();
-bmp.src = await blobUrl(f.path, small);
-await bmp.decode();
-const r = small ? k : 1, s = Math.max(x2 - x1, y2 - y1) * 1.6 * r, cx = (x1 + x2) / 2 * r, cy = (y1 + y2) / 2 * r;
-c.getContext('2d').drawImage(bmp, cx - s / 2, cy - s / 2, s, s, 0, 0, 160, 160);
-} catch { /* photo illisible : la tuile reste vide */ }
-});
-}
 async function viewBro(root) {
-const f = await api('/api/v1/faces'), log = h('ol', { id: 'log', 'aria-live': 'polite', 'aria-label': 'Activité de la station' });
-dav = f.dav || dav;
-const faces = h('div');
-const drawFaces = r => {
-if (!r.enabled) return faces.replaceChildren(h('p', { class: 'muted' }, 'FaceCloud n\'est pas activé sur cette station.'));
-faces.replaceChildren(...[
-h('h3', {}, 'Personnes reconnues'),
-r.people.length ? h('div', { class: 'people' }, r.people.map(p => h('div', { class: 'person' }, crop(p.sample), h('strong', {}, p.name), h('div', { class: 'muted' }, `${p.count} photo(s)`)))) : h('p', { class: 'muted' }, 'Aucun visage nommé pour l\'instant.'),
-r.unknown ? h('p', { class: 'muted' }, `${r.unknown} visage(s) inconnu(s) en attente.`) : null,
-h('h3', {}, 'À valider'),
-...(r.suggestions.length ? r.suggestions.map(sg => suggestion(sg)) : [h('p', { class: 'muted' }, 'Rien à valider.')])].filter(x => x != null));
-};
-const reload = () => api('/api/v1/faces').then(drawFaces).catch(e => faces.replaceChildren(h('p', { class: 'err' }, e.message)));
-const suggestion = sg => {
-const row = h('div', { class: 'sugg' }), done = () => reload();
-const name = h('input', { placeholder: 'Qui est-ce ?', required: true, 'aria-label': 'Nom de la personne', maxLength: 80 });
-const form = h('form', { hidden: true, onsubmit: async ev => { ev.preventDefault(); await api(`/api/v1/faces/${sg.face_id}/name`, { method: 'POST', body: { name: name.value } }); toast(`Visage nommé : ${name.value}`, 1); done(); } }, name, h('button', {}, 'Nommer'));
-row.append(crop(sg), h('div', {}, h('p', {}, 'Est-ce ', h('strong', {}, sg.suggest_name), ` ? (${Math.round(sg.score * 100)} % de ressemblance)`),
-h('button', { onclick: async () => { await api(`/api/v1/faces/${sg.face_id}/accept`, { method: 'POST' }); toast(`Photo associée à ${sg.suggest_name}`, 1); done(); } }, `Oui, c'est ${sg.suggest_name}`), ' ',
-h('button', { class: 'ghost', onclick: () => { form.hidden = false; name.focus(); } }, 'Non, quelqu\'un d\'autre'), form));
-return row;
-};
-drawFaces(f);
+const log = h('ol', { id: 'log', 'aria-live': 'polite', 'aria-label': 'Activité de la station' });
 const add = (ev, me) => { const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30; log.append(h('li', { class: me ? 'me' : '' }, h('span', { class: 'k' }, me ? 'vous' : ev.kind), ev.message)); if (stick) log.scrollTop = log.scrollHeight; };
 const input = h('input', { placeholder: 'Parler à BRO… (#solde, #statut, #aide)', 'aria-label': 'Message pour BRO', maxLength: 2000, required: true });
 const say = h('form', { id: 'say', onsubmit: async ev => {
@@ -301,7 +275,7 @@ ev.preventDefault();
 const text = input.value; input.value = ''; add({ message: text }, true);
 try { add({ kind: 'bro', message: (await api('/api/v1/bro/say', { method: 'POST', body: { text } })).reply }); } catch (e) { add({ kind: 'erreur', message: e.message }); }
 } }, input, h('button', {}, 'Envoyer'));
-root.replaceChildren(h('div', { class: 'grid' }, h('section', { class: 'card' }, h('h2', {}, 'Visages'), faces), h('section', { class: 'card' }, h('h2', {}, 'BRO LifeOS ', h('small', {}, 'en direct'), ' '), log, say)));
+root.replaceChildren(h('div', { class: 'grid' }, h('section', { class: 'card wide' }, h('h2', {}, 'BRO LifeOS ', h('small', {}, 'en direct'), ' '), log, say)));
 feed.forEach(ev => add(ev));
 listeners.add(add);
 cleanups.push(() => listeners.delete(add));
@@ -341,7 +315,28 @@ if (data && ev !== 'lag') { try { onEvent(JSON.parse(data)); } catch { /* ligne 
 await new Promise(ok => setTimeout(ok, wait)); wait = Math.min(wait * 2, 30000);
 }
 }
-const views = { home: viewHome, station: viewStation, cloud: viewCloud, bro: viewBro };
+// Multilingue : le français du code sert de clé ; m-lang-<lg>.js donne les textes exacts traduits (sinon le français reste).
+let dict = {};
+const LANGS = ['fr', 'en', 'es'], lsGet = () => { try { return localStorage.getItem('lang'); } catch { return null; } };
+const lang = LANGS.find(l => l === (lsGet() || navigator.language.slice(0, 2))) || 'fr';
+const t = (s, ...a) => a.reduce((r, v, i) => r.replace(`{${i}}`, v), dict[s] ?? s);
+const tr = n => {
+if (n.nodeType === 3) { const k = n.nodeValue.trim(); if (dict[k]) n.nodeValue = n.nodeValue.replace(k, dict[k]); return; }
+if (n.nodeType !== 1) return;
+for (const a of ['placeholder', 'aria-label', 'title']) { const v = n.getAttribute(a); if (dict[v]) n.setAttribute(a, dict[v]); }
+n.childNodes.forEach(tr);
+};
+const setLang = l => { try { localStorage.setItem('lang', l); } catch { /* préférence non conservée */ } location.reload(); };
+async function loadLang() {
+document.documentElement.lang = lang;
+if (lang === 'fr') return;
+try { dict = (await import(`/ui/m-lang-${lang}.js`)).default; } catch (e) { toast(e.message); return; }
+tr(document.body); new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(tr))).observe(document.body, { childList: true, subtree: true });
+}
+// Écrans lourds chargés à la demande (hors budget de la coque) : ils reçoivent la boîte à outils ci-dessous.
+const K = { t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, every, enc, dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f) };
+const lazyView = f => async (root, q) => (await import('/ui/' + f)).default(root, K, q);
+const views = { home: viewHome, station: viewStation, cloud: viewCloud, account: lazyView('m-account.js'), contacts: lazyView('m-contacts.js'), people: lazyView('m-people.js'), replication: lazyView('m-replication.js'), coop: lazyView('m-coop.js'), options: lazyView('m-options.js'), bro: viewBro };
 let me = null;
 async function route() {
 cleanups.forEach(c => c()); cleanups = [];
@@ -349,10 +344,10 @@ blobs.forEach(p => p.then(URL.revokeObjectURL, () => {})); blobs.clear();
 const [p, qs] = (location.hash.slice(1) || '/').split('?'), main = $('#main');
 main.replaceChildren(h('p', { class: 'muted' }, 'Chargement…'));
 try {
-me ??= await api('/api/v1/me');
+if (!me) { me = await api('/api/v1/me'); import('/ui/m-nostr.js').then(m => m.default(me, api), () => {}); }
 document.querySelector('nav a[data-r=station]').hidden = !me.captain; // l'écran Capitaine n'existe pas pour un MULTIPASS
-const name = p.startsWith('/cloud') ? 'cloud' : p.startsWith('/bro') ? 'bro' : p.startsWith('/station') && me.captain ? 'station' : 'home';
-document.querySelectorAll('nav a').forEach(a => (a.dataset.r === name ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
+const name = ['cloud', 'bro', 'people', 'replication', 'account', 'contacts'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/station') && me.captain ? 'station' : 'home');
+document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (name === 'coop' || name === 'options' ? 'station' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
 await views[name](main, new URLSearchParams(qs || ''));
 $('#out').hidden = false;
 startLive();
@@ -362,4 +357,4 @@ addEventListener('hashchange', route);
 addEventListener('offline', () => toast('Hors ligne : la station est injoignable'));
 addEventListener('online', () => toast('Connexion rétablie', 1));
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/ui/sw.js', { scope: '/' }).catch(() => { /* contexte non sécurisé : pas de PWA, l'application reste utilisable */ });
-route();
+loadLang().then(route);

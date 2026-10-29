@@ -17,7 +17,7 @@ pub mod solar;
 pub mod telemetry;
 pub mod week;
 
-pub use activity::{Activity, ActivityBus};
+pub use activity::{Activity, ActivityBus, Audience};
 pub use amount::{Amount, AmountError};
 pub use formula::{Credentials, FormulaInput, KeyFormula, KeyKind};
 pub use kdf::{NostrKeys, Seed};

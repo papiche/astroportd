@@ -21,3 +21,6 @@ dl{margin:1rem 0}
 dt{font-weight:600;margin-top:.8rem}
 dd{margin:.15rem 0 0;padding:.5rem .7rem;background:var(--card);border:1px solid var(--bd);border-radius:.4rem;font-family:ui-monospace,monospace;font-size:.85rem;overflow-wrap:anywhere}
 .row{display:flex;flex-wrap:wrap;gap:.6rem}
+
+.check{display:flex;gap:.5rem;align-items:center;font-weight:400;margin:.9rem 0 .3rem}.check input{width:auto}
+code{background:var(--card);padding:.05rem .3rem;border-radius:.25rem}

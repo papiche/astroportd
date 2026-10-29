@@ -8,11 +8,17 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+pub mod board;
 pub mod engine;
+pub mod imageio;
 mod pipeline;
 mod queue;
+pub mod thumbs;
 pub mod review;
+#[cfg(feature = "onnx")]
+pub mod onnx;
+pub mod scrfd;
 
-pub use engine::{BBox, DIM, DetectedFace, EngineError, FaceEngine, HttpFaceEngine, embedding_hash, l2_normalize, unknown_name};
+pub use engine::{AnyFaceEngine, BBox, DIM, DetectedFace, EngineError, FaceEngine, HttpFaceEngine, SwitchableEngine, embedding_hash, l2_normalize, unknown_name};
 pub use pipeline::{Decision, FaceCloud, FaceConfig, FaceError, FaceReport, Outbox, OutboxError, PhotoReport, ShareReport, ShareVia, Skipped};
 pub use queue::QueueStats;

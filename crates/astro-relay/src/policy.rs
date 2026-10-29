@@ -7,7 +7,7 @@
 //! **Écriture** : seuls les membres du cercle publient. Exception d'amorçage NIP-59 : un gift wrap (1059)
 //! dont un tag `p` vise un MULTIPASS hébergé ici est accepté de n'importe qui, sous limitation de débit par IP.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use astro_nostr_proto::{Event, Filter, kind};
 
@@ -58,8 +58,117 @@ pub enum WriteDecision {
     Accept,
     /// Gift wrap d'amorçage : accepté sous limitation de débit par IP.
     AcceptGiftWrap,
+    /// Kind ouvert à tous par la matrice du Capitaine : accepté sous limitation de débit par IP.
+    AcceptLimited,
     /// Refusé, avec le message `OK false` préfixé.
     Reject(&'static str),
+}
+
+/// Qui peut lire un kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadRule {
+    /// Tout le monde, sans authentification.
+    Public,
+    /// Authentifié du cercle social ; en plus, seulement l'auteur et les destinataires `p`.
+    Addressed,
+    /// L'auteur et ceux qu'il suit (N¹ de l'auteur).
+    Friends,
+    /// Authentifié (NIP-42) et membre du cercle social.
+    Circle,
+    /// Personne : le kind n'est jamais servi.
+    Deny,
+}
+
+/// Qui peut publier un kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteRule {
+    /// Membres du cercle social.
+    Circle,
+    /// N'importe qui, sous limitation de débit par IP.
+    Open,
+    /// Personne : le kind est refusé.
+    Deny,
+}
+
+/// Règle d'un kind : lecture, écriture, projection en base.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KindRule {
+    /// Lecture.
+    pub read: ReadRule,
+    /// Écriture.
+    pub write: WriteRule,
+    /// Projection dans les tables dérivées (identités, ledger…) ; l'événement reste stocké et servi.
+    pub project: bool,
+}
+
+impl ReadRule {
+    /// Nom dans `station.conf` et l'API.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Addressed => "addressed",
+            Self::Friends => "friends",
+            Self::Circle => "circle",
+            Self::Deny => "deny",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "public" => Self::Public,
+            "addressed" => Self::Addressed,
+            "friends" => Self::Friends,
+            "circle" => Self::Circle,
+            "deny" => Self::Deny,
+            _ => return None,
+        })
+    }
+}
+
+impl WriteRule {
+    /// Nom dans `station.conf` et l'API.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Circle => "circle",
+            Self::Open => "open",
+            Self::Deny => "deny",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "circle" => Self::Circle,
+            "open" => Self::Open,
+            "deny" => Self::Deny,
+            _ => return None,
+        })
+    }
+}
+
+impl KindRule {
+    /// `read=circle write=deny project=off` ; les clés omises gardent la valeur de `base`.
+    pub fn parse(spec: &str, base: Self) -> Result<Self, String> {
+        let mut rule = base;
+        for part in spec.split_whitespace() {
+            let (k, v) = part.split_once('=').ok_or_else(|| format!("« {part} » : attendu clé=valeur"))?;
+            match k {
+                "read" => rule.read = ReadRule::parse(v).ok_or_else(|| format!("read={v} : public, addressed, friends, circle ou deny"))?,
+                "write" => rule.write = WriteRule::parse(v).ok_or_else(|| format!("write={v} : circle, open ou deny"))?,
+                "project" => rule.project = match v {
+                    "on" | "true" => true,
+                    "off" | "false" => false,
+                    _ => return Err(format!("project={v} : on ou off")),
+                },
+                _ => return Err(format!("clé inconnue « {k} » (read, write, project)")),
+            }
+        }
+        Ok(rule)
+    }
+
+    /// Forme texte, relisible par [`KindRule::parse`].
+    pub fn spec(self) -> String {
+        format!("read={} write={} project={}", self.read.name(), self.write.name(), if self.project { "on" } else { "off" })
+    }
 }
 
 /// Politique d'accès du relai.
@@ -72,6 +181,8 @@ pub struct Policy {
     /// Kinds réservés au cercle de confiance **N¹** de leur auteur (vidéos NIP-71 : 21 et 22) : l'auteur et ceux
     /// qu'il suit, jamais le reste du cercle N².
     pub friend_kinds: HashSet<u32>,
+    /// Matrice du Capitaine : une règle par kind, qui l'emporte sur les ensembles ci-dessus.
+    pub rules: BTreeMap<u32, KindRule>,
 }
 
 impl Default for Policy {
@@ -92,22 +203,65 @@ impl Default for Policy {
             .collect(),
             addressed_kinds: [kind::DM_LEGACY, kind::GIFT_WRAP].into_iter().collect(),
             friend_kinds: [kind::VIDEO, kind::VIDEO_SHORT].into_iter().collect(),
+            rules: BTreeMap::new(),
         }
     }
 }
 
 impl Policy {
+    /// Règle en vigueur pour un kind : celle du Capitaine, sinon celle qui découle des ensembles par défaut.
+    pub fn rule(&self, kind: u32) -> KindRule {
+        self.rules.get(&kind).copied().unwrap_or_else(|| self.default_rule(kind))
+    }
+
+    /// Règle sans la matrice du Capitaine.
+    pub fn default_rule(&self, kind: u32) -> KindRule {
+        let read = if self.public_kinds.contains(&kind) {
+            ReadRule::Public
+        } else if self.friend_kinds.contains(&kind) {
+            ReadRule::Friends
+        } else if self.addressed_kinds.contains(&kind) {
+            ReadRule::Addressed
+        } else {
+            ReadRule::Circle
+        };
+        KindRule { read, write: WriteRule::Circle, project: true }
+    }
+
+    /// Les événements de ce kind sont-ils projetés dans les tables dérivées ?
+    pub fn projects(&self, kind: u32) -> bool {
+        self.rule(kind).project
+    }
+
+    /// Ajoute les règles d'une matrice ; refuse les kinds dont la règle est fixée par le protocole.
+    pub fn with_rules(mut self, rules: impl IntoIterator<Item = (u32, KindRule)>) -> Result<Self, String> {
+        for (k, r) in rules {
+            if k == kind::AUTH {
+                return Err("le kind 22242 (authentification) n'est jamais stocké : pas de règle possible".into());
+            }
+            if k == kind::GIFT_WRAP && r.write != WriteRule::Circle {
+                return Err("le kind 1059 garde la règle d'amorçage (gift wrap vers un compte hébergé)".into());
+            }
+            if k == kind::GIFT_WRAP && !matches!(r.read, ReadRule::Addressed | ReadRule::Deny) {
+                return Err("le kind 1059 reste lisible par son seul destinataire (addressed) ou fermé (deny)".into());
+            }
+            self.rules.insert(k, r);
+        }
+        Ok(self)
+    }
+
     /// Examine les kinds explicitement demandés par un filtre.
     ///
     /// Un filtre sans `kinds` reste ouvert : seuls les événements publics (ou autorisés) sortiront.
     pub fn filter_access(&self, f: &Filter, auth: &AuthState, circle: &dyn CircleProvider) -> ReadAccess {
         let Some(kinds) = &f.kinds else { return ReadAccess::Open };
-        if kinds.iter().all(|k| self.public_kinds.contains(k)) {
+        // Un kind fermé (deny) ne ralentit personne : il ne sortira simplement aucun événement.
+        if kinds.iter().all(|k| matches!(self.rule(*k).read, ReadRule::Public | ReadRule::Deny)) {
             return ReadAccess::Open;
         }
         if auth.is_empty() {
             ReadAccess::NeedsAuth
-        } else if !auth.any_in_circle(circle) && !kinds.iter().any(|k| self.friend_kinds.contains(k)) {
+        } else if !auth.any_in_circle(circle) && !kinds.iter().any(|k| self.rule(*k).read == ReadRule::Friends) {
             // Les vidéos se jugent événement par événement (N¹ de l'auteur), même pour un lecteur hors du cercle
             // de cette station : un ami d'un auteur distant n'est pas forcément connu ici.
             ReadAccess::Restricted
@@ -118,20 +272,14 @@ impl Policy {
 
     /// L'événement peut-il être livré à cette connexion ?
     pub fn can_read(&self, e: &Event, auth: &AuthState, circle: &dyn CircleProvider) -> bool {
-        if self.public_kinds.contains(&e.kind) {
-            return true;
-        }
-        if self.friend_kinds.contains(&e.kind) {
+        match self.rule(e.kind).read {
+            ReadRule::Deny => false,
+            ReadRule::Public => true,
             // N¹ de l'auteur : lecteur authentifié (NIP-42) qui est l'auteur ou figure dans son dernier kind 3.
-            return auth.contains(&e.pubkey) || auth.pubkeys.iter().any(|k| circle.is_friend_of(&e.pubkey, k));
+            ReadRule::Friends => auth.contains(&e.pubkey) || auth.pubkeys.iter().any(|k| circle.is_friend_of(&e.pubkey, k)),
+            ReadRule::Addressed => auth.any_in_circle(circle) && (auth.contains(&e.pubkey) || p_tags(e).any(|p| auth.contains(p))),
+            ReadRule::Circle => auth.any_in_circle(circle),
         }
-        if !auth.any_in_circle(circle) {
-            return false;
-        }
-        if self.addressed_kinds.contains(&e.kind) {
-            return auth.contains(&e.pubkey) || p_tags(e).any(|p| auth.contains(p));
-        }
-        true
     }
 
     /// Décide du sort d'un `EVENT` entrant (signature déjà vérifiée).
@@ -139,12 +287,19 @@ impl Policy {
         if e.kind == kind::AUTH {
             return WriteDecision::Reject("invalid: use the AUTH message for kind 22242");
         }
+        let write = self.rule(e.kind).write;
+        if write == WriteRule::Deny {
+            return WriteDecision::Reject("blocked: this kind is not accepted on this station");
+        }
         if e.kind == kind::GIFT_WRAP {
             return if p_tags(e).any(|p| circle.is_hosted(p)) {
                 WriteDecision::AcceptGiftWrap
             } else {
                 WriteDecision::Reject("restricted: recipient is not hosted on this station")
             };
+        }
+        if write == WriteRule::Open {
+            return WriteDecision::AcceptLimited;
         }
         if circle.in_circle(&e.pubkey) {
             WriteDecision::Accept
@@ -281,5 +436,45 @@ mod tests {
     fn kind_22242_cannot_be_published_as_an_event() {
         let p = Policy::default();
         assert!(matches!(p.write_decision(&ev(1, 22_242, vec![]), &circle()), WriteDecision::Reject(m) if m.starts_with("invalid:")));
+    }
+
+    #[test]
+    fn the_default_matrix_reproduces_the_historic_behaviour() {
+        let p = Policy::default();
+        assert_eq!(p.rule(1), KindRule { read: ReadRule::Public, write: WriteRule::Circle, project: true });
+        assert_eq!(p.rule(1059).read, ReadRule::Addressed);
+        assert_eq!(p.rule(21).read, ReadRule::Friends);
+        assert_eq!(p.rule(7).read, ReadRule::Circle);
+    }
+
+    #[test]
+    fn a_rule_overrides_the_defaults_per_kind() {
+        let c = circle();
+        let p = Policy::default().with_rules([(7, KindRule::parse("write=deny", Policy::default().rule(7)).unwrap()), (1, KindRule::parse("read=deny", Policy::default().rule(1)).unwrap()), (30_078, KindRule::parse("write=open read=public project=off", Policy::default().rule(30_078)).unwrap())]).unwrap();
+        assert!(matches!(p.write_decision(&ev(2, 7, vec![]), &c), WriteDecision::Reject(m) if m.starts_with("blocked:")), "un membre ne publie plus de kind 7");
+        assert!(!p.can_read(&ev(2, 1, vec![]), &auth(&[2]), &c), "kind 1 fermé à la lecture, même pour un membre");
+        assert_eq!(p.filter_access(&filter(Some(vec![1])), &AuthState::default(), &c), ReadAccess::Open, "un kind fermé ne demande pas d'authentification");
+        assert_eq!(p.write_decision(&ev(9, 30_078, vec![]), &c), WriteDecision::AcceptLimited, "un inconnu publie un kind ouvert (débit limité)");
+        assert!(p.can_read(&ev(9, 30_078, vec![]), &AuthState::default(), &c), "kind 30078 rendu public");
+        assert!(!p.projects(30_078) && p.projects(1));
+    }
+
+    #[test]
+    fn protocol_fixed_kinds_refuse_incoherent_rules() {
+        let base = Policy::default().rule(1059);
+        assert!(Policy::default().with_rules([(22_242, base)]).is_err());
+        assert!(Policy::default().with_rules([(1059, KindRule { write: WriteRule::Open, ..base })]).is_err());
+        assert!(Policy::default().with_rules([(1059, KindRule { read: ReadRule::Public, ..base })]).is_err());
+        assert!(Policy::default().with_rules([(1059, KindRule { read: ReadRule::Deny, ..base })]).is_ok());
+    }
+
+    #[test]
+    fn rule_text_round_trips_and_rejects_typos() {
+        let base = Policy::default().rule(1);
+        let r = KindRule::parse("read=friends write=open project=off", base).unwrap();
+        assert_eq!(KindRule::parse(&r.spec(), base).unwrap(), r);
+        for bad in ["read=tous", "write", "project=maybe", "lire=public"] {
+            assert!(KindRule::parse(bad, base).is_err(), "{bad}");
+        }
     }
 }

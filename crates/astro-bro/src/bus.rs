@@ -133,7 +133,7 @@ impl<S: Services, R: Reply> CommandBus<S, R> {
 
     fn announce(&self, message: String) {
         if let Some(bus) = &self.activity {
-            bus.publish("bro", "bro:bus", message, None);
+            bus.publish_to(astro_core::Audience::Captain, "bro", "bro:bus", message, None);
         }
     }
 

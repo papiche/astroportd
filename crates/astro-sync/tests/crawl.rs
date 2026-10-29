@@ -245,3 +245,42 @@ async fn run_forever_stops_on_shutdown() {
     stop.send(true).unwrap();
     tokio::time::timeout(Duration::from_secs(5), task).await.expect("arrêt attendu").unwrap();
 }
+
+/// Un relai qui refuse l'authentification : le crawl continu doit le DIRE, pas l'avaler.
+struct Broken;
+
+impl RelayClient for Broken {
+    async fn fetch(&self, relay: &str, _filter: &Filter) -> Result<Vec<Event>, ClientError> {
+        Err(ClientError::Connection(format!("{relay} injoignable")))
+    }
+}
+
+#[tokio::test]
+async fn the_continuous_loop_discovers_relays_each_pass_records_its_status_and_reports_failures() {
+    let dir = TempDir::new("loop");
+    let db = open_db(&dir);
+    host(&db, &ALICE).await;
+    let known = Arc::new(std::sync::Mutex::new(vec!["p2p://12D3A".to_owned()]));
+    let reports = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (src, sink) = (known.clone(), reports.clone());
+    let crawler = Arc::new(
+        Crawler::new(db.clone(), Broken, CrawlConfig { relays: vec!["ws://fixe".into()], ..CrawlConfig::default() })
+            .with_relay_source(Arc::new(move || src.lock().unwrap().clone()))
+            .with_hook(Arc::new(move |r| sink.lock().unwrap().push((r.relays, r.result.as_ref().map(|s| s.errors.len()).map_err(Clone::clone))))),
+    );
+    assert_eq!(crawler.current_relays(), ["ws://fixe", "p2p://12D3A"]);
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(crawler.clone().run_forever_after(Duration::from_millis(10), Duration::from_millis(30), rx));
+    // Une station apparaît dans la constellation entre deux passages : elle est prise en compte au passage suivant.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    known.lock().unwrap().push("p2p://12D3B".to_owned());
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    stop.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), task).await.expect("arrêt attendu").unwrap();
+    let seen = reports.lock().unwrap().clone();
+    assert!(seen.len() >= 3, "plusieurs passages : {seen:?}");
+    assert_eq!(seen[0], (2, Ok(2)), "les deux relais sont en échec et le bilan le dit : {seen:?}");
+    assert!(seen.iter().any(|(relays, _)| *relays == 3), "le nouveau relai est interrogé : {seen:?}");
+    let status: String = db.readers().read(|c| Ok(c.query_row("SELECT value FROM kv WHERE scope = 'crawl_status' AND key = 'last'", [], |r| r.get(0))?)).await.unwrap();
+    assert!(status.contains("\"errors\"") && status.contains("injoignable"), "{status}");
+}

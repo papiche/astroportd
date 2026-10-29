@@ -118,7 +118,8 @@ impl<B: BlobStore, E: FaceEngine, O: Outbox> FaceCloud<B, E, O> {
     pub async fn run_worker(self: Arc<Self>, poll: Duration, mut shutdown: watch::Receiver<bool>) {
         let _ = self.recover().await;
         loop {
-            while matches!(self.run_pending(10).await, Ok(s) if s.done + s.retried + s.failed > 0) {}
+            // Moteur arrêté : les photos restent en attente, sans consommer de tentative.
+            while self.engine.available() && matches!(self.run_pending(10).await, Ok(s) if s.done + s.retried + s.failed > 0) {}
             tokio::select! {
                 () = tokio::time::sleep(poll) => {}
                 changed = shutdown.changed() => {

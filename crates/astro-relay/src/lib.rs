@@ -12,5 +12,5 @@ mod server;
 
 pub use circle::{CircleProvider, DbCircle, StaticCircle};
 pub use limits::RateLimiter;
-pub use policy::{AuthState, Policy, ReadAccess, WriteDecision};
+pub use policy::{AuthState, KindRule, Policy, ReadAccess, ReadRule, WriteDecision, WriteRule};
 pub use server::{PlanFn, Relay, RelayConfig, serve};

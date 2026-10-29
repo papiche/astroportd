@@ -12,14 +12,18 @@ pub mod client;
 pub mod crawl;
 pub mod ingest;
 pub mod outbox;
+pub mod peers;
 pub mod projector;
+pub mod replication;
 pub mod replay;
 
 pub use client::{ClientError, RelayClient, Signer, WsClient};
-pub use crawl::{CrawlConfig, CrawlStats, Crawler};
+pub use crawl::{CrawlConfig, CrawlStats, Crawler, PassHook, PassReport, RelaySource};
 pub use ingest::{Ingested, ingest_event};
 pub use outbox::RelayOutbox;
+pub use peers::{Peer, read_peers};
 pub use projector::{ProjectError, Projector};
+pub use replication::{ReplicationConfig, Replicator};
 pub use replay::{ReplayStats, replay_local, replay_with_ucloud};
 
 /// Erreurs du moteur de synchronisation.
