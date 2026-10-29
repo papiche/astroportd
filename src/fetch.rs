@@ -154,16 +154,26 @@ async fn resolve(host: &str, port: u16, allow_private: bool) -> Result<SocketAdd
 
 /// Télécharge `url`. Le corps est rendu en flux : rien n'est lu en mémoire ni écrit sur disque ici.
 pub async fn fetch(url: &str, limits: &FetchLimits) -> Result<Fetched, FetchError> {
-    fetch_inner(url, limits, None).await
+    fetch_inner(url, limits, None, &[]).await
+}
+
+/// Comme [`fetch`], avec des en-têtes en plus (`Authorization` d'un appel de station à station).
+pub async fn fetch_with(url: &str, headers: &[(&str, String)], limits: &FetchLimits) -> Result<Fetched, FetchError> {
+    fetch_inner(url, limits, None, headers).await
 }
 
 /// Envoie `json` en `POST` à `url` (service d'indexation configuré par l'opérateur : GraphQL) et rend la réponse,
 /// bornée par `limits.max_bytes`. Mêmes garde-fous que [`fetch`] ; aucune redirection n'est suivie (un `POST` n'est
 /// jamais rejoué ailleurs).
 pub async fn post_json(url: &str, json: &str, limits: &FetchLimits) -> Result<Vec<u8>, FetchError> {
+    post_json_with(url, json, &[], limits).await
+}
+
+/// Comme [`post_json`], avec des en-têtes en plus (`Authorization` d'un appel de station à station).
+pub async fn post_json_with(url: &str, json: &str, headers: &[(&str, String)], limits: &FetchLimits) -> Result<Vec<u8>, FetchError> {
     let mut once = limits.clone();
     once.max_redirects = 0;
-    let got = fetch_inner(url, &once, Some(Bytes::from(json.to_owned()))).await?;
+    let got = fetch_inner(url, &once, Some(Bytes::from(json.to_owned())), headers).await?;
     let mut out = Vec::new();
     let mut body = got.body;
     body.read_to_end(&mut out).await.map_err(|e| FetchError::Connect(e.to_string()))?;
@@ -173,7 +183,7 @@ pub async fn post_json(url: &str, json: &str, limits: &FetchLimits) -> Result<Ve
     Ok(out)
 }
 
-async fn fetch_inner(url: &str, limits: &FetchLimits, post: Option<Bytes>) -> Result<Fetched, FetchError> {
+async fn fetch_inner(url: &str, limits: &FetchLimits, post: Option<Bytes>, extra: &[(&str, String)]) -> Result<Fetched, FetchError> {
     let mut current = Url::parse(url).map_err(|e| FetchError::BadUrl(e.to_string()))?;
     let tls = tls_config(&limits.extra_roots)?;
     for hop in 0..=limits.max_redirects {
@@ -209,6 +219,7 @@ async fn fetch_inner(url: &str, limits: &FetchLimits, post: Option<Bytes>) -> Re
                 Some(_) => Request::post(target).header(header::CONTENT_TYPE, "application/json"),
                 None => Request::get(target),
             };
+            let builder = extra.iter().fold(builder, |b, (k, v)| b.header(*k, v.as_str()));
             let req = builder
                 .header(header::HOST, host_header)
                 .header(header::USER_AGENT, HeaderValue::from_static("astroportd"))

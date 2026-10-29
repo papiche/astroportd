@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0b5fff">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<title>Invitation</title>
+<link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/register.css">
+<link rel="stylesheet" href="/ui/invite.css">
+</head>
+<body>
+<a class="skip" href="#main" data-t="skip">Aller au contenu</a>
+<main id="main">
+  <h1 id="title" data-t="loading">Chargement…</h1>
+  <p id="lead" class="lead" role="status"></p>
+
+  <form id="login" hidden>
+    <label for="u" data-t="email">Votre adresse email</label>
+    <input id="u" name="u" type="email" autocomplete="username" required maxlength="254">
+    <label for="p" data-t="pass">Code PASS</label>
+    <input id="p" name="p" type="password" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4,6}" maxlength="6" required>
+    <button id="login-go" class="primary" data-t="go">Continuer</button>
+    <p id="login-e" class="err" role="alert"></p>
+  </form>
+
+  <section id="ask" hidden>
+    <p class="row"><button id="yes" type="button" class="primary" data-t="accept">Accepter ces photos</button></p>
+    <p id="err" class="err" role="alert"></p>
+  </section>
+
+  <section id="done" hidden aria-live="polite">
+    <h2 id="done-t" tabindex="-1"></h2>
+    <p id="warns" class="muted"></p>
+    <p class="row"><button id="open" type="button" class="primary" data-t="open">Ouvrir mon espace</button></p>
+  </section>
+</main>
+<script src="/ui/claim.js"></script>
+</body>
+</html>

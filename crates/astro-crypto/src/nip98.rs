@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use astro_nostr_proto::{Event, EventError, kind};
+use astro_nostr_proto::{Event, EventError, UnsignedEvent, kind};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use sha2::{Digest, Sha256};
@@ -124,6 +124,22 @@ impl ReplayStore for MemoryReplayStore {
     }
 }
 
+/// Construit l'en-tête `Authorization: Nostr …` d'une requête que **cette station** adresse à une autre au nom d'un compte
+/// qu'elle héberge. Même forme que celle exigée par [`verify_authorization`] : `u`, `method`, et `payload` si `body` est non vide.
+pub fn authorization_header(secret: &[u8; 32], method: &str, url: &str, body: Option<&[u8]>, now: u64) -> Result<String, EventError> {
+    let mut tags = vec![vec!["u".to_owned(), url.to_owned()], vec!["method".to_owned(), method.to_ascii_uppercase()]];
+    if let Some(b) = body.filter(|b| !b.is_empty()) {
+        tags.push(vec!["payload".to_owned(), hex::encode(Sha256::digest(b))]);
+    }
+    // Deux appels identiques dans la même seconde donneraient le même événement : le second serait pris pour un rejeu.
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
+    let nonce = hex::encode(Sha256::digest(format!("{}:{nanos}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed))))[..16].to_owned();
+    let event = UnsignedEvent { created_at: now, kind: kind::HTTP_AUTH, tags, content: nonce }.sign(secret)?;
+    let json = serde_json::to_string(&event).map_err(|_| EventError::Serialize)?;
+    Ok(format!("Nostr {}", base64::engine::general_purpose::STANDARD.encode(json)))
+}
+
 /// Valide l'en-tête `Authorization` d'une requête.
 ///
 /// L'événement n'est enregistré dans `store` qu'une fois toutes les autres vérifications réussies.
@@ -234,6 +250,17 @@ mod tests {
         ev.sig = hex::encode(secp.sign_schnorr_no_aux_rand(&id, &kp).to_byte_array());
         let json = serde_json::to_vec(&ev).unwrap();
         format!("Nostr {}", base64::engine::general_purpose::STANDARD.encode(json))
+    }
+
+    #[test]
+    fn a_header_built_here_is_accepted_by_the_verifier() {
+        let secret = [9u8; 32];
+        let body = br#"{"a":1}"#;
+        let h = authorization_header(&secret, "post", URL, Some(body), NOW).unwrap();
+        let s = MemoryReplayStore::new();
+        let ok = verify_authorization(&h, &req(Some(body)), NOW, &s).unwrap();
+        assert_eq!(ok.pubkey, astro_nostr_proto::pubkey_of(&secret).unwrap());
+        assert_eq!(verify_authorization(&h, &req(Some(b"autre")), NOW, &MemoryReplayStore::new()), Err(Nip98Error::PayloadMismatch), "le corps est lié à la signature");
     }
 
     fn good(body: Option<&[u8]>) -> String {

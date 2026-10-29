@@ -110,6 +110,43 @@ impl<O: Outbox> Sharing<O> {
             .map_err(|e| e.to_string())
     }
 
+    /// Message fichier (NIP-17, kind 15) emballé en NIP-59 pour `friend`, avec l'indication de la station qui détient le blob.
+    fn wrap_for(&self, secret: &[u8; 32], owner: &str, friend: &str, file: &SharedFile) -> Result<astro_nostr_proto::Event, String> {
+        let mut tags = vec![
+            vec!["p".to_owned(), friend.to_owned()],
+            vec!["file-type".into(), file.mime.clone()],
+            vec!["encryption-algorithm".into(), "uenc-v2".into()],
+            vec!["decryption-key".into(), file.key_hex.clone()],
+            vec!["cid".into(), file.cid.clone()],
+            vec!["ox".into(), file.sha_plain.clone()],
+            vec!["size".into(), file.size.to_string()],
+            vec!["name".into(), file.name.clone()],
+        ];
+        if let Some(peer) = &self.station_peer {
+            tags.push(vec!["station".into(), peer.clone()]);
+        }
+        let rumor = Rumor { pubkey: owner.to_owned(), created_at: u64::try_from(now()).unwrap_or(0), kind: kind::FILE, tags, content: format!("ipfs://{}", file.cid) };
+        gift_wrap(secret, friend, &rumor, rumor.created_at).map_err(|_| "emballage NIP-59 impossible".to_owned())
+    }
+
+    /// Envoie `files` de `owner` à `friend`, hébergé **ailleurs**, sans vérifier le suivi réciproque : l'appelant (une invitation
+    /// acceptée) vient de l'établir. Rend `(envoyés, première erreur)`.
+    pub async fn deliver_remote(&self, owner: &str, friend: &str, files: &[SharedFile]) -> (usize, Option<String>) {
+        let Some(secret) = self.keys.secret(owner) else { return (0, Some("clé du compte indisponible : envoi impossible".into())) };
+        let (mut sent, mut first) = (0usize, None);
+        for file in files {
+            let result = match self.wrap_for(&secret, owner, friend, file) {
+                Ok(wrap) => self.outbox.send(friend, wrap).await.map_err(|e| e.to_string()),
+                Err(e) => Err(e),
+            };
+            match result {
+                Ok(()) => sent += 1,
+                Err(e) => first = first.or(Some(e)),
+            }
+        }
+        (sent, first)
+    }
+
     /// Fichiers (et contenu des dossiers) désignés par `paths`, avec ce qu'il faut pour les envoyer.
     async fn files(&self, owner: &str, paths: &[String]) -> Result<Vec<(String, SharedFile)>, String> {
         resolve_files(&self.db, owner, paths).await
@@ -146,23 +183,9 @@ impl<O: Outbox> Sharing<O> {
                 let result = if f.hosted {
                     adopt_shared_file(&self.db, &f.hex, owner, &my_label, file, "friend-share").await.map(|_| ()).map_err(|e| e.to_string())
                 } else {
-                    let mut tags = vec![
-                        vec!["p".to_owned(), f.hex.clone()],
-                        vec!["file-type".into(), file.mime.clone()],
-                        vec!["encryption-algorithm".into(), "uenc-v2".into()],
-                        vec!["decryption-key".into(), file.key_hex.clone()],
-                        vec!["cid".into(), file.cid.clone()],
-                        vec!["ox".into(), file.sha_plain.clone()],
-                        vec!["size".into(), file.size.to_string()],
-                        vec!["name".into(), file.name.clone()],
-                    ];
-                    if let Some(peer) = &self.station_peer {
-                        tags.push(vec!["station".into(), peer.clone()]);
-                    }
-                    let rumor = Rumor { pubkey: owner.to_owned(), created_at: u64::try_from(now()).unwrap_or(0), kind: kind::FILE, tags, content: format!("ipfs://{}", file.cid) };
-                    match gift_wrap(&secret, &f.hex, &rumor, rumor.created_at) {
+                    match self.wrap_for(&secret, owner, &f.hex, file) {
                         Ok(wrap) => self.outbox.send(&f.hex, wrap).await.map_err(|e| e.to_string()),
-                        Err(_) => Err("emballage NIP-59 impossible".to_owned()),
+                        Err(e) => Err(e),
                     }
                 };
                 match result {

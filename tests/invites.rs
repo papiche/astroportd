@@ -109,7 +109,7 @@ async fn a_link_creates_the_account_befriends_both_ways_shares_the_photos_and_li
     assert_eq!((token.len(), created["count"].as_u64()), (32, Some(2)), "toutes les photos de Léa, pas une de plus");
 
     // Ce que voit le porteur du lien : qui invite et combien, jamais un chemin ni une clé ; première ouverture notée.
-    let p = b.invites.preview(&token).await.unwrap();
+    let p = b.invites.preview(&token, false).await.unwrap();
     assert_eq!((p["from"].as_str(), p["count"].as_u64(), p["email_hint"].as_str()), (Some("alice"), Some(2), Some("l**@example.org")));
     assert!(!p.to_string().contains("/Photos") && !p.to_string().contains(&alice));
     assert_eq!(b.invites.list(&alice).await.unwrap()["invites"][0]["state"], "opened");
@@ -149,7 +149,7 @@ async fn a_link_works_once_and_a_failed_claim_leaves_it_usable() {
     b.invites.claim(&token, None, "lea@example.org", "fr").await.unwrap();
     // Réutilisation : refusée, aussi bien pour l'aperçu que pour une nouvelle réclamation.
     assert!(matches!(b.invites.claim(&token, None, "autre@example.org", "fr").await, Err(InviteError::Gone(_))));
-    assert!(matches!(b.invites.preview(&token).await, Err(InviteError::Gone(_))));
+    assert!(matches!(b.invites.preview(&token, false).await, Err(InviteError::Gone(_))));
     assert_eq!(count(&b, "SELECT COUNT(*) FROM identities WHERE hosted = 1", vec![]).await, 2);
 }
 
@@ -163,18 +163,18 @@ async fn revoked_expired_unknown_and_foreign_requests_are_refused() {
     // Un autre compte ne retire pas le lien d'Alice ; Alice, si.
     assert!(matches!(b.invites.revoke(&"cd".repeat(32), &token).await, Err(InviteError::NotFound(_))));
     b.invites.revoke(&alice, &token).await.unwrap();
-    assert!(matches!(b.invites.preview(&token).await, Err(InviteError::Gone(_))));
+    assert!(matches!(b.invites.preview(&token, false).await, Err(InviteError::Gone(_))));
     assert!(matches!(b.invites.claim(&token, None, "lea@example.org", "fr").await, Err(InviteError::Gone(_))));
 
     // Expirée.
     let t2 = b.invites.create(&alice, req(&contact)).await.unwrap()["token"].as_str().unwrap().to_owned();
     b.db.writer().execute("UPDATE invites SET expires_at = 1 WHERE token = ?1", vec![V::Text(t2.clone())]).await.unwrap();
-    assert!(matches!(b.invites.preview(&t2).await, Err(InviteError::Gone(_))));
+    assert!(matches!(b.invites.preview(&t2, false).await, Err(InviteError::Gone(_))));
     assert!(matches!(b.invites.claim(&t2, None, "lea@example.org", "fr").await, Err(InviteError::Gone(_))));
 
     // Jeton inventé ou mal formé : introuvable, sans rien révéler.
     for bad in ["0".repeat(32), "x".into(), String::new(), "../etc/passwd".into()] {
-        assert!(matches!(b.invites.preview(&bad).await, Err(InviteError::NotFound(_))), "{bad}");
+        assert!(matches!(b.invites.preview(&bad, false).await, Err(InviteError::NotFound(_))), "{bad}");
     }
     // Rien à envoyer, chemins d'un autre compte, validité absurde.
     assert!(matches!(b.invites.create(&alice, CreateRequest::default()).await, Err(InviteError::Invalid(_))));
@@ -200,7 +200,7 @@ async fn the_public_thumbnail_is_a_few_pixels_wide() {
     }
     let img = image::load_from_memory(&png.unwrap()).unwrap();
     assert!(img.width().max(img.height()) <= 16, "{}x{}", img.width(), img.height());
-    let p: Value = b.invites.preview(&token).await.unwrap();
+    let p: Value = b.invites.preview(&token, false).await.unwrap();
     assert_eq!(p["thumbs"].as_array().unwrap().len(), 2);
     assert!(matches!(b.invites.thumb(&token, 7).await, Err(InviteError::NotFound(_))));
 }
@@ -211,12 +211,12 @@ async fn an_existing_account_accepts_without_a_form_and_gets_the_photos_added_si
     let alice = hex(&ALICE);
     let contact = alice_has_lea(&b).await;
     let token = b.invites.create(&alice, req(&contact)).await.unwrap()["token"].as_str().unwrap().to_owned();
-    assert_eq!(b.invites.preview(&token).await.unwrap()["count"], 2);
+    assert_eq!(b.invites.preview(&token, false).await.unwrap()["count"], 2);
 
     // Une troisième photo de Léa arrive après la création du lien : l'aperçu et l'acceptation la comptent.
     ingest::ingest(&b.dav, &alice, "/Photos", "c.png", Some("image/png"), Cursor::new(png())).await.unwrap();
     b.db.writer().execute("INSERT INTO faces(owner_hex, name, embed_hash, ts, ucloud_path) VALUES (?1, 'Léa', 'h9', 9, '/Photos/c.png')", vec![V::Text(alice.clone())]).await.unwrap();
-    assert_eq!(b.invites.preview(&token).await.unwrap()["count"], 3);
+    assert_eq!(b.invites.preview(&token, false).await.unwrap()["count"], 3);
 
     // Léa a déjà un compte ici. Alice ne peut pas accepter sa propre invitation.
     let lea = b.registrar.register(None, "lea@example.org", "fr").await.unwrap().account.hex;

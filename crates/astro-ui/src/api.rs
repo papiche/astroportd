@@ -335,12 +335,29 @@ pub trait Backend: Send + Sync + 'static {
     fn invite_preview(&self, _token: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
     }
+    /// Aperçu d'une invitation pour une station qui signe sa demande (NIP-98) : il porte en plus la clé de l'expéditeur.
+    fn invite_preview_signed(&self, _headers: &HeaderMap, _method: &str, _uri: &Uri, _token: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
+    }
     /// Vignette floutée n° `index` d'une invitation (public) : PNG de quelques pixels.
     fn invite_thumb(&self, _token: String, _index: usize) -> impl Future<Output = Result<Vec<u8>, ApiError>> + Send {
         async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
     }
     /// Accepte une invitation avec le compte authentifié (même station) : double suivi, photos rangées, sans nouveau compte.
     fn invite_accept(&self, _who: &Principal, _token: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
+    }
+    /// Accepte une invitation au nom d'un destinataire qui prouve son identité par NIP-98 (`Authorization: Nostr`) : compte d'ici,
+    /// ou compte hébergé sur une autre station qui appelle de station à station. `body` est le corps brut (lié à la signature).
+    fn invite_accept_nostr(&self, _headers: &HeaderMap, _method: &str, _uri: &Uri, _token: String, _body: Vec<u8>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
+    }
+    /// Demande l'envoi des photos d'une invitation acceptée depuis une autre station (NIP-98).
+    fn invite_deliver(&self, _headers: &HeaderMap, _method: &str, _uri: &Uri, _token: String, _body: Vec<u8>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
+    }
+    /// Accepte, avec le compte authentifié, l'invitation d'**une autre station** (`origin`).
+    fn invite_accept_elsewhere(&self, _who: &Principal, _origin: String, _token: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
     }
     /// Réclame une invitation (public) : crée le MULTIPASS de `email` et range les photos chez lui.
@@ -389,6 +406,8 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/invite/{token}/thumb/{index}", get(invite_thumb::<B>))
         .route("/api/v1/invite/{token}/claim", post(invite_claim::<B>))
         .route("/api/v1/invite/{token}/accept", post(invite_accept::<B>))
+        .route("/api/v1/invite/{token}/deliver", post(invite_deliver::<B>))
+        .route("/api/v1/invites/remote-accept", post(invite_accept_elsewhere::<B>))
         .route("/api/v1/contacts", get(contacts::<B>))
         .route("/api/v1/contacts/sync", post(contacts_sync::<B>))
         .route("/api/v1/contacts/from-person", post(contacts_create::<B>))
@@ -1011,7 +1030,10 @@ async fn invite_revoke<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: H
 }
 
 /// Public : le jeton du lien est la seule preuve. Jamais mis en cache ni indexé.
-async fn invite_preview<B: Backend>(State(st): State<Arc<UiState<B>>>, Path(token): Path<String>) -> Response {
+async fn invite_preview<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(token): Path<String>) -> Response {
+    if nostr_scheme(&headers) {
+        return reply(st.backend.invite_preview_signed(&headers, method.as_str(), &uri, token).await);
+    }
     reply(st.backend.invite_preview(token).await)
 }
 
@@ -1022,10 +1044,46 @@ async fn invite_thumb<B: Backend>(State(st): State<Arc<UiState<B>>>, Path((token
     }
 }
 
-/// Accepte l'invitation avec le compte connecté : l'identité vient de la session, pas d'une adresse saisie.
-async fn invite_accept<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(token): Path<String>) -> Response {
+/// Corps maximal d'un appel de station à station (une liste de contacts signée).
+const REMOTE_BODY_BYTES: usize = 256 * 1024;
+
+fn nostr_scheme(headers: &HeaderMap) -> bool {
+    headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.split_whitespace().next()).is_some_and(|s| s.eq_ignore_ascii_case("nostr"))
+}
+
+/// Accepte l'invitation avec le compte connecté : l'identité vient de la session (Basic) ou d'une signature NIP-98, jamais
+/// d'une adresse saisie. Une signature peut venir d'une autre station, au nom d'un compte qu'elle héberge.
+async fn invite_accept<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(token): Path<String>, body: axum::body::Bytes) -> Response {
+    if nostr_scheme(&headers) {
+        if body.len() > REMOTE_BODY_BYTES {
+            return reply(Err(ApiError::bad_request("corps trop volumineux")));
+        }
+        return reply(st.backend.invite_accept_nostr(&headers, method.as_str(), &uri, token, body.to_vec()).await);
+    }
     match who(&st, &headers, &method, &uri).await {
         Ok(p) => reply(st.backend.invite_accept(&p, token).await),
+        Err(r) => r,
+    }
+}
+
+/// Demande l'envoi des photos d'une invitation acceptée depuis une autre station (signature NIP-98 du destinataire).
+async fn invite_deliver<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(token): Path<String>, body: axum::body::Bytes) -> Response {
+    if !nostr_scheme(&headers) || body.len() > REMOTE_BODY_BYTES {
+        return unauthorized();
+    }
+    reply(st.backend.invite_deliver(&headers, method.as_str(), &uri, token, body.to_vec()).await)
+}
+
+#[derive(Deserialize)]
+struct RemoteAcceptBody {
+    origin: String,
+    token: String,
+}
+
+/// Accepte l'invitation d'une autre station avec le compte connecté ici.
+async fn invite_accept_elsewhere<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(b): Json<RemoteAcceptBody>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.invite_accept_elsewhere(&p, b.origin, b.token).await),
         Err(r) => r,
     }
 }

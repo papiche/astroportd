@@ -61,7 +61,14 @@
     </p>
   </section>
 
-  <p class="muted small"><a href="/" data-t="have">J’ai déjà un MULTIPASS</a></p>
+  <form id="away" hidden>
+    <label for="away-host" data-t="awaylabel">Adresse de votre station</label>
+    <input id="away-host" name="host" type="text" inputmode="url" autocomplete="url" required maxlength="253" placeholder="station.exemple.org">
+    <button id="away-go" class="primary" data-t="go2">Continuer</button>
+    <p id="away-e" class="err" role="alert"></p>
+  </form>
+
+  <p class="muted small"><a href="/" data-t="have">J’ai déjà un MULTIPASS</a> · <a href="#" id="away-open" data-t="away">Mon compte est sur une autre station</a></p>
 </main>
 <script src="/ui/invite.js"></script>
 </body>

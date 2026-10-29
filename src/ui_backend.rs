@@ -230,7 +230,12 @@ impl<B: BlobStore> Backend for StationUi<B> {
     }
 
     async fn invite_preview(&self, token: String) -> Result<Value, ApiError> {
-        self.invites_service()?.preview(&token).await.map_err(invite_error)
+        self.invites_service()?.preview(&token, false).await.map_err(invite_error)
+    }
+
+    async fn invite_preview_signed(&self, headers: &HeaderMap, method: &str, uri: &Uri, token: String) -> Result<Value, ApiError> {
+        self.nostr_caller(headers, method, uri, &[]).await?;
+        self.invites_service()?.preview(&token, true).await.map_err(invite_error)
     }
 
     async fn invite_thumb(&self, token: String, index: usize) -> Result<Vec<u8>, ApiError> {
@@ -240,6 +245,27 @@ impl<B: BlobStore> Backend for StationUi<B> {
     async fn invite_accept(&self, who: &Principal, token: String) -> Result<Value, ApiError> {
         let a = self.invites_service()?.accept(&token, &who.hex).await.map_err(invite_error)?;
         Ok(json!({ "from": a.from, "shared": a.shared, "warnings": a.warnings }))
+    }
+
+    async fn invite_accept_nostr(&self, headers: &HeaderMap, method: &str, uri: &Uri, token: String, body: Vec<u8>) -> Result<Value, ApiError> {
+        let pubkey = self.nostr_caller(headers, method, uri, &body).await?;
+        let svc = self.invites_service()?;
+        let hosted = self.is_hosted(&pubkey).await;
+        if hosted {
+            let a = svc.accept(&token, &pubkey).await.map_err(invite_error)?;
+            return Ok(json!({ "from": a.from, "shared": a.shared, "warnings": a.warnings }));
+        }
+        let proof: crate::invites::RemoteProof = serde_json::from_slice(&body).map_err(|e| ApiError::bad_request(format!("preuve illisible : {e}")))?;
+        svc.accept_remote(&token, &pubkey, proof).await.map_err(invite_error)
+    }
+
+    async fn invite_deliver(&self, headers: &HeaderMap, method: &str, uri: &Uri, token: String, body: Vec<u8>) -> Result<Value, ApiError> {
+        let pubkey = self.nostr_caller(headers, method, uri, &body).await?;
+        self.invites_service()?.deliver_remote(&token, &pubkey).await.map_err(invite_error)
+    }
+
+    async fn invite_accept_elsewhere(&self, who: &Principal, origin: String, token: String) -> Result<Value, ApiError> {
+        self.invites_service()?.accept_elsewhere(&who.hex, &origin, &token).await.map_err(invite_error)
     }
 
     async fn invite_claim(&self, ip: Option<std::net::IpAddr>, token: String, who: Applicant, lang: String) -> Result<Value, ApiError> {
@@ -959,6 +985,32 @@ fn registered_json(reg: &crate::register::Registered) -> Value {
         "email": a.email, "token": reg.token, "pass": a.pass, "salt": &*a.salt, "pepper": &*a.pepper, "nsec": &*a.nsec,
         "npub": a.npub, "hex": a.hex, "g1pub": a.g1_ss58, "nostrns": a.nostrns, "constellation": reg.constellation, "lang": a.lang, "guest": reg.guest,
     })
+}
+
+impl<B: BlobStore> StationUi<B> {
+    /// Clé qui a signé la requête (NIP-98, corps lié à la signature, anti-rejeu). L'URL attendue est celle que la station annonce
+    /// publiquement (`public_base_url`), à défaut celle de l'en-tête `Host`.
+    async fn nostr_caller(&self, headers: &HeaderMap, method: &str, uri: &Uri, body: &[u8]) -> Result<String, ApiError> {
+        let value = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok()).ok_or_else(|| ApiError::denied("signature NIP-98 attendue"))?.to_owned();
+        let base = match &self.dav.config.public_base_url {
+            Some(b) => b.trim_end_matches('/').to_owned(),
+            None => format!("http://{}", headers.get(axum::http::header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("localhost")),
+        };
+        let url = format!("{base}{}", uri.path_and_query().map_or("/", |p| p.as_str()));
+        let (method, body, store) = (method.to_owned(), body.to_vec(), self.dav.replay.clone());
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        tokio::task::spawn_blocking(move || astro_crypto::nip98::verify_authorization(&value, &astro_crypto::nip98::Nip98Request { method: &method, url: &url, body: Some(&body) }, now, store.as_ref()))
+            .await
+            .map_err(|_| ApiError::internal("vérification interrompue"))?
+            .map(|v| v.pubkey)
+            .map_err(|e| ApiError::denied(format!("NIP-98 refusé : {e}")))
+    }
+
+    async fn is_hosted(&self, hex: &str) -> bool {
+        use rusqlite::OptionalExtension;
+        let h = hex.to_owned();
+        self.services.db.readers().read(move |c| Ok(c.query_row("SELECT 1 FROM identities WHERE hex = ?1 AND hosted = 1", [h], |r| r.get::<_, i64>(0)).optional()?.is_some())).await.unwrap_or(false)
+    }
 }
 
 fn invite_error(e: crate::invites::InviteError) -> ApiError {

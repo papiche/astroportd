@@ -84,7 +84,13 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
     let nsec = bech32::encode::<bech32::Bech32>(bech32::Hrp::parse("nsec").unwrap(), &ALICE).unwrap();
     std::fs::write(dir.join("nostr/alice@example.org/.secret.nostr"), format!("NSEC={nsec}; NPUB=x; HEX={}\n", hex(&ALICE))).unwrap();
     std::fs::write(dir.join("nostr/alice@example.org/.pass"), "123456\n").unwrap();
-    let invites = Arc::new(astroportd::invites::Invites::new(db.clone(), dav.blobs.clone(), Arc::new(astro_crypto::FileKeySource::new(dir.join("nostr"))), registrar.clone(), Arc::new(|_| Box::pin(async { Ok(()) }))).with_links(links.clone()));
+    std::fs::create_dir_all(dir.join("nostr/bob@example.org")).unwrap();
+    let nsec = bech32::encode::<bech32::Bech32>(bech32::Hrp::parse("nsec").unwrap(), &BOB).unwrap();
+    std::fs::write(dir.join("nostr/bob@example.org/.secret.nostr"), format!("NSEC={nsec}; NPUB=x; HEX={}\n", hex(&BOB))).unwrap();
+    // Deux stations de test se parlent en local : adresses privées et http admis pour les appels de station à station.
+    let mut local = astroportd::fetch::FetchLimits::new(256 * 1024);
+    local.allow_private = true;
+    let invites = Arc::new(astroportd::invites::Invites::new(db.clone(), dav.blobs.clone(), Arc::new(astro_crypto::FileKeySource::new(dir.join("nostr"))), registrar.clone(), Arc::new(|_| Box::pin(async { Ok(()) }))).with_links(links.clone()).with_fetch_limits(local));
     let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_registrar(registrar).with_invites(invites).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), Arc::new(|_| Box::pin(async { Ok(()) })), None).with_activity(bus.clone()))).with_contacts(links).with_coop(
         Arc::new(|| Box::pin(async { Ok(json!({ "exists": false, "sections": [] })) })),
         Arc::new(|values| Box::pin(async move { Ok(json!({ "saved": values.keys().collect::<Vec<_>>() })) })),
@@ -943,4 +949,74 @@ async fn a_logged_in_member_accepts_an_invitation_and_errors_carry_stable_codes(
     let (s, _, raw) = call(&b.app, Method::POST, &format!("/api/v1/invite/{t2}/claim"), None, &[("content-type", "application/json")], json!({ "email": "alice@example.org" }).to_string().into_bytes()).await;
     let taken: Value = serde_json::from_slice(&raw).unwrap();
     assert_eq!((s, taken["code"].as_str()), (StatusCode::CONFLICT, Some("email_taken")), "{taken}");
+}
+
+/// Sert le routeur d'une station de test sur un port local et rend son origine (`http://127.0.0.1:port`).
+async fn serve_local(app: Router) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    origin
+}
+
+#[tokio::test]
+async fn an_invitation_from_another_station_is_accepted_with_a_signature_made_by_the_recipients_station() {
+    // A : la station d'Alice (expéditrice). B : celle de Bob, qui n'y est pas hébergé.
+    let a = bench("remote-a", None).await;
+    let b = bench("remote-b", None).await;
+    a.db.writer().execute("UPDATE identities SET hosted = 0 WHERE hex = ?1", vec![V::Text(hex(&BOB))]).await.unwrap();
+    b.db.writer().execute("UPDATE identities SET hosted = 0 WHERE hex = ?1", vec![V::Text(hex(&ALICE))]).await.unwrap();
+    let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
+    put(&a.app, &alice, "/Photos/a.png", &png_bytes()).await;
+    let (_, made) = api(&a.app, Method::POST, "/api/v1/invites", &alice, Some(json!({ "paths": ["/Photos"], "label": "Bob" }))).await;
+    let token = made["token"].as_str().unwrap().to_owned();
+    let origin = serve_local(a.app.clone()).await;
+
+    // L'aperçu public ne donne pas la clé de l'expéditeur ; la station de Bob la reçoit, en signant sa demande.
+    let (_, _, raw) = call(&a.app, Method::GET, &format!("/api/v1/invite/{token}"), None, &[], vec![]).await;
+    assert!(!String::from_utf8_lossy(&raw).contains(&hex(&ALICE)));
+
+    // Sans session sur sa propre station, rien ne part ; une adresse en clair ou un jeton inconnu sont refusés.
+    let go = |body: Value| { let (app, bob) = (b.app.clone(), bob.clone()); async move { api(&app, Method::POST, "/api/v1/invites/remote-accept", &bob, Some(body)).await } };
+    assert_eq!(api(&b.app, Method::POST, "/api/v1/invites/remote-accept", "Basic nope", Some(json!({ "origin": origin, "token": token }))).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(go(json!({ "origin": "ftp://x", "token": token })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(go(json!({ "origin": origin, "token": "f".repeat(32) })).await.0, StatusCode::GONE, "lien inconnu de la station d'origine");
+
+    let (s, ok) = go(json!({ "origin": origin, "token": token })).await;
+    assert_eq!((s, ok["from"].as_str()), (StatusCode::OK, Some("alice")), "{ok}");
+
+    // Station A : le lien est utilisé par Bob ; Alice le suit et détient sa liste de contacts signée.
+    let (claimed_by, follows): (Option<String>, i64) = a.db.readers().read({ let (t, bob_hex) = (token.clone(), hex(&BOB)); move |c| Ok((
+        c.query_row("SELECT claimed_by FROM invites WHERE token = ?1", [&t], |r| r.get(0))?,
+        c.query_row("SELECT COUNT(*) FROM social_graph WHERE owner_hex = ?1 AND pubkey = ?2 AND level = 1", [hex(&ALICE), bob_hex], |r| r.get(0))?,
+    )) }).await.unwrap();
+    assert_eq!((claimed_by, follows), (Some(hex(&BOB)), 1));
+    // Station B : Bob suit Alice, et la liste de contacts d'Alice (qui le suit) est rangée AVANT toute photo : sans elle, ShareInbox
+    // écarterait l'enveloppe.
+    let (bob_follows, alice_follows_bob): (i64, i64) = b.db.readers().read({ let bob_hex = hex(&BOB); move |c| Ok((
+        c.query_row("SELECT COUNT(*) FROM social_graph WHERE owner_hex = ?1 AND pubkey = ?2 AND level = 1", [&bob_hex, &hex(&ALICE)], |r| r.get(0))?,
+        c.query_row("SELECT COUNT(*) FROM nostr_events e JOIN nostr_tags t ON t.event_id = e.id WHERE e.kind = 3 AND e.pubkey = ?1 AND t.name = 'p' AND t.value = ?2", [hex(&ALICE), bob_hex], |r| r.get(0))?,
+    )) }).await.unwrap();
+    assert_eq!((bob_follows, alice_follows_bob), (1, 1));
+
+    // Usage unique, même à distance.
+    let (s, again) = go(json!({ "origin": origin, "token": token })).await;
+    assert_eq!((s, again["code"].as_str()), (StatusCode::GONE, Some("invite_gone")), "{again}");
+
+    // L'envoi est réservé à celui qui a accepté, pendant un temps limité ; la signature est liée à l'URL, au corps, et à usage unique.
+    let url = format!("http://station.test/api/v1/invite/{token}/deliver");
+    let sign = |secret: &[u8; 32], url: &str, body: &str| astro_crypto::nip98::authorization_header(secret, "POST", url, Some(body.as_bytes()), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()).unwrap();
+    let post = |url: String, auth: String, body: String| { let app = a.app.clone(); async move {
+        let path = url.strip_prefix("http://station.test").unwrap().to_owned();
+        let (s, _, raw) = call(&app, Method::POST, &path, Some(&auth), &[("content-type", "application/json")], body.into_bytes()).await;
+        (s, serde_json::from_slice::<Value>(&raw).unwrap_or(Value::Null))
+    } };
+    let h = sign(&ALICE, &url, "{}");
+    assert_eq!(post(url.clone(), h, "{}".into()).await.0, StatusCode::BAD_REQUEST, "pas celui qui a accepté");
+    let h = sign(&BOB, &url, "{}");
+    let (s, _) = post(url.clone(), h.clone(), "{\"x\":1}".into()).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "le corps ne correspond pas à la signature");
+    // Signature valide de celui qui a accepté : autorisé (ici, sans maillage configuré, la station le dit) ; rejouée : refusée.
+    assert_eq!(post(url.clone(), h.clone(), "{}".into()).await.0, StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(post(url, h, "{}".into()).await.0, StatusCode::UNAUTHORIZED, "une signature ne sert qu'une fois");
 }

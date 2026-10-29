@@ -887,7 +887,7 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
             let p = relays.clone();
             Box::pin(async move { astro_bro::broker::Publisher::publish(&*p, e).await })
         });
-        Arc::new(astroportd::invites::Invites::new(db.clone(), dav.blobs.clone(), invites_keys, registrar.clone(), publish).with_links(links.clone()).with_publisher(publisher.clone()).with_activity(activity.clone()))
+        Arc::new(astroportd::invites::Invites::new(db.clone(), dav.blobs.clone(), invites_keys, registrar.clone(), publish).with_links(links.clone()).with_publisher(publisher.clone()).with_activity(activity.clone()).with_remote(sharing.clone()))
     };
     let account_publish: astroportd::register::PublishFn = {
         let publisher = event_publisher.clone();

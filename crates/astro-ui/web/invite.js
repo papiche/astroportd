@@ -13,6 +13,7 @@ const T = {
     gone: 'This link is no longer valid.', down: 'Station unreachable.', got: (c, n) => `${c} file(s) from ${n} are waiting for you.`, warn: w => `Note: ${w}`,
     e400: 'Address refused: check it.', e429: 'Too many sign-ups from your network. Wait a little.', e501: 'Sign-ups are closed on this station.',
     cardHead: 'MULTIPASS', keep: 'Keep this file offline. It will never be shown again.',
+    away: 'My account is on another station', awaylabel: 'Your station address', go2: 'Continue', awaybad: 'Enter the address of your station (e.g. station.example.org).',
     pwlead: 'This address already has a MULTIPASS here. Enter its PASS code to add these photos.', pwlabel: 'PASS code', pwgo: 'Continue',
     accept: 'Accept these photos', other: 'Use another account',
     hello: (n, c) => `Hello ${n}, add these ${c} file(s) to your account?`, added: (c, n) => `${c} file(s) from ${n} were added to your space.`,
@@ -31,6 +32,7 @@ const T = {
     gone: 'Este enlace ya no es válido.', down: 'Estación inaccesible.', got: (c, n) => `${c} archivo(s) de ${n} le esperan.`, warn: w => `Nota: ${w}`,
     e400: 'Dirección rechazada: compruébela.', e429: 'Demasiados registros desde su red. Espere un poco.', e501: 'El registro está cerrado en esta estación.',
     cardHead: 'MULTIPASS', keep: 'Guarde este archivo sin conexión. No se volverá a mostrar.',
+    away: 'Mi cuenta está en otra estación', awaylabel: 'Dirección de su estación', go2: 'Continuar', awaybad: 'Introduzca la dirección de su estación (p. ej. estacion.ejemplo.org).',
     pwlead: 'Esta dirección ya tiene un MULTIPASS aquí. Introduzca su código PASS para añadir estas fotos.', pwlabel: 'Código PASS', pwgo: 'Continuar',
     accept: 'Aceptar estas fotos', other: 'Usar otra cuenta',
     hello: (n, c) => `Hola ${n}, ¿añadir estos ${c} archivo(s) a su cuenta?`, added: (c, n) => `${c} archivo(s) de ${n} se añadieron a su espacio.`,
@@ -49,7 +51,7 @@ const fr = {
   email_taken: 'Cette adresse a déjà un MULTIPASS ici : connectez-vous avec, puis rouvrez ce lien pour l’accepter avec votre compte.', invite_own: 'C’est votre propre invitation.',
   rate_limited: 'Trop d’inscriptions depuis votre réseau. Patientez un peu.', registration_closed: 'L’inscription est fermée sur cette station.',
   title: n => `${n} vous envoie des photos`, lead: (n, c) => `${n} vous invite à recevoir ${c} fichier(s). Indiquez votre adresse email pour créer votre espace privé et les voir.`,
-  gone: 'Ce lien n’est plus valable.', down: 'Station injoignable.', got: (c, n) => `${c} fichier(s) de ${n} vous attendent.`, warn: w => `À noter : ${w}`,
+  awaybad: 'Saisissez l’adresse de votre station (ex. station.exemple.org).', gone: 'Ce lien n’est plus valable.', down: 'Station injoignable.', got: (c, n) => `${c} fichier(s) de ${n} vous attendent.`, warn: w => `À noter : ${w}`,
   e400: 'Adresse refusée : vérifiez-la.', e429: 'Trop d’inscriptions depuis votre réseau. Patientez un peu.', e501: 'L’inscription est fermée sur cette station.',
   cardHead: 'MULTIPASS', keep: 'Gardez ce fichier hors ligne. Il ne sera plus jamais affiché.',
 };
@@ -60,6 +62,7 @@ if (lang !== 'fr') {
 }
 // Message d'une erreur de l'API : le code stable est traduit ; à défaut, le statut, puis le texte du serveur.
 const why = (r, j) => (j.code && t(j.code)) || t('e' + r.status) || j.error || t('down');
+const awayBad = () => t('awaybad');
 const FIELDS = [['email', 'Email'], ['token', 'Token'], ['pass', 'PASS (email + PASS)'], ['salt', 'SALT'], ['pepper', 'PEPPER'], ['nsec', 'nsec (secret)'], ['npub', 'npub'], ['g1pub', 'Ğ1'], ['nostrns', 'IPNS']];
 let card = null, info = null;
 $('#guest').onchange = ev => { const g = ev.target.checked; $('#email').required = !g; $('#email').hidden = g; document.querySelector('label[for=email]').hidden = g; $('#guest-note').hidden = !g; };
@@ -131,6 +134,17 @@ $('#f').onsubmit = async ev => {
     for (const id of ['#f', '#thumbs', '#lead']) $(id).hidden = true;
     $('#title').textContent = ''; $('#done').hidden = false; $('#done-t').focus();
   } catch { $('#err').textContent = t('down'); } finally { b.disabled = false; }
+};
+// Compte hébergé sur une autre station : on s'y rend avec le lien. Le jeton voyage dans le fragment de l'adresse, que le navigateur
+// n'envoie à aucun serveur ; l'autre station fait elle-même, signée, la demande à celle-ci.
+$('#away-open').onclick = ev => { ev.preventDefault(); $('#away').hidden = false; $('#f').hidden = true; $('#away-host').focus(); };
+$('#away').onsubmit = ev => {
+  ev.preventDefault();
+  try {
+    const raw = $('#away-host').value.trim(), u = new URL(/^https?:\/\//.test(raw) ? raw : 'https://' + raw);
+    if (u.origin === location.origin || !u.hostname.includes('.') && u.hostname !== 'localhost') throw new Error('hôte');
+    location.href = u.origin + '/claim#origin=' + encodeURIComponent(location.origin) + '&token=' + token;
+  } catch { $('#away-e').textContent = awayBad(); }
 };
 // Adresse déjà hébergée ici (typiquement dans Safari alors que la session est dans la PWA) : le PASS suffit, sans quitter la page.
 // La session obtenue reste en mémoire : elle n'est pas enregistrée dans ce navigateur.

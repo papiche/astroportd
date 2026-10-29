@@ -23,15 +23,17 @@ use astro_dav::adopt::{SharedFile, adopt_shared_file, sender_label};
 use astro_dav::blob::{BlobStore, is_cid};
 use astro_dav::ManifestPublisher;
 use astro_db::Db;
-use astro_nostr_proto::{UnsignedEvent, kind};
+use astro_nostr_proto::{Event, UnsignedEvent, kind};
 use astro_sync::Projector;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::identity_links::IdentityLinks;
+use crate::fetch::{FetchError, FetchLimits};
+use crate::mesh_outbox::MeshOutbox;
 use crate::register::{PublishFn, RegisterError, Registered, Registrar};
-use crate::sharing::{MAX_FILES, resolve_files};
+use crate::sharing::{MAX_FILES, Sharing, resolve_files};
 
 /// Durée de validité par défaut, et maximale.
 pub const DEFAULT_DAYS: i64 = 14;
@@ -88,6 +90,7 @@ pub fn gone_message(code: &str) -> &'static str {
     match code {
         "invite_revoked" => "ce lien a été retiré par la personne qui vous l'a envoyé",
         "invite_expired" => "ce lien a expiré : demandez-en un nouveau",
+        "invite_gone" => "ce lien ne sert plus (utilisé, expiré ou retiré)",
         _ => "ce lien a déjà été utilisé",
     }
 }
@@ -198,13 +201,32 @@ pub struct Invites<B: BlobStore> {
     publish: PublishFn,
     publisher: Option<ManifestPublisher>,
     activity: Option<ActivityBus>,
+    remote: Option<Arc<Sharing<MeshOutbox>>>,
+    fetch: FetchLimits,
 }
+
+/// Preuve qu'apporte la station d'un destinataire hébergé ailleurs, dans le corps (lié à la signature NIP-98) de sa demande.
+#[derive(Debug, Deserialize)]
+pub struct RemoteProof {
+    /// Liste de contacts (kind 3) du destinataire, signée par lui, qui suit l'expéditeur.
+    pub follow: Event,
+    /// Station d'accueil du destinataire (`<PeerID>:<NODE_HEX>`) : où lui envoyer les photos.
+    #[serde(default)]
+    pub home: Option<String>,
+}
+
+/// Envois par le maillage au plus par invitation acceptée ailleurs (une nouvelle tentative après un échec reste possible).
+const MAX_DELIVERIES: i64 = 3;
+/// Une invitation acceptée ailleurs peut déclencher l'envoi pendant ce délai seulement.
+const DELIVERY_WINDOW_SECS: i64 = 3600;
+/// Taille maximale des réponses de la station d'origine.
+const REMOTE_REPLY_BYTES: u64 = 256 * 1024;
 
 impl<B: BlobStore> Invites<B> {
     /// `keys` : clés des comptes hébergés (l'expéditeur et le nouveau titulaire s'abonnent l'un à l'autre) ;
     /// `publish` : relais où partent ces abonnements ; `publisher` : prévient la publication du uCloud du destinataire.
     pub fn new(db: Arc<Db>, blobs: Arc<B>, keys: Arc<dyn KeySource>, registrar: Arc<Registrar>, publish: PublishFn) -> Self {
-        Self { db, blobs, keys, registrar, links: None, publish, publisher: None, activity: None }
+        Self { db, blobs, keys, registrar, links: None, publish, publisher: None, activity: None, remote: None, fetch: FetchLimits::new(REMOTE_REPLY_BYTES) }
     }
 
     /// Annuaire : relie la fiche de contact au MULTIPASS créé.
@@ -222,6 +244,18 @@ impl<B: BlobStore> Invites<B> {
     /// Flux d'activité : l'expéditeur apprend que son invité a rejoint.
     pub fn with_activity(mut self, bus: ActivityBus) -> Self {
         self.activity = Some(bus);
+        self
+    }
+
+    /// Envoi des photos par le maillage aux destinataires hébergés sur une autre station.
+    pub fn with_remote(mut self, sharing: Arc<Sharing<MeshOutbox>>) -> Self {
+        self.remote = Some(sharing);
+        self
+    }
+
+    /// Réglages des appels vers une autre station (les tests y autorisent les adresses locales).
+    pub fn with_fetch_limits(mut self, limits: FetchLimits) -> Self {
+        self.fetch = limits;
         self
     }
 
@@ -402,7 +436,7 @@ impl<B: BlobStore> Invites<B> {
     }
 
     /// Ce que voit le porteur du lien : qui invite, combien de photos, jusqu'à quand. Note la première ouverture.
-    pub async fn preview(&self, token: &str) -> Result<Value, InviteError> {
+    pub async fn preview(&self, token: &str, with_owner: bool) -> Result<Value, InviteError> {
         let row = self.load(token).await?.ok_or_else(|| InviteError::NotFound("lien inconnu".into()))?;
         let at = now();
         let state = row.state(at);
@@ -417,11 +451,16 @@ impl<B: BlobStore> Invites<B> {
         }
         let items = self.current_items(&row).await?;
         let photos = items.iter().filter(|i| astro_dav::thumb::is_thumbable(&i.mime)).count();
-        Ok(json!({
+        let mut out = json!({
             "from": self.sender_name(&row.owner).await, "label": row.label, "count": items.len(), "photos": photos,
             "thumbs": items.iter().take(PREVIEW_THUMBS).enumerate().filter(|(_, i)| astro_dav::thumb::is_thumbable(&i.mime)).map(|(n, _)| n).collect::<Vec<_>>(),
             "expires_at": row.expires_at, "email_hint": row.email.as_deref().map(mask_email),
-        }))
+        });
+        // La clé de l'expéditeur n'est donnée qu'à une station qui prouve, par une signature, qui demande (accept_elsewhere).
+        if with_owner {
+            out["owner"] = json!(row.owner);
+        }
+        Ok(out)
     }
 
     /// Vignette n° `index` réduite à quelques pixels (PNG) : la page la montre agrandie et floutée.
@@ -505,6 +544,192 @@ impl<B: BlobStore> Invites<B> {
         let label = if row.label.is_empty() { label.unwrap_or_else(|| recipient.chars().take(8).collect()) } else { row.label.clone() };
         let (shared, from, warnings) = self.finish(token, &row, recipient, &label).await;
         Ok(Accepted { from, shared, warnings })
+    }
+
+    /// Accepte l'invitation au nom d'un destinataire hébergé sur **une autre station** (sa station l'appelle, signée NIP-98 : `bob`
+    /// est la clé qui a signé). Établit le suivi des deux côtés et rend la liste de contacts de l'expéditeur, que l'autre station
+    /// range avant de recevoir quoi que ce soit : elle n'accepte un fichier que d'un proche réciproque. Les photos ne partent
+    /// qu'ensuite, sur demande ([`Self::deliver_remote`]).
+    pub async fn accept_remote(&self, token: &str, bob: &str, proof: RemoteProof) -> Result<Value, InviteError> {
+        let peek = self.load(token).await?.ok_or_else(|| InviteError::NotFound("lien inconnu".into()))?;
+        if peek.owner == bob {
+            return Err(InviteError::Invalid("c'est votre propre invitation".into()));
+        }
+        let f = &proof.follow;
+        let follows_owner = f.tags.iter().any(|t| t.first().map(String::as_str) == Some("p") && t.get(1).map(String::as_str) == Some(peek.owner.as_str()));
+        if f.kind != kind::CONTACTS || f.pubkey != bob || !follows_owner || f.verify().is_err() || f.tags.len() > 5000 || f.created_at > u64::try_from(now() + 86_400).unwrap_or(0) {
+            return Err(InviteError::Invalid("liste de contacts du destinataire invalide : elle doit être signée par lui et suivre l'expéditeur".into()));
+        }
+        let home = match proof.home.as_deref() {
+            None | Some("") => None,
+            Some(h) if valid_home(h) => Some(h.to_owned()),
+            Some(_) => return Err(InviteError::Invalid("station d'accueil invalide (<PeerID>:<clé du NODE> attendu)".into())),
+        };
+        let row = self.take(token).await?;
+        let release = || async { let _ = self.db.writer().execute("UPDATE invites SET claimed_at = NULL WHERE token = ?1 AND claimed_by IS NULL", vec![token.to_owned().into()]).await; };
+        if let Err(e) = self.store_event(f.clone()).await {
+            release().await;
+            return Err(internal(format!("liste de contacts du destinataire : {e}")));
+        }
+        let (b, h) = (bob.to_owned(), home);
+        // La station d'accueil n'est jamais écrasée : elle vient d'un DID signé, pas d'une déclaration du destinataire.
+        let known = self
+            .db
+            .writer()
+            .execute(
+                "INSERT INTO identities(hex, role, home_station, hosted) VALUES (?1, 'multipass', ?2, 0) ON CONFLICT(hex) DO UPDATE SET home_station = COALESCE(identities.home_station, excluded.home_station) WHERE identities.hosted = 0",
+                vec![b.into(), h.map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text)],
+            )
+            .await;
+        let mut warnings = Vec::new();
+        if let Err(e) = known {
+            warnings.push(format!("station d'accueil non retenue : {e}"));
+        }
+        let _ = self.db.writer().execute("UPDATE invites SET claimed_by = ?2 WHERE token = ?1", vec![token.to_owned().into(), bob.to_owned().into()]).await;
+        if let Err(e) = self.follow(&row.owner, bob).await {
+            warnings.push(format!("abonnement : {e}"));
+        }
+        if let (Some(path), Some(links)) = (row.contact_path.as_deref(), &self.links) {
+            if let Err(e) = links.link(&row.owner, path, Some(bob)).await {
+                warnings.push(format!("fiche de contact non reliée : {e:?}"));
+            }
+        }
+        let count = self.current_items(&row).await.map_or(row.items.len(), |i| i.len());
+        if let Some(bus) = &self.activity {
+            bus.publish_to(Audience::Owner(row.owner.clone()), "facecloud", "invite", format!("{} a accepté votre invitation depuis une autre station : {count} fichier(s) en route", if row.label.is_empty() { bob.chars().take(8).collect() } else { row.label.clone() }), None);
+        }
+        let follow = self.latest_contacts(&row.owner).await;
+        Ok(json!({ "from": self.sender_name(&row.owner).await, "owner": row.owner, "count": count, "follow": follow, "warnings": warnings }))
+    }
+
+    /// Envoie par le maillage les photos d'une invitation acceptée par `bob` depuis une autre station. Sa station le demande
+    /// une fois qu'elle suit l'expéditeur : l'enveloppe arrivée trop tôt serait écartée. Quelques essais, pendant une heure.
+    pub async fn deliver_remote(&self, token: &str, bob: &str) -> Result<Value, InviteError> {
+        let row = self.load(token).await?.ok_or_else(|| InviteError::NotFound("lien inconnu".into()))?;
+        let fresh = row.claimed_at.is_some_and(|t| now() - t < DELIVERY_WINDOW_SECS);
+        if row.claimed_by.as_deref() != Some(bob) || !fresh {
+            return Err(InviteError::Invalid("cette invitation n'a pas été acceptée par vous, ou depuis trop longtemps".into()));
+        }
+        let sharing = self.remote.as_ref().ok_or_else(|| InviteError::Unavailable("envoi vers une autre station non disponible ici".into()))?;
+        let t = token.to_owned();
+        let tries = self
+            .db
+            .writer()
+            .execute(
+                "INSERT INTO kv(scope, key, value, updated_at) VALUES ('invite_delivery', ?1, '1', ?2) ON CONFLICT(scope, key) DO UPDATE SET value = CAST(value AS INTEGER) + 1, updated_at = excluded.updated_at WHERE CAST(value AS INTEGER) < ?3",
+                vec![t.into(), now().into(), MAX_DELIVERIES.into()],
+            )
+            .await
+            .map_err(internal)?;
+        if tries.changes == 0 {
+            return Err(InviteError::Conflict("les photos ont déjà été envoyées plusieurs fois : demandez un nouveau lien".into()));
+        }
+        let items = self.current_items(&row).await?;
+        let files = self.shared_files(&row.owner, &items).await;
+        let skipped = items.len() - files.len();
+        let (sent, error) = sharing.deliver_remote(&row.owner, bob, &files).await;
+        Ok(json!({ "sent": sent, "skipped": skipped, "error": error }))
+    }
+
+    /// Côté station du destinataire : accepte l'invitation d'une **autre** station (`origin`, ex. `https://station-a.org`) pour
+    /// `recipient`, hébergé ici. Le destinataire suit l'expéditeur, prouve son identité à la station d'origine par une signature
+    /// NIP-98 faite ici avec sa clé (qui ne quitte jamais cette station), puis demande l'envoi des photos.
+    pub async fn accept_elsewhere(&self, recipient: &str, origin: &str, token: &str) -> Result<Value, InviteError> {
+        if token.len() != 32 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(InviteError::NotFound("lien inconnu".into()));
+        }
+        let origin = origin_of(origin, self.fetch.allow_private)?;
+        let base = format!("{origin}/api/v1/invite/{token}");
+        // 1. Aperçu public : l'expéditeur (sa clé), et surtout, que le lien est encore valable.
+        let secret = self.keys.secret(recipient).ok_or_else(|| InviteError::Invalid("ce compte n'est pas hébergé sur cette station".into()))?;
+        let auth = astro_crypto::nip98::authorization_header(&secret, "GET", &base, None, u64::try_from(now()).unwrap_or(0)).map_err(|e| internal(format!("signature : {e}")))?;
+        let got = crate::fetch::fetch_with(&base, &[("authorization", auth)], &self.fetch).await.map_err(remote_error)?;
+        let preview: Value = serde_json::from_slice(&read_capped(got.body, self.fetch.max_bytes).await?).map_err(|_| InviteError::Unavailable("réponse illisible de la station d'origine".into()))?;
+        let owner = preview["owner"].as_str().filter(|o| o.len() == 64 && o.bytes().all(|b| b.is_ascii_hexdigit())).ok_or_else(|| InviteError::Unavailable("la station d'origine n'a pas annoncé l'expéditeur : version trop ancienne ?".into()))?.to_ascii_lowercase();
+        if owner == recipient {
+            return Err(InviteError::Invalid("c'est votre propre invitation".into()));
+        }
+        // 2. Le destinataire suit l'expéditeur ici, avant tout envoi.
+        self.follow(recipient, &owner).await.map_err(|e| internal(format!("abonnement : {e}")))?;
+        let mine = self.latest_contacts(recipient).await.ok_or_else(|| internal("liste de contacts introuvable après l'abonnement"))?;
+        let r = recipient.to_owned();
+        let home: Option<String> = self.db.readers().read(move |c| Ok(c.query_row("SELECT home_station FROM identities WHERE hex = ?1 AND hosted = 1", [r], |r| r.get::<_, Option<String>>(0)).optional()?.flatten())).await.ok().flatten();
+        let body = json!({ "follow": mine, "home": home }).to_string();
+        // 3. Acceptation signée.
+        let reply = self.signed_post(&secret, &format!("{base}/accept"), &body).await?;
+        let from = reply["from"].as_str().unwrap_or("?").to_owned();
+        let mut warnings: Vec<String> = reply["warnings"].as_array().map(|a| a.iter().filter_map(|w| w.as_str().map(str::to_owned)).collect()).unwrap_or_default();
+        // 4. La liste de contacts de l'expéditeur (elle suit le destinataire) : sans elle, ses photos seraient écartées à l'arrivée.
+        match serde_json::from_value::<Event>(reply["follow"].clone()) {
+            Ok(e) if e.kind == kind::CONTACTS && e.pubkey == owner && e.verify().is_ok() && e.tags.iter().any(|t| t.first().map(String::as_str) == Some("p") && t.get(1).map(String::as_str) == Some(recipient)) => {
+                self.store_event(e).await.map_err(|e| internal(format!("liste de contacts de l'expéditeur : {e}")))?;
+            }
+            _ => warnings.push("la station d'origine n'a pas rendu sa liste de contacts : les photos peuvent être écartées".into()),
+        }
+        // 5. Les photos partent maintenant.
+        // L'acceptation a eu lieu : un échec ici se dit, il ne la défait pas.
+        let sent = match self.signed_post(&secret, &format!("{base}/deliver"), "{}").await {
+            Ok(v) => v,
+            Err(e) => {
+                warnings.push(format!("envoi des photos : {}", match e { InviteError::Unavailable(m) | InviteError::Invalid(m) | InviteError::Conflict(m) => m, other => other.code().to_owned() }));
+                Value::Null
+            }
+        };
+        if let Some(e) = sent["error"].as_str() {
+            warnings.push(format!("envoi : {e}"));
+        }
+        Ok(json!({ "from": from, "origin": origin, "sent": sent["sent"].as_u64().unwrap_or(0), "warnings": warnings }))
+    }
+
+    /// `POST` signé NIP-98 par `secret` vers une autre station ; rend la réponse JSON.
+    async fn signed_post(&self, secret: &[u8; 32], url: &str, body: &str) -> Result<Value, InviteError> {
+        let auth = astro_crypto::nip98::authorization_header(secret, "POST", url, Some(body.as_bytes()), u64::try_from(now()).unwrap_or(0)).map_err(|e| internal(format!("signature : {e}")))?;
+        let raw = crate::fetch::post_json_with(url, body, &[("authorization", auth)], &self.fetch).await.map_err(remote_error)?;
+        serde_json::from_slice(&raw).map_err(|_| InviteError::Unavailable("réponse illisible de la station d'origine".into()))
+    }
+
+    /// Range un événement signé (insertion et projection), sans le publier : il vient d'ailleurs, ou l'a déjà été.
+    async fn store_event(&self, event: Event) -> Result<(), String> {
+        let plan = Projector::plan(&event).map_err(|e| e.to_string())?;
+        self.db
+            .writer()
+            .transaction(move |tx| {
+                astro_db::events::insert_event(tx, &event)?;
+                astro_db::apply_statements(tx, &plan)?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Dernière liste de contacts (kind 3) connue de `who`.
+    async fn latest_contacts(&self, who: &str) -> Option<Event> {
+        let w = who.to_owned();
+        self.db
+            .readers()
+            .read(move |c| {
+                Ok(c.query_row("SELECT id, created_at, content, tags, sig FROM nostr_events WHERE pubkey = ?1 AND kind = 3 ORDER BY created_at DESC LIMIT 1", [&w], |r| {
+                    let tags: String = r.get(3)?;
+                    Ok(Event { id: r.get(0)?, pubkey: w.clone(), created_at: u64::try_from(r.get::<_, i64>(1)?).unwrap_or(0), kind: kind::CONTACTS, tags: serde_json::from_str(&tags).unwrap_or_default(), content: r.get(2)?, sig: r.get(4)? })
+                })
+                .optional()?)
+            })
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// Fichiers de `items` avec leur clé : ceux dont la clé manque (supprimés depuis) sont écartés.
+    async fn shared_files(&self, owner: &str, items: &[Item]) -> Vec<SharedFile> {
+        let mut out = Vec::new();
+        for item in items {
+            let (o, cid) = (owner.to_owned(), item.cid.clone());
+            let key: Option<String> = self.db.readers().read(move |c| Ok(c.query_row("SELECT key_hex FROM ucloud_keyring WHERE owner_hex = ?1 AND cid = ?2", [&o, &cid], |r| r.get(0)).optional()?)).await.ok().flatten();
+            if let Some(key_hex) = key {
+                out.push(SharedFile { cid: item.cid.clone(), key_hex, mime: item.mime.clone(), size: item.size, sha_plain: item.sha_plain.clone(), name: item.name.clone() });
+            }
+        }
+        out
     }
 
     /// Prend la réclamation de façon **atomique** (une seule requête gagne, même si deux personnes valident en même temps) et rend
@@ -639,6 +864,47 @@ impl<B: BlobStore> Invites<B> {
         });
         Ok(())
     }
+}
+
+/// `<PeerID>:<NODE_HEX>` : un PeerID alphanumérique et la clé Nostr du NODE en 64 hexadécimaux.
+fn valid_home(h: &str) -> bool {
+    h.split_once(':').is_some_and(|(peer, node)| (10..=64).contains(&peer.len()) && peer.bytes().all(|b| b.is_ascii_alphanumeric()) && node.len() == 64 && node.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// Origine (`https://hôte[:port]`) d'une adresse saisie par un humain : https seulement (http n'est admis que pour les tests),
+/// sans identifiants ni chemin.
+fn origin_of(input: &str, allow_http: bool) -> Result<String, InviteError> {
+    let bad = || InviteError::Invalid("adresse de la station d'origine invalide (https://… attendu)".into());
+    let raw = input.trim();
+    let url = url::Url::parse(&if raw.contains("://") { raw.to_owned() } else { format!("https://{raw}") }).map_err(|_| bad())?;
+    let host = url.host_str().ok_or_else(bad)?;
+    if !(url.scheme() == "https" || (allow_http && url.scheme() == "http")) || !url.username().is_empty() || url.password().is_some() {
+        return Err(bad());
+    }
+    Ok(match url.port() {
+        Some(p) => format!("{}://{host}:{p}", url.scheme()),
+        None => format!("{}://{host}", url.scheme()),
+    })
+}
+
+/// Erreur d'un appel vers une autre station, dite à l'humain.
+fn remote_error(e: FetchError) -> InviteError {
+    match e {
+        FetchError::Status(404 | 410) => InviteError::Gone("invite_gone"),
+        FetchError::Status(401 | 403) => InviteError::Invalid("la station d'origine a refusé la signature : son adresse publique est-elle bien celle saisie ?".into()),
+        other => InviteError::Unavailable(format!("station d'origine injoignable ({other})")),
+    }
+}
+
+/// Lit au plus `max` octets.
+async fn read_capped(mut body: impl tokio::io::AsyncRead + Unpin, max: u64) -> Result<Vec<u8>, InviteError> {
+    use tokio::io::AsyncReadExt;
+    let mut out = Vec::new();
+    body.read_to_end(&mut out).await.map_err(|e| InviteError::Unavailable(format!("lecture de la réponse : {e}")))?;
+    if out.len() as u64 > max {
+        return Err(InviteError::Unavailable("réponse trop volumineuse".into()));
+    }
+    Ok(out)
 }
 
 /// 128 bits aléatoires en hexadécimal.

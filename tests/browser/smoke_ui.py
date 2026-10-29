@@ -79,6 +79,7 @@ class H(BaseHTTPRequestHandler):
         if p == '/': return self.send(200, (WEB / 'index.html').read_bytes(), 'text/html')
         if p == '/register': return self.send(200, (WEB / 'register.html').read_bytes(), 'text/html')
         if p == '/api/v1/register': return self.send(200, dict(open=True, constellation='ORIGIN', accounts=1, max_accounts=500))
+        if p == '/claim': return self.send(200, (WEB / 'claim.html').read_bytes(), 'text/html')
         if p.startswith('/i/'): return self.send(200, (WEB / 'invite.html').read_bytes(), 'text/html')
         if p == '/api/v1/invites': return self.send(200, INVITES)
         if p == '/api/v1/invite/' + 'b2' * 16: return self.send(410, dict(error='ce lien a expiré : demandez-en un nouveau', code='invite_expired'))
@@ -114,6 +115,7 @@ class H(BaseHTTPRequestHandler):
         if p.startswith('/api/v1/station/admin/'): return self.send(200, ADMIN[p.rsplit('/', 1)[1]])
         if p == '/api/v1/register': return self.send(200, dict(email='lea-x7k2p9@uplanet.local', token='JT', pass_='123456', salt='S', pepper='P', nsec='nsec1x', npub='npub1x', hex='cd' * 32, g1pub='G', nostrns='/ipns/k', constellation='ORIGIN', lang='fr', guest=True, **{'pass': '123456'}))
         if p == '/api/v1/invites': return self.send(200, dict(token=TOKEN, count=3, label=body.get('label'), expires_at=1791000000, url='https://s.example/i/' + TOKEN, qr_svg=QR))
+        if p == '/api/v1/invites/remote-accept': return self.send(200, dict(**{'from': 'alice'}, origin=body['origin'], sent=4, warnings=[]))
         if p == f'/api/v1/invite/{TOKEN}/accept': return self.send(200, dict(**{'from': 'alice'}, shared=4, warnings=[]))
         if p == f'/api/v1/invite/{TOKEN}/claim':
             if body.get('email') == 'taken@example.org': return self.send(409, dict(error='adresse déjà hébergée', code='email_taken'))
@@ -291,10 +293,12 @@ with sync_playwright() as pw:
         c3.close()
     # Envoi par la messagerie de l'expéditeur : liens mailto / sms / WhatsApp préremplis (la station n'envoie jamais de courrier).
     page.goto(f'http://127.0.0.1:{port}/#/contacts'); page.wait_for_selector('table')
-    page.locator('table tbody tr:has-text("Paul") button:text-is("Inviter")').click(); page.wait_for_selector('a:text-is("WhatsApp")')
-    hrefs = {a.text_content(): a.get_attribute('href') for a in page.locator('main a.btn').all()}
+    page.locator('table tbody tr:has-text("Paul") button:text-is("Inviter")').click(); page.wait_for_selector('main a.btn:text-is("WhatsApp")')
+    page.wait_for_timeout(600)  # la liste se redessine une seconde fois (rechargement des invitations) : on attend qu'elle se stabilise
+    page.wait_for_function("document.querySelectorAll('main a.btn').length >= 3")
+    hrefs = dict(page.evaluate("[...document.querySelectorAll('main a.btn')].map(a => [a.textContent, a.getAttribute('href')])"))
     url_q = 'https%3A%2F%2Fs.example%2Fi%2F' + TOKEN
-    check(hrefs.get('Email', '').startswith('mailto:?subject=') and url_q in hrefs.get('Email', ''), 'le lien mailto est prérempli avec l\'invitation : ' + hrefs.get('Email', '')[:90])
+    check(hrefs.get('Email', '').startswith('mailto:?subject=') and url_q in hrefs.get('Email', ''), 'le lien mailto est prérempli avec l\'invitation : ' + str(hrefs)[:300])
     check(hrefs.get('SMS', '').startswith('sms:?&body=') and url_q in hrefs.get('SMS', ''), 'le lien sms est prérempli')
     check(hrefs.get('WhatsApp', '').startswith('https://wa.me/?text=') and url_q in hrefs.get('WhatsApp', ''), 'le lien WhatsApp est prérempli')
     # Un lien qui ne sert plus : le code stable est traduit dans la langue du navigateur.
@@ -332,6 +336,22 @@ with sync_playwright() as pw:
     p9.click('#acc-go'); p9.wait_for_selector('#acc-done:not([hidden])')
     check(p9.evaluate("localStorage.getItem('basic')") is None, 'la session obtenue par PASS n\'est pas enregistrée dans ce navigateur')
     c9.close()
+    # Compte sur une autre station : l'invitation y envoie, le jeton dans le fragment ; la page de là-bas retire le jeton de l'adresse,
+    # demande le PASS (pas de session dans ce navigateur) puis envoie origine et jeton à SA station.
+    c10 = br.new_context(viewport=dict(width=390, height=800), locale='fr-FR', service_workers='block'); p10 = c10.new_page()
+    p10.on('console', lambda m: errors.append(m.text) if m.type == 'error' and '401' not in m.text else None); p10.on('pageerror', lambda e: errors.append(str(e)))
+    p10.goto(f'http://localhost:{port}/i/{TOKEN}'); p10.wait_for_selector('#f:not([hidden])')
+    p10.click('#away-open'); p10.fill('#away-host', f'http://localhost:{port}'); p10.click('#away-go'); p10.wait_for_timeout(300)
+    check('adresse de votre station' in p10.inner_text('#away-e').lower(), 'sa propre station est refusée : ' + p10.inner_text('#away-e'))
+    p10.fill('#away-host', f'http://127.0.0.1:{port}'); p10.click('#away-go'); p10.wait_for_selector('#login:not([hidden])')
+    check(p10.url == f'http://127.0.0.1:{port}/claim', 'le jeton est retiré de l\'adresse dès la lecture : ' + p10.url)
+    p10.fill('#u', 'alice@example.org'); p10.fill('#p', '123456'); p10.click('#login-go'); p10.wait_for_selector('#ask:not([hidden])')
+    check('alice@example.org' in p10.inner_text('#lead'), 'le compte qui recevra est nommé : ' + p10.inner_text('#lead'))
+    p10.click('#yes'); p10.wait_for_selector('#done:not([hidden])')
+    sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/invites/remote-accept']
+    check(sent and sent[-1] == dict(origin=f'http://localhost:{port}', token=TOKEN), 'sa station reçoit origine et jeton : ' + str(sent[-1:]))
+    check('alice' in p10.inner_text('#done-t') and p10.evaluate("localStorage.getItem('basic')") is None, 'accepté, sans session enregistrée : ' + p10.inner_text('#done-t'))
+    c10.close()
     # Connexion par code PASS : la station rend le jeton ; `window.nostr` délègue la signature à la station.
     ctx4 = br.new_context(viewport=dict(width=390, height=800), locale='fr-FR', service_workers='block'); p4 = ctx4.new_page()
     p4.on('console', lambda m: errors.append(m.text) if m.type == 'error' and '401' not in m.text else None); p4.on('pageerror', lambda e: errors.append(str(e)))

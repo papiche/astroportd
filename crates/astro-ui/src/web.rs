@@ -44,7 +44,7 @@ pub fn embedded_bytes() -> usize {
 /// Fichiers chargés à la demande : la page d'inscription (`register.*`, pour les seuls nouveaux venus) et les écrans
 /// lourds (`m-*.js` / `m-*.css`, tri des visages, réplication) n'entrent pas dans le budget de la coque ; ils ont le leur.
 fn is_lazy(path: &str) -> bool {
-    path.starts_with("register.") || path.starts_with("invite.") || path.starts_with("m-")
+    path.starts_with("register.") || path.starts_with("invite.") || path.starts_with("claim.") || path.starts_with("m-")
 }
 
 /// Fichiers de la coque de l'application (tout sauf les fichiers chargés à la demande).
@@ -214,9 +214,16 @@ async fn invite_page(headers: HeaderMap) -> Response {
     r
 }
 
+/// Page où l'on accepte l'invitation d'une autre station avec son compte d'ici (`/claim#origin=…&token=…`). Jamais indexée.
+async fn claim_page(headers: HeaderMap) -> Response {
+    let mut r = asset("claim.html", &headers);
+    r.headers_mut().insert(header::HeaderName::from_static("x-robots-tag"), HeaderValue::from_static("noindex, nofollow, noarchive"));
+    r
+}
+
 /// Routes `/ui/{fichier}`, `/register` (inscription d'un MULTIPASS) et `/i/{jeton}` (invitation à recevoir des photos).
 pub fn static_router() -> Router {
-    Router::new().route("/ui/{*path}", get(static_file)).route("/register", get(register_page)).route("/i/{token}", get(invite_page))
+    Router::new().route("/ui/{*path}", get(static_file)).route("/register", get(register_page)).route("/i/{token}", get(invite_page)).route("/claim", get(claim_page))
 }
 
 #[cfg(test)]
