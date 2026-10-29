@@ -19,11 +19,17 @@ export default async function contacts(root, K) {
     ev.target.disabled = true;
     try {
       const path = c ? c.path : (await api('/from-person', { name })).path;
-      fresh = await K.api('/api/v1/invites', { method: 'POST', body: { person: name, label: name, email: c?.emails?.[0], contact_path: path } });
+      fresh = { ...(await K.api('/api/v1/invites', { method: 'POST', body: { person: name, label: name, email: c?.emails?.[0], contact_path: path } })), to: c?.emails?.[0] };
       K.toast(t('Invitation créée'), 1); redraw();
     } catch (e) { K.toast(e.message); ev.target.disabled = false; }
   };
   const copy = (text, what) => h('button', { class: 'ghost', type: 'button', onclick: () => navigator.clipboard?.writeText(text).then(() => K.toast(t('{0} copié', what), 1), e => K.toast(e.message)) }, 'Copier');
+  // Envoi par le moyen de l'expéditeur (sa messagerie, son téléphone) : la station n'envoie jamais de courrier elle-même.
+  const text = url => t('Voici des photos pour vous : {0}', url), q = encodeURIComponent;
+  const send = inv => [
+    h('a', { class: 'btn', href: `mailto:${inv.to ? q(inv.to) : ''}?subject=${q(t('Photos pour vous'))}&body=${q(text(inv.url))}` }, 'Email'),
+    h('a', { class: 'btn', href: `sms:?&body=${q(text(inv.url))}` }, 'SMS'),
+    h('a', { class: 'btn', href: `https://wa.me/?text=${q(text(inv.url))}`, target: '_blank', rel: 'noopener noreferrer' }, 'WhatsApp')];
   const share = inv => navigator.share ? h('button', { class: 'ghost', type: 'button', onclick: () => navigator.share({ title: t('Photos pour vous'), url: inv.url }).catch(() => {}) }, 'Partager') : null;
   const STATES = { pending: 'pas encore ouverte', opened: 'ouverte', claiming: 'en cours', claimed: 'a rejoint', expired: 'expirée', revoked: 'retirée' };
 
@@ -51,7 +57,7 @@ export default async function contacts(root, K) {
 
   const link = fresh ? h('section', { class: 'card wide', 'aria-live': 'polite' }, h('h2', {}, t('Lien pour {0}', fresh.label || '')),
     h('p', { class: 'muted' }, t('{0} photo(s) seront partagées dès qu\'elle ouvrira ce lien et créera son compte. Valable jusqu\'au {1}.', fresh.count, new Date(fresh.expires_at * 1000).toLocaleDateString())),
-    h('p', { class: 'row' }, h('input', { readonly: true, value: fresh.url, 'aria-label': t('Lien d\'invitation'), onfocus: ev => ev.target.select() }), copy(fresh.url, t('Lien')), share(fresh)),
+    h('p', { class: 'row' }, h('input', { readonly: true, value: fresh.url, 'aria-label': t('Lien d\'invitation'), onfocus: ev => ev.target.select() }), copy(fresh.url, t('Lien')), share(fresh), send(fresh)),
     fresh.qr_svg ? h('img', { alt: t('QR code du lien, à scanner avec le téléphone de la personne'), width: 200, height: 200, src: 'data:image/svg+xml;base64,' + btoa(fresh.qr_svg) }) : null) : null;
   const sent = invites?.length ? h('section', { class: 'card wide' }, h('h2', {}, 'Invitations ', h('small', {}, String(invites.length))),
     h('table', {}, h('thead', {}, h('tr', {}, ['Pour', 'Photos', 'État', ''].map(x => h('th', { scope: 'col' }, x)))), h('tbody', {}, invites.map(i => {

@@ -13,8 +13,8 @@ e.append(...kids.flat().filter(x => x != null && x !== false));
 return e;
 };
 const store = {
-get: k => { try { return sessionStorage.getItem(k); } catch { return null; } },
-set: (k, v) => { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch { /* stockage indisponible : session éphémère */ } },
+get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* stockage indisponible : session éphémère */ } },
 };
 const b64 = s => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 const bytes = n => { if (n == null) return '—'; const u = ['o', 'Ko', 'Mo', 'Go', 'To']; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return `${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${u[i]}`; };

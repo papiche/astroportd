@@ -912,3 +912,35 @@ async fn a_guest_registers_and_claims_an_invitation_without_an_email() {
     assert_eq!((s, claimed["guest"].as_bool(), claimed["shared"].as_u64()), (StatusCode::OK, Some(true), Some(1)), "{claimed}");
     assert!(claimed["email"].as_str().unwrap().starts_with("max-"));
 }
+
+#[tokio::test]
+async fn a_logged_in_member_accepts_an_invitation_and_errors_carry_stable_codes() {
+    let b = bench("accept", None).await;
+    let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
+    put(&b.app, &alice, "/Photos/a.png", &png_bytes()).await;
+    let (_, made) = api(&b.app, Method::POST, "/api/v1/invites", &alice, Some(json!({ "paths": ["/Photos"] }))).await;
+    let token = made["token"].as_str().unwrap().to_owned();
+    let uri = format!("/api/v1/invite/{token}/accept");
+    // Il faut une session ; l'expéditeur ne peut pas accepter son propre lien.
+    assert_eq!(api(&b.app, Method::POST, &uri, "Basic nope", None).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(api(&b.app, Method::POST, &uri, &alice, None).await.0, StatusCode::BAD_REQUEST);
+    // Bob accepte : aucune création de compte, la photo arrive chez lui.
+    let (s, ok) = api(&b.app, Method::POST, &uri, &bob, None).await;
+    assert_eq!((s, ok["from"].as_str(), ok["shared"].as_u64()), (StatusCode::OK, Some("alice"), Some(1)), "{ok}");
+    let (_, v) = api(&b.app, Method::GET, "/api/v1/ucloud/list?path=/Partages/De_alice", &bob, None).await;
+    assert_eq!(v["entries"].as_array().map(Vec::len), Some(1), "{v}");
+    // Lien consommé : 410 avec un code stable, que la page traduit ; un lien inconnu : 404.
+    let (s, again) = api(&b.app, Method::POST, &uri, &bob, None).await;
+    assert_eq!((s, again["code"].as_str()), (StatusCode::GONE, Some("invite_used")), "{again}");
+    let (s, gone) = {
+        let (s, _, raw) = call(&b.app, Method::GET, &format!("/api/v1/invite/{token}"), None, &[], vec![]).await;
+        (s, serde_json::from_slice::<Value>(&raw).unwrap())
+    };
+    assert_eq!((s, gone["code"].as_str()), (StatusCode::GONE, Some("invite_used")));
+    // Une adresse déjà inscrite ici : 409 « email_taken » sur une invitation neuve.
+    let (_, made) = api(&b.app, Method::POST, "/api/v1/invites", &alice, Some(json!({ "paths": ["/Photos"] }))).await;
+    let t2 = made["token"].as_str().unwrap();
+    let (s, _, raw) = call(&b.app, Method::POST, &format!("/api/v1/invite/{t2}/claim"), None, &[("content-type", "application/json")], json!({ "email": "alice@example.org" }).to_string().into_bytes()).await;
+    let taken: Value = serde_json::from_slice(&raw).unwrap();
+    assert_eq!((s, taken["code"].as_str()), (StatusCode::CONFLICT, Some("email_taken")), "{taken}");
+}

@@ -53,8 +53,10 @@ pub enum InviteError {
     Invalid(String),
     /// Lien ou ressource inconnue.
     NotFound(String),
-    /// Lien déjà utilisé, révoqué ou expiré.
-    Gone(String),
+    /// Lien déjà utilisé (`invite_used`), retiré (`invite_revoked`) ou expiré (`invite_expired`) : le code stable est porté.
+    Gone(&'static str),
+    /// L'adresse a déjà un MULTIPASS ici (`email_taken`).
+    EmailTaken,
     /// Conflit (adresse déjà inscrite).
     Conflict(String),
     /// Trop de demandes depuis cette adresse (minutes à attendre dans le message).
@@ -63,6 +65,31 @@ pub enum InviteError {
     Unavailable(String),
     /// Défaillance interne : le détail est pour les journaux.
     Internal(String),
+}
+
+impl InviteError {
+    /// Code stable, pour que l'interface traduise le message sans l'analyser.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Invalid(_) => "invalid",
+            Self::NotFound(_) => "not_found",
+            Self::Gone(code) => code,
+            Self::EmailTaken => "email_taken",
+            Self::Conflict(_) => "conflict",
+            Self::RateLimited(_) => "rate_limited",
+            Self::Unavailable(_) => "registration_closed",
+            Self::Internal(_) => "internal",
+        }
+    }
+}
+
+/// Message (français) d'un lien qui ne sert plus.
+pub fn gone_message(code: &str) -> &'static str {
+    match code {
+        "invite_revoked" => "ce lien a été retiré par la personne qui vous l'a envoyé",
+        "invite_expired" => "ce lien a expiré : demandez-en un nouveau",
+        _ => "ce lien a déjà été utilisé",
+    }
 }
 
 fn internal(e: impl std::fmt::Display) -> InviteError {
@@ -112,7 +139,11 @@ struct Row {
     label: String,
     email: Option<String>,
     contact_path: Option<String>,
+    /// Fichiers retenus à la création (invitations anciennes, ou chemins disparus) ; voir `person` et `paths`.
     items: Vec<Item>,
+    /// Sélecteur : si la personne ou les chemins sont connus, la liste est **recalculée** à chaque lecture et à la réclamation.
+    person: Option<String>,
+    paths: Vec<String>,
     created_at: i64,
     expires_at: i64,
     opened_at: Option<i64>,
@@ -144,6 +175,16 @@ pub struct Claimed {
     /// Fichiers rangés chez le nouveau titulaire.
     pub shared: usize,
     /// Étapes qui n'ont pas abouti (le compte, lui, existe) : dites à l'humain, jamais cachées.
+    pub warnings: Vec<String>,
+}
+
+/// Ce que rend l'acceptation d'une invitation avec un compte existant.
+pub struct Accepted {
+    /// Nom de l'expéditeur.
+    pub from: String,
+    /// Fichiers rangés chez le titulaire.
+    pub shared: usize,
+    /// Étapes qui n'ont pas abouti (le partage, lui, a eu lieu).
     pub warnings: Vec<String>,
 }
 
@@ -198,6 +239,34 @@ impl<B: BlobStore> Invites<B> {
             .map_err(internal)
     }
 
+    /// Fichiers de `owner` désignés par `paths` et par les photos où apparaît `person` (au plus [`MAX_FILES`]).
+    async fn resolve_items(&self, owner: &str, paths: &[String], person: Option<&str>) -> Result<Vec<Item>, InviteError> {
+        let mut all = paths.to_vec();
+        if let Some(person) = person {
+            all.extend(self.person_paths(owner, person).await?);
+        }
+        all.sort();
+        all.dedup();
+        if all.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut files = resolve_files(&self.db, owner, &all).await.map_err(internal)?;
+        files.dedup_by(|a, b| a.0 == b.0);
+        if files.len() > MAX_FILES {
+            return Err(InviteError::Invalid(format!("trop de fichiers (maximum {MAX_FILES})")));
+        }
+        Ok(files.into_iter().map(|(path, f)| Item { path, cid: f.cid, name: f.name, mime: f.mime, size: f.size, sha_plain: f.sha_plain }).collect())
+    }
+
+    /// Fichiers à partager **maintenant** : si l'invitation porte un sélecteur (personne, chemins), il est recalculé, de sorte que les
+    /// photos traitées entre la création du lien et son acceptation en font partie, et que celles supprimées n'en font plus partie.
+    async fn current_items(&self, row: &Row) -> Result<Vec<Item>, InviteError> {
+        if row.person.is_some() || !row.paths.is_empty() {
+            return self.resolve_items(&row.owner, &row.paths, row.person.as_deref()).await;
+        }
+        Ok(row.items.clone())
+    }
+
     /// Crée une invitation. Rend `{ token, count, label, expires_at }` ; l'adresse du lien se construit côté appelant.
     pub async fn create(&self, owner: &str, req: CreateRequest) -> Result<Value, InviteError> {
         let label = req.label.as_deref().map(str::trim).unwrap_or_default().to_owned();
@@ -215,27 +284,20 @@ impl<B: BlobStore> Invites<B> {
         if !(1..=MAX_DAYS).contains(&days) {
             return Err(InviteError::Invalid(format!("validité : 1 à {MAX_DAYS} jours")));
         }
+        let person = req.person.as_deref().map(str::trim).filter(|p| !p.is_empty()).map(str::to_owned);
         let mut paths = req.paths;
-        if let Some(person) = req.person.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
-            paths.extend(self.person_paths(owner, person).await?);
-        }
         paths.sort();
         paths.dedup();
-        if paths.is_empty() {
+        if paths.is_empty() && person.is_none() {
             return Err(InviteError::Invalid("rien à envoyer : choisissez des photos, ou une personne qui en a".into()));
         }
         if paths.len() > MAX_FILES * 4 {
             return Err(InviteError::Invalid("trop de chemins".into()));
         }
-        let mut files = resolve_files(&self.db, owner, &paths).await.map_err(internal)?;
-        files.dedup_by(|a, b| a.0 == b.0);
-        if files.is_empty() {
-            return Err(InviteError::Invalid("aucun fichier à envoyer (chemins introuvables, ou dossiers vides)".into()));
+        let items = self.resolve_items(owner, &paths, person.as_deref()).await?;
+        if items.is_empty() {
+            return Err(InviteError::Invalid("aucun fichier à envoyer (chemins introuvables, dossiers vides, ou personne sans photo reconnue)".into()));
         }
-        if files.len() > MAX_FILES {
-            return Err(InviteError::Invalid(format!("trop de fichiers (maximum {MAX_FILES})")));
-        }
-        let items: Vec<Item> = files.into_iter().map(|(path, f)| Item { path, cid: f.cid, name: f.name, mime: f.mime, size: f.size, sha_plain: f.sha_plain }).collect();
         let count = items.len();
         let (at, o) = (now(), owner.to_owned());
         let pending: i64 = self
@@ -253,7 +315,7 @@ impl<B: BlobStore> Invites<B> {
             .writer()
             .execute(
                 "INSERT INTO invites(token, owner_hex, label, email, contact_path, items, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                vec![token.clone().into(), owner.to_owned().into(), label.clone().into(), email.into(), req.contact_path.into(), serde_json::to_string(&items).map_err(internal)?.into(), at.into(), expires_at.into()],
+                vec![token.clone().into(), owner.to_owned().into(), label.clone().into(), email.into(), req.contact_path.into(), serde_json::to_string(&json!({ "items": items, "person": person, "paths": paths })).map_err(internal)?.into(), at.into(), expires_at.into()],
             )
             .await
             .map_err(internal)?;
@@ -315,8 +377,14 @@ impl<B: BlobStore> Invites<B> {
             .await
             .map_err(internal)?;
         let Some((owner, label, email, contact_path, items, created_at, expires_at, opened_at, claimed_at, claimed_by, revoked_at)) = raw else { return Ok(None) };
-        let items = serde_json::from_str(&items).map_err(|e| internal(format!("invitation illisible : {e}")))?;
-        Ok(Some(Row { owner, label, email, contact_path, items, created_at, expires_at, opened_at, claimed_at, claimed_by, revoked_at }))
+        let parsed: Value = serde_json::from_str(&items).map_err(|e| internal(format!("invitation illisible : {e}")))?;
+        // Ancien format : un tableau de fichiers. Format courant : `{ items, person, paths }`.
+        let (list, person, paths) = match &parsed {
+            Value::Array(_) => (parsed.clone(), None, Vec::new()),
+            obj => (obj["items"].clone(), obj["person"].as_str().map(str::to_owned), obj["paths"].as_array().map(|a| a.iter().filter_map(|p| p.as_str().map(str::to_owned)).collect()).unwrap_or_default()),
+        };
+        let items = serde_json::from_value(list).map_err(|e| internal(format!("invitation illisible : {e}")))?;
+        Ok(Some(Row { owner, label, email, contact_path, items, person, paths, created_at, expires_at, opened_at, claimed_at, claimed_by, revoked_at }))
     }
 
     /// Nom sous lequel l'expéditeur se présente : son profil Nostr, sinon la partie locale de son email.
@@ -339,18 +407,19 @@ impl<B: BlobStore> Invites<B> {
         let at = now();
         let state = row.state(at);
         match state {
-            "revoked" => return Err(InviteError::Gone("ce lien a été retiré par la personne qui vous l'a envoyé".into())),
-            "claimed" | "claiming" => return Err(InviteError::Gone("ce lien a déjà été utilisé".into())),
-            "expired" => return Err(InviteError::Gone("ce lien a expiré : demandez-en un nouveau".into())),
+            "revoked" => return Err(InviteError::Gone("invite_revoked")),
+            "claimed" | "claiming" => return Err(InviteError::Gone("invite_used")),
+            "expired" => return Err(InviteError::Gone("invite_expired")),
             _ => {}
         }
         if row.opened_at.is_none() {
             let _ = self.db.writer().execute("UPDATE invites SET opened_at = ?2 WHERE token = ?1 AND opened_at IS NULL", vec![token.to_owned().into(), at.into()]).await;
         }
-        let photos = row.items.iter().filter(|i| astro_dav::thumb::is_thumbable(&i.mime)).count();
+        let items = self.current_items(&row).await?;
+        let photos = items.iter().filter(|i| astro_dav::thumb::is_thumbable(&i.mime)).count();
         Ok(json!({
-            "from": self.sender_name(&row.owner).await, "label": row.label, "count": row.items.len(), "photos": photos,
-            "thumbs": row.items.iter().take(PREVIEW_THUMBS).enumerate().filter(|(_, i)| astro_dav::thumb::is_thumbable(&i.mime)).map(|(n, _)| n).collect::<Vec<_>>(),
+            "from": self.sender_name(&row.owner).await, "label": row.label, "count": items.len(), "photos": photos,
+            "thumbs": items.iter().take(PREVIEW_THUMBS).enumerate().filter(|(_, i)| astro_dav::thumb::is_thumbable(&i.mime)).map(|(n, _)| n).collect::<Vec<_>>(),
             "expires_at": row.expires_at, "email_hint": row.email.as_deref().map(mask_email),
         }))
     }
@@ -361,7 +430,8 @@ impl<B: BlobStore> Invites<B> {
         if !matches!(row.state(now()), "pending" | "opened") || index >= PREVIEW_THUMBS {
             return Err(InviteError::NotFound("pas de vignette".into()));
         }
-        let item = row.items.get(index).ok_or_else(|| InviteError::NotFound("pas de vignette".into()))?;
+        let items = self.current_items(&row).await?;
+        let item = items.get(index).ok_or_else(|| InviteError::NotFound("pas de vignette".into()))?;
         let (o, cid) = (row.owner.clone(), item.cid.clone());
         let found: Option<(String, String)> = self
             .db
@@ -397,27 +467,7 @@ impl<B: BlobStore> Invites<B> {
     }
 
     async fn claim_as(&self, token: &str, ip: Option<IpAddr>, email: Option<&str>, alias: Option<&str>, lang: &str) -> Result<Claimed, InviteError> {
-        let row = self.load(token).await?.ok_or_else(|| InviteError::NotFound("lien inconnu".into()))?;
-        let at = now();
-        match row.state(at) {
-            "revoked" => return Err(InviteError::Gone("ce lien a été retiré par la personne qui vous l'a envoyé".into())),
-            "claimed" | "claiming" => return Err(InviteError::Gone("ce lien a déjà été utilisé".into())),
-            "expired" => return Err(InviteError::Gone("ce lien a expiré : demandez-en un nouveau".into())),
-            _ => {}
-        }
-        // Réclamation atomique : une seule requête gagne, même si deux personnes valident en même temps.
-        let taken = self
-            .db
-            .writer()
-            .execute(
-                "UPDATE invites SET claimed_at = ?2, claimed_by = NULL WHERE token = ?1 AND revoked_at IS NULL AND expires_at > ?2 AND (claimed_at IS NULL OR (claimed_by IS NULL AND claimed_at < ?3))",
-                vec![token.to_owned().into(), at.into(), (at - STALE_CLAIM_SECS).into()],
-            )
-            .await
-            .map_err(internal)?;
-        if taken.changes == 0 {
-            return Err(InviteError::Gone("ce lien vient d'être utilisé".into()));
-        }
+        let row = self.take(token).await?;
         let registered = match match email {
             Some(email) => self.registrar.register(ip, email, lang).await,
             None => self.registrar.register_guest(ip, alias, lang).await,
@@ -430,55 +480,111 @@ impl<B: BlobStore> Invites<B> {
                     RegisterError::Closed | RegisterError::Full => InviteError::Unavailable(e.to_string()),
                     RegisterError::RateLimited(_) => InviteError::RateLimited(e.to_string()),
                     RegisterError::Invalid(m) => InviteError::Invalid(m),
-                    RegisterError::Conflict(_) => InviteError::Conflict("cette adresse a déjà un MULTIPASS : connectez-vous avec, puis demandez à la personne qui vous invite de vous ajouter comme proche".into()),
+                    RegisterError::Conflict(_) => InviteError::EmailTaken,
                     RegisterError::Internal(m) => internal(m),
                 });
             }
         };
         let recipient = registered.account.hex.clone();
-        let _ = self.db.writer().execute("UPDATE invites SET claimed_by = ?2 WHERE token = ?1", vec![token.to_owned().into(), recipient.clone().into()]).await;
+        let label = if row.label.is_empty() { registered.account.email.clone() } else { row.label.clone() };
+        let (shared, from, warnings) = self.finish(token, &row, &recipient, &label).await;
+        Ok(Claimed { registered, from, shared, warnings })
+    }
+
+    /// Accepte l'invitation avec un compte **déjà hébergé ici** (`recipient`, authentifié par l'appelant) : pas de formulaire, pas de
+    /// nouveau compte. L'identité est prouvée par la session, jamais par une adresse saisie. Même suite que la réclamation : double
+    /// suivi, photos rangées, fiche reliée, expéditeur prévenu.
+    pub async fn accept(&self, token: &str, recipient: &str) -> Result<Accepted, InviteError> {
+        let peek = self.load(token).await?.ok_or_else(|| InviteError::NotFound("lien inconnu".into()))?;
+        if peek.owner == recipient {
+            return Err(InviteError::Invalid("c'est votre propre invitation".into()));
+        }
+        let row = self.take(token).await?;
+        let r = recipient.to_owned();
+        let label: Option<String> = self.db.readers().read(move |c| Ok(c.query_row("SELECT email FROM identities WHERE hex = ?1", [r], |r| r.get::<_, Option<String>>(0)).optional()?.flatten())).await.ok().flatten();
+        let label = if row.label.is_empty() { label.unwrap_or_else(|| recipient.chars().take(8).collect()) } else { row.label.clone() };
+        let (shared, from, warnings) = self.finish(token, &row, recipient, &label).await;
+        Ok(Accepted { from, shared, warnings })
+    }
+
+    /// Prend la réclamation de façon **atomique** (une seule requête gagne, même si deux personnes valident en même temps) et rend
+    /// l'invitation ; `Gone` si elle ne sert plus.
+    async fn take(&self, token: &str) -> Result<Row, InviteError> {
+        let row = self.load(token).await?.ok_or_else(|| InviteError::NotFound("lien inconnu".into()))?;
+        let at = now();
+        match row.state(at) {
+            "revoked" => return Err(InviteError::Gone("invite_revoked")),
+            "claimed" | "claiming" => return Err(InviteError::Gone("invite_used")),
+            "expired" => return Err(InviteError::Gone("invite_expired")),
+            _ => {}
+        }
+        let taken = self
+            .db
+            .writer()
+            .execute(
+                "UPDATE invites SET claimed_at = ?2, claimed_by = NULL WHERE token = ?1 AND revoked_at IS NULL AND expires_at > ?2 AND (claimed_at IS NULL OR (claimed_by IS NULL AND claimed_at < ?3))",
+                vec![token.to_owned().into(), at.into(), (at - STALE_CLAIM_SECS).into()],
+            )
+            .await
+            .map_err(internal)?;
+        if taken.changes == 0 {
+            return Err(InviteError::Gone("invite_used"));
+        }
+        Ok(row)
+    }
+
+    /// Suite commune d'une réclamation et d'une acceptation, une fois le compte du destinataire connu : l'invitation est marquée
+    /// utilisée, les deux comptes se suivent, les photos (liste recalculée) sont rangées, la fiche reliée, l'expéditeur prévenu.
+    /// Rend `(fichiers rangés, nom de l'expéditeur, étapes en échec)` : le compte existe, rien n'est défait.
+    async fn finish(&self, token: &str, row: &Row, recipient: &str, label: &str) -> (usize, String, Vec<String>) {
+        let _ = self.db.writer().execute("UPDATE invites SET claimed_by = ?2 WHERE token = ?1", vec![token.to_owned().into(), recipient.to_owned().into()]).await;
         let mut warnings = Vec::new();
-        for (who, target) in [(&row.owner, &recipient), (&recipient, &row.owner)] {
+        for (who, target) in [(&row.owner, recipient), (&recipient.to_owned(), row.owner.as_str())] {
             if let Err(e) = self.follow(who, target).await {
                 warnings.push(format!("abonnement mutuel : {e}"));
             }
         }
-        let (shared, skipped) = self.adopt_all(&row, &recipient).await;
+        let items = match self.current_items(row).await {
+            Ok(i) => i,
+            Err(e) => {
+                warnings.push(format!("liste des fichiers : {}", e.code()));
+                row.items.clone()
+            }
+        };
+        let (shared, skipped) = self.adopt_all(&row.owner, &items, recipient).await;
         if skipped > 0 {
             warnings.push(format!("{skipped} fichier(s) n'ont pas pu être partagés (supprimés depuis l'invitation ?)"));
         }
         if let Some(path) = row.contact_path.as_deref() {
             if let Some(links) = &self.links {
-                if let Err(e) = links.link(&row.owner, path, Some(&recipient)).await {
+                if let Err(e) = links.link(&row.owner, path, Some(recipient)).await {
                     warnings.push(format!("fiche de contact non reliée : {e:?}"));
                 }
             }
         }
-        let from = self.sender_name(&row.owner).await;
         if let Some(bus) = &self.activity {
-            let who = if row.label.is_empty() { registered.account.email.clone() } else { row.label.clone() };
-            bus.publish_to(Audience::Owner(row.owner.clone()), "facecloud", "invite", format!("{who} a rejoint la constellation grâce à votre invitation : {shared} fichier(s) partagé(s)"), None);
+            bus.publish_to(Audience::Owner(row.owner.clone()), "facecloud", "invite", format!("{label} a rejoint la constellation grâce à votre invitation : {shared} fichier(s) partagé(s)"), None);
         }
-        Ok(Claimed { registered, from, shared, warnings })
+        (shared, self.sender_name(&row.owner).await, warnings)
     }
 
     /// Range chaque fichier de l'invitation chez le destinataire. Rend `(rangés, écartés)`.
-    async fn adopt_all(&self, row: &Row, recipient: &str) -> (usize, usize) {
+    async fn adopt_all(&self, owner: &str, items: &[Item], recipient: &str) -> (usize, usize) {
         let label = {
-            let o = row.owner.clone();
+            let o = owner.to_owned();
             self.db.readers().read(move |c| Ok(c.query_row("SELECT email FROM identities WHERE hex = ?1", [&o], |r| r.get::<_, Option<String>>(0)).optional()?.flatten())).await.ok().flatten()
         };
-        let label = sender_label(label.as_deref(), &row.owner);
+        let label = sender_label(label.as_deref(), owner);
         let (mut done, mut skipped) = (0usize, 0usize);
-        for item in &row.items {
-            let (o, cid) = (row.owner.clone(), item.cid.clone());
+        for item in items {
+            let (o, cid) = (owner.to_owned(), item.cid.clone());
             let key: Option<String> = self.db.readers().read(move |c| Ok(c.query_row("SELECT key_hex FROM ucloud_keyring WHERE owner_hex = ?1 AND cid = ?2", [&o, &cid], |r| r.get(0)).optional()?)).await.ok().flatten();
             let Some(key_hex) = key else {
                 skipped += 1;
                 continue;
             };
             let file = SharedFile { cid: item.cid.clone(), key_hex, mime: item.mime.clone(), size: item.size, sha_plain: item.sha_plain.clone(), name: item.name.clone() };
-            match adopt_shared_file(&self.db, recipient, &row.owner, &label, &file, "invite").await {
+            match adopt_shared_file(&self.db, recipient, owner, &label, &file, "invite").await {
                 Ok(_) => done += 1,
                 Err(_) => skipped += 1,
             }
@@ -576,7 +682,7 @@ mod tests {
 
     #[test]
     fn states_follow_the_life_of_a_link() {
-        let mut r = Row { owner: String::new(), label: String::new(), email: None, contact_path: None, items: vec![], created_at: 0, expires_at: 1000, opened_at: None, claimed_at: None, claimed_by: None, revoked_at: None };
+        let mut r = Row { owner: String::new(), label: String::new(), email: None, contact_path: None, items: vec![], person: None, paths: vec![], created_at: 0, expires_at: 1000, opened_at: None, claimed_at: None, claimed_by: None, revoked_at: None };
         assert_eq!(r.state(10), "pending");
         r.opened_at = Some(5);
         assert_eq!(r.state(10), "opened");

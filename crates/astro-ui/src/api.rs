@@ -70,58 +70,70 @@ pub struct ApiError {
     pub status: StatusCode,
     /// Message.
     pub message: String,
+    /// Code stable (`invite_expired`…) : l'interface traduit d'après lui, sans analyser le message.
+    pub code: Option<&'static str>,
 }
 
 impl ApiError {
+    /// Ajoute le code stable de l'erreur.
+    pub fn with_code(mut self, code: &'static str) -> Self {
+        self.code = Some(code);
+        self
+    }
+
     /// 400.
     pub fn bad_request(m: impl Into<String>) -> Self {
-        Self { status: StatusCode::BAD_REQUEST, message: m.into() }
+        Self { status: StatusCode::BAD_REQUEST, message: m.into(), code: None }
     }
 
     /// 404.
     pub fn not_found(m: impl Into<String>) -> Self {
-        Self { status: StatusCode::NOT_FOUND, message: m.into() }
+        Self { status: StatusCode::NOT_FOUND, message: m.into(), code: None }
     }
 
     /// 401 : identifiants refusés (code PASS faux).
     pub fn denied(m: impl Into<String>) -> Self {
-        Self { status: StatusCode::UNAUTHORIZED, message: m.into() }
+        Self { status: StatusCode::UNAUTHORIZED, message: m.into(), code: None }
     }
 
     /// 403 : réservé à un autre rôle (le Capitaine).
     pub fn forbidden(m: impl Into<String>) -> Self {
-        Self { status: StatusCode::FORBIDDEN, message: m.into() }
+        Self { status: StatusCode::FORBIDDEN, message: m.into(), code: None }
     }
 
     /// 409 : la ressource existe déjà (email déjà inscrit).
     pub fn conflict(m: impl Into<String>) -> Self {
-        Self { status: StatusCode::CONFLICT, message: m.into() }
+        Self { status: StatusCode::CONFLICT, message: m.into(), code: None }
     }
 
     /// 410 : la ressource a existé (lien déjà utilisé, retiré ou expiré).
     pub fn gone(m: impl Into<String>) -> Self {
-        Self { status: StatusCode::GONE, message: m.into() }
+        Self { status: StatusCode::GONE, message: m.into(), code: None }
     }
 
     /// 429 : trop de demandes.
     pub fn too_many(m: impl Into<String>) -> Self {
-        Self { status: StatusCode::TOO_MANY_REQUESTS, message: m.into() }
+        Self { status: StatusCode::TOO_MANY_REQUESTS, message: m.into(), code: None }
     }
 
     /// 501 : fonction non activée sur cette station.
     pub fn unavailable(m: impl Into<String>) -> Self {
-        Self { status: StatusCode::NOT_IMPLEMENTED, message: m.into() }
+        Self { status: StatusCode::NOT_IMPLEMENTED, message: m.into(), code: None }
     }
 
     /// 500 (le détail technique reste dans les journaux, pas dans la réponse).
     pub fn internal(m: impl Into<String>) -> Self {
-        Self { status: StatusCode::INTERNAL_SERVER_ERROR, message: m.into() }
+        Self { status: StatusCode::INTERNAL_SERVER_ERROR, message: m.into(), code: None }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(json!({ "error": self.message }))).into_response()
+        let body = match self.code {
+            Some(code) => json!({ "error": self.message, "code": code }),
+            None => json!({ "error": self.message }),
+        };
+        (self.status, Json(body)).into_response()
     }
 }
 
@@ -327,6 +339,10 @@ pub trait Backend: Send + Sync + 'static {
     fn invite_thumb(&self, _token: String, _index: usize) -> impl Future<Output = Result<Vec<u8>, ApiError>> + Send {
         async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
     }
+    /// Accepte une invitation avec le compte authentifié (même station) : double suivi, photos rangées, sans nouveau compte.
+    fn invite_accept(&self, _who: &Principal, _token: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
+    }
     /// Réclame une invitation (public) : crée le MULTIPASS de `email` et range les photos chez lui.
     fn invite_claim(&self, _ip: Option<std::net::IpAddr>, _token: String, _who: Applicant, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
@@ -372,6 +388,7 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/invite/{token}", get(invite_preview::<B>))
         .route("/api/v1/invite/{token}/thumb/{index}", get(invite_thumb::<B>))
         .route("/api/v1/invite/{token}/claim", post(invite_claim::<B>))
+        .route("/api/v1/invite/{token}/accept", post(invite_accept::<B>))
         .route("/api/v1/contacts", get(contacts::<B>))
         .route("/api/v1/contacts/sync", post(contacts_sync::<B>))
         .route("/api/v1/contacts/from-person", post(contacts_create::<B>))
@@ -1002,6 +1019,14 @@ async fn invite_thumb<B: Backend>(State(st): State<Arc<UiState<B>>>, Path((token
     match st.backend.invite_thumb(token, index).await {
         Ok(png) => private((StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response()),
         Err(e) => reply(Err(e)),
+    }
+}
+
+/// Accepte l'invitation avec le compte connecté : l'identité vient de la session, pas d'une adresse saisie.
+async fn invite_accept<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(token): Path<String>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.invite_accept(&p, token).await),
+        Err(r) => r,
     }
 }
 

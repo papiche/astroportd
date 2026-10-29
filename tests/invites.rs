@@ -26,6 +26,7 @@ fn hex(s: &[u8; 32]) -> String {
 struct Bench {
     db: Arc<Db>,
     invites: Invites<FsBlobStore>,
+    registrar: Arc<Registrar>,
     links: Arc<IdentityLinks<FsBlobStore>>,
     dav: Arc<DavState<FsBlobStore>>,
     published: Arc<Mutex<Vec<Event>>>,
@@ -69,8 +70,8 @@ async fn bench(tag: &str) -> Bench {
             Ok(())
         })
     });
-    let invites = Invites::new(db.clone(), blobs, keys, registrar, publish).with_links(links.clone()).with_publisher(publisher);
-    Bench { db, invites, links, dav, published, dir }
+    let invites = Invites::new(db.clone(), blobs, keys, registrar.clone(), publish).with_links(links.clone()).with_publisher(publisher);
+    Bench { db, invites, registrar, links, dav, published, dir }
 }
 
 /// Deux photos de `Léa` dans l'uCloud d'Alice, avec leurs visages ; une fiche de contact « Léa ».
@@ -141,7 +142,7 @@ async fn a_link_works_once_and_a_failed_claim_leaves_it_usable() {
 
     // Adresse invalide, puis adresse qui a déjà un MULTIPASS ici : refusées, le lien reste valable.
     assert!(matches!(b.invites.claim(&token, None, "pas-un-email", "fr").await, Err(InviteError::Invalid(_))));
-    assert!(matches!(b.invites.claim(&token, None, "alice@example.org", "fr").await, Err(InviteError::Conflict(_))));
+    assert!(matches!(b.invites.claim(&token, None, "alice@example.org", "fr").await, Err(InviteError::EmailTaken)));
     assert_eq!(b.invites.list(&alice).await.unwrap()["invites"][0]["state"], "pending");
     assert_eq!(count(&b, "SELECT COUNT(*) FROM identities WHERE hosted = 1", vec![]).await, 1, "aucun compte créé par un essai refusé");
 
@@ -202,4 +203,48 @@ async fn the_public_thumbnail_is_a_few_pixels_wide() {
     let p: Value = b.invites.preview(&token).await.unwrap();
     assert_eq!(p["thumbs"].as_array().unwrap().len(), 2);
     assert!(matches!(b.invites.thumb(&token, 7).await, Err(InviteError::NotFound(_))));
+}
+
+#[tokio::test]
+async fn an_existing_account_accepts_without_a_form_and_gets_the_photos_added_since_the_link_was_made() {
+    let b = bench("accept").await;
+    let alice = hex(&ALICE);
+    let contact = alice_has_lea(&b).await;
+    let token = b.invites.create(&alice, req(&contact)).await.unwrap()["token"].as_str().unwrap().to_owned();
+    assert_eq!(b.invites.preview(&token).await.unwrap()["count"], 2);
+
+    // Une troisième photo de Léa arrive après la création du lien : l'aperçu et l'acceptation la comptent.
+    ingest::ingest(&b.dav, &alice, "/Photos", "c.png", Some("image/png"), Cursor::new(png())).await.unwrap();
+    b.db.writer().execute("INSERT INTO faces(owner_hex, name, embed_hash, ts, ucloud_path) VALUES (?1, 'Léa', 'h9', 9, '/Photos/c.png')", vec![V::Text(alice.clone())]).await.unwrap();
+    assert_eq!(b.invites.preview(&token).await.unwrap()["count"], 3);
+
+    // Léa a déjà un compte ici. Alice ne peut pas accepter sa propre invitation.
+    let lea = b.registrar.register(None, "lea@example.org", "fr").await.unwrap().account.hex;
+    assert!(matches!(b.invites.accept(&token, &alice).await, Err(InviteError::Invalid(_))));
+    // Elle accepte avec son compte : aucune création, double suivi, photos (3), fiche reliée, expéditeur prévenu.
+    let accepted = b.invites.accept(&token, &lea).await.unwrap();
+    assert_eq!((accepted.shared, accepted.from.as_str(), accepted.warnings.is_empty()), (3, "alice", true), "{:?}", accepted.warnings);
+    assert_eq!(count(&b, "SELECT COUNT(*) FROM identities WHERE hosted = 1 AND role = 'multipass'", vec![]).await, 2, "pas de nouveau compte");
+    assert_eq!(count(&b, "SELECT COUNT(*) FROM ucloud_entries WHERE owner_hex = ?1 AND path LIKE '/Partages/De_alice/%' AND type = 'file'", vec![V::Text(lea.clone())]).await, 3);
+    for (a, c) in [(&alice, &lea), (&lea, &alice)] {
+        assert_eq!(count(&b, "SELECT COUNT(*) FROM social_graph WHERE owner_hex = ?1 AND pubkey = ?2 AND level = 1", vec![V::Text(a.clone()), V::Text(c.clone())]).await, 1);
+    }
+    let v = b.links.list(&alice).await.unwrap();
+    assert_eq!((v["contacts"][0]["pubkey"].as_str(), v["contacts"][0]["friends"].as_bool()), (Some(lea.as_str()), Some(true)), "{v}");
+    assert_eq!(b.invites.list(&alice).await.unwrap()["invites"][0]["state"], "claimed");
+    // Usage unique : une seconde acceptation, par n'importe qui, est refusée avec son code stable.
+    let again = b.invites.accept(&token, &lea).await.err().unwrap();
+    assert_eq!((again.code(), &again), ("invite_used", &InviteError::Gone("invite_used")));
+    assert_eq!(InviteError::Gone("invite_expired").code(), "invite_expired");
+}
+
+#[tokio::test]
+async fn photos_deleted_after_the_link_was_made_are_not_shared() {
+    let b = bench("deleted").await;
+    let alice = hex(&ALICE);
+    let contact = alice_has_lea(&b).await;
+    let token = b.invites.create(&alice, req(&contact)).await.unwrap()["token"].as_str().unwrap().to_owned();
+    b.db.writer().execute("DELETE FROM ucloud_entries WHERE owner_hex = ?1 AND path = '/Photos/b.png'", vec![V::Text(alice.clone())]).await.unwrap();
+    let lea = b.registrar.register(None, "lea@example.org", "fr").await.unwrap().account.hex;
+    assert_eq!(b.invites.accept(&token, &lea).await.unwrap().shared, 1);
 }

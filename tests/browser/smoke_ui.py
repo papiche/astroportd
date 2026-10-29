@@ -81,6 +81,7 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/v1/register': return self.send(200, dict(open=True, constellation='ORIGIN', accounts=1, max_accounts=500))
         if p.startswith('/i/'): return self.send(200, (WEB / 'invite.html').read_bytes(), 'text/html')
         if p == '/api/v1/invites': return self.send(200, INVITES)
+        if p == '/api/v1/invite/' + 'b2' * 16: return self.send(410, dict(error='ce lien a expiré : demandez-en un nouveau', code='invite_expired'))
         if p == f'/api/v1/invite/{TOKEN}': return self.send(200, dict(**{'from': 'alice'}, label='Léa', count=4, photos=4, thumbs=[0, 1], expires_at=1791000000, email_hint='l**@example.org'))
         if p.startswith(f'/api/v1/invite/{TOKEN}/thumb/'):
             im = Image.new('RGB', (16, 12), (180, 90, 60)); b = io.BytesIO(); im.save(b, 'PNG'); return self.send(200, b.getvalue(), 'image/png')
@@ -113,6 +114,7 @@ class H(BaseHTTPRequestHandler):
         if p.startswith('/api/v1/station/admin/'): return self.send(200, ADMIN[p.rsplit('/', 1)[1]])
         if p == '/api/v1/register': return self.send(200, dict(email='lea-x7k2p9@uplanet.local', token='JT', pass_='123456', salt='S', pepper='P', nsec='nsec1x', npub='npub1x', hex='cd' * 32, g1pub='G', nostrns='/ipns/k', constellation='ORIGIN', lang='fr', guest=True, **{'pass': '123456'}))
         if p == '/api/v1/invites': return self.send(200, dict(token=TOKEN, count=3, label=body.get('label'), expires_at=1791000000, url='https://s.example/i/' + TOKEN, qr_svg=QR))
+        if p == f'/api/v1/invite/{TOKEN}/accept': return self.send(200, dict(**{'from': 'alice'}, shared=4, warnings=[]))
         if p == f'/api/v1/invite/{TOKEN}/claim':
             return self.send(200, dict(email=body['email'], token='JETON-WEB', pass_='1234', salt='SEL', pepper='POIVRE', nsec='nsec1secret', npub='npub1x', hex='cd' * 32, g1pub='G1X', nostrns='/ipns/k51', constellation='ORIGIN', lang=body['lang'], **{'from': 'alice'}, shared=4, warnings=[]))
         if p.startswith('/api/v1/contacts/'): return self.send(200, dict(path='/Contacts/x.vcf', linked=1))
@@ -137,7 +139,7 @@ def check(cond, msg):
 with sync_playwright() as pw:
     br = pw.chromium.launch(); ctx = br.new_context(viewport=dict(width=1280, height=820), service_workers='block'); page = ctx.new_page()
     page.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None); page.on('pageerror', lambda e: errors.append(str(e)))
-    ctx.add_init_script("sessionStorage.setItem('basic', btoa('alice@example.org:jeton'))")
+    ctx.add_init_script("localStorage.setItem('basic', btoa('alice@example.org:jeton'))")
     page.goto(f'http://127.0.0.1:{port}/#/people'); page.wait_for_selector('canvas.pe-board'); page.wait_for_timeout(900)
     check(page.inner_text('.pe-count').startswith(f"{sum(1 for f in STATE['faces'] if not f['named'])} à ranger"), 'le compteur « à ranger » est affiché : ' + page.inner_text('.pe-count'))
     check(page.locator('.pe-pochette[data-name]').count() == 3, 'trois pochettes de personnes')
@@ -230,7 +232,7 @@ with sync_playwright() as pw:
     check(page.locator('button:text-is("Exporter mes clés")').is_disabled(), 'l\'export des clés exige une case de confirmation')
     page.click('button:text-is("Changer le jeton")')  # la confirmation est acceptée par le gestionnaire de dialogue déjà posé; page.wait_for_selector('text=NOUVEAU-JETON'); page.wait_for_timeout(100)
     import base64 as b64
-    page.wait_for_function("sessionStorage.getItem('basic') !== btoa('alice@example.org:jeton')", timeout=3000); got = b64.b64decode(page.evaluate("sessionStorage.getItem('basic')")).decode(); check(got == 'alice@example.org:NOUVEAU-JETON', 'la session suit le nouveau jeton : ' + got)
+    page.wait_for_function("localStorage.getItem('basic') !== btoa('alice@example.org:jeton')", timeout=3000); got = b64.b64decode(page.evaluate("localStorage.getItem('basic')")).decode(); check(got == 'alice@example.org:NOUVEAU-JETON', 'la session suit le nouveau jeton : ' + got)
     page.check('#ac-ok'); page.click('button:text-is("Exporter mes clés")'); page.wait_for_selector('textarea[aria-label=nsec]')
     check(page.input_value('textarea[aria-label=nsec]') == 'nsec1secret', 'les clés exportées s\'affichent après confirmation')
     page.fill('#ac-name', 'Alice B'); page.click('button:text-is("Enregistrer")'); page.wait_for_timeout(400)
@@ -238,7 +240,7 @@ with sync_playwright() as pw:
     check(sent and sent[-1] == dict(name='Alice B'), 'seul le champ modifié du profil est envoyé : ' + str(sent[-1:]))
     # Multilingue : l'anglais traduit la coque et les écrans, sans rechargement de dictionnaire côté serveur.
     ctx2 = br.new_context(viewport=dict(width=1280, height=820), service_workers='block'); p2 = ctx2.new_page()
-    ctx2.add_init_script("sessionStorage.setItem('basic', btoa('alice@example.org:jeton')); localStorage.setItem('lang', 'en')")
+    ctx2.add_init_script("localStorage.setItem('basic', btoa('alice@example.org:jeton')); localStorage.setItem('lang', 'en')")
     p2.goto(f'http://127.0.0.1:{port}/#/account'); p2.wait_for_selector('#ac-name'); p2.wait_for_timeout(400)
     nav = p2.inner_text('nav')
     check('Dashboard' in nav and 'My account' in nav and 'Tableau de bord' not in nav, 'la navigation est traduite en anglais : ' + nav.replace('\n', ' | '))
@@ -286,6 +288,37 @@ with sync_playwright() as pw:
             check('4 fichier(s) de alice' in p3.inner_text('#got') and 'nsec1secret' in p3.inner_text('#card'), 'le compte créé et ses secrets sont montrés une fois')
             p3.screenshot(path=str(OUT / 'invite-page.png'))
         c3.close()
+    # Envoi par la messagerie de l'expéditeur : liens mailto / sms / WhatsApp préremplis (la station n'envoie jamais de courrier).
+    page.goto(f'http://127.0.0.1:{port}/#/contacts'); page.wait_for_selector('table')
+    page.locator('table tbody tr:has-text("Paul") button:text-is("Inviter")').click(); page.wait_for_selector('a:text-is("WhatsApp")')
+    hrefs = {a.text_content(): a.get_attribute('href') for a in page.locator('main a.btn').all()}
+    url_q = 'https%3A%2F%2Fs.example%2Fi%2F' + TOKEN
+    check(hrefs.get('Email', '').startswith('mailto:?subject=') and url_q in hrefs.get('Email', ''), 'le lien mailto est prérempli avec l\'invitation : ' + hrefs.get('Email', '')[:90])
+    check(hrefs.get('SMS', '').startswith('sms:?&body=') and url_q in hrefs.get('SMS', ''), 'le lien sms est prérempli')
+    check(hrefs.get('WhatsApp', '').startswith('https://wa.me/?text=') and url_q in hrefs.get('WhatsApp', ''), 'le lien WhatsApp est prérempli')
+    # Un lien qui ne sert plus : le code stable est traduit dans la langue du navigateur.
+    for loc, expect in (('fr-FR', 'Ce lien a expiré'), ('en-US', 'This link has expired'), ('es-ES', 'Este enlace ha caducado')):
+        c6 = br.new_context(locale=loc, service_workers='block'); p6 = c6.new_page()
+        p6.goto(f'http://127.0.0.1:{port}/i/' + 'b2' * 16); p6.wait_for_timeout(500)
+        check(expect in p6.inner_text('#lead'), f'le code invite_expired est traduit ({loc}) : ' + p6.inner_text('#lead')[:60])
+        c6.close()
+    # Déjà connecté : « accepter avec mon compte », sans formulaire ni nouveau compte.
+    c7 = br.new_context(viewport=dict(width=390, height=800), locale='fr-FR', service_workers='block'); p7 = c7.new_page()
+    c7.add_init_script("localStorage.setItem('basic', btoa('alice@example.org:jeton'))")
+    p7.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None); p7.on('pageerror', lambda e: errors.append(str(e)))
+    p7.goto(f'http://127.0.0.1:{port}/i/{TOKEN}'); p7.wait_for_selector('#acc:not([hidden])')
+    check('Bonjour Léa, ajouter ces 4 fichier(s) à votre compte' in p7.inner_text('#acc-t') and p7.is_hidden('#f'), 'une session ouverte propose d\'accepter, sans formulaire : ' + p7.inner_text('#acc-t'))
+    p7.screenshot(path=str(OUT / 'invite-accept.png'))
+    before = len([1 for p_, _ in STATE['posts'] if p_.endswith('/accept')])
+    p7.click('#acc-go'); p7.wait_for_selector('#acc-done:not([hidden])')
+    check(len([1 for p_, _ in STATE['posts'] if p_.endswith('/accept')]) == before + 1 and '4 fichier(s) de alice ont été ajoutés' in p7.inner_text('#acc-done-t'), 'l\'acceptation part avec la session et confirme : ' + p7.inner_text('#acc-done-t'))
+    c7.close()
+    # « Utiliser un autre compte » ramène au formulaire.
+    c8 = br.new_context(locale='fr-FR', service_workers='block'); p8 = c8.new_page()
+    c8.add_init_script("localStorage.setItem('basic', btoa('alice@example.org:jeton'))")
+    p8.goto(f'http://127.0.0.1:{port}/i/{TOKEN}'); p8.wait_for_selector('#acc:not([hidden])'); p8.click('#acc-other')
+    check(p8.is_visible('#f') and p8.is_hidden('#acc'), 'l\'autre compte rouvre le formulaire d\'inscription')
+    c8.close()
     # Connexion par code PASS : la station rend le jeton ; `window.nostr` délègue la signature à la station.
     ctx4 = br.new_context(viewport=dict(width=390, height=800), locale='fr-FR', service_workers='block'); p4 = ctx4.new_page()
     p4.on('console', lambda m: errors.append(m.text) if m.type == 'error' and '401' not in m.text else None); p4.on('pageerror', lambda e: errors.append(str(e)))
@@ -295,7 +328,7 @@ with sync_playwright() as pw:
     p4.fill('input[name=p]', '123456'); p4.click('#login-f button[value=ok]'); p4.wait_for_selector('#ac-name'); p4.wait_for_timeout(300)
     sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/account/unlock']
     check(sent and sent[-1] == {'email': 'alice@example.org', 'pass': '123456'}, 'le PASS part vers la station : ' + str(sent[-1:]))
-    check(p4.evaluate("sessionStorage.getItem('basic') || localStorage.getItem('basic')") is not None, 'la session est conservée')
+    check(p4.evaluate("localStorage.getItem('basic') || localStorage.getItem('basic')") is not None, 'la session est conservée')
     check(p4.evaluate("!!window.nostr && window.nostr.astro === true"), 'window.nostr est fourni par la PWA')
     check(p4.evaluate("window.nostr.getPublicKey()") == 'aa' * 32, 'getPublicKey rend la clé du compte')
     ev = p4.evaluate("window.nostr.signEvent({ kind: 1, content: 'salut', tags: [] })")

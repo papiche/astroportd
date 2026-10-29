@@ -53,7 +53,7 @@ $('#save').onclick = () => {
 };
 $('#open').onclick = () => {
   if (!card) return;
-  try { sessionStorage.setItem('basic', btoa(card.email + ':' + card.token)); } catch { /* connexion manuelle */ }
+  try { localStorage.setItem('basic', btoa(card.email + ':' + card.token)); } catch { /* connexion manuelle */ }
   location.href = '/';
 };
 init();

@@ -186,5 +186,7 @@ export default {
 "Déverrouiller le PASS": "Desbloquear el PASS",
 "PASS déverrouillé": "PASS desbloqueado",
 "Compte invité. ": "Cuenta de invitado. ",
-"Votre adresse a été créée par la station : c'est votre identifiant UPlanet, pas une boîte aux lettres. Gardez la carte remise à la création (SALT, PEPPER) et votre code PASS : sans email, ce sont vos seuls moyens de récupérer le compte.": "Su dirección la creó la estación: es su identificador UPlanet, no un buzón. Guarde la tarjeta entregada al crear la cuenta (SALT, PEPPER) y su código PASS: sin correo, son su única forma de recuperar la cuenta."
+"Votre adresse a été créée par la station : c'est votre identifiant UPlanet, pas une boîte aux lettres. Gardez la carte remise à la création (SALT, PEPPER) et votre code PASS : sans email, ce sont vos seuls moyens de récupérer le compte.": "Su dirección la creó la estación: es su identificador UPlanet, no un buzón. Guarde la tarjeta entregada al crear la cuenta (SALT, PEPPER) y su código PASS: sin correo, son su única forma de recuperar la cuenta.",
+"Voici des photos pour vous : {0}": "Aquí tiene fotos para usted: {0}",
+"Email": "Correo"
 };

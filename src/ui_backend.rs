@@ -237,6 +237,11 @@ impl<B: BlobStore> Backend for StationUi<B> {
         self.invites_service()?.thumb(&token, index).await.map_err(invite_error)
     }
 
+    async fn invite_accept(&self, who: &Principal, token: String) -> Result<Value, ApiError> {
+        let a = self.invites_service()?.accept(&token, &who.hex).await.map_err(invite_error)?;
+        Ok(json!({ "from": a.from, "shared": a.shared, "warnings": a.warnings }))
+    }
+
     async fn invite_claim(&self, ip: Option<std::net::IpAddr>, token: String, who: Applicant, lang: String) -> Result<Value, ApiError> {
         let svc = self.invites_service()?;
         let claimed = match who {
@@ -958,10 +963,12 @@ fn registered_json(reg: &crate::register::Registered) -> Value {
 
 fn invite_error(e: crate::invites::InviteError) -> ApiError {
     use crate::invites::InviteError as E;
+    let code = e.code();
     match e {
         E::Invalid(m) => ApiError::bad_request(m),
         E::NotFound(m) => ApiError::not_found(m),
-        E::Gone(m) => ApiError::gone(m),
+        E::Gone(code) => ApiError::gone(crate::invites::gone_message(code)),
+        E::EmailTaken => ApiError::conflict("cette adresse a déjà un MULTIPASS : connectez-vous avec, puis rouvrez ce lien pour l'accepter avec votre compte"),
         E::Conflict(m) => ApiError::conflict(m),
         E::RateLimited(m) => ApiError::too_many(m),
         E::Unavailable(m) => ApiError::unavailable(m),
@@ -970,6 +977,7 @@ fn invite_error(e: crate::invites::InviteError) -> ApiError {
             ApiError::internal("opération impossible : voir les journaux de la station")
         }
     }
+    .with_code(code)
 }
 
 fn link_error(e: crate::identity_links::LinkError) -> ApiError {
@@ -990,8 +998,8 @@ fn account_error(e: crate::account::AccountError) -> ApiError {
     match e {
         E::Invalid(m) => ApiError::bad_request(m),
         E::NotFound => ApiError::not_found("compte non hébergé ici"),
-        E::Limited(m) => ApiError::too_many(m),
-        E::Denied(m) => ApiError::denied(m),
+        E::Limited(m) => ApiError::too_many(m).with_code("pass_locked"),
+        E::Denied(m) => ApiError::denied(m).with_code("pass_denied"),
         E::Internal(m) => {
             eprintln!("interface : Mon compte : {m}");
             ApiError::internal("opération impossible : voir les journaux de la station")

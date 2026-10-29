@@ -19,6 +19,18 @@
   <p id="lead" class="lead" role="status"></p>
   <div id="thumbs" class="thumbs" aria-hidden="true"></div>
 
+  <section id="acc" hidden aria-labelledby="acc-t">
+    <h2 id="acc-t"></h2>
+    <p class="row"><button id="acc-go" type="button" class="primary" data-t="accept">Accepter ces photos</button> <button id="acc-other" type="button" data-t="other">Utiliser un autre compte</button></p>
+    <p id="acc-e" class="err" role="alert"></p>
+  </section>
+
+  <section id="acc-done" hidden aria-live="polite">
+    <h2 tabindex="-1" id="acc-done-t"></h2>
+    <p id="acc-warns" class="muted"></p>
+    <p class="row"><button id="acc-open" type="button" class="primary" data-t="open">Ouvrir mon espace</button></p>
+  </section>
+
   <form id="f" hidden>
     <label for="email" data-t="email">Votre adresse email</label>
     <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="vous@exemple.org">
