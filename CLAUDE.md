@@ -25,7 +25,7 @@ cargo build --release --features onnx         # avec l'inférence faciale locale
 astroportd doctor --db uplanet.db --game-dir ~/.zen/game                 # diagnostic en lecture seule
 ```
 
-Les tests ont besoin de `ffmpeg` (pipeline média) et d'un compilateur C (SQLite et libwebp sont compilés depuis leurs sources). Environ 570 tests (`cargo test --workspace`, ≈ 40 s). Aucun test ne requiert de service externe : base, WebDAV et pairs libp2p sont réels mais locaux.
+Les tests ont besoin de `ffmpeg` (pipeline média) et d'un compilateur C (SQLite et libwebp sont compilés depuis leurs sources). Environ 585 tests (`cargo test --workspace`, ≈ 40 s). Aucun test ne requiert de service externe : base, WebDAV et pairs libp2p sont réels mais locaux.
 
 Les plugins Wasm (`plugins/resonance`) sont **hors workspace** et se compilent pour `wasm32-unknown-unknown` avec `./plugins/build.sh` (produit `plugins/resonance.wasm`, versionné).
 

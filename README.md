@@ -10,7 +10,7 @@ relais Nostr, cloud personnel chiffré, reconnaissance de visages, agent BRO, é
 P2P et interface web — dans **un seul exécutable** de quelques dizaines de Mo, qui tient sur un Raspberry Pi comme
 sur un serveur GPU.
 
-> **Préversion 0.2.2-beta.** Le code est testé de bout en bout (≈ 570 tests, `clippy` sans avertissement) mais jeune :
+> **Préversion 0.3.0-beta.** Le code est testé de bout en bout (≈ 585 tests, `clippy` sans avertissement) mais jeune :
 > lisez [les limites connues](#8-état-du-projet-et-limites-connues). Licence **AGPL-3.0** · Auteur : Fred
 > (support@qo-op.com) · Rust 2024 (≥ 1.85).
 
