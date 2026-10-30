@@ -178,8 +178,9 @@ have_ort() {
 
 install_ort() {
   have_ort && { say "  ✔ libonnxruntime déjà présente"; return 0; }
-  command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1 \
-    || { warn "libonnxruntime : python3/pip absents (sudo apt install python3-pip), ou définissez ORT_DYLIB_PATH"; return 1; }
+  if ! { command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; }; then
+    warn "libonnxruntime : python3/pip absents (sudo apt install python3-pip), ou définissez ORT_DYLIB_PATH"; return 1
+  fi
   say "  Installation de libonnxruntime (roue pip, extraite dans ${DATA}/lib)…"
   local whl; whl="$(mktemp -d)"
   if python3 -m pip download onnxruntime --no-deps -d "$whl" -q 2>/dev/null && python3 - "$whl" "${DATA}/lib" <<'PY'
