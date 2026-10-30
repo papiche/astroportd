@@ -144,7 +144,10 @@ for t in "${TARGETS[@]}"; do
   echo "▶ $t ($PROFILE)"
   build=(cargo build)
   uses_zigbuild "$t" && build=(cargo zigbuild)
-  if ( cross_env "$t"; "${build[@]}" "${CARGO_FLAGS[@]}" --target "$t" ); then
+  # Inférence faciale locale (ONNX Runtime chargé à l'exécution) : impossible dans un binaire statique musl.
+  feat=()
+  case "$t" in *-gnu*) feat=(--features onnx) ;; esac
+  if ( cross_env "$t"; "${build[@]}" "${CARGO_FLAGS[@]}" ${feat[@]+"${feat[@]}"} --target "$t" ); then
     src="target/$t/$PROFILE/$BIN"
     name="$BIN-$VERSION-$t"
     stage="$OUT/$name"

@@ -44,6 +44,9 @@ pub struct InitArgs {
     /// Fonde SA constellation ẐEN : génère une `swarm.key` neuve (à copier ensuite sur chaque station).
     #[arg(long)]
     found_constellation: bool,
+    /// Nom de domaine public : HTTPS automatique (Let's Encrypt) quand les ports 80/443 sont libres. Demandé si absent (terminal).
+    #[arg(long)]
+    domain: Option<String>,
     /// Dossier de la station (défaut : `~/.zen/astroportd`).
     #[arg(long)]
     home: Option<PathBuf>,
@@ -133,6 +136,27 @@ impl Asker {
         if line.is_empty() { default.to_owned() } else { line.to_owned() }
     }
 }
+
+/// État d'un port d'écoute de l'interface web.
+#[derive(PartialEq)]
+enum Port {
+    Free,
+    /// Déjà pris (Nginx Proxy Manager, nginx, IPFS…).
+    Busy,
+    /// Libre mais réservé aux comptes privilégiés (< 1024) : il faut `setcap` ou un autre port.
+    Privileged,
+}
+
+fn probe_port(port: u16) -> Port {
+    match std::net::TcpListener::bind(("0.0.0.0", port)) {
+        Ok(_) => Port::Free,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => Port::Busy,
+        Err(_) => Port::Privileged,
+    }
+}
+
+/// Port local de repli quand 80/443 sont pris : le reverse proxy (NPM) y renvoie le domaine.
+const BEHIND_PROXY_LISTEN: &str = "127.0.0.1:8090";
 
 fn parse_coord(s: &str, name: &str, max: f64) -> Result<f64, String> {
     let v: f64 = s.trim().replace(',', ".").parse().map_err(|_| format!("{name} : « {s} » n'est pas un nombre"))?;
@@ -251,13 +275,23 @@ pub fn init(a: InitArgs) -> Res {
     };
     let email = a.email.clone().unwrap_or_else(|| ask.ask("Email du Capitaine (facultatif)", &prev("captain_email")));
 
+    // Web : domaine + certificat. Ports 80/443 libres → astroportd gère lui-même HTTPS (ACME) ; pris (NPM…) → il reste local.
+    let (p80, p443) = (probe_port(80), probe_port(443));
+    let behind_proxy = p80 == Port::Busy || p443 == Port::Busy;
+    let domain = a.domain.clone().unwrap_or_else(|| prev("domain"));
+    let domain = if domain.is_empty() && !behind_proxy {
+        ask.ask("Nom de domaine public pour HTTPS automatique (vide = HTTP local seulement)", "")
+    } else {
+        domain
+    };
+
     // 4. Dossiers + station.conf.
     // `nostr/` : un dossier par MULTIPASS hébergé (vide au départ ; `serve` l'exige).
     for dir in [home.clone(), home.join("blobs"), home.join("snapshots"), game.join("nostr")] {
         std::fs::create_dir_all(&dir)?;
     }
     let conf = format!(
-        "# astroportd — station.conf (écrit par `astroportd init`, relisible et modifiable)\nmode = {}\nuplanetname = {uplanetname}\nipfsnodeid = {}\ncaptain_email = {email}\nlat = {}\nlon = {}\n",
+        "# astroportd — station.conf (écrit par `astroportd init`, relisible et modifiable)\nmode = {}\nuplanetname = {uplanetname}\nipfsnodeid = {}\ncaptain_email = {email}\ndomain = {domain}\nlat = {}\nlon = {}\n",
         if mode == Mode::Zen { "zen" } else { "origin" },
         report.peer_id,
         coords.map_or(String::new(), |c| c.0.to_string()),
@@ -279,6 +313,14 @@ pub fn init(a: InitArgs) -> Res {
         serve.push(format!("--swarm-key {}", home.join("swarm.key").display()));
         serve.push("--p2p-listen /ip4/0.0.0.0/tcp/4101".into());
     }
+    if behind_proxy {
+        serve.push(format!("--http-listen {BEHIND_PROXY_LISTEN}"));
+    } else if !domain.is_empty() {
+        serve.push(format!("--domain {domain}"));
+        if !email.is_empty() {
+            serve.push(format!("--acme-email {email}"));
+        }
+    }
     if let Some((la, lo)) = coords {
         serve.push(format!("--lat {la} --lon {lo}"));
     }
@@ -298,7 +340,19 @@ pub fn init(a: InitArgs) -> Res {
         }
     }
     println!("Démarrer :        {serve}\nVérifier :        astroportd doctor --game-dir {} && astroportd ylevel --verify", game.display());
-    println!("Interface web :   http://127.0.0.1:8080/   (jeton : astroportd token <email>)");
+    if behind_proxy {
+        println!("Web :             les ports 80/443 sont pris (Nginx Proxy Manager ?) : astroportd écoute sur http://{BEHIND_PROXY_LISTEN}/");
+        println!("                  dans NPM : Proxy Host {} → http://{BEHIND_PROXY_LISTEN} (WebSockets activés), certificat SSL Let's Encrypt géré par NPM", if domain.is_empty() { "<votre domaine>" } else { &domain });
+    } else if !domain.is_empty() {
+        println!("Interface web :   https://{domain}/   (certificat Let's Encrypt obtenu et renouvelé par astroportd ; jeton : astroportd token <email>)");
+        println!("                  avant le démarrage : le DNS de {domain} doit pointer sur cette machine, et les ports 80 et 443 être ouverts (box/pare-feu)");
+        if p80 == Port::Privileged || p443 == Port::Privileged {
+            println!("                  ports < 1024 refusés à un utilisateur : sudo setcap 'cap_net_bind_service=+ep' {}   (ou lancer avec --http-listen/--https-listen sur d'autres ports)", exe.display());
+        }
+        println!("                  essai sans quota : ajoutez --acme-staging à la commande");
+    } else {
+        println!("Interface web :   http://127.0.0.1:8080/   (jeton : astroportd token <email>)   — HTTPS : relancez `astroportd init --domain votre.domaine`");
+    }
     println!("MULTIPASS :       astroportd multipass create {} --captain   (le premier compte devient le Capitaine ; les suivants s'inscrivent sur /register)", if email.is_empty() { "<votre@email>" } else { &email });
     Ok(())
 }
