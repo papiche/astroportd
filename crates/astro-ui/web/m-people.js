@@ -240,7 +240,7 @@ function setView(v) {
 /* ── Chargement ────────────────────────────────────────────────────────────── */
 async function load() {
   const r = await K.api('/api/v1/faces/board');
-  if (!r.enabled) { root.replaceChildren(K.h('p', { class: 'muted' }, 'FaceCloud n\'est pas activé sur cette station (--face-engine).')); return false; }
+  if (!r.enabled) { root.replaceChildren(K.h('p', { class: 'muted' }, 'La reconnaissance des visages n\'est pas activée sur cette station (le Capitaine l\'active dans Options).')); return false; }
   K.dav(r.dav);
   S.faces = r.faces; S.people = r.people; S.byId = new Map(); S.sel = new Set([...S.sel].filter(i => r.faces.some(f => f.id === i)));
   S.visible = () => (S.view === 'all' ? S.faces : S.faces.filter(f => !f.named));

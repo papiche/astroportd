@@ -1,7 +1,7 @@
 //! Dépôt d'un flux arbitraire dans l'uCloud d'un compte, hors WebDAV (documents rapatriés par BRO).
 //!
 //! Mêmes garanties qu'un `PUT` : chiffrement UENC v2 en flux (le clair ne touche jamais le disque), plafond par
-//! fichier et quota du compte (relevé par un bail de disque), clé dans le trousseau, miniature, publication du
+//! fichier et quota du compte, clé dans le trousseau, miniature, publication du
 //! manifeste et rappel FaceCloud.
 
 use std::sync::Arc;
@@ -80,7 +80,7 @@ pub async fn replace<B: BlobStore, R: AsyncRead + Unpin>(st: &Arc<DavState<B>>, 
 
 async fn ingest_with<B: BlobStore, R: AsyncRead + Unpin>(st: &Arc<DavState<B>>, owner: &str, dir: &str, name: &str, mime_hint: Option<&str>, reader: R, replace: bool) -> Result<Ingested, IngestError> {
     let account = crate::auth::lookup_by_hex(&st.db, owner).await.ok_or(IngestError::NoAccount)?;
-    let limits = st.limits_for(&account).await;
+    let limits = st.config.limits(account.tier);
     let dir = vfs::normalize_path(dir)?;
     let name = sanitize_name(name).ok_or(IngestError::BadName)?;
 

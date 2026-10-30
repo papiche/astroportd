@@ -255,3 +255,22 @@ async fn photos_received_before_the_exif_reader_existed_are_caught_up_once_each(
     assert_eq!((one.scanned, one.remaining), (1, 1), "{one:?}");
     assert_eq!(backfill_exif(&state, &hex(&ALICE), 1).await.unwrap().remaining, 0);
 }
+
+#[tokio::test]
+async fn a_photo_gets_a_visual_hash_and_old_photos_are_backfilled_from_their_thumbnail() {
+    let b = bench("phash").await;
+    assert_eq!(call(&b.app, "PUT", "/dav/a.jpg", Some(&alice()), &[("content-type", "image/jpeg")], Body::from(jpeg(1200, 800, 3))).await.status(), 201);
+    wait_thumb(&b, "/a.jpg").await;
+    let read = |b: &Bench| {
+        let o = hex(&ALICE);
+        let db = b.db.clone();
+        async move { db.readers().read(move |c| Ok(c.query_row("SELECT phash FROM ucloud_entries WHERE owner_hex = ?1 AND path = '/a.jpg'", [o], |r| r.get::<_, Option<i64>>(0))?)).await.unwrap() }
+    };
+    let direct = read(&b).await.unwrap(); // empreinte posée à la génération de la miniature
+    // Une photo d'avant cette fonction : pas d'empreinte. Le rattrapage la refait depuis la miniature.
+    b.db.writer().execute("UPDATE ucloud_entries SET phash = NULL", vec![]).await.unwrap();
+    assert_eq!(astro_dav::thumb::backfill_phash(&b.db, &*b.blobs, 10).await.unwrap(), 1);
+    let again = read(&b).await.unwrap();
+    assert!((direct ^ again).count_ones() <= 6, "même image, miniature ou original : {direct:x} contre {again:x}");
+    assert_eq!(astro_dav::thumb::backfill_phash(&b.db, &*b.blobs, 10).await.unwrap(), 0, "plus rien à rattraper");
+}

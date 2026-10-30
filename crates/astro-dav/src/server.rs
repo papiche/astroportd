@@ -55,9 +55,6 @@ pub struct DavConfig {
     pub propfind_infinity_cap: usize,
     /// Secret de la station dont dérivent les jetons Basic.
     pub station_secret: Zeroizing<Vec<u8>>,
-    /// Clé Nostr (hex) du nœud qui encaisse les baux de disque : un bail `disk_*` actif chez lui relève le quota du
-    /// compte. `None` : les baux n'influent pas sur les quotas.
-    pub lease_node: Option<String>,
 }
 
 impl DavConfig {
@@ -72,16 +69,11 @@ impl DavConfig {
             quota_zencard: 128 * GIB,
             propfind_infinity_cap: 10_000,
             station_secret: Zeroizing::new(station_secret),
-            lease_node: None,
         }
     }
 
-    /// Limites de la formule seule, sans relèvement par un bail de disque.
-    pub fn limits_without_leases(&self, tier: Tier) -> Limits {
-        self.limits(tier)
-    }
-
-    pub(crate) fn limits(&self, tier: Tier) -> Limits {
+    /// Limites (taille de fichier, quota total) de la formule d'un compte.
+    pub fn limits(&self, tier: Tier) -> Limits {
         match tier {
             Tier::Multipass => Limits { max_file: self.max_file_multipass, quota_total: self.quota_multipass },
             Tier::ZenCard => Limits { max_file: self.max_file_zencard, quota_total: self.quota_zencard },
@@ -109,17 +101,6 @@ pub struct DavState<B: BlobStore> {
 pub type UploadHook = Arc<dyn Fn(&str, &str, &str) + Send + Sync>;
 
 impl<B: BlobStore> DavState<B> {
-    /// Limites d'un compte : celles de sa formule, relevées par un bail de disque actif (palier 10, 128 ou 256 Go)
-    /// chez le nœud `config.lease_node` — le plus grand des deux l'emporte.
-    pub async fn limits_for(&self, account: &crate::auth::Account) -> vfs::Limits {
-        let base = self.config.limits(account.tier);
-        let Some(node) = self.config.lease_node.clone() else { return base };
-        let owner = account.owner.clone();
-        let now = now_secs();
-        let gib = self.db.readers().read(move |c| Ok(c.query_row(astro_economy::lease::LEASED_QUOTA_SQL, rusqlite::params![node, owner, now], |r| r.get::<_, i64>(0))?)).await.unwrap_or(0);
-        vfs::Limits { quota_total: base.quota_total.max(astro_economy::lease::gib_to_bytes(gib)), ..base }
-    }
-
     /// Le compte hébergé ici qui s'authentifie (Basic ou NIP-98), s'il y en a un.
     pub async fn account_of(&self, headers: &HeaderMap, method: &str, uri: &axum::http::Uri) -> Option<crate::auth::Account> {
         authenticate(self, headers, method, uri).await.ok().map(|a| a.account)
@@ -537,7 +518,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for Measure<R> {
 }
 
 pub(crate) async fn put<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, req: Request) -> Response {
-    let limits = st.limits_for(&auth.account).await;
+    let limits = st.config.limits(auth.account.tier);
     let owner = auth.account.owner.clone();
     if path == "/" {
         return reply(StatusCode::METHOD_NOT_ALLOWED, "la racine est une collection");
@@ -666,7 +647,7 @@ async fn move_<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, to: &str
 async fn copy<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, to: &str, headers: &HeaderMap) -> Response {
     let overwrite = headers.get("overwrite").and_then(|v| v.to_str().ok()).is_none_or(|v| !v.trim().eq_ignore_ascii_case("f"));
     let recursive = headers.get("depth").and_then(|v| v.to_str().ok()).is_none_or(|v| v.trim() != "0");
-    let quota = st.limits_for(&auth.account).await.quota_total;
+    let quota = st.config.limits(auth.account.tier).quota_total;
     let (o, from, dst) = (auth.account.owner.clone(), path.to_owned(), to.to_owned());
     let existed = {
         let (o, d) = (o.clone(), dst.clone());

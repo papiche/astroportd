@@ -8,11 +8,12 @@
 //! 2. verrou du jour (`done`), posé **avant** tout travail : deux déclenchements le même jour solaire ne font pas
 //!    deux nuits (leçon du doublon de mail du legacy) ;
 //! 3. snapshot atomique de `uplanet.db` (`VACUUM INTO`), les `N` plus récents sont gardés ;
-//! 4. purge des réclamations anciennes (`claimed`, 7 jours) et des liens d'invités expirés ;
+//! 4. purge des réclamations anciennes (`claimed`, 7 jours), des événements Nostr expirés (NIP-40) et des liens d'invités expirés ;
 //! 5. balayage sémantique RÊVE ;
-//! 6. clôture hebdomadaire de la régie (3×1/3) : toute semaine ISO terminée et pas encore close, soit le lundi
+//! 6. sauvegarde privée : envoi chez les amis des fichiers non partagés pas encore sauvegardés ;
+//! 7. clôture hebdomadaire de la régie (3×1/3) : toute semaine ISO terminée et pas encore close, soit le lundi
 //!    pour la semaine finie le dimanche, avec rattrapage jusqu'à 5 semaines si la station était éteinte ;
-//! 7. émission de l'événement de santé économique (kind 30850, `d = economic-health`).
+//! 8. émission de l'événement de santé économique (kind 30850, `d = economic-health`).
 //!
 //! Une station arrêtée à 20h12 ne rejoue pas la nuit manquée (sauf la clôture hebdomadaire, qui se rattrape).
 
@@ -22,7 +23,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use astro_bro::broker::Publisher;
+use astro_bro::publisher::Publisher;
 use astro_core::solar::{Coordinates, ensure_clock_sane, next_20h12, solar_20h12_of, system_now_checked};
 use astro_core::week::{date_string, iso_week, week_start};
 use astro_core::{ActivityBus, Amount};
@@ -90,7 +91,7 @@ pub struct Nightly<P: Publisher> {
     pub db: Arc<Db>,
     /// Dossier des snapshots.
     pub snapshot_dir: PathBuf,
-    /// Clé Nostr (hex) du NODE qui encaisse les baux et loyers.
+    /// Clé Nostr (hex) du NODE qui encaisse les loyers.
     pub node_hex: String,
     /// Clé du NODE : signe l'événement de santé. Sans elle, l'étape est sautée en le disant.
     pub node_secret: Option<[u8; 32]>,
@@ -104,6 +105,10 @@ pub struct Nightly<P: Publisher> {
     pub purge_shares: Option<Hook>,
     /// Balayage RÊVE.
     pub dream: Option<Hook>,
+    /// Sauvegarde privée chez les amis (envoi du jour).
+    pub backup: Option<Hook>,
+    /// Contrôle d'intégrité du stockage (blobs absents ou corrompus).
+    pub integrity: Option<Hook>,
     /// Publication de l'événement de santé (relai local + relais).
     pub publisher: Option<Arc<P>>,
     /// Journal d'activité.
@@ -156,6 +161,16 @@ impl<P: Publisher> Nightly<P> {
             None => Ok("mémoire sémantique inactive (pas d'Ollama)".into()),
         };
         report.step("rêve", r);
+        let r = match &self.backup {
+            Some(h) => h(now).await,
+            None => Ok("sauvegarde privée inactive".into()),
+        };
+        report.step("sauvegarde", r);
+        let r = match &self.integrity {
+            Some(h) => h(now).await,
+            None => Ok("contrôle d'intégrité inactif".into()),
+        };
+        report.step("intégrité", r);
         let r = self.close_weeks(now).await;
         report.step("clôture", r);
         let r = self.health(now).await;
@@ -210,22 +225,20 @@ impl<P: Publisher> Nightly<P> {
             Some(h) => h(now).await.map_err(|e| format!("liens d'invités : {e}"))?,
             None => "liens d'invités : sans objet".into(),
         };
-        Ok(format!("{claimed} réclamation(s) purgée(s) ; {shares}"))
+        // NIP-40 : les événements expirés ne sont plus servis ; la nuit les retire de la base (leurs tags suivent).
+        let expired = self.db.writer().execute("DELETE FROM nostr_events WHERE expires_at IS NOT NULL AND expires_at <= ?1", vec![int(now)]).await.map_err(|e| format!("événements expirés : {e}"))?.changes;
+        Ok(format!("{claimed} réclamation(s) purgée(s) ; {expired} événement(s) expiré(s) ; {shares}"))
     }
 
-    /// Recettes d'une semaine `[start, end[` : loyers constatés + baux payés à ce NODE (sans double compte).
+    /// Recettes d'une semaine `[start, end[` : loyers constatés.
     async fn revenue(&self, start: u64, end: u64) -> Result<Amount, String> {
-        let node = self.node_hex.clone();
         let cents: i64 = self
             .db
             .readers()
             .read(move |c| {
                 Ok(c.query_row(
-                    "SELECT COALESCE((SELECT SUM(amount_cents) FROM rent_payments WHERE at >= ?1 AND at < ?2), 0) \
-                          + COALESCE((SELECT SUM(l.paid_cents) FROM resource_leases l JOIN ledger_n2 n ON n.event_id = l.src_event \
-                                      WHERE l.node = ?3 AND l.status = 'active' AND n.created_at >= ?1 AND n.created_at < ?2 \
-                                        AND l.src_event NOT IN (SELECT event_id FROM rent_payments)), 0)",
-                    rusqlite::params![i64::try_from(start).unwrap_or(0), i64::try_from(end).unwrap_or(i64::MAX), node],
+                    "SELECT COALESCE(SUM(amount_cents), 0) FROM rent_payments WHERE at >= ?1 AND at < ?2",
+                    rusqlite::params![i64::try_from(start).unwrap_or(0), i64::try_from(end).unwrap_or(i64::MAX)],
                     |r| r.get(0),
                 )?)
             })

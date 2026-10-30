@@ -63,6 +63,8 @@ pub mod kind {
     pub const ZEN_ISSUANCE: u32 = 30851;
     /// Ledger Ğ1-N².
     pub const LEDGER_N2: u32 = 30852;
+    /// Attestation de build d'une station (version et empreinte SHA-256 du binaire), signée par le NODE.
+    pub const STATION_BUILD: u32 = 30853;
     /// Paramètres applicatifs utilisateur (un `d` par usage).
     pub const APP_PARAMS: u32 = 31903;
 }

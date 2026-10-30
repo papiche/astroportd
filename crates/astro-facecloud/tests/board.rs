@@ -124,3 +124,22 @@ async fn face_thumbs_are_cropped_by_the_station_decoded_once_and_cached() {
     assert!(bob.thumbs.is_empty() && bob.failed[0].1.contains("inconnu"));
     assert!(r.fc.face_thumbs(&alice, &[1], 8).await.is_err() && r.fc.face_thumbs(&alice, &[], 64).await.is_err());
 }
+
+#[tokio::test]
+async fn blurry_faces_do_not_form_groups_but_stay_on_the_board() {
+    let r = rig("board-blur", |_| {}).await;
+    let alice = hex(&ALICE);
+    for (i, spec) in ["lea", "lea+a", "lea+b"].iter().enumerate() {
+        add_face(&r, 10 + i as i64, &format!("Inconnu_{i:08}"), None, None, spec).await;
+    }
+    // Deux visages de la même personne, flous (score de détection sous le seuil de noyau) : visibles, jamais agrégés.
+    for (i, spec) in ["tom", "tom+a"].iter().enumerate() {
+        add_face(&r, 40 + i as i64, &format!("Inconnu_t{i:07}"), None, None, spec).await;
+    }
+    r.db.writer().execute("UPDATE faces SET det_score = 0.65 WHERE face_id >= 40", vec![]).await.unwrap();
+    let b = BoardCache::new().board(&r.db, &alice).await.unwrap();
+    assert_eq!(b.faces.len(), 5);
+    let by = |id: i64| b.faces.iter().find(|f| f.face_id == id).unwrap();
+    assert!(by(10).group.is_some(), "les visages nets forment un groupe");
+    assert!(by(40).group.is_none() && by(41).group.is_none(), "les visages flous ne s'agrègent pas");
+}

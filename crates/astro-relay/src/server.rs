@@ -97,6 +97,9 @@ fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
+/// Plafond d'un décompte (NIP-45) : au-delà, la réponse est marquée approximative.
+const COUNT_CAP: usize = 10_000;
+
 impl Relay {
     /// Crée le relai.
     pub fn new(db: Arc<Db>, circle: Arc<dyn CircleProvider>, config: RelayConfig) -> Arc<Self> {
@@ -140,15 +143,19 @@ impl Relay {
         serde_json::json!({
             "name": self.config.name,
             "description": "Relais Nostr souverain astroportd (pare-feu social NIP-42)",
-            "supported_nips": [1, 9, 11, 40, 42, 59],
+            "supported_nips": [1, 9, 11, 17, 40, 42, 45, 50, 59, 70],
             "software": "astroportd",
             "version": env!("CARGO_PKG_VERSION"),
             "limitation": {
                 "max_message_length": self.config.max_message_bytes,
+                "max_subid_length": astro_nostr_proto::message::MAX_SUB_ID_LEN,
+                "max_limit": self.config.query_cap,
                 "max_event_tags": 2000,
+                "created_at_upper_limit": self.config.future_skew_secs,
                 "max_subscriptions": self.config.max_subscriptions,
                 "max_filters": self.config.max_filters,
                 "auth_required": false,
+                "payment_required": false,
                 "restricted_writes": true
             }
         })
@@ -201,6 +208,11 @@ impl Relay {
         };
         match msg {
             ClientMessage::Event(event) => {
+                // NIP-70 : un événement protégé (`["-"]`) n'est accepté que de son auteur, authentifié sur cette connexion.
+                if event.tags.iter().any(|t| t.len() == 1 && t[0] == "-") && !conn.auth.contains(&event.pubkey) {
+                    let message = if conn.auth.is_empty() { "auth-required: this event may only be published by its author" } else { "restricted: this event may only be published by its author" };
+                    return send(socket, &RelayMessage::Ok { event_id: event.id, accepted: false, message: message.into() }).await;
+                }
                 let (accepted, message) = self.process_event(&event, ip).await;
                 send(socket, &RelayMessage::Ok { event_id: event.id, accepted, message }).await
             }
@@ -219,6 +231,7 @@ impl Relay {
                 true
             }
             ClientMessage::Req { sub_id, filters } => self.on_req(socket, conn, sub_id, filters).await,
+            ClientMessage::Count { sub_id, filters } => self.on_count(socket, conn, sub_id, filters).await,
         }
     }
 
@@ -268,6 +281,10 @@ impl Relay {
         if e.created_at > now_secs().saturating_add(self.config.future_skew_secs) {
             return (false, "invalid: created_at is too far in the future".into());
         }
+        // NIP-40 : un événement déjà expiré n'est pas conservé.
+        if e.tag_value("expiration").and_then(|v| v.parse::<u64>().ok()).is_some_and(|t| t <= now_secs()) {
+            return (false, "invalid: event expired".into());
+        }
         let policy = self.policy();
         match policy.write_decision(e, self.circle.as_ref()) {
             WriteDecision::Reject(reason) => return (false, reason.to_owned()),
@@ -301,28 +318,26 @@ impl Relay {
             }
             Ok(InsertOutcome::Duplicate) => (true, "duplicate: already have this event".into()),
             Ok(InsertOutcome::Superseded) => (false, "invalid: a newer version of this replaceable event is stored".into()),
+            Ok(InsertOutcome::Deleted) => (false, "invalid: this event was deleted by its author".into()),
             Err(_) => (false, "error: storage failure".into()),
         }
     }
 
-    async fn on_req(&self, socket: &mut WebSocket, conn: &mut Conn, sub_id: String, filters: Vec<Filter>) -> bool {
-        let closed = |message: &str| RelayMessage::Closed { sub_id: sub_id.clone(), message: message.to_owned() };
+    /// Événements lisibles par la connexion pour `filters`, du plus récent au plus ancien, ou la raison d'un `CLOSED`.
+    async fn readable(&self, conn: &Conn, filters: &[Filter], cap: usize) -> Result<Vec<Event>, &'static str> {
         if filters.len() > self.config.max_filters {
-            return send(socket, &closed("error: too many filters")).await;
-        }
-        if !conn.subs.contains_key(&sub_id) && conn.subs.len() >= self.config.max_subscriptions {
-            return send(socket, &closed("error: too many subscriptions")).await;
+            return Err("error: too many filters");
         }
         let policy = self.policy();
         let policy = &*policy;
-        for f in &filters {
+        for f in filters {
             match policy.filter_access(f, &conn.auth, self.circle.as_ref()) {
                 ReadAccess::Open => {}
-                ReadAccess::NeedsAuth => return send(socket, &closed("auth-required: this subscription targets private kinds")).await,
-                ReadAccess::Restricted => return send(socket, &closed("restricted: authenticated key is outside the social circle")).await,
+                ReadAccess::NeedsAuth => return Err("auth-required: this subscription targets private kinds"),
+                ReadAccess::Restricted => return Err("restricted: authenticated key is outside the social circle"),
             }
         }
-        let (query, cap, now) = (filters.clone(), self.config.query_cap, now_secs());
+        let (query, now) = (filters.to_vec(), now_secs());
         let found = self
             .db
             .readers()
@@ -334,12 +349,25 @@ impl Relay {
                 Ok(out)
             })
             .await;
-        let Ok(mut events) = found else {
-            return send(socket, &closed("error: storage failure")).await;
-        };
+        let Ok(mut events) = found else { return Err("error: storage failure") };
         let mut seen = HashSet::new();
         events.retain(|e| seen.insert(e.id.clone()) && policy.can_read(e, &conn.auth, self.circle.as_ref()));
         events.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.id.cmp(&b.id)));
+        Ok(events)
+    }
+
+    async fn on_req(&self, socket: &mut WebSocket, conn: &mut Conn, sub_id: String, filters: Vec<Filter>) -> bool {
+        let closed = |message: &str| RelayMessage::Closed { sub_id: sub_id.clone(), message: message.to_owned() };
+        if filters.len() > self.config.max_filters {
+            return send(socket, &closed("error: too many filters")).await;
+        }
+        if !conn.subs.contains_key(&sub_id) && conn.subs.len() >= self.config.max_subscriptions {
+            return send(socket, &closed("error: too many subscriptions")).await;
+        }
+        let events = match self.readable(conn, &filters, self.config.query_cap).await {
+            Ok(events) => events,
+            Err(reason) => return send(socket, &closed(reason)).await,
+        };
         for event in events {
             if !send(socket, &RelayMessage::Event { sub_id: sub_id.clone(), event: Box::new(event) }).await {
                 return false;
@@ -347,6 +375,15 @@ impl Relay {
         }
         conn.subs.insert(sub_id.clone(), filters);
         send(socket, &RelayMessage::Eose(sub_id)).await
+    }
+
+    /// NIP-45 : nombre d'événements que la connexion a le droit de lire (même contrôle d'accès qu'un `REQ`).
+    async fn on_count(&self, socket: &mut WebSocket, conn: &Conn, sub_id: String, filters: Vec<Filter>) -> bool {
+        let reply = match self.readable(conn, &filters, COUNT_CAP).await {
+            Ok(events) => RelayMessage::Count { sub_id, count: events.len() as u64, approximate: events.len() >= COUNT_CAP },
+            Err(reason) => RelayMessage::Closed { sub_id, message: reason.to_owned() },
+        };
+        send(socket, &reply).await
     }
 
     async fn deliver_live(&self, socket: &mut WebSocket, conn: &Conn, event: &Event) -> bool {
@@ -375,7 +412,8 @@ async fn root(State(relay): State<Arc<Relay>>, req: Request) -> Response {
     let (mut parts, _body) = req.into_parts();
     match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
         Ok(ws) => ws.max_message_size(relay.config.max_message_bytes).on_upgrade(move |socket| relay.run(socket, ip)),
-        Err(_) if wants_info => (StatusCode::OK, [(header::CONTENT_TYPE, "application/nostr+json")], relay.info_document()).into_response(),
+        // CORS : les clients web (Coracle…) lisent le document NIP-11 depuis un autre domaine.
+        Err(_) if wants_info => (StatusCode::OK, [(header::CONTENT_TYPE, "application/nostr+json"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"), (header::ACCESS_CONTROL_ALLOW_HEADERS, "*")], relay.info_document()).into_response(),
         Err(_) => (StatusCode::OK, "astroportd relay\n").into_response(),
     }
 }

@@ -378,3 +378,23 @@ async fn node_did_assets_fill_capital_assets_and_converge() {
     assert_eq!(rows[0], "a1|Serveur|alice@example.org|500.0|50.0|1|52|active");
     assert_eq!(rows[1], "neg|||null|null|null|null|null");
 }
+
+#[tokio::test]
+async fn station_build_attestations_keep_the_latest_and_reject_malformed_ones() {
+    let dir = TempDir::new("build");
+    let db = open_db(&dir);
+    let sha = "ab".repeat(32);
+    let attest = |at: u64, version: &str, sha: &str| ev(&BOB, 30_853, at, vec![t(&["d", "build"]), t(&["version", version]), t(&["sha256", sha]), t(&["target", "x86_64-linux"]), t(&["station", "12D3KooWx"])], "");
+    assert_eq!(ingest(&db, &attest(200, "0.2.2-beta", &sha)).await, Ingested::Inserted);
+    // Une attestation plus ancienne, arrivée après, n'écrase pas la plus récente.
+    db.writer().batch(Projector::plan(&attest(100, "0.1.0", &sha)).unwrap()).await.unwrap();
+    // Empreinte invalide : rien n'est projeté.
+    assert!(Projector::plan(&attest(300, "0.3.0", "pas-un-sha")).unwrap().is_empty());
+    assert!(Projector::plan(&ev(&BOB, 30_853, 300, vec![t(&["d", "build"]), t(&["sha256", &sha])], "")).unwrap().is_empty());
+    let version: String = db
+        .readers()
+        .read(|c| Ok(c.query_row("SELECT json_extract(value, '$.tags.version') FROM kv WHERE scope='station_build'", [], |r| r.get(0))?))
+        .await
+        .unwrap();
+    assert_eq!(version, "0.2.2-beta");
+}

@@ -39,8 +39,10 @@ pub struct StationUi<B: BlobStore> {
     consent_fn: Option<ConsentFn>,
     thumbs_fn: Option<ThumbFn>,
     friends_fn: Option<FriendsFn>,
+    backup: Option<BackupFns>,
     coop: Option<(CoopGetFn, CoopSetFn)>,
     admin: Option<AdminFn>,
+    console: Option<Arc<crate::console::Consoles>>,
     account: Option<Arc<crate::account::AccountService>>,
     contacts: Option<Arc<crate::identity_links::IdentityLinks<B>>>,
     invites: Option<Arc<crate::invites::Invites<B>>>,
@@ -65,6 +67,22 @@ pub type AdminFn = Arc<dyn Fn(String, Option<Value>) -> std::pin::Pin<Box<dyn st
 
 /// Proches réciproques d'un titulaire ; fourni par le binaire (il détient la boîte d'envoi générique).
 pub type FriendsFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
+/// Réglage de la sauvegarde privée : `(compte, actif, ami)`.
+pub type BackupSetFn = Arc<dyn Fn(String, bool, Option<String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
+/// Réponse de l'hébergeur : `(hébergeur, propriétaire, accepte, volume demandé, volume maximal)`.
+pub type BackupRespondFn = Arc<dyn Fn(String, String, bool, u64, u64) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
+
+/// Sauvegarde privée : état, réglage `(compte, actif, ami)` et réponse de l'hébergeur `(hébergeur, propriétaire, accepte, volume, plafond)`.
+#[derive(Clone)]
+pub struct BackupFns {
+    /// État du compte.
+    pub status: FriendsFn,
+    /// Active ou suspend.
+    pub set: BackupSetFn,
+    /// Réponse de l'hébergeur.
+    pub respond: BackupRespondFn,
+}
+
 /// Envoi de fichiers d'un titulaire à des proches : `(titulaire, chemins, proches)`.
 pub type SendFn = Arc<dyn Fn(String, Vec<String>, Vec<String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
 
@@ -74,7 +92,7 @@ pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Fu
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, friends_fn: None, send_fn: None, coop: None, admin: None, account: None, contacts: None, invites: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None) }
+        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None) }
     }
 
     /// Active l'attestation de copie privée depuis l'interface.
@@ -111,6 +129,12 @@ impl<B: BlobStore> StationUi<B> {
         self
     }
 
+    /// Active la console SSH de l'interface (aide acceptée par un ami).
+    pub fn with_console(mut self, consoles: Arc<crate::console::Consoles>) -> Self {
+        self.console = Some(consoles);
+        self
+    }
+
     /// Active l'écran de configuration coopérative du Capitaine.
     pub fn with_coop(mut self, get: CoopGetFn, set: CoopSetFn) -> Self {
         self.coop = Some((get, set));
@@ -121,6 +145,12 @@ impl<B: BlobStore> StationUi<B> {
     pub fn with_sharing(mut self, friends: FriendsFn, send: SendFn) -> Self {
         self.friends_fn = Some(friends);
         self.send_fn = Some(send);
+        self
+    }
+
+    /// Active la sauvegarde privée chez un ami.
+    pub fn with_backup(mut self, fns: BackupFns) -> Self {
+        self.backup = Some(fns);
         self
     }
 
@@ -384,6 +414,47 @@ impl<B: BlobStore> Backend for StationUi<B> {
         Ok(json!({ "dav": self.dav.config.mount, "items": items, "next": next }))
     }
 
+    async fn library(&self, who: &Principal, q: astro_ui::api::LibraryQuery) -> Result<Value, ApiError> {
+        use astro_ui::api::LibraryQuery as Q;
+        let owner = who.hex.clone();
+        let now = now_secs();
+        self.services
+            .db
+            .readers()
+            .read(move |c| {
+                Ok(match q {
+                    Q::Have(shas) => Ok(json!({ "have": crate::library::have(c, &owner, &shas)? })),
+                    Q::Memories(day) => {
+                        if let Some((md, y)) = day {
+                            return Ok(Ok(json!({ "memories": crate::library::memories(c, &owner, &md, y)? })));
+                        }
+                        let (y, md): (i64, String) = c.query_row("SELECT CAST(strftime('%Y', ?1, 'unixepoch') AS INTEGER), strftime('%m-%d', ?1, 'unixepoch')", [now], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                        Ok(json!({ "memories": crate::library::memories(c, &owner, &md, y)? }))
+                    }
+                    Q::Timeline(None) => Ok(json!({ "months": crate::library::timeline_buckets(c, &owner)? })),
+                    Q::Timeline(Some(ym)) => crate::library::timeline_month(c, &owner, &ym)?.map(|items| json!({ "ym": ym, "items": items })).ok_or_else(|| ApiError::bad_request("mois attendu au format AAAA-MM")),
+                    Q::Search(s) => {
+                        let bbox = match s.bbox.as_deref() {
+                            None => None,
+                            Some(b) => {
+                                let v: Vec<f64> = b.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                                match v[..] {
+                                    [s, w, n, e] if (-90.0..=90.0).contains(&s) && (-90.0..=90.0).contains(&n) && s <= n && (-180.0..=180.0).contains(&w) && (-180.0..=180.0).contains(&e) => Some((s, w, n, e)),
+                                    _ => return Ok(Err(ApiError::bad_request("zone attendue : sud,ouest,nord,est en degrés"))),
+                                }
+                            }
+                        };
+                        let after = s.after_t.zip(s.after_p.clone());
+                        let query = crate::library::Search { q: s.q, person: s.person, from: s.from, to: s.to, bbox, kind: s.kind, after, limit: s.limit.unwrap_or(60) };
+                        Ok(crate::library::search(c, &owner, &query)?)
+                    }
+                    Q::Duplicates => Ok(crate::library::duplicates(c, &owner)?),
+                })
+            })
+            .await
+            .map_err(db_err)?
+    }
+
     async fn ucloud_share(&self, who: &Principal, paths: Vec<String>, ttl_secs: i64, origin: String) -> Result<Value, ApiError> {
         use astro_dav::share::{ShareError, create_guest_link};
         let title = who.email.clone().unwrap_or_else(|| "uCloud".into());
@@ -437,7 +508,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
 
     async fn face_accept(&self, who: &Principal, face_id: i64) -> Result<Value, ApiError> {
         if !self.faces_enabled {
-            return Err(ApiError::unavailable("FaceCloud n'est pas activé (--face-engine)"));
+            return Err(ApiError::unavailable("La reconnaissance des visages n'est pas activée sur cette station (le Capitaine l'active dans Options)."));
         }
         match astro_facecloud::review::accept_suggestion(&self.services.db, &who.hex, face_id).await {
             Ok(true) => {
@@ -451,7 +522,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
 
     async fn face_name(&self, who: &Principal, face_id: i64, name: String) -> Result<Value, ApiError> {
         if !self.faces_enabled {
-            return Err(ApiError::unavailable("FaceCloud n'est pas activé (--face-engine)"));
+            return Err(ApiError::unavailable("La reconnaissance des visages n'est pas activée sur cette station (le Capitaine l'active dans Options)."));
         }
         match astro_facecloud::review::name_face(&self.services.db, &who.hex, face_id, None, &name).await {
             Ok(()) => {
@@ -488,37 +559,20 @@ impl<B: BlobStore> Backend for StationUi<B> {
     async fn footprint(&self, who: &Principal) -> Result<Value, ApiError> {
         let svc = &self.services;
         let account = astro_dav::auth::lookup_by_hex(&svc.db, &who.hex).await.ok_or_else(|| ApiError::not_found("compte non hébergé ici"))?;
-        let base = self.dav.config.limits_without_leases(account.tier).quota_total;
-        let limits = self.dav.limits_for(&account).await;
-        let (owner, node, now) = (who.hex.clone(), svc.info.node_hex.clone(), now_secs());
+        let limits = self.dav.config.limits(account.tier);
+        let owner = who.hex.clone();
         let (opex, capex) = self.opex_capex(&who.hex, &account).await?;
-        let (used, files, leases, tariffs) = svc
+        let (used, files) = svc
             .db
             .readers()
             .read(move |c| {
-                let (used, files): (i64, i64) = c.query_row("SELECT COALESCE(SUM(size), 0), COUNT(*) FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file'", [&owner], |r| Ok((r.get(0)?, r.get(1)?)))?;
-                let mut stmt = c.prepare_cached("SELECT src_event, node, resource, start_at, end_at, units, paid_cents, status FROM resource_leases WHERE beneficiary = ?1 ORDER BY start_at DESC LIMIT 50")?;
-                let leases = stmt
-                    .query_map([&owner], |r| {
-                        let (start, end, status): (i64, i64, String) = (r.get(3)?, r.get(4)?, r.get(7)?);
-                        let resource: String = r.get(2)?;
-                        Ok(json!({
-                            "id": r.get::<_, String>(0)?.chars().take(12).collect::<String>(), "mine": r.get::<_, String>(1)? == node, "resource": resource,
-                            "start": start, "end": end, "units": r.get::<_, i64>(5)?, "paid_cents": r.get::<_, i64>(6)?, "status": status,
-                            "active": status == "active" && start <= now && now < end,
-                            "used_secs": if status == "active" { (now.min(end) - start).max(0) } else { 0 },
-                        }))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-                let mut t = c.prepare_cached("SELECT resource, price_cents, unit FROM tariffs WHERE node_hex = ?1 ORDER BY resource")?;
-                let tariffs = t.query_map([&node], |r| Ok(json!({ "resource": r.get::<_, String>(0)?, "price_cents": r.get::<_, i64>(1)?, "unit": r.get::<_, String>(2)? })))?.collect::<Result<Vec<_>, _>>()?;
-                Ok((used, files, leases, tariffs))
+                Ok(c.query_row("SELECT COALESCE(SUM(size), 0), COUNT(*) FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file'", [&owner], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?)
             })
             .await
             .map_err(db_err)?;
         Ok(json!({
-            "disk": { "used_bytes": used, "files": files, "quota_bytes": limits.quota_total, "base_quota_bytes": base, "leased": limits.quota_total > base, "tier": format!("{:?}", account.tier) },
-            "leases": leases, "tariffs": tariffs, "opex": opex, "capex": capex,
+            "disk": { "used_bytes": used, "files": files, "quota_bytes": limits.quota_total, "tier": format!("{:?}", account.tier) },
+            "opex": opex, "capex": capex,
         }))
     }
 
@@ -544,7 +598,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
     }
 
     async fn faces_thumbs(&self, who: &Principal, ids: Vec<i64>, size: u32) -> Result<Value, ApiError> {
-        let f = self.thumbs_fn.as_ref().ok_or_else(|| ApiError::unavailable("vignettes de visages non activées (--face-engine)"))?;
+        let f = self.thumbs_fn.as_ref().ok_or_else(|| ApiError::unavailable("Les vignettes de visages ne sont pas disponibles : la reconnaissance des visages n'est pas activée."))?;
         let (thumbs, failed) = f(who.hex.clone(), ids, size).await.map_err(|e| {
             eprintln!("interface : vignettes de visages : {e}");
             ApiError::internal("vignettes indisponibles")
@@ -555,7 +609,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
 
     async fn faces_assign(&self, who: &Principal, ids: Vec<i64>, name: String, pubkey: Option<String>) -> Result<Value, ApiError> {
         if !self.faces_enabled {
-            return Err(ApiError::unavailable("FaceCloud n'est pas activé (--face-engine)"));
+            return Err(ApiError::unavailable("La reconnaissance des visages n'est pas activée sur cette station (le Capitaine l'active dans Options)."));
         }
         match astro_facecloud::review::name_faces(&self.services.db, &who.hex, &ids, pubkey.as_deref(), &name).await {
             Ok(changed) => {
@@ -578,7 +632,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
 
     async fn faces_forget(&self, who: &Principal, ids: Vec<i64>) -> Result<Value, ApiError> {
         if !self.faces_enabled {
-            return Err(ApiError::unavailable("FaceCloud n'est pas activé (--face-engine)"));
+            return Err(ApiError::unavailable("La reconnaissance des visages n'est pas activée sur cette station (le Capitaine l'active dans Options)."));
         }
         match astro_facecloud::review::forget_faces(&self.services.db, &who.hex, &ids).await {
             Ok(gone) => {
@@ -658,6 +712,10 @@ impl<B: BlobStore> Backend for StationUi<B> {
         Ok(view)
     }
 
+    async fn console_open(&self, ticket: &str) -> Option<astro_ui::api::ConsoleLink> {
+        self.console.as_ref()?.open(ticket)
+    }
+
     async fn coop_config(&self, _who: &Principal) -> Result<Value, ApiError> {
         let (get, _) = self.coop.as_ref().ok_or_else(|| ApiError::unavailable("configuration coopérative non activée"))?;
         get().await.map_err(|e| {
@@ -681,6 +739,29 @@ impl<B: BlobStore> Backend for StationUi<B> {
             eprintln!("interface : proches : {e}");
             ApiError::internal("liste des proches indisponible")
         })
+    }
+
+    async fn backup_status(&self, who: &Principal) -> Result<Value, ApiError> {
+        let b = self.backup.as_ref().ok_or_else(|| ApiError::unavailable("sauvegarde privée non activée"))?;
+        (b.status)(who.hex.clone()).await.map_err(|e| {
+            eprintln!("interface : sauvegarde privée : {e}");
+            ApiError::internal("état de la sauvegarde indisponible")
+        })
+    }
+
+    async fn backup_set(&self, who: &Principal, enabled: bool, host: Option<String>) -> Result<Value, ApiError> {
+        let b = self.backup.as_ref().ok_or_else(|| ApiError::unavailable("sauvegarde privée non activée"))?;
+        (b.set)(who.hex.clone(), enabled, host).await.map_err(ApiError::bad_request)
+    }
+
+    async fn backup_respond(&self, who: &Principal, owner: String, accept: bool, quota_bytes: u64) -> Result<Value, ApiError> {
+        let b = self.backup.as_ref().ok_or_else(|| ApiError::unavailable("sauvegarde privée non activée"))?;
+        // Volume maximal : ce qui reste du quota de l'hébergeur, sauvegarde déjà hébergée comprise dans son occupation.
+        let account = astro_dav::auth::lookup_by_hex(&self.services.db, &who.hex).await.ok_or_else(|| ApiError::not_found("compte non hébergé ici"))?;
+        let quota = self.dav.config.limits(account.tier).quota_total;
+        let hex = who.hex.clone();
+        let used = self.services.db.readers().read(move |c| astro_dav::vfs::used_bytes(c, &hex).map_err(|_| astro_db::DbError::Aborted)).await.map_err(db_err)?;
+        (b.respond)(who.hex.clone(), owner, accept, quota_bytes, quota.saturating_sub(used)).await.map_err(ApiError::bad_request)
     }
 
     async fn ucloud_send(&self, who: &Principal, paths: Vec<String>, friends: Vec<String>) -> Result<Value, ApiError> {
@@ -720,29 +801,45 @@ impl<B: BlobStore> Backend for StationUi<B> {
         let peers: Vec<Candidate> = tokio::task::spawn_blocking(move || dir.map(|d| astro_p2p::routing::read_swarm_dir(&d)).unwrap_or_default())
         .await
         .map_err(db_err)?;
-        let prices: Vec<(String, String, i64, String)> = svc
+        let connected: Vec<String> = svc.p2p.as_ref().map(|h| h.connected_peers().iter().map(ToString::to_string).collect()).unwrap_or_default();
+        let me = svc.info.peer_id.clone().unwrap_or_default();
+        // Attestations de build reçues (kind 30853), par station (`station` = PeerID) ; la nôtre vient du binaire lui-même.
+        let attested: Vec<(String, String, String, String, i64, String)> = svc
             .db
             .readers()
             .read(|c| {
-                let mut stmt = c.prepare("SELECT i.peer_id, t.resource, t.price_cents, t.unit FROM tariffs t JOIN identities i ON i.hex = t.node_hex WHERE i.peer_id IS NOT NULL ORDER BY t.resource")?;
-                let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<Result<Vec<_>, _>>()?;
+                let mut stmt = c.prepare(
+                    "SELECT json_extract(value, '$.tags.station'), json_extract(value, '$.tags.version'), json_extract(value, '$.tags.sha256'), json_extract(value, '$.tags.target'), updated_at, key \
+                     FROM kv WHERE scope = 'station_build' AND json_extract(value, '$.tags.station') IS NOT NULL",
+                )?;
+                let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3).unwrap_or_default(), r.get::<_, i64>(4)?, r.get::<_, String>(5)?)))?.collect::<Result<Vec<_>, _>>()?;
                 Ok(rows)
             })
             .await
             .map_err(db_err)?;
-        let connected: Vec<String> = svc.p2p.as_ref().map(|h| h.connected_peers().iter().map(ToString::to_string).collect()).unwrap_or_default();
-        let me = svc.info.peer_id.clone().unwrap_or_default();
+        let mine = svc.build();
+        let build_of = |node_id: &str, is_self: bool| -> Value {
+            if is_self {
+                return mine.map_or(Value::Null, |b| json!({ "version": b.version, "sha256": b.sha256, "target": b.target, "verdict": "self" }));
+            }
+            let theirs = attested.iter().find(|a| a.0 == node_id);
+            let verdict = match mine {
+                Some(m) => crate::build_attest::compare(m, theirs.map(|a| (a.1.as_str(), a.2.as_str(), a.3.as_str()))),
+                None => crate::build_attest::Verdict::Unknown,
+            };
+            json!({ "version": theirs.map(|a| a.1.clone()), "sha256": theirs.map(|a| a.2.clone()), "target": theirs.map(|a| a.3.clone()), "at": theirs.map(|a| a.4), "signer": theirs.map(|a| a.5.clone()), "verdict": verdict.code() })
+        };
         let describe = |node_id: &str, power: f64, pos: Option<(f64, f64)>, services: Vec<String>, is_self: bool| {
             let distance = match (origin, pos) {
                 (Some(o), Some(p)) => Some((haversine_km(o, p) * 10.0).round() / 10.0),
                 _ => None,
             };
-            let tariffs: Vec<Value> = prices.iter().filter(|p| p.0 == node_id).map(|p| json!({ "resource": p.1, "price_cents": p.2, "unit": p.3 })).collect();
             json!({
                 "node_id": node_id, "self": is_self, "power_score": (power * 10.0).round() / 10.0, "tier": astro_p2p::routing::Tier::of(power).label(),
                 "distance_km": distance, "lat": pos.map(|p| p.0), "lon": pos.map(|p| p.1),
                 "status": if is_self { "local" } else if connected.iter().any(|c| c == node_id) { "connected" } else { "known" },
-                "services": services, "tariffs": tariffs,
+                "services": services,
+                "build": build_of(node_id, is_self),
             })
         };
         let mut nodes = vec![describe(&me, svc.hardware.score(), origin, svc.exposed.clone(), true)];
@@ -809,7 +906,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
         let mut out = Vec::new();
         for (hex, role, email, contract, state, used, files) in rows {
             let quota = match astro_dav::auth::lookup_by_hex(&self.services.db, &hex).await {
-                Some(a) => self.dav.limits_for(&a).await.quota_total,
+                Some(a) => self.dav.config.limits(a.tier).quota_total,
                 None => 0,
             };
             let life: Value = state.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
@@ -850,7 +947,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
             let out = bus::execute(self.services.as_ref(), &command, &who.hex).await;
             return Ok(json!({ "reply": out.unwrap_or_else(|e| format!("⚠️ {e}")) }));
         }
-        let Some(memory) = &self.memory else { return Err(ApiError::unavailable("la mémoire de BRO demande un moteur d'embeddings (--ollama)")) };
+        let Some(memory) = &self.memory else { return Err(ApiError::unavailable("La mémoire de BRO n'est pas disponible : cette station n'a pas de moteur d'IA (Ollama).")) };
         let related = memory.recall(&who.hex, &text, 3, None).await.map_err(|e| ApiError::unavailable(format!("mémoire indisponible : {e}")))?;
         let meta = Meta { source: "console".into(), ..Meta::default() };
         let mut reply = match memory.remember(&who.hex, Slot::Journal, &text, meta).await {
@@ -885,13 +982,13 @@ impl<B: BlobStore> Backend for StationUi<B> {
             }
         });
         out.push(match (&svc.chain, svc.last_chain_call()) {
-            (None, _) => Subsystem::new("duniter", Status::Disabled, "nœud Duniter non configuré"),
+            (None, _) => Subsystem::new("duniter", Status::Disabled, "non reliée à la Ğ1"),
             (Some(_), None) => Subsystem::new("duniter", Status::Ok, "configuré, pas encore sollicité"),
             (Some(_), Some((age, true))) => Subsystem::new("duniter", Status::Ok, format!("dernière lecture réussie il y a {} s", age.as_secs())),
             (Some(_), Some((age, false))) => Subsystem::new("duniter", Status::Degraded, format!("dernière lecture en échec il y a {} s", age.as_secs())),
         });
         out.push(match self.ollama_probe().await {
-            None => Subsystem::new("bro", Status::Disabled, "sans moteur d'embeddings (--ollama)"),
+            None => Subsystem::new("bro", Status::Disabled, "mémoire désactivée : pas de moteur d'IA (Ollama)"),
             Some(Ok(())) => Subsystem::new("bro", Status::Ok, "Ollama répond"),
             Some(Err(e)) => Subsystem::new("bro", Status::Degraded, e),
         });
@@ -902,7 +999,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
 
 impl<B: BlobStore> StationUi<B> {
     /// Écran MULTIPASS : redevances courantes d'usage (**Opex**) distinctes des parts d'investissement matériel
-    /// (**Capex**, ZenCard). Un virement est soit un loyer, soit un bail : jamais compté deux fois.
+    /// (**Capex**, ZenCard). Les parts de matériel sont comptées à part des loyers.
     async fn opex_capex(&self, owner: &str, account: &astro_dav::auth::Account) -> Result<(Value, Value), ApiError> {
         let (owner, now) = (owner.to_owned(), now_secs());
         let tier = format!("{:?}", account.tier);
@@ -916,13 +1013,6 @@ impl<B: BlobStore> StationUi<B> {
                 let (rent_28, rent_total): (i64, i64) = c.query_row(
                     "SELECT COALESCE(SUM(CASE WHEN at >= ?2 THEN amount_cents END), 0), COALESCE(SUM(amount_cents), 0) FROM rent_payments WHERE owner_hex = ?1",
                     rusqlite::params![owner, since],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )?;
-                let (usage_28, usage_week): (i64, i64) = c.query_row(
-                    "SELECT COALESCE(SUM(CASE WHEN start_at >= ?2 THEN paid_cents END), 0), \
-                            COALESCE(SUM(CASE WHEN start_at <= ?3 AND end_at > ?3 THEN unit_price_cents END), 0) \
-                     FROM resource_leases WHERE beneficiary = ?1 AND status = 'active'",
-                    rusqlite::params![owner, since, now],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )?;
                 let (contract, email): (Option<String>, Option<String>) = c.query_row("SELECT contract, email FROM identities WHERE hex = ?1", [&owner], |r| Ok((r.get(0)?, r.get(1)?)))?;
@@ -939,8 +1029,7 @@ impl<B: BlobStore> StationUi<B> {
                     }
                 }
                 let opex = json!({
-                    "weekly_rent_cents": weekly_rent, "rent_28d_cents": rent_28, "rent_total_cents": rent_total,
-                    "usage_28d_cents": usage_28, "usage_weekly_cents": usage_week, "total_28d_cents": rent_28 + usage_28,
+                    "weekly_rent_cents": weekly_rent, "rent_28d_cents": rent_28, "rent_total_cents": rent_total, "total_28d_cents": rent_28,
                 });
                 Ok((opex, contract, assets, value, amortized))
             })

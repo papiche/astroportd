@@ -34,10 +34,64 @@ pub struct Filter {
     pub limit: Option<usize>,
     /// Filtres de tags à une lettre (`#e`, `#p`, `#d`…).
     pub tags: BTreeMap<char, Vec<String>>,
+    /// Recherche plein texte (NIP-50) : tous les mots doivent figurer dans le contenu.
+    pub search: Option<String>,
 }
 
 /// Nombre maximal d'éléments par liste d'un filtre.
 pub const MAX_LIST_LEN: usize = 500;
+
+/// Longueur maximale d'une recherche (NIP-50), en caractères.
+pub const MAX_SEARCH_LEN: usize = 256;
+
+/// Mots d'une recherche NIP-50 : les extensions `clé:valeur` sont ignorées, 8 mots de 64 caractères au plus.
+pub fn search_terms(search: &str) -> Vec<String> {
+    search.split_whitespace().filter(|w| !w.contains(':')).take(8).map(|w| w.chars().take(64).collect::<String>().to_lowercase()).collect()
+}
+
+/// Lettre de base d'un caractère latin accentué (« é » → « e »), en minuscule ; les autres caractères sont seulement mis en minuscule.
+fn fold(c: char) -> char {
+    let c = c.to_lowercase().next().unwrap_or(c);
+    match c {
+        'à'..='å' | 'ā' | 'ă' | 'ą' => 'a',
+        'ç' | 'ć' | 'č' | 'ĉ' | 'ċ' => 'c',
+        'ď' | 'đ' => 'd',
+        'è'..='ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => 'e',
+        'ì'..='ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => 'i',
+        'ñ' | 'ń' | 'ň' => 'n',
+        'ò'..='ö' | 'ø' | 'ō' | 'ŏ' | 'ő' => 'o',
+        'ŕ' | 'ř' => 'r',
+        'ś' | 'š' | 'ş' => 's',
+        'ť' | 'ţ' => 't',
+        'ù'..='ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' => 'u',
+        'ý' | 'ÿ' => 'y',
+        'ź' | 'ż' | 'ž' => 'z',
+        c => c,
+    }
+}
+
+/// Mots d'un texte : suites de lettres et de chiffres, sans casse ni accents (le découpage de l'index FTS5 `unicode61`).
+fn words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(|w| w.chars().map(fold).collect()).collect()
+}
+
+/// Recherche NIP-50 sur un contenu, avec la même sémantique que l'index de la base : chaque mot de `search` (hors
+/// extensions `clé:valeur`) est une suite de mots consécutifs du contenu dont le dernier peut n'en être que le début.
+/// Un mot sans lettre ni chiffre ne trouve rien.
+pub fn search_matches(search: &str, content: &str) -> bool {
+    let hay = words(content);
+    search_terms(search).iter().all(|term| {
+        let needle = words(term);
+        let Some((last, head)) = needle.split_last() else { return false };
+        hay.windows(needle.len()).any(|w| w[..head.len()] == *head && w[head.len()].starts_with(last.as_str()))
+    })
+}
+
+/// Nombre maximal de filtres de tags (`#e`, `#p`…) par filtre : chacun devient une sous-requête corrélée en SQL.
+pub const MAX_TAG_FILTERS: usize = 8;
+
+/// Nombre maximal de valeurs, tous filtres de tags confondus.
+pub const MAX_TAG_VALUES: usize = 1000;
 
 impl Filter {
     /// Analyse un filtre JSON.
@@ -58,6 +112,13 @@ impl Filter {
                 }
                 "since" => f.since = Some(val.as_u64().ok_or_else(|| FilterError::BadField(key.clone()))?),
                 "until" => f.until = Some(val.as_u64().ok_or_else(|| FilterError::BadField(key.clone()))?),
+                "search" => {
+                    let text = val.as_str().ok_or_else(|| FilterError::BadField(key.clone()))?;
+                    if text.chars().count() > MAX_SEARCH_LEN {
+                        return Err(FilterError::BadField("search (trop long)".to_owned()));
+                    }
+                    f.search = Some(text.to_owned());
+                }
                 "limit" => {
                     let n = val.as_u64().ok_or_else(|| FilterError::BadField(key.clone()))?;
                     f.limit = Some(usize::try_from(n).unwrap_or(usize::MAX));
@@ -70,6 +131,9 @@ impl Filter {
                 }
                 _ => {}
             }
+        }
+        if f.tags.len() > MAX_TAG_FILTERS || f.tags.values().map(Vec::len).sum::<usize>() > MAX_TAG_VALUES {
+            return Err(FilterError::BadField("filtres de tags (trop nombreux)".to_owned()));
         }
         Ok(f)
     }
@@ -95,6 +159,9 @@ impl Filter {
         if let Some(n) = self.limit {
             m.insert("limit".into(), n.into());
         }
+        if let Some(q) = &self.search {
+            m.insert("search".into(), q.clone().into());
+        }
         for (name, values) in &self.tags {
             m.insert(format!("#{name}"), values.clone().into());
         }
@@ -108,6 +175,7 @@ impl Filter {
             && self.kinds.as_ref().is_none_or(|v| v.contains(&e.kind))
             && self.since.is_none_or(|t| e.created_at >= t)
             && self.until.is_none_or(|t| e.created_at <= t)
+            && self.search.as_ref().is_none_or(|q| !matches!(e.kind, 4 | 1059) && search_matches(q, &e.content))
             && self.tags.iter().all(|(name, wanted)| {
                 let name = name.to_string();
                 e.tags.iter().any(|t| {
@@ -134,6 +202,20 @@ fn strings(key: &str, v: &Value) -> Result<Vec<String>, FilterError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn live_search_matches_like_the_fts_index() {
+        use super::search_matches as m;
+        assert!(m("CAFE", "Un café sur la place"));
+        assert!(m("caf", "café"));
+        assert!(!m("afe", "café"), "pas de sous-chaîne au milieu d'un mot");
+        assert!(m("café place", "la place du café"), "tous les mots, dans n'importe quel ordre");
+        assert!(m("100%", "100% sûr") && !m("100%", "autre chose"));
+        assert!(m("foo-bar", "un foo bar ici") && !m("foo-bar", "bar foo"), "mots consécutifs");
+        assert!(!m("!!!", "!!!"), "sans lettre ni chiffre : rien");
+        assert!(m("language:fr hello", "Hello"), "extensions ignorées");
+        assert!(!m("_ello", "hello"));
+    }
+
     use serde_json::json;
 
     use super::*;
@@ -157,6 +239,15 @@ mod tests {
         assert_eq!(f.kinds, Some(vec![1, 3]));
         assert_eq!(f.tags.get(&'p'), Some(&vec!["bb".to_string()]));
         assert_eq!(Filter::from_value(&f.to_value()).unwrap(), f);
+    }
+
+    #[test]
+    fn bounds_the_number_of_tag_filters() {
+        let many: serde_json::Map<String, Value> = ('a'..='i').map(|c| (format!("#{c}"), json!(["x"]))).collect();
+        assert!(Filter::from_value(&Value::Object(many)).is_err());
+        let wide: Vec<String> = (0..MAX_LIST_LEN).map(|i| i.to_string()).collect();
+        assert!(Filter::from_value(&json!({"#a": wide, "#b": wide, "#c": wide})).is_err());
+        assert!(Filter::from_value(&json!({"#a": wide, "#b": wide})).is_ok());
     }
 
     #[test]

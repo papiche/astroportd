@@ -29,6 +29,12 @@ button.ghost { background: transparent; color: var(--accent); }
 button:disabled { opacity: .5; cursor: default; }
 input { font: inherit; width: 100%; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); color: inherit; }
 label { display: block; margin: .6rem 0; }
+select { font: inherit; width: 100%; padding: .4rem .5rem; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); color: inherit; }
+td select { width: auto; min-width: 8rem; }
+.inline { display: inline-flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
+.inline input { width: 12rem; }
+input[type=checkbox], input[type=radio] { width: auto; margin: 0; accent-color: var(--accent); }
+label:has(> input[type=checkbox], > input[type=radio]) { display: flex; align-items: center; gap: .4rem; }
 code { background: var(--bg); padding: 0 .3rem; border-radius: .3rem; }
 .muted { color: var(--muted); }
 .err { color: var(--bad); min-height: 1.4em; }
@@ -94,3 +100,11 @@ nav a[hidden], #out[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 fieldset.coop-s { border: 1px solid var(--line); border-radius: var(--r); margin: 0 0 1rem; padding: .4rem 1rem 1rem; display: grid; gap: .2rem 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
 fieldset.coop-s legend { padding: 0 .4rem; font-weight: 600; }
+fieldset { min-width: 0; }
+@media (max-width: 40rem) {
+  header { position: static; }
+  nav { flex-wrap: nowrap; overflow-x: auto; flex-basis: 100%; order: 3; }
+  nav a { white-space: nowrap; }
+}
+details.fold > summary { cursor: pointer; list-style-position: inside; }
+details.fold[open] > summary { margin-bottom: .6rem; }

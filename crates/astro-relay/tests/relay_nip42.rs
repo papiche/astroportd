@@ -419,3 +419,108 @@ async fn nip11_document_is_served_over_http() {
     assert_eq!(doc["name"], "astroportd");
     assert!(doc["supported_nips"].as_array().unwrap().contains(&serde_json::json!(42)));
 }
+
+// ───────────── NIP-09 / NIP-11 / NIP-40 / NIP-45 / NIP-50 / NIP-70 ─────────────
+
+fn at(secret: &[u8; 32], kind: u32, created_at: u64, tags: Vec<Vec<String>>, content: &str) -> Event {
+    UnsignedEvent { created_at, kind, tags, content: content.into() }.sign(secret).unwrap()
+}
+
+impl Client {
+    async fn count(&mut self, filter: Filter) -> (u64, bool) {
+        self.send(ClientMessage::Count { sub_id: "c".into(), filters: vec![filter] }).await;
+        match self.recv().await {
+            RelayMessage::Count { count, approximate, .. } => (count, approximate),
+            other => panic!("COUNT attendu, reçu {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn count_and_search_follow_nip45_and_nip50() {
+    let h = start(RelayConfig::default()).await;
+    let mut alice = Client::connect(h.addr).await;
+    for text in ["Hello world", "hello nostr", "100% sûr", "autre chose"] {
+        assert!(alice.publish(&event(&ALICE, 1, vec![], text)).await.0, "{text}");
+    }
+    assert_eq!(alice.count(kinds(&[1])).await, (4, false));
+    let search = |q: &str| Filter { kinds: Some(vec![1]), search: Some(q.into()), ..Filter::default() };
+    assert_eq!(alice.req("s1", search("hello")).await.unwrap().len(), 2, "insensible à la casse");
+    assert_eq!(alice.req("s2", search("hello world")).await.unwrap().len(), 1, "tous les mots");
+    assert_eq!(alice.req("s3", search("language:fr hello")).await.unwrap().len(), 2, "les extensions clé:valeur sont ignorées");
+    assert_eq!(alice.req("s4", search("100%")).await.unwrap().len(), 1, "le % est cherché tel quel, pas un joker");
+    assert_eq!(alice.req("s5", search("_ello")).await.unwrap().len(), 0, "ni le _");
+    assert_eq!(alice.count(search("hello")).await.0, 2);
+    // Les kinds privés restent fermés aux curieux, aussi pour COUNT.
+    let mut mallory = Client::connect(h.addr).await;
+    mallory.send(ClientMessage::Count { sub_id: "c".into(), filters: vec![kinds(&[kind::GIFT_WRAP])] }).await;
+    assert!(matches!(mallory.recv().await, RelayMessage::Closed { message, .. } if message.starts_with("auth-required")));
+}
+
+#[tokio::test]
+async fn protected_events_are_only_accepted_from_their_authenticated_author() {
+    let h = start(RelayConfig::default()).await;
+    let mut c = Client::connect(h.addr).await;
+    let protected = event(&ALICE, 1, vec![vec!["-".into()]], "pour moi seule");
+    let (ok, msg) = c.publish(&protected).await;
+    assert!(!ok && msg.starts_with("auth-required"), "{msg}");
+    c.auth(&BOB).await;
+    let (ok, msg) = c.publish(&protected).await;
+    assert!(!ok && msg.starts_with("restricted"), "un autre auteur authentifié ne peut pas la publier : {msg}");
+    c.auth(&ALICE).await;
+    assert!(c.publish(&protected).await.0, "l'auteur authentifié la publie");
+}
+
+#[tokio::test]
+async fn an_already_expired_event_is_refused() {
+    let h = start(RelayConfig::default()).await;
+    let mut c = Client::connect(h.addr).await;
+    let (ok, msg) = c.publish(&event(&ALICE, 1, vec![vec!["expiration".into(), (now() - 10).to_string()]], "trop tard")).await;
+    assert!(!ok && msg.contains("expired"), "{msg}");
+    assert!(c.publish(&event(&ALICE, 1, vec![vec!["expiration".into(), (now() + 3600).to_string()]], "encore bon")).await.0);
+}
+
+#[tokio::test]
+async fn deletions_by_id_and_by_address_stick_and_only_the_author_can_delete() {
+    let h = start(RelayConfig::default()).await;
+    let mut c = Client::connect(h.addr).await;
+    let t = now();
+    let note = at(&ALICE, 1, t - 100, vec![], "à supprimer");
+    let versioned = at(&ALICE, 30_023, t - 100, vec![vec!["d".into(), "article".into()]], "v1");
+    assert!(c.publish(&note).await.0 && c.publish(&versioned).await.0);
+
+    // Une autre clé ne supprime rien.
+    let theft = at(&BOB, 5, t - 50, vec![vec!["e".into(), note.id.clone()]], "");
+    let _ = c.publish(&theft).await;
+    assert_eq!(c.req("a", Filter { ids: Some(vec![note.id.clone()]), ..Filter::default() }).await.unwrap().len(), 1);
+
+    // L'auteur supprime par id et par adresse.
+    let address = format!("30023:{}:article", hex_of(&ALICE));
+    let del = at(&ALICE, 5, t - 50, vec![vec!["e".into(), note.id.clone()], vec!["a".into(), address]], "");
+    assert!(c.publish(&del).await.0);
+    assert!(c.req("b", Filter { ids: Some(vec![note.id.clone(), versioned.id.clone()]), ..Filter::default() }).await.unwrap().is_empty());
+
+    // Ils ne reviennent pas : ni l'événement, ni une version plus ancienne de l'adresse ; une version plus récente passe.
+    let (ok, msg) = c.publish(&note).await;
+    assert!(!ok && msg.contains("deleted"), "{msg}");
+    let old = at(&ALICE, 30_023, t - 80, vec![vec!["d".into(), "article".into()]], "v0");
+    assert!(!c.publish(&old).await.0);
+    assert!(c.publish(&at(&ALICE, 30_023, t, vec![vec!["d".into(), "article".into()]], "v2")).await.0);
+}
+
+#[tokio::test]
+async fn the_nip11_document_advertises_what_is_implemented_and_allows_web_clients() {
+    let h = start(RelayConfig::default()).await;
+    let mut tcp = TcpStream::connect(h.addr).await.unwrap();
+    tokio::io::AsyncWriteExt::write_all(&mut tcp, b"GET / HTTP/1.1\r\nHost: relay.test\r\nAccept: application/nostr+json\r\nConnection: close\r\n\r\n").await.unwrap();
+    let mut raw = String::new();
+    tokio::io::AsyncReadExt::read_to_string(&mut tcp, &mut raw).await.unwrap();
+    let lower = raw.to_lowercase();
+    assert!(lower.contains("access-control-allow-origin: *") && lower.contains("application/nostr+json"), "{raw}");
+    let doc: serde_json::Value = serde_json::from_str(raw.split("\r\n\r\n").nth(1).unwrap().trim()).unwrap();
+    let nips: Vec<u64> = doc["supported_nips"].as_array().unwrap().iter().filter_map(serde_json::Value::as_u64).collect();
+    for n in [1, 9, 11, 40, 42, 45, 50, 59, 70] {
+        assert!(nips.contains(&n), "NIP-{n} manque : {nips:?}");
+    }
+    assert_eq!(doc["limitation"]["max_subid_length"], 64);
+}

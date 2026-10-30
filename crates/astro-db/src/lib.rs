@@ -141,7 +141,7 @@ pub fn open(path: &Path) -> Result<Connection, DbError> {
 
 /// Colonnes ajoutées après la première version du schéma : `(table, colonne, définition)`.
 /// `CREATE TABLE IF NOT EXISTS` ne modifie pas une table existante ; une base créée avant l'ajout reçoit la colonne ici.
-const ADDED_COLUMNS: [(&str, &str, &str); 3] = [("identities", "peer_id", "TEXT"), ("capital_assets", "node_hex", "TEXT"), ("resource_leases", "unit_price_cents", "INTEGER NOT NULL DEFAULT 0")];
+const ADDED_COLUMNS: [(&str, &str, &str); 2] = [("identities", "peer_id", "TEXT"), ("capital_assets", "node_hex", "TEXT")];
 
 /// Ajoute à une base ancienne les colonnes apparues depuis (idempotent).
 fn migrate(conn: &Connection) -> Result<(), DbError> {
@@ -150,6 +150,11 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
         if !has {
             conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {def}"))?;
         }
+    }
+    // Base antérieure à l'index de recherche : les événements déjà là sont indexés une fois (les triggers font le reste).
+    let (indexed, stored): (i64, i64) = conn.query_row("SELECT (SELECT count(*) FROM nostr_fts_ids), (SELECT count(*) FROM nostr_events WHERE kind NOT IN (4, 1059))", [], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    if indexed == 0 && stored > 0 {
+        events::rebuild_search_index(conn)?;
     }
     Ok(())
 }

@@ -69,12 +69,12 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
     let keys: Arc<dyn KeySource> = Arc::new(StaticKeySource::new().with(ALICE).with(BOB));
     let publisher = ManifestPublisher::spawn(db.clone(), blobs.clone(), keys, Duration::from_secs(3600));
     let mut config = DavConfig::new(SECRET.to_vec());
-    config.lease_node = Some(hex(&[1; 32]));
     tune(&mut config);
     let dav = Arc::new(DavState { db: db.clone(), blobs, replay: Arc::new(SqliteReplayStore::in_memory().unwrap()), publisher: Some(publisher), config, on_upload: None });
     let bus = ActivityBus::new();
     let info = StationInfo { node_hex: hex(&[1; 32]), peer_id: Some("12D3KooWTest".into()), domain: Some("station.test".into()), started: Instant::now() };
     let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: None, chain: None, hardware: Hardware { vram_gb: 24.0, cpu_cores: 16, ram_gb: 64.0 }, p2p: None, weekly_rent_cents: 100, activity: bus.clone(), swarm_dir, origin: Some((45.76, 4.83)), exposed: vec!["comfyui".into(), "ssh".into()] }));
+    services.set_build(astroportd::build_attest::BuildInfo { version: "0.2.2-beta".into(), sha256: "ab".repeat(32), target: "x86_64-linux".into() });
     let client = ollama.map(|url| Arc::new(OllamaClient::new(url, "bge-m3", "llama3.2", Duration::from_secs(5))));
     let memory = client.as_ref().map(|o| Arc::new(MemoryStore::new(db.clone(), o.clone(), o.clone(), Some(bus.clone()))));
     let registrar = Arc::new(astroportd::register::Registrar::new(db.clone(), dir.join("nostr"), "0".repeat(64), Arc::new(|hex| derive_dav_token(SECRET, hex)), astroportd::register::Limits::default()));
@@ -201,7 +201,7 @@ async fn the_dashboard_reports_the_station_the_relay_and_the_sovereignty_widget(
     assert_eq!((d["p2p"]["score"].as_f64(), d["p2p"]["tier"].as_str()), (Some(160.0), Some("Brain")));
     assert_eq!(d["sovereignty"]["encrypted_files"], 2);
     assert_eq!(d["sovereignty"]["encrypted_bytes"], 7 + 8);
-    assert!(d["balance"]["error"].as_str().unwrap().contains("Duniter"), "solde indisponible dit clairement : {d}");
+    assert!(d["balance"]["error"].as_str().unwrap().contains("Ğ1"), "solde indisponible dit clairement : {d}");
     assert!(d["energy"]["weeks"].is_null() && d["energy"]["max_weeks"] == 12.0);
 }
 
@@ -398,9 +398,9 @@ async fn without_ollama_free_text_is_refused_but_commands_still_work() {
     let alice = basic("alice@example.org", &ALICE);
     let (s, r) = api(&b.app, Method::POST, "/api/v1/bro/say", &alice, Some(json!({ "text": "bonjour BRO" }))).await;
     assert_eq!(s, StatusCode::NOT_IMPLEMENTED);
-    assert!(r["error"].as_str().unwrap().contains("--ollama"));
+    assert!(r["error"].as_str().unwrap().contains("Ollama"));
     let (_, r) = api(&b.app, Method::POST, "/api/v1/bro/say", &alice, Some(json!({ "text": "#solde" }))).await;
-    assert!(r["reply"].as_str().unwrap().starts_with("⚠️ nœud Duniter non configuré"), "{r}");
+    assert!(r["reply"].as_str().unwrap().starts_with("⚠️ solde indisponible"), "{r}");
     let (_, r) = api(&b.app, Method::POST, "/api/v1/bro/say", &alice, Some(json!({ "text": "#upload bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku contrat.pdf" }))).await;
     assert!(r["reply"].as_str().unwrap().starts_with("Document « contrat.pdf » mis en file"), "{r}");
     let (_, r) = api(&b.app, Method::POST, "/api/v1/bro/say", &alice, Some(json!({ "text": "#upload bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku contrat.pdf" }))).await;
@@ -414,42 +414,6 @@ fn jpeg(w: u32, h: u32) -> Vec<u8> {
     let mut out = std::io::Cursor::new(Vec::new());
     image::DynamicImage::ImageRgb8(img).write_to(&mut out, image::ImageFormat::Jpeg).unwrap();
     out.into_inner()
-}
-
-/// Virement ledger `alice → node` portant un bail, projeté comme le ferait le relai.
-async fn buy(db: &Db, buyer: &[u8; 32], amount: &str, resource: &str, units: u32, at: u64, d: &str) {
-    use astro_nostr_proto::{UnsignedEvent, kind};
-    let tags = vec![
-        vec!["d".into(), d.into()], vec!["p".into(), hex(&[1; 32])], vec!["amount".into(), amount.into()], vec!["prev".into(), "genesis".into()],
-        vec!["t".into(), "g1-n2".into()], vec!["t".into(), "lease".into()], vec!["resource".into(), resource.into()], vec!["units".into(), units.to_string()],
-        vec!["unit_price".into(), if resource == "gpu_1_24" { "0.50" } else { "4.00" }.into()],
-    ];
-    let e = UnsignedEvent { created_at: at, kind: kind::LEDGER_N2, tags, content: String::new() }.sign(buyer).unwrap();
-    db.writer()
-        .transaction(move |tx| {
-            astro_db::events::insert_event(tx, &e)?;
-            astro_db::apply_statements(tx, &astro_sync::Projector::plan(&e).unwrap())?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-}
-
-async fn publish_tariffs(db: &Db) {
-    use astro_core::Amount;
-    use astro_economy::lease::{Resource, Tariff};
-    let mut t = Tariff::default();
-    t.prices.insert(Resource::Gpu1of24, Amount(50));
-    t.prices.insert(Resource::Disk128, Amount(400));
-    let e = astro_nostr_proto::UnsignedEvent { created_at: 1_790_000_000, kind: astro_nostr_proto::kind::ECONOMIC_HEALTH, tags: t.to_tags(), content: String::new() }.sign(&[1; 32]).unwrap();
-    db.writer()
-        .transaction(move |tx| {
-            astro_db::events::insert_event(tx, &e)?;
-            astro_db::apply_statements(tx, &astro_sync::Projector::plan(&e).unwrap())?;
-            Ok(())
-        })
-        .await
-        .unwrap();
 }
 
 fn now() -> u64 {
@@ -493,35 +457,18 @@ async fn photos_and_faces_carry_their_thumbnail_so_the_grid_never_downloads_orig
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_footprint_shows_disk_quota_leases_and_the_node_tariffs() {
+async fn the_footprint_shows_disk_quota_and_the_opex_capex_accounts() {
     let b = bench_with("footprint", None, |c| c.quota_multipass = 5_000, None).await;
     let alice = basic("alice@example.org", &ALICE);
-    publish_tariffs(&b.db).await;
     put(&b.app, &alice, "/a.txt", &[b'x'; 3000]).await;
     let (s, f) = api(&b.app, Method::GET, "/api/v1/me/footprint", &alice, None).await;
     assert_eq!(s, StatusCode::OK, "{f}");
-    assert_eq!((f["disk"]["used_bytes"].as_i64(), f["disk"]["quota_bytes"].as_i64(), f["disk"]["leased"].as_bool()), (Some(3000), Some(5000), Some(false)));
-    assert_eq!(f["tariffs"].as_array().unwrap().len(), 2);
+    assert_eq!((f["disk"]["used_bytes"].as_i64(), f["disk"]["quota_bytes"].as_i64()), (Some(3000), Some(5000)));
 
-    // Plus de place : le dépôt de 3 000 octets de plus est refusé (507) ...
+    // Plus de place : le dépôt de 3 000 octets de plus est refusé (507) : le quota est celui de la formule.
     let (s, ..) = call(&b.app, Method::PUT, "/dav/b.txt", Some(&alice), &[], vec![b'y'; 3000]).await;
     assert_eq!(s, StatusCode::INSUFFICIENT_STORAGE);
-    // ... jusqu'à l'achat d'un palier de 128 Go (4 Ẑen / semaine, 1 semaine) : le quota monte.
     let t = now();
-    buy(&b.db, &ALICE, "4.00", "disk_128gb", 1, t, "lease-disk").await;
-    let (_, f) = api(&b.app, Method::GET, "/api/v1/me/footprint", &alice, None).await;
-    assert_eq!((f["disk"]["quota_bytes"].as_i64(), f["disk"]["leased"].as_bool()), (Some(128 << 30), Some(true)));
-    let (s, ..) = call(&b.app, Method::PUT, "/dav/b.txt", Some(&alice), &[], vec![b'y'; 3000]).await;
-    assert_eq!(s, StatusCode::CREATED, "le quota relevé par le bail permet le dépôt");
-    // Un bail de GPU sous-payé apparaît dans l'historique, avec son statut.
-    buy(&b.db, &ALICE, "0.50", "gpu_1_24", 3, t, "lease-gpu").await;
-    let (_, f) = api(&b.app, Method::GET, "/api/v1/me/footprint", &alice, None).await;
-    let leases = f["leases"].as_array().unwrap();
-    assert_eq!(leases.len(), 2);
-    let gpu = leases.iter().find(|l| l["resource"] == "gpu_1_24").unwrap();
-    assert_eq!((gpu["status"].as_str(), gpu["active"].as_bool(), gpu["units"].as_i64()), (Some("underpaid"), Some(false), Some(3)));
-    let disk = leases.iter().find(|l| l["resource"] == "disk_128gb").unwrap();
-    assert_eq!((disk["status"].as_str(), disk["active"].as_bool(), disk["mine"].as_bool()), (Some("active"), Some(true), Some(true)));
     // Opex (redevances d'usage) et Capex (parts d'investissement) sont deux comptes distincts.
     b.db.writer().execute("INSERT INTO rent_payments(event_id, owner_hex, at, amount_cents, src_kind) VALUES ('rent-1', ?1, ?2, 100, 30852)", vec![V::Text(hex(&ALICE)), V::Integer(t as i64)]).await.unwrap();
     // Capex : les actifs viennent du DID du NODE (kind 30800, `.assets[]`), projetés dès son insertion.
@@ -530,7 +477,7 @@ async fn the_footprint_shows_disk_quota_leases_and_the_node_tariffs() {
         let node = [0x44u8; 32];
         let doc = json!({
             "id": format!("did:nostr:{}", astro_nostr_proto::pubkey_of(&node).unwrap()),
-            "assets": [{"id": "rig-1", "label": "Serveur GPU (part)", "asset_type": "hardware", "email": "Alice@Example.org", "value_zen": 120.5, "amortized_zen": 20.25, "depreciable": true, "depreciation_weeks": 104, "status": "active"}],
+            "assets": [{"id": "rig-1", "label": "Serveur (part)", "asset_type": "hardware", "email": "Alice@Example.org", "value_zen": 120.5, "amortized_zen": 20.25, "depreciable": true, "depreciation_weeks": 104, "status": "active"}],
         });
         let did = UnsignedEvent { created_at: t, kind: kind::DID, tags: vec![vec!["d".into(), "12D3KooWFSoxH5cZqhpcywX4P4ZKgaU1yTzcopYEvVhSQfHdhwwJ".into()]], content: doc.to_string() }.sign(&node).unwrap();
         b.db.writer()
@@ -544,9 +491,9 @@ async fn the_footprint_shows_disk_quota_leases_and_the_node_tariffs() {
     }
     let (_, f) = api(&b.app, Method::GET, "/api/v1/me/footprint", &alice, None).await;
     let (ox, cx) = (&f["opex"], &f["capex"]);
-    assert_eq!((ox["weekly_rent_cents"].as_i64(), ox["rent_28d_cents"].as_i64(), ox["usage_28d_cents"].as_i64(), ox["usage_weekly_cents"].as_i64(), ox["total_28d_cents"].as_i64()), (Some(100), Some(100), Some(400), Some(400), Some(500)), "le bail sous-payé ne compte pas : {ox}");
+    assert_eq!((ox["weekly_rent_cents"].as_i64(), ox["rent_28d_cents"].as_i64(), ox["total_28d_cents"].as_i64()), (Some(100), Some(100), Some(100)), "{ox}");
     assert_eq!((cx["zencard"].as_bool(), cx["value_cents"].as_i64(), cx["amortized_cents"].as_i64(), cx["net_cents"].as_i64()), (Some(false), Some(12_050), Some(2_025), Some(10_025)), "{cx}");
-    assert_eq!(cx["assets"][0]["label"], "Serveur GPU (part)");
+    assert_eq!(cx["assets"][0]["label"], "Serveur (part)");
 
     // Copie privée : sans le dépôt de médias branché, l'API le dit au lieu de mentir.
     let (s, c) = api(&b.app, Method::GET, "/api/v1/consent/private-copy", &alice, None).await;
@@ -555,9 +502,41 @@ async fn the_footprint_shows_disk_quota_leases_and_the_node_tariffs() {
     assert_eq!(api(&b.app, Method::POST, "/api/v1/consent/private-copy", &alice, Some(json!({ "version": 1 }))).await.0, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(call(&b.app, Method::GET, "/api/v1/consent/private-copy", None, &[], vec![]).await.0, StatusCode::UNAUTHORIZED);
 
-    // Les baux d'Alice ne sont pas visibles de Bob.
+    // Le Capex d'Alice n'est pas visible de Bob.
     let bob = basic("bob@example.org", &BOB);
-    assert!(api(&b.app, Method::GET, "/api/v1/me/footprint", &bob, None).await.1["leases"].as_array().unwrap().is_empty());
+    assert!(api(&b.app, Method::GET, "/api/v1/me/footprint", &bob, None).await.1["capex"]["assets"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_library_answers_have_search_timeline_and_duplicates_for_the_account_only() {
+    let b = bench("lib", None).await;
+    let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
+    let sha = "ab".repeat(32);
+    for (owner, path, taken, phash) in [(hex(&ALICE), "/Vacances/mer.jpg", 1_715_947_200_i64, Some(0x0F0F_i64)), (hex(&ALICE), "/Vacances/copie.jpg", 1_715_947_300, Some(0x0F0F)), (hex(&BOB), "/Vacances/bob.jpg", 1_715_947_200, None)] {
+        b.db.writer().execute("INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, taken_at, sha_plain, phash, data) VALUES (?1, ?2, '/Vacances', 'file', ?3, 'image/jpeg', 100, 1, ?4, ?5, ?6, '{}')", vec![V::Text(owner), V::Text(path.into()), V::Text(format!("cid{path}")), V::Integer(taken), V::Text(sha.clone()), phash.map_or(V::Null, V::Integer)]).await.unwrap();
+    }
+    for uri in ["/api/v1/ucloud/search", "/api/v1/ucloud/timeline", "/api/v1/ucloud/memories", "/api/v1/ucloud/duplicates"] {
+        assert_eq!(api(&b.app, Method::GET, uri, "", None).await.0, StatusCode::UNAUTHORIZED, "{uri} sans compte");
+    }
+    let (s, r) = api(&b.app, Method::GET, "/api/v1/ucloud/search?q=vacances&kind=image", &alice, None).await;
+    assert_eq!((s, r["items"].as_array().map(Vec::len)), (StatusCode::OK, Some(2)), "{r}");
+    let (_, r) = api(&b.app, Method::GET, "/api/v1/ucloud/search?q=vacances&limit=1", &alice, None).await;
+    assert!(r["next"]["path"].is_string(), "{r}");
+    assert_eq!(api(&b.app, Method::GET, "/api/v1/ucloud/search?bbox=1,2,3", &alice, None).await.0, StatusCode::BAD_REQUEST);
+    let (_, r) = api(&b.app, Method::GET, "/api/v1/ucloud/timeline", &alice, None).await;
+    assert_eq!(r["months"][0], json!({ "ym": "2024-05", "count": 2 }));
+    let (_, r) = api(&b.app, Method::GET, "/api/v1/ucloud/timeline?ym=2024-05", &alice, None).await;
+    assert_eq!(r["items"].as_array().map(Vec::len), Some(2));
+    assert_eq!(api(&b.app, Method::GET, "/api/v1/ucloud/timeline?ym=abc", &alice, None).await.0, StatusCode::BAD_REQUEST);
+    let (_, r) = api(&b.app, Method::GET, "/api/v1/ucloud/memories?md=05-17&y=2026", &alice, None).await;
+    assert_eq!(r["memories"][0]["year"], 2024, "souvenirs du jour donné par le navigateur : {r}");
+    let (_, r) = api(&b.app, Method::POST, "/api/v1/ucloud/have", &alice, Some(json!({ "shas": [sha, "cd".repeat(32)] }))).await;
+    assert_eq!(r["have"].as_array().map(Vec::len), Some(1));
+    let (_, r) = api(&b.app, Method::POST, "/api/v1/ucloud/have", &bob, Some(json!({ "shas": [sha] }))).await;
+    assert_eq!(r["have"][0]["path"], "/Vacances/bob.jpg", "chaque compte ne voit que le sien");
+    assert_eq!(api(&b.app, Method::POST, "/api/v1/ucloud/have", &alice, Some(json!({ "shas": vec!["a"; 501] }))).await.0, StatusCode::BAD_REQUEST);
+    let (_, r) = api(&b.app, Method::GET, "/api/v1/ucloud/duplicates", &alice, None).await;
+    assert_eq!(r["exact"].as_array().map(Vec::len), Some(1), "{r}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -578,9 +557,8 @@ async fn the_captain_screens_show_the_constellation_the_regie_and_the_hosted_acc
     }
     assert_eq!(api(&b.app, Method::POST, &format!("/api/v1/station/accounts/{}/token", hex(&ALICE)), &alice, None).await.0, StatusCode::FORBIDDEN);
 
-    // Constellation : triée par puissance, distance de Haversine depuis (45.76, 4.83), tarifs publiés.
+    // Constellation : triée par puissance, distance de Haversine depuis (45.76, 4.83).
     b.db.writer().execute("INSERT INTO identities(hex, role, peer_id, hosted) VALUES (?1, 'node', '12D3KooWnexus', 0)", vec![V::Text(hex(&[1; 32]))]).await.unwrap();
-    publish_tariffs(&b.db).await;
     let (s, c) = api(&b.app, Method::GET, "/api/v1/station/constellation", &bob, None).await;
     assert_eq!(s, StatusCode::OK, "{c}");
     let ids: Vec<&str> = c["nodes"].as_array().unwrap().iter().map(|n| n["node_id"].as_str().unwrap()).collect();
@@ -589,9 +567,17 @@ async fn the_captain_screens_show_the_constellation_the_regie_and_the_hosted_acc
     assert_eq!((nexus["tier"].as_str(), nexus["status"].as_str()), (Some("Brain"), Some("known")));
     assert!((nexus["distance_km"].as_f64().unwrap() - 277.0).abs() < 8.0, "Lyon → Marseille : {}", nexus["distance_km"]);
     assert_eq!(nexus["services"], json!(["ollama", "comfyui"]));
-    assert_eq!(nexus["tariffs"].as_array().unwrap().len(), 2, "tarifs publiés par ce nœud (30850)");
     assert_eq!(c["nodes"][0]["self"], true);
     assert_eq!(c["nodes"][0]["services"], json!(["comfyui", "ssh"]));
+
+    // Code identique entre stations : l'attestation de chaque pair (kind 30853) est comparée au binaire local.
+    let attest = |station: &str, sha: &str| json!({ "event_id": "e", "created_at": 1, "tags": { "d": "build", "version": "0.2.2-beta", "sha256": sha, "target": "x86_64-linux", "station": station } }).to_string();
+    for (key, station, sha) in [("aa", "12D3KooWnexus", "ab".repeat(32)), ("bb", "12D3KooWrasp", "cd".repeat(32))] {
+        b.db.writer().execute("INSERT INTO kv(scope, key, value, updated_at) VALUES ('station_build', ?1, ?2, 1)", vec![V::Text(key.into()), V::Text(attest(station, &sha))]).await.unwrap();
+    }
+    let (_, c) = api(&b.app, Method::GET, "/api/v1/station/constellation", &bob, None).await;
+    let verdicts: Vec<&str> = c["nodes"].as_array().unwrap().iter().map(|n| n["build"]["verdict"].as_str().unwrap()).collect();
+    assert_eq!(verdicts, ["self", "identical", "diverges"], "{c}");
 
     // Régie : rien tant qu'aucune clôture ; puis une ventilation 3×1/3 et le Love Ledger.
     let (_, e) = api(&b.app, Method::GET, "/api/v1/station/economy", &bob, None).await;

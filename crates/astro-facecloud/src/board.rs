@@ -27,6 +27,9 @@ pub const GROUP_KNN: usize = 8;
 pub const GROUP_MAX: usize = 120;
 /// Cosinus minimal entre deux visages d'un même groupe (le bas de la zone « est-ce lui ? »).
 pub const GROUP_MIN_SIM: f32 = 0.55;
+/// Score de détection minimal pour qu'un visage non nommé **forme** un groupe (« noyau »). Un visage flou ou de profil
+/// (score entre le seuil de détection et celui-ci) reste visible sur la table mais ne s'agrège pas : il polluerait les groupes.
+pub const GROUP_MIN_DET: f64 = 0.70;
 /// Au-delà de ce nombre de visages non identifiés, les groupes ne sont pas calculés (coût quadratique).
 pub const GROUP_CAP: usize = 8_000;
 /// Lignes confrontées ensemble au calcul des voisins (tuile qui tient dans le cache).
@@ -346,9 +349,18 @@ impl BoardCache {
                     })
                     .await?;
                 let by_id: HashMap<i64, Vec<f32>> = vectors.into_iter().collect();
+                let o = owner.to_owned();
+                let scores: HashMap<i64, f64> = db
+                    .readers()
+                    .read(move |c| {
+                        let mut stmt = c.prepare("SELECT face_id, det_score FROM faces WHERE owner_hex = ?1 AND det_score IS NOT NULL")?;
+                        Ok(stmt.query_map([&o], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)))?.filter_map(Result::ok).collect())
+                    })
+                    .await?;
                 // Seuls les visages qui ont un vecteur entrent dans le calcul (les autres restent au centre, sans groupe).
                 let with: Vec<i64> = ids.iter().copied().filter(|i| by_id.contains_key(i)).collect();
-                let flags: Vec<bool> = with.iter().map(|i| unnamed[i]).collect();
+                // Seuls les visages nets (score connu et suffisant) peuvent former un groupe.
+                let flags: Vec<bool> = with.iter().map(|i| unnamed[i] && scores.get(i).is_some_and(|s| *s >= GROUP_MIN_DET)).collect();
                 let mut flat = Vec::with_capacity(with.len() * DIM);
                 for i in &with {
                     flat.extend_from_slice(&by_id[i]);

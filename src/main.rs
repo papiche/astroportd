@@ -24,7 +24,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use astro_crypto::{FileKeySource, KeySource};
-use astro_economy::lease::{Resource, Tariff};
 use astro_dav::{AutoBlobStore, DavConfig, DavState, FsBlobStore, KuboBlobStore, ManifestPublisher};
 use astro_facecloud::{FaceCloud, FaceConfig, HttpFaceEngine};
 use astro_db::{Db, SqliteReplayStore};
@@ -68,30 +67,6 @@ enum Command {
         /// Base de la station (défaut : `~/.zen/astroportd/uplanet.db`) : sert à connaître la génération du jeton après un changement.
         #[arg(long)]
         db: Option<PathBuf>,
-    },
-    /// Publie la grille tarifaire du nœud (kind 30850, `d = tariffs`) : paliers de disque et part de GPU 1/24.
-    Tariff {
-        /// Palier 10 Go, en Ẑen par semaine (`1.00`).
-        #[arg(long)]
-        disk10: Option<astro_economy::Amount>,
-        /// Palier 128 Go, en Ẑen par semaine.
-        #[arg(long)]
-        disk128: Option<astro_economy::Amount>,
-        /// Palier 256 Go, en Ẑen par semaine.
-        #[arg(long)]
-        disk256: Option<astro_economy::Amount>,
-        /// Part de GPU 1/24 (`gpu_1_24`), en Ẑen par semaine (1 h de calcul par jour).
-        #[arg(long)]
-        gpu: Option<astro_economy::Amount>,
-        /// Dossier `~/.zen/game` (défaut : `$ASTRO_GAME_DIR`, sinon `$HOME/.zen/game`) : fournit la clé du NODE.
-        #[arg(long)]
-        game_dir: Option<PathBuf>,
-        /// Base `uplanet.db` où enregistrer l'événement (et projeter les tarifs) sans passer par un relai.
-        #[arg(long)]
-        db: Option<PathBuf>,
-        /// Relai (`ws://` ou `wss://`) où publier l'événement ; répétable.
-        #[arg(long = "relay")]
-        relays: Vec<String>,
     },
     /// Extensions WebAssembly (`plugins/*.wasm`) : lister ou appeler un plugin dans sa bulle isolée.
     Plugin {
@@ -370,7 +345,6 @@ async fn run(cli: Cli) -> Result<(), Failure> {
             println!("identifiant : {}\njeton       : {token}", m.email);
             Ok(())
         }
-        Command::Tariff { disk10, disk128, disk256, gpu, game_dir, db, relays } => tariff([(Resource::Disk10, disk10), (Resource::Disk128, disk128), (Resource::Disk256, disk256), (Resource::Gpu1of24, gpu)], game_dir, db, relays).await,
         Command::Plugin { dir, action } => {
             let (host, report) = astro_plugins::PluginHost::load_dir(&dir, astro_plugins::Limits::default())?;
             for (path, why) in &report.rejected {
@@ -540,65 +514,6 @@ fn route(service: &str, mode: astro_p2p::routing::Mode, swarm_dir: Option<PathBu
         eprintln!("route : ⚠ mode {mode:?} inapplicable (coordonnées inconnues, --lat/--lon) : repli sur le Power-Score");
     }
     Ok(())
-}
-
-/// `astroportd tariff` : signe la grille tarifaire avec la clé du NODE, l'enregistre et/ou la publie.
-async fn tariff(prices: [(Resource, Option<astro_economy::Amount>); 4], game_dir: Option<PathBuf>, db: Option<PathBuf>, relays: Vec<String>) -> Result<(), Failure> {
-    let mut grid = Tariff::default();
-    for (resource, price) in prices {
-        if let Some(p) = price {
-            if p.0 == 0 {
-                return Err(format!("le prix de {} doit être positif", resource.name()).into());
-            }
-            grid.prices.insert(resource, p);
-        }
-    }
-    if grid.prices.is_empty() {
-        return Err("aucun prix : indiquer au moins --disk10, --disk128, --disk256 ou --gpu".into());
-    }
-    let station = identity::resolve(game_dir.as_deref(), true)?;
-    let secret = station.node_secret.as_ref().ok_or("clé du NODE introuvable (--game-dir)")?;
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let event = astro_nostr_proto::UnsignedEvent { created_at: now, kind: astro_nostr_proto::kind::ECONOMIC_HEALTH, tags: grid.to_tags(), content: String::new() }.sign(secret)?;
-    for (r, p) in &grid.prices {
-        println!("tarif : {} = {p} Ẑen / {}", r.name(), r.unit().as_str());
-    }
-    let stored = db.is_some();
-    if let Some(path) = db {
-        let db = Db::open(&path, 1)?;
-        let e = event.clone();
-        db.writer()
-            .transaction(move |tx| {
-                astro_db::events::insert_event(tx, &e)?;
-                astro_db::apply_statements(tx, &Projector::plan(&e).map_err(|err| astro_db::DbError::Corrupt(err.to_string()))?)?;
-                Ok(())
-            })
-            .await?;
-        db.writer().shutdown().await?;
-        println!("enregistré dans {}", path.display());
-    }
-    let mut client = WsClient::new(Duration::from_secs(30));
-    if let Some(signer) = station.signer {
-        client = client.with_signer(signer);
-    }
-    let mut failures = 0;
-    for relay in &relays {
-        match client.publish(relay, &event).await {
-            Ok((true, _)) => println!("publié sur {relay}"),
-            Ok((false, why)) => {
-                failures += 1;
-                eprintln!("refusé par {relay} : {why}");
-            }
-            Err(e) => {
-                failures += 1;
-                eprintln!("échec sur {relay} : {e}");
-            }
-        }
-    }
-    if relays.is_empty() && !stored {
-        println!("événement {} : {}", event.id, serde_json::to_string(&event)?);
-    }
-    if failures > 0 { Err(format!("{failures} publication(s) en échec").into()) } else { Ok(()) }
 }
 
 /// `astroportd multipass …`.

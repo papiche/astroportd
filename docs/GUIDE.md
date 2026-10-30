@@ -300,7 +300,7 @@ Le même jeton sert de mot de passe pour monter votre cloud en WebDAV (Finder, E
 1. Ouvrez la station dans votre navigateur.
 2. Une fenêtre **Connexion** s'affiche : saisissez votre email (ou votre clé) et le jeton.
 3. Le **Tableau de bord** montre votre solde en Ẑen, votre autonomie, votre empreinte sur les communs, vos fichiers chiffrés.
-4. Deux cartes distinctes : **Ẑen Opex** (ce que vous dépensez : loyer, baux) et **Ẑen Capex** (ce que vous possédez : parts de matériel, avec leur amortissement).
+4. Deux cartes distinctes : **Ẑen Opex** (ce que vous dépensez : loyer) et **Ẑen Capex** (ce que vous possédez : parts de matériel, avec leur amortissement).
 5. La carte **Copie privée** vous demande d'attester, une fois, que vos films et séries sont des copies pour votre usage privé.
 
 Sur un téléphone, installez la page comme application (menu du navigateur : *Ajouter à l'écran d'accueil*).
@@ -456,7 +456,7 @@ Quand le maillage P2P est actif, la station **offre aussi son relai Nostr** aux 
 Sur la station qui **offre** son accès SSH :
 
 ```bash
-astroportd serve ... --p2p-listen /ip4/0.0.0.0/tcp/4101 --p2p-expose ssh=127.0.0.1:22 [--swarm-key ./swarm.key]
+astroportd serve ... --p2p-listen /ip4/0.0.0.0/tcp/4101 [--swarm-key ./swarm.key]   # le SSH est offert par défaut, mais fermé : le Capitaine l'ouvre dans Options › Tunnels
 ```
 
 Sur la station qui **rejoint** (le PeerID est celui de l'hôte, visible avec `astroportd ylevel`) :

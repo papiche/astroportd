@@ -19,8 +19,12 @@
 //! | `GET /api/v1/account` · `POST …/profile` · `…/token` · `…/keys` | Mon compte : identité, profil, nouveau jeton WebDAV, export des clés |
 //! | `GET /api/v1/contacts` · `POST …/sync` · `…/from-person` · `…/link` | annuaire CardDAV : fiches, personnes sans fiche, rapprochement visage ↔ fiche ↔ MULTIPASS |
 //! | `GET /api/v1/friends` · `POST /api/v1/ucloud/send` | proches réciproques ; envoi de fichiers à des proches |
+//! | `GET`/`POST /api/v1/backup` · `POST /api/v1/backup/respond` | sauvegarde privée chez un ami : réglage, demandes reçues, réponse de l'hébergeur |
+//! | `POST /api/v1/ucloud/have` | parmi des SHA-256, ceux que le compte possède déjà (envoi sans doublon) |
+//! | `GET /api/v1/ucloud/memories` · `…/timeline[?ym=]` · `…/search` · `…/duplicates` | « ce jour-là », chronologie par mois, recherche à filtres, doublons exacts et visuels |
 //! | `GET /api/v1/replication` | où et par qui les données du compte sont répliquées (stations, amis, fichiers) |
 //! | `POST /api/v1/bro/say` | dialogue avec BRO |
+//! | `GET /api/v1/station/console?ticket=` | console (WebSocket) ouverte par un ticket à usage unique que le Capitaine a obtenu par `admin/assist` |
 //!
 //! L'authentification est portée par l'en-tête `Authorization` (Basic ou NIP-98), jamais par un cookie : l'API
 //! n'est donc pas exposée aux requêtes forgées depuis un autre site.
@@ -32,6 +36,7 @@ use std::time::{Duration, Instant};
 
 use astro_core::ActivityBus;
 use axum::Router;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -52,6 +57,61 @@ pub struct Principal {
     pub email: Option<String>,
     /// Le compte est celui du Capitaine.
     pub captain: bool,
+}
+
+/// Question posée à la bibliothèque du compte.
+#[derive(Debug, Clone)]
+pub enum LibraryQuery {
+    /// Parmi ces SHA-256, lesquels le compte possède-t-il ?
+    Have(Vec<String>),
+    /// « Ce jour-là » : les années précédentes, pour le jour `(MM-JJ, année)` du navigateur (son fuseau, pas celui de la station).
+    Memories(Option<(String, i64)>),
+    /// Compteurs par mois, ou les éléments d'un mois (`2026-10`).
+    Timeline(Option<String>),
+    /// Recherche à filtres combinés.
+    Search(LibrarySearch),
+    /// Doublons exacts et visuels.
+    Duplicates,
+}
+
+/// Filtres de recherche tels que l'URL les porte.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LibrarySearch {
+    /// Mots cherchés dans le nom et la description.
+    pub q: Option<String>,
+    /// Personne reconnue sur la photo.
+    pub person: Option<String>,
+    /// Début de période (secondes Unix, inclus).
+    pub from: Option<i64>,
+    /// Fin de période (exclue).
+    pub to: Option<i64>,
+    /// Zone `sud,ouest,nord,est`.
+    pub bbox: Option<String>,
+    /// `image`, `video` ou `other`.
+    pub kind: Option<String>,
+    /// Curseur : date du dernier résultat reçu.
+    pub after_t: Option<i64>,
+    /// Curseur : chemin du dernier résultat reçu.
+    pub after_p: Option<String>,
+    /// Résultats par page.
+    pub limit: Option<usize>,
+}
+
+/// Ce que le navigateur envoie à une console.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConsoleIn {
+    /// Frappes à transmettre telles quelles.
+    Data(Vec<u8>),
+    /// Nouvelle taille du terminal `(colonnes, lignes)`.
+    Resize(u16, u16),
+}
+
+/// Les deux sens d'une console ouverte par la station : la fermer côté navigateur (abandon de `input`) la termine.
+pub struct ConsoleLink {
+    /// Vers le processus.
+    pub input: tokio::sync::mpsc::Sender<ConsoleIn>,
+    /// Depuis le processus ; fermé quand il se termine.
+    pub output: tokio::sync::mpsc::Receiver<Vec<u8>>,
 }
 
 /// Qui réclame une invitation : une adresse email, ou un invité (adresse générée par la station, `alias` facultatif).
@@ -199,7 +259,7 @@ pub trait Backend: Send + Sync + 'static {
     fn face_accept(&self, who: &Principal, face_id: i64) -> impl Future<Output = Result<Value, ApiError>> + Send;
     /// Nomme un visage.
     fn face_name(&self, who: &Principal, face_id: i64, name: String) -> impl Future<Output = Result<Value, ApiError>> + Send;
-    /// Empreinte du compte sur les communs : disque utilisé et quota, baux 1/24e, tarifs du nœud.
+    /// Empreinte du compte sur les communs : disque utilisé et quota de sa formule, Opex et Capex.
     fn footprint(&self, who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send;
     /// Constellation : nœuds de l'essaim, Power-Score, distance, statut, services (Capitaine).
     fn constellation(&self, who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send;
@@ -283,6 +343,14 @@ pub trait Backend: Send + Sync + 'static {
     fn admin_get(&self, _who: &Principal, _section: &str) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::not_found("section d'administration inconnue")) }
     }
+    /// Interroge la bibliothèque du compte (photos, souvenirs, chronologie, recherche, doublons).
+    fn library(&self, _who: &Principal, _q: LibraryQuery) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("bibliothèque non disponible sur cette station")) }
+    }
+    /// Ouvre la console que `ticket` autorise (à usage unique, délivré au Capitaine) ; `None` si le ticket est inconnu, périmé ou déjà utilisé.
+    fn console_open(&self, _ticket: &str) -> impl Future<Output = Option<ConsoleLink>> + Send {
+        async { None }
+    }
     /// Modifie une section d'administration (Capitaine) ; rend la vue mise à jour.
     fn admin_set(&self, _who: &Principal, _section: &str, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::not_found("section d'administration inconnue")) }
@@ -302,6 +370,18 @@ pub trait Backend: Send + Sync + 'static {
     /// Envoie des fichiers (ou dossiers) du uCloud à des proches réciproques.
     fn ucloud_send(&self, _who: &Principal, _paths: Vec<String>, _friends: Vec<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("envoi à des proches non disponible sur cette station")) }
+    }
+    /// Sauvegarde privée chez un ami : mon réglage, les demandes reçues comme hébergeur, mes proches.
+    fn backup_status(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("sauvegarde privée non disponible sur cette station")) }
+    }
+    /// Active la sauvegarde chez `host` (la demande lui est envoyée) ou la suspend.
+    fn backup_set(&self, _who: &Principal, _enabled: bool, _host: Option<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("sauvegarde privée non disponible sur cette station")) }
+    }
+    /// Réponse de l'hébergeur : accepter avec un volume (en octets), refuser ou révoquer.
+    fn backup_respond(&self, _who: &Principal, _owner: String, _accept: bool, _quota_bytes: u64) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("sauvegarde privée non disponible sur cette station")) }
     }
     /// Réplication des données du compte : où et par qui. `{ crawl, routes, mine, peers }`.
     fn replication(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
@@ -387,6 +467,11 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/activity", get(activity_stream::<B>))
         .route("/api/v1/ucloud/list", get(ucloud_list::<B>))
         .route("/api/v1/ucloud/photos", get(ucloud_photos::<B>))
+        .route("/api/v1/ucloud/have", post(library_have::<B>))
+        .route("/api/v1/ucloud/memories", get(library_memories::<B>))
+        .route("/api/v1/ucloud/timeline", get(library_timeline::<B>))
+        .route("/api/v1/ucloud/search", get(library_search::<B>))
+        .route("/api/v1/ucloud/duplicates", get(library_duplicates::<B>))
         .route("/api/v1/ucloud/share", post(ucloud_share::<B>))
         .route("/api/v1/faces", get(faces::<B>))
         .route("/api/v1/faces/board", get(faces_board::<B>))
@@ -420,9 +505,12 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/station/accounts/{hex}/unlock-pass", post(pass_unlock::<B>))
         .route("/api/v1/account/keys", post(account_keys::<B>))
         .route("/api/v1/station/admin/{section}", get(admin_get::<B>).post(admin_set::<B>))
+        .route("/api/v1/station/console", get(console_ws::<B>))
         .route("/api/v1/station/coop", get(coop_get::<B>).post(coop_set::<B>))
         .route("/api/v1/friends", get(friends::<B>))
         .route("/api/v1/ucloud/send", post(ucloud_send::<B>))
+        .route("/api/v1/backup", get(backup_status::<B>).post(backup_set::<B>))
+        .route("/api/v1/backup/respond", post(backup_respond::<B>))
         .route("/api/v1/station/constellation", get(constellation::<B>))
         .route("/api/v1/station/economy", get(economy::<B>))
         .route("/api/v1/station/accounts", get(accounts::<B>))
@@ -492,6 +580,63 @@ struct ListQuery {
 async fn ucloud_list<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Query(q): Query<ListQuery>) -> Response {
     match who(&st, &headers, &method, &uri).await {
         Ok(p) => reply(st.backend.ucloud_list(&p, q.path.unwrap_or_else(|| "/".into())).await),
+        Err(r) => r,
+    }
+}
+
+#[derive(Deserialize)]
+struct HaveBody {
+    shas: Vec<String>,
+}
+
+async fn library_have<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<HaveBody>) -> Response {
+    if body.shas.len() > 500 {
+        return reply(Err(ApiError::bad_request("500 empreintes au plus par appel")));
+    }
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.library(&p, LibraryQuery::Have(body.shas)).await),
+        Err(r) => r,
+    }
+}
+
+#[derive(Deserialize)]
+struct MemoriesQuery {
+    md: Option<String>,
+    y: Option<i64>,
+}
+
+async fn library_memories<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Query(q): Query<MemoriesQuery>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.library(&p, LibraryQuery::Memories(q.md.zip(q.y))).await),
+        Err(r) => r,
+    }
+}
+
+#[derive(Deserialize)]
+struct TimelineQuery {
+    ym: Option<String>,
+}
+
+async fn library_timeline<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Query(q): Query<TimelineQuery>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.library(&p, LibraryQuery::Timeline(q.ym)).await),
+        Err(r) => r,
+    }
+}
+
+async fn library_search<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Query(q): Query<LibrarySearch>) -> Response {
+    if q.q.as_deref().is_some_and(|s| s.len() > 256) || q.person.as_deref().is_some_and(|s| s.len() > 128) {
+        return reply(Err(ApiError::bad_request("recherche trop longue")));
+    }
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.library(&p, LibraryQuery::Search(q)).await),
+        Err(r) => r,
+    }
+}
+
+async fn library_duplicates<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.library(&p, LibraryQuery::Duplicates).await),
         Err(r) => r,
     }
 }
@@ -881,6 +1026,53 @@ fn valid_section(s: &str) -> bool {
     !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
 }
 
+#[derive(Deserialize)]
+struct ConsoleQuery {
+    ticket: String,
+}
+
+/// Console WebSocket. L'authentification est le ticket (30 s, un seul usage, délivré au seul Capitaine) : un navigateur ne peut
+/// pas poser d'en-tête `Authorization` sur un WebSocket. Une page d'un autre site ne passe pas : `Origin` doit être cette station.
+async fn console_ws<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, Query(q): Query<ConsoleQuery>, ws: WebSocketUpgrade) -> Response {
+    let same_origin = headers
+        .get(header::ORIGIN)
+        .and_then(|o| o.to_str().ok())
+        .and_then(|o| o.split_once("://").map(|(_, host)| host))
+        .zip(headers.get(header::HOST).and_then(|h| h.to_str().ok()))
+        .is_some_and(|(origin, host)| origin.eq_ignore_ascii_case(host));
+    if !same_origin {
+        return reply(Err(ApiError::forbidden("origine refusée")));
+    }
+    let Some(link) = st.backend.console_open(&q.ticket).await else { return reply(Err(ApiError::forbidden("ticket inconnu, périmé ou déjà utilisé"))) };
+    ws.max_message_size(64 * 1024).on_upgrade(move |sock| bridge_console(sock, link))
+}
+
+async fn bridge_console(mut sock: WebSocket, link: ConsoleLink) {
+    let ConsoleLink { input, mut output } = link;
+    loop {
+        tokio::select! {
+            out = output.recv() => match out {
+                Some(data) => if sock.send(Message::Binary(data.into())).await.is_err() { break },
+                None => {
+                    let _ = sock.send(Message::Close(None)).await;
+                    break;
+                }
+            },
+            msg = sock.recv() => match msg {
+                Some(Ok(Message::Binary(b))) => if input.send(ConsoleIn::Data(b.to_vec())).await.is_err() { break },
+                Some(Ok(Message::Text(t))) => {
+                    let size = serde_json::from_str::<Value>(&t).ok().and_then(|v| Some((u16::try_from(v["resize"][0].as_u64()?).ok()?, u16::try_from(v["resize"][1].as_u64()?).ok()?)));
+                    if let Some((cols, rows)) = size.filter(|(c, r)| (1..=500).contains(c) && (1..=200).contains(r)) {
+                        if input.send(ConsoleIn::Resize(cols, rows)).await.is_err() { break }
+                    }
+                }
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                _ => break,
+            },
+        }
+    }
+}
+
 async fn admin_get<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(section): Path<String>) -> Response {
     if !valid_section(&section) {
         return reply(Err(ApiError::not_found("section d'administration inconnue")));
@@ -948,6 +1140,48 @@ async fn ucloud_send<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: Hea
     let friends = body.friends.into_iter().map(|f| f.to_ascii_lowercase()).collect();
     match who(&st, &headers, &method, &uri).await {
         Ok(p) => reply(st.backend.ucloud_send(&p, body.paths, friends).await),
+        Err(r) => r,
+    }
+}
+
+async fn backup_status<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.backup_status(&p).await),
+        Err(r) => r,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct BackupSetBody {
+    enabled: bool,
+    host: Option<String>,
+}
+
+async fn backup_set<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<BackupSetBody>) -> Response {
+    if body.host.as_ref().is_some_and(|h| h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit())) {
+        return reply(Err(ApiError::bad_request("clé de l'ami : 64 caractères hexadécimaux attendus")));
+    }
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.backup_set(&p, body.enabled, body.host.map(|h| h.to_ascii_lowercase())).await),
+        Err(r) => r,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct BackupRespondBody {
+    owner: String,
+    accept: bool,
+    /// Volume mis à disposition, en octets (obligatoire pour accepter).
+    #[serde(default)]
+    quota_bytes: u64,
+}
+
+async fn backup_respond<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<BackupRespondBody>) -> Response {
+    if body.owner.len() != 64 || !body.owner.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return reply(Err(ApiError::bad_request("clé de l'ami : 64 caractères hexadécimaux attendus")));
+    }
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => reply(st.backend.backup_respond(&p, body.owner.to_ascii_lowercase(), body.accept, body.quota_bytes).await),
         Err(r) => r,
     }
 }
@@ -1195,6 +1429,23 @@ mod tests {
         async fn footprint(&self, p: &Principal) -> Result<Value, ApiError> {
             Ok(json!({ "who": p.hex }))
         }
+        async fn console_open(&self, ticket: &str) -> Option<ConsoleLink> {
+            // Console de test : renvoie en majuscules ce qu'elle reçoit ; « bye » la termine ; une taille est rapportée.
+            (ticket == "good").then(|| {
+                let (in_tx, mut in_rx) = tokio::sync::mpsc::channel::<ConsoleIn>(8);
+                let (out_tx, out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
+                tokio::spawn(async move {
+                    while let Some(m) = in_rx.recv().await {
+                        match m {
+                            ConsoleIn::Data(d) if d == b"bye" => break,
+                            ConsoleIn::Data(d) => drop(out_tx.send(d.to_ascii_uppercase()).await),
+                            ConsoleIn::Resize(c, r) => drop(out_tx.send(format!("{c}x{r}").into_bytes()).await),
+                        }
+                    }
+                });
+                ConsoleLink { input: in_tx, output: out_rx }
+            })
+        }
         async fn constellation(&self, _: &Principal) -> Result<Value, ApiError> {
             Ok(json!({ "nodes": [] }))
         }
@@ -1241,7 +1492,7 @@ mod tests {
     #[tokio::test]
     async fn every_api_route_but_health_requires_authentication() {
         let bus = ActivityBus::new();
-        for (method, uri) in [(Method::GET, "/api/v1/friends"), (Method::GET, "/api/v1/replication"), (Method::GET, "/api/v1/me"), (Method::GET, "/api/v1/dashboard"), (Method::GET, "/api/v1/ucloud/list"), (Method::GET, "/api/v1/ucloud/photos"), (Method::GET, "/api/v1/faces"), (Method::GET, "/api/v1/activity")] {
+        for (method, uri) in [(Method::GET, "/api/v1/friends"), (Method::GET, "/api/v1/backup"), (Method::GET, "/api/v1/replication"), (Method::GET, "/api/v1/me"), (Method::GET, "/api/v1/dashboard"), (Method::GET, "/api/v1/ucloud/list"), (Method::GET, "/api/v1/ucloud/photos"), (Method::GET, "/api/v1/faces"), (Method::GET, "/api/v1/activity")] {
             let (s, _, h) = call(app(&bus), method, uri, false, None).await;
             assert_eq!(s, StatusCode::UNAUTHORIZED, "{uri}");
             assert_eq!(h[header::WWW_AUTHENTICATE], "Nostr realm=\"astroportd\"", "pas de Basic annoncé : pas de fenêtre native du navigateur");
@@ -1284,6 +1535,34 @@ mod tests {
         assert_eq!(call_as(app(&bus), Method::POST, "/api/v1/station/accounts/zz/token", "Basic cap", None).await.0, StatusCode::BAD_REQUEST);
         // L'empreinte sur les communs est personnelle : tout compte la voit.
         assert_eq!(call_as(app(&bus), Method::GET, "/api/v1/me/footprint", "Basic ok", None).await.0, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn the_console_socket_needs_a_valid_ticket_and_the_same_origin() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as M};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = app(&ActivityBus::new());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let connect = |ticket: &str, origin: Option<String>| {
+            let mut req = format!("ws://{addr}/api/v1/station/console?ticket={ticket}").into_client_request().unwrap();
+            if let Some(o) = origin {
+                req.headers_mut().insert("origin", o.parse().unwrap());
+            }
+            tokio_tungstenite::connect_async(req)
+        };
+        assert!(connect("good", None).await.is_err(), "sans Origin : refusé");
+        assert!(connect("good", Some("http://evil.example".into())).await.is_err(), "autre origine : refusé");
+        assert!(connect("bad", Some(format!("http://{addr}"))).await.is_err(), "ticket inconnu : refusé");
+        let (mut ws, _) = connect("good", Some(format!("http://{addr}"))).await.unwrap();
+        ws.send(M::Binary(b"salut".to_vec().into())).await.unwrap();
+        assert_eq!(ws.next().await.unwrap().unwrap().into_data().as_ref(), b"SALUT");
+        ws.send(M::Text(r#"{"resize":[120,40]}"#.into())).await.unwrap();
+        assert_eq!(ws.next().await.unwrap().unwrap().into_data().as_ref(), b"120x40");
+        ws.send(M::Text(r#"{"resize":[0,9999]}"#.into())).await.unwrap();
+        ws.send(M::Binary(b"bye".to_vec().into())).await.unwrap();
+        assert!(matches!(ws.next().await, Some(Ok(M::Close(_))) | None), "la fin du processus ferme la socket");
     }
 
     #[tokio::test]

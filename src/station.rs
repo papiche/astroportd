@@ -99,12 +99,24 @@ pub struct StationServices {
     pub exposed: Vec<String>,
     /// Dernier appel Duniter : `(quand, réussi)`, pour `/health` sans appel réseau.
     chain_seen: Mutex<Option<(Instant, bool)>>,
+    /// Build exécuté ici (version, empreinte du binaire), renseigné au démarrage une fois haché.
+    build: std::sync::OnceLock<crate::build_attest::BuildInfo>,
 }
 
 impl StationServices {
     /// Assemble le contexte.
     pub fn new(d: StationDeps) -> Self {
-        Self { db: d.db, info: d.info, nostr_dir: d.nostr_dir, chain: d.chain, hardware: d.hardware, p2p: d.p2p, weekly_rent_cents: d.weekly_rent_cents, activity: d.activity, swarm_dir: d.swarm_dir, origin: d.origin, exposed: d.exposed, chain_seen: Mutex::new(None) }
+        Self { db: d.db, info: d.info, nostr_dir: d.nostr_dir, chain: d.chain, hardware: d.hardware, p2p: d.p2p, weekly_rent_cents: d.weekly_rent_cents, activity: d.activity, swarm_dir: d.swarm_dir, origin: d.origin, exposed: d.exposed, chain_seen: Mutex::new(None), build: std::sync::OnceLock::new() }
+    }
+
+    /// Enregistre le build exécuté ici (une seule fois).
+    pub fn set_build(&self, info: crate::build_attest::BuildInfo) {
+        let _ = self.build.set(info);
+    }
+
+    /// Build exécuté ici, s'il a déjà été mesuré.
+    pub fn build(&self) -> Option<&crate::build_attest::BuildInfo> {
+        self.build.get()
     }
 
     /// Résultat du dernier appel Duniter (`None` : jamais sollicité).
@@ -134,7 +146,7 @@ impl StationServices {
 
     /// Solde du compte `owner`. L'erreur est lisible par l'humain (nœud injoignable, portefeuille inconnu…).
     pub async fn balance_of(&self, owner: &str) -> Result<BalanceView, String> {
-        let chain = self.chain.as_ref().ok_or("nœud Duniter non configuré (--duniter-rpc)")?;
+        let chain = self.chain.as_ref().ok_or("solde indisponible : cette station n'est pas reliée à la Ğ1")?;
         let account = self.wallet_of(owner).await?;
         let result = tokio::time::timeout(BALANCE_TIMEOUT, chain.balance(&account)).await;
         let ok = matches!(result, Ok(Ok(_)));

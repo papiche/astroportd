@@ -107,7 +107,7 @@ if (items[at] === it) box.replaceChildren(kindOf(it.mime) === 'video' ? h('video
 function open(list, i) { items = list; viewer.showModal(); show(i); }
 $('#view-x').onclick = () => viewer.close();
 viewer.addEventListener('close', () => $('#view-b').replaceChildren());
-viewer.addEventListener('keydown', e => { if (e.key === 'ArrowRight') show(at + 1); else if (e.key === 'ArrowLeft') show(at - 1); });
+viewer.addEventListener('keydown', e => { if (e.key === 'ArrowRight') show(at + 1); else if (e.key === 'ArrowLeft') show(at - 1); else if (e.key === 'Home') show(0); else if (e.key === 'End') show(items.length - 1); else if (e.key === 's') share([items[at].path]); });
 $('#share-x').onclick = () => $('#share').close();
 async function share(paths) {
 const box = $('#share-b'), dlg = $('#share');
@@ -129,13 +129,10 @@ let cleanups = [];
 const every = (ms, fn) => { const t = setInterval(fn, ms); cleanups.push(() => clearInterval(t)); };
 const pill = s => h('span', { class: 'pill ' + s }, { ok: 'OK', degraded: 'Dégradé', down: 'Panne', disabled: 'Inactif' }[s] || s);
 const row = (k, v) => [h('dt', {}, k), h('dd', {}, v)];
-const RES = { disk_10gb: 'Disque 10 Go', disk_128gb: 'Disque 128 Go', disk_256gb: 'Disque 256 Go', gpu_1_24: 'GPU 1/24e' };
-const LEASE = { active: 'actif', underpaid: 'sous-payé', unpriced: 'sans tarif', full: 'complet', invalid: 'invalide', revoked: 'révoqué' };
-const LIFE = { active_rental: 'ActiveRental', cooperative_member: 'CooperativeMember', grace_period: 'GracePeriod', suspended: 'Suspended' };
+const LIFE = { active_rental: 'Locataire actif', cooperative_member: 'Membre coopérateur', grace_period: 'Période de grâce', suspended: 'Suspendu' };
 const tone = s => (s === 'grace_period' ? 'degraded' : s === 'suspended' ? 'down' : s ? 'ok' : 'disabled');
 const day = t => (t ? new Date(t * 1000).toLocaleDateString('fr', { dateStyle: 'medium' }) : '—');
 const table = (cap, head, rows) => h('table', {}, h('caption', { class: 'muted' }, cap), h('thead', {}, h('tr', {}, head.map(x => h('th', { scope: 'col' }, x)))), h('tbody', {}, rows.map(r => h('tr', {}, r.map(c => h('td', {}, c))))));
-const priceOf = t => `${zen(t.price_cents)} Ẑ/${'sem.'}`;
 function consentForm(cp, redraw) {
 const ok = h('input', { type: 'checkbox', id: 'cp-ok' }), go = h('button', { disabled: true, onclick: async () => {
 try { await api('/api/v1/consent/private-copy', { method: 'POST', body: { version: cp.current_version } }); toast('Copie privée attestée', 1); redraw(); } catch (e) { toast(e.message, 0); }
@@ -156,31 +153,27 @@ h('p', { class: 'big' }, e.weeks.toFixed(1), h('small', { class: 'muted' }, ' se
 h('section', { class: 'card' }, h('h2', {}, 'Empreinte sur les communs'),
 h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: Math.min(pct, 1), 'aria-label': 'Disque utilisé' }),
 h('p', { class: 'big' }, bytes(k.used_bytes), h('small', { class: 'muted' }, ` / ${bytes(k.quota_bytes)}`)),
-h('p', { class: 'muted' }, `${k.files} fichier(s) · formule ${k.tier}${k.leased ? ' · quota relevé par un bail' : ''}`),
-fp.tariffs.length ? h('p', { class: 'muted' }, 'Tarifs du nœud : ' + fp.tariffs.map(t => `${RES[t.resource] || t.resource} ${priceOf(t)}`).join(' · ')) : null),
+h('p', { class: 'muted' }, `${k.files} fichier(s) · formule ${k.tier}`)),
 h('section', { class: 'card' }, h('h2', {}, 'Souveraineté ', h('small', {}, 'vos données, chiffrées')),
 h('p', { class: 'big' }, String(w.encrypted_files), h('small', { class: 'muted' }, ` fichiers chiffrés · ${bytes(w.encrypted_bytes)}`)),
 h('dl', {}, row('Dernier manifeste', w.last_manifest_at ? when(w.last_manifest_at) : 'aucun'), row('Événement Nostr', w.last_manifest_event || '—'), row('Révision', w.last_manifest_rev ?? '—'))),
 h('section', { class: 'card' }, h('h2', {}, 'Ẑen Opex ', h('small', {}, 'redevances d\'usage')),
 h('p', { class: 'big' }, zen(ox.total_28d_cents), h('small', { class: 'muted' }, ' Ẑen · 28 jours')),
-h('dl', {}, row('Loyer MULTIPASS', `${zen(ox.weekly_rent_cents)} Ẑ / sem.`), row('Loyers payés', `${zen(ox.rent_28d_cents)} Ẑ`), row('Baux d\'usage payés', `${zen(ox.usage_28d_cents)} Ẑ`), row('Baux en cours', `${zen(ox.usage_weekly_cents)} Ẑ / sem.`)),
+h('dl', {}, row('Loyer MULTIPASS', `${zen(ox.weekly_rent_cents)} Ẑ / sem.`), row('Loyers payés', `${zen(ox.rent_28d_cents)} Ẑ`)),
 h('p', { class: 'muted' }, 'Dépenses courantes : elles paient l\'usage du nœud et ne créent aucun capital.')),
 h('section', { class: 'card' }, h('h2', {}, 'Ẑen Capex ', h('small', {}, 'parts d\'investissement · ZenCard')),
 cx.assets.length ? [h('p', { class: 'big' }, zen(cx.net_cents), h('small', { class: 'muted' }, ' Ẑen nets')), h('p', { class: 'muted' }, `valeur ${zen(cx.value_cents)} · amortis ${zen(cx.amortized_cents)}`), h('ul', { class: 'muted' }, cx.assets.map(a => h('li', {}, `${a.label || a.id} : ${zen(a.net_cents)} Ẑ`)))]
 : h('p', { class: 'muted' }, cx.zencard ? 'Sociétaire ZenCard : aucune part de matériel enregistrée à votre nom.' : 'Aucune part. Une ZenCard fait de vous sociétaire : le matériel financé reste votre capital, il s\'amortit.'),
 h('p', { class: 'muted' }, 'Investissement : acheté une fois, jamais confondu avec les redevances.')),
 cp && cp.available && h('section', { class: 'card wide' }, h('h2', {}, 'Copie privée ', h('small', {}, cp.article)),
-cp.accepted ? h('p', { class: 'ok' }, `Attestée le ${when(cp.accepted_at)} : vous pouvez déposer films et séries ; ils ne sont montrés qu'à vos amis N¹.`) : consentForm(cp, draw)),
-h('section', { class: 'card wide' }, h('h2', {}, 'Baux 1/24e et paliers de disque'),
-fp.leases.length ? table('Vos baux, du plus récent au plus ancien', ['Ressource', 'Début', 'Durée', 'Utilisé', 'Payé', 'Statut'],
-fp.leases.map(l => [RES[l.resource] || l.resource, when(l.start), `${l.units} ${'sem.'}`, l.resource === 'gpu_1_24' ? '1 h/jour' : '—', `${zen(l.paid_cents)} Ẑ`, [pill(l.active ? 'ok' : l.status === 'active' ? 'disabled' : 'degraded'), ' ', l.active ? 'en cours' : (LEASE[l.status] || l.status)]]))
-: h('p', { class: 'muted' }, 'Aucun bail pour le moment. Réservez une part de GPU ou un palier de disque par un virement Ẑen au nœud.'))));
+cp.accepted ? h('p', { class: 'ok' }, `Attestée le ${when(cp.accepted_at)} : vous pouvez déposer films et séries ; ils ne sont montrés qu'à vos amis N¹.`) : consentForm(cp, draw))));
 };
 await draw();
 every(30000, () => draw().catch(() => {}));
 }
 async function viewStation(root) {
 const draw = async () => {
+const { codeCell, codeSummary } = await import('/ui/m-code.js');
 const [d, z, cs, ec, ac] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()), api('/api/v1/station/constellation'), api('/api/v1/station/economy'), api('/api/v1/station/accounts')]);
 const s = d.station, r = d.relay, p = d.p2p, sub = z.subsystems || {};
 const love = ec.love, sh = ec.shares;
@@ -192,8 +185,9 @@ h('p', { class: 'big' }, String(r.events ?? '—'), h('small', { class: 'muted' 
 h('dl', {}, row('Dernier événement', when(r.last_event_at)), row('Base de données', bytes(r.db_bytes)))),
 h('section', { class: 'card' }, h('h2', {}, 'Sous-systèmes'), h('dl', {}, Object.entries(sub).flatMap(([n, v]) => row(n, [pill(v.status), ' ', v.detail])))),
 h('section', { class: 'card wide' }, h('h2', {}, 'Constellation ', h('small', {}, `${cs.nodes.length} nœud(s)${p.enabled ? ` · ${p.peers} pair(s) connecté(s)` : ''}`)),
-table('Nœuds de l\'essaim, du plus puissant au moins puissant', ['Nœud', 'Power-Score', 'Distance', 'Statut', 'Services', 'Tarifs'],
-cs.nodes.map(n => [[h('code', {}, n.node_id ? n.node_id.slice(-8) : '—'), n.self ? ' (ce nœud)' : ''], `${n.power_score} · ${n.tier}`, n.distance_km == null ? '—' : `${n.distance_km} km`, pill(n.status === 'connected' || n.self ? 'ok' : 'disabled'), n.services.join(', ') || '—', n.tariffs.map(priceOf).join(' · ') || '—'])),
+codeSummary(cs.nodes, t),
+table('Nœuds de l\'essaim, du plus puissant au moins puissant', ['Nœud', 'Power-Score', 'Distance', 'Statut', 'Code', 'Services'],
+cs.nodes.map(n => [[h('code', {}, n.node_id ? n.node_id.slice(-8) : '—'), n.self ? ' (ce nœud)' : ''], `${n.power_score} · ${n.tier}`, n.distance_km == null ? '—' : `${n.distance_km} km`, (n.status === 'connected' || n.self) ? pill('ok') : h('span', { class: 'pill disabled' }, t('Non connecté')), codeCell(n.build, t), n.services.join(', ') || '—'])),
 cs.swarm_dir_configured ? null : h('p', { class: 'muted' }, 'Aucun dossier de pairs configuré (--swarm-dir) : seule cette station est listée.')),
 h('section', { class: 'card wide' }, h('h2', {}, 'Régie coopérative 3×1/3 ', h('small', {}, ec.week ? `semaine ${ec.week}` : '')),
 ec.kind === 'split' ? [
@@ -239,11 +233,7 @@ root.replaceChildren(tabs, grid, h('p', {}, more));
 const load = async before => {
 const r = await api('/api/v1/ucloud/photos?limit=60' + (before ? '&before=' + before : ''));
 dav = r.dav || dav;
-for (const it of r.items) {
-const i = list.push(it) - 1;
-const img = h('img', { alt: '', decoding: 'async' });
-grid.append(lazy(h('button', { class: 'tile', 'aria-label': lastName(it.path), onclick: () => open(list, i) }, img, kindOf(it.mime) === 'video' && h('span', { class: 'badge' }, '▶')), () => (kindOf(it.mime) === 'image' ? blobUrl(it.path, !!it.thumb).then(u => { img.src = u; }) : 0)));
-}
+tiles(grid, list, r.items);
 more.hidden = !r.next; more.onclick = () => load(r.next);
 if (!list.length) grid.replaceWith(h('p', { class: 'muted' }, 'Aucune photo pour le moment.'));
 };
@@ -265,6 +255,13 @@ h('button', { class: 'link', onclick: act }, x.name), h('span', { class: 'muted'
 };
 root.replaceChildren(tabs, h('div', { class: 'bar' }, crumbs, h('span', { class: 'sp' }), send, btn),
 r.entries.length ? h('ul', { class: 'files' }, r.entries.map(li)) : h('p', { class: 'muted' }, 'Dossier vide.'));
+}
+// Tuiles de photos ajoutées à `grid` ; `list` est la liste que la visionneuse parcourt (flèches, Début, Fin).
+function tiles(grid, list, its) {
+for (const it of its) {
+const i = list.push(it) - 1, img = h('img', { alt: '', decoding: 'async' });
+grid.append(lazy(h('button', { class: 'tile', 'aria-label': lastName(it.path), onclick: () => open(list, i) }, img, kindOf(it.mime) === 'video' && h('span', { class: 'badge' }, '▶')), () => (kindOf(it.mime) === 'image' ? blobUrl(it.path, !!it.thumb).then(u => { img.src = u; }) : 0)));
+}
 }
 async function viewBro(root) {
 const log = h('ol', { id: 'log', 'aria-live': 'polite', 'aria-label': 'Activité de la station' });
@@ -334,9 +331,9 @@ try { dict = (await import(`/ui/m-lang-${lang}.js`)).default; } catch (e) { toas
 tr(document.body); new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(tr))).observe(document.body, { childList: true, subtree: true });
 }
 // Écrans lourds chargés à la demande (hors budget de la coque) : ils reçoivent la boîte à outils ci-dessous.
-const K = { t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, every, enc, dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f) };
+const K = { t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, tiles, every, enc, del: p => req(dav + enc(p), { method: 'DELETE' }), dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f) };
 const lazyView = f => async (root, q) => (await import('/ui/' + f)).default(root, K, q);
-const views = { home: viewHome, station: viewStation, cloud: viewCloud, account: lazyView('m-account.js'), contacts: lazyView('m-contacts.js'), people: lazyView('m-people.js'), replication: lazyView('m-replication.js'), coop: lazyView('m-coop.js'), options: lazyView('m-options.js'), bro: viewBro };
+const views = { home: viewHome, station: viewStation, cloud: viewCloud, account: lazyView('m-account.js'), contacts: lazyView('m-contacts.js'), people: lazyView('m-people.js'), replication: lazyView('m-replication.js'), library: lazyView('m-library.js'), coop: lazyView('m-coop.js'), options: lazyView('m-options.js'), bro: viewBro };
 let me = null;
 async function route() {
 cleanups.forEach(c => c()); cleanups = [];
@@ -344,9 +341,9 @@ blobs.forEach(p => p.then(URL.revokeObjectURL, () => {})); blobs.clear();
 const [p, qs] = (location.hash.slice(1) || '/').split('?'), main = $('#main');
 main.replaceChildren(h('p', { class: 'muted' }, 'Chargement…'));
 try {
-if (!me) { me = await api('/api/v1/me'); import('/ui/m-nostr.js').then(m => m.default(me, api), () => {}); }
+if (!me) { me = await api('/api/v1/me'); import('/ui/m-nostr.js').then(m => m.default(me, api), () => {}); import('/ui/m-ux.js').then(m => m.default(me, api, t), () => {}); }
 document.querySelector('nav a[data-r=station]').hidden = !me.captain; // l'écran Capitaine n'existe pas pour un MULTIPASS
-const name = ['cloud', 'bro', 'people', 'replication', 'account', 'contacts'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/station') && me.captain ? 'station' : 'home');
+const name = ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/station') && me.captain ? 'station' : 'home');
 document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (name === 'coop' || name === 'options' ? 'station' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
 await views[name](main, new URLSearchParams(qs || ''));
 $('#out').hidden = false;

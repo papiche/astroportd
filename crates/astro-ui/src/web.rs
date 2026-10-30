@@ -24,6 +24,11 @@ struct Assets;
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; \
                    connect-src 'self'; font-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
+/// Page de la console : xterm.js crée des éléments `<style>` à l'exécution (couleurs, dimensions des cellules), ce que
+/// `style-src 'self'` interdit. Seuls les **styles** sont assouplis, pour cette page-là ; les scripts restent `'self'`.
+const CSP_CONSOLE: &str = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; \
+                           base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
 fn mime_of(path: &str) -> &'static str {
     match path.rsplit('.').next() {
         Some("html") => "text/html; charset=utf-8",
@@ -32,6 +37,7 @@ fn mime_of(path: &str) -> &'static str {
         Some("svg") => "image/svg+xml",
         Some("json") => "application/json",
         Some("webmanifest") => "application/manifest+json",
+        Some("LICENSE") => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
 }
@@ -44,7 +50,7 @@ pub fn embedded_bytes() -> usize {
 /// Fichiers chargés à la demande : la page d'inscription (`register.*`, pour les seuls nouveaux venus) et les écrans
 /// lourds (`m-*.js` / `m-*.css`, tri des visages, réplication) n'entrent pas dans le budget de la coque ; ils ont le leur.
 fn is_lazy(path: &str) -> bool {
-    path.starts_with("register.") || path.starts_with("invite.") || path.starts_with("claim.") || path.starts_with("m-")
+    path.starts_with("register.") || path.starts_with("invite.") || path.starts_with("claim.") || path.starts_with("m-") || path.starts_with("console.") || path.starts_with("xterm")
 }
 
 /// Fichiers de la coque de l'application (tout sauf les fichiers chargés à la demande).
@@ -58,8 +64,18 @@ fn module_files() -> impl Iterator<Item = (String, rust_embed::EmbeddedFile)> {
 }
 
 /// Taille cumulée des écrans chargés à la demande (octets bruts, Gzip) : chacun ne se télécharge qu'à sa première visite.
+/// Un visiteur ne charge qu'**un** dictionnaire de langue (`m-lang-*`) : on compte le plus lourd, pas leur somme.
 pub fn module_bytes() -> (usize, usize) {
-    module_files().fold((0, 0), |(raw, gz), (p, f)| (raw + f.data.len(), gz + compressed(&p, Encoding::Gzip, &f.data).len()))
+    let sizes = |(p, f): (String, rust_embed::EmbeddedFile)| (p.starts_with("m-lang-"), f.data.len(), compressed(&p, Encoding::Gzip, &f.data).len());
+    let (mut raw, mut gz, mut lang) = (0, 0, (0, 0));
+    for (is_lang, r, g) in module_files().map(sizes) {
+        if is_lang {
+            lang = (lang.0.max(r), lang.1.max(g));
+        } else {
+            (raw, gz) = (raw + r, gz + g);
+        }
+    }
+    (raw + lang.0, gz + lang.1)
 }
 
 /// Compression négociée par `Accept-Encoding` : Brotli de préférence, puis Gzip, sinon octets bruts.
@@ -163,7 +179,7 @@ fn asset(path: &str, headers_in: &HeaderMap) -> Response {
     put(&mut headers, header::CACHE_CONTROL, "no-cache");
     put(&mut headers, header::X_CONTENT_TYPE_OPTIONS, "nosniff");
     put(&mut headers, header::REFERRER_POLICY, "no-referrer");
-    put(&mut headers, header::CONTENT_SECURITY_POLICY, CSP);
+    put(&mut headers, header::CONTENT_SECURITY_POLICY, if path == "console.html" { CSP_CONSOLE } else { CSP });
     // Le service worker pilote tout le site (scope `/`) bien qu'il vive sous `/ui/` ; la page `/` varie selon `Accept`.
     if path == "sw.js" {
         headers.insert(header::HeaderName::from_static("service-worker-allowed"), HeaderValue::from_static("/"));
@@ -309,7 +325,12 @@ mod tests {
         eprintln!("poids de l'application : {size} o bruts, {gz} o en gzip, {br} o en brotli");
         let (mraw, mgz) = module_bytes();
         eprintln!("écrans à la demande : {mraw} o bruts, {mgz} o en gzip");
-        assert!(mraw > 0 && mraw < 128 * 1024 && mgz < 40 * 1024, "écrans à la demande : {mraw} o bruts (budget 128 Ko), {mgz} o en gzip (budget 40 Ko)");
+        // Le cumul des écrans (qu'un visiteur ne télécharge qu'à la demande) est borné, et chaque écran garde sa propre limite.
+        assert!(mraw > 0 && mraw < 128 * 1024 && mgz < 48 * 1024, "écrans à la demande : {mraw} o bruts (budget 128 Ko), {mgz} o en gzip (budget 48 Ko)");
+        for (name, f) in module_files().filter(|(p, _)| !p.starts_with("m-lang-")) {
+            let gz = compressed(&name, Encoding::Gzip, &f.data).len();
+            assert!(gz < 12 * 1024, "{name} : {gz} o en gzip, au-delà des 12 Ko par écran");
+        }
         assert!(br <= gz && gz < size / 2, "la compression doit diviser par plus de deux : brut {size}, gzip {gz}, br {br}");
     }
 

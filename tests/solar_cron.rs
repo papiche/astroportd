@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use astro_bro::broker::Publisher;
+use astro_bro::publisher::Publisher;
 use astro_core::Amount;
 use astro_core::solar::{Coordinates, next_20h12};
 use astro_core::week::days_from_civil;
@@ -49,6 +49,8 @@ async fn nightly(dir: &std::path::Path, db: Arc<Db>, sink: Arc<Sink>, dream: Hoo
         split: SplitConfig::default(),
         purge_shares: Some(shares),
         dream: Some(dream),
+        backup: None,
+        integrity: None,
         publisher: Some(sink),
         activity: None,
     }
@@ -79,7 +81,7 @@ async fn the_solar_night_runs_every_step_once_per_solar_day() {
 
     let report = n.run_night(monday_night, lon).await;
     assert!(report.all_ok(), "{:?}", report.steps);
-    assert_eq!(report.steps.iter().map(|s| s.name).collect::<Vec<_>>(), ["rtc", "snapshot", "purge", "rêve", "clôture", "santé"]);
+    assert_eq!(report.steps.iter().map(|s| s.name).collect::<Vec<_>>(), ["rtc", "snapshot", "purge", "rêve", "sauvegarde", "intégrité", "clôture", "santé"]);
 
     // 3. Snapshot : un fichier SQLite lisible qui contient la loyer et le verrou posé avant le travail.
     let snap = dir.join("snapshots").join(format!("uplanet-{}.db", report.date));

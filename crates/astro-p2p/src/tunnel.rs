@@ -3,11 +3,11 @@
 //! Remplace `DRAGON_p2p_ssh.sh` : une station **expose** un service local (relai Nostr, SSH, Brain GPU…) sous un nom ;
 //! une autre le **joint** depuis un port local, sans qu'aucun port ne soit ouvert sur la box de l'hôte.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -34,8 +34,8 @@ pub fn protocol_name(service: &str, host: &PeerId) -> Result<StreamProtocol, P2p
 /// Réponse (asynchrone) d'une [`StreamGate`].
 pub type GateFuture = Pin<Box<dyn Future<Output = bool> + Send>>;
 
-/// Décide, pour chaque flux entrant, s'il est ouvert. Sert aux services « lourds » (GPU, LLM) réservés à qui a payé
-/// un bail : la décision dépend de l'instant présent, elle est donc prise **à chaque flux**, pas à l'exposition.
+/// Décide, pour chaque flux entrant, s'il est ouvert. Sert aux services « lourds » (GPU, LLM) réservés à qui
+/// y est autorisé : la décision dépend de l'instant présent, elle est donc prise **à chaque flux**, pas à l'exposition.
 /// Un refus (ou une garde trop lente) referme le flux sans rien envoyer.
 pub trait StreamGate: Send + Sync + 'static {
     /// Le pair `peer` peut-il ouvrir un flux vers `service` maintenant ?
@@ -61,10 +61,10 @@ pub struct ExposeOpts {
     pub allow: Option<HashSet<PeerId>>,
     /// Tunnels simultanés au plus.
     pub max_streams: usize,
-    /// Garde consultée pour chaque flux (baux de ressources) ; `None` = pas de contrôle supplémentaire.
+    /// Garde consultée pour chaque flux (politique de tunnels) ; `None` = pas de contrôle supplémentaire.
     pub gate: Option<Arc<dyn StreamGate>>,
     /// Période du watchdog : la garde est reconsultée pour chaque flux ouvert, et le flux est **coupé** dès qu'elle
-    /// refuse (créneau de bail expiré en cours de session). 60 s par défaut ; ignoré sans garde.
+    /// refuse (autorisation retirée en cours de session). 60 s par défaut ; ignoré sans garde.
     pub watch_every: Duration,
 }
 
@@ -93,21 +93,56 @@ impl Drop for Exposed {
     }
 }
 
+/// Emplacement occupé par un pair : libéré à la destruction.
+struct PeerSlot {
+    map: Arc<Mutex<HashMap<PeerId, usize>>>,
+    peer: PeerId,
+}
+
+impl PeerSlot {
+    fn take(map: &Arc<Mutex<HashMap<PeerId, usize>>>, peer: PeerId, cap: usize) -> Option<Self> {
+        let mut m = map.lock().unwrap_or_else(PoisonError::into_inner);
+        let n = m.entry(peer).or_default();
+        if *n >= cap {
+            return None;
+        }
+        *n += 1;
+        Some(Self { map: map.clone(), peer })
+    }
+}
+
+impl Drop for PeerSlot {
+    fn drop(&mut self) {
+        let mut m = self.map.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(n) = m.get_mut(&self.peer) {
+            *n -= 1;
+            if *n == 0 {
+                m.remove(&self.peer);
+            }
+        }
+    }
+}
+
 /// Expose `target` (`127.0.0.1:22`, `127.0.0.1:7777`…) sous le nom `service`.
 pub fn expose(handle: &P2pHandle, service: &str, target: String, opts: ExposeOpts) -> Result<Exposed, P2pError> {
     let protocol = protocol_name(service, &handle.peer_id())?;
     let mut incoming = handle.control().accept(protocol.clone()).map_err(|e| P2pError::Stream(e.to_string()))?;
     let limit = Arc::new(Semaphore::new(opts.max_streams.max(1)));
+    let per_peer: Arc<Mutex<HashMap<PeerId, usize>>> = Arc::default();
+    let per_peer_cap = (opts.max_streams / 4).max(4).min(opts.max_streams.max(1));
     let (gate, service, watch_every) = (opts.gate.clone(), service.to_owned(), opts.watch_every.max(Duration::from_millis(10)));
     let task = tokio::spawn(async move {
         while let Some((peer, stream)) = incoming.next().await {
             if opts.allow.as_ref().is_some_and(|a| !a.contains(&peer)) {
                 continue; // pair non autorisé : le flux est refermé
             }
+            // Un même pair ne peut pas occuper tous les emplacements (même refusé par la garde, il en tient un
+            // jusqu'à 5 s) : au plus le quart du total (4 au minimum), pour que les autres pairs passent toujours.
+            let Some(_slot) = PeerSlot::take(&per_peer, peer, per_peer_cap) else { continue };
             let Ok(permit) = limit.clone().try_acquire_owned() else { continue };
             let (target, gate, service) = (target.clone(), gate.clone(), service.clone());
             tokio::spawn(async move {
-                let _permit = permit;
+                let (_permit, _slot) = (permit, _slot);
                 if let Some(gate) = &gate {
                     // Garde injoignable ou trop lente = refus.
                     if !tokio::time::timeout(GATE_TIMEOUT, gate.allow(peer, &service)).await.unwrap_or(false) {
@@ -123,7 +158,7 @@ pub fn expose(handle: &P2pHandle, service: &str, target: String, opts: ExposeOpt
                         tokio::select! {
                             _ = &mut relay => break,
                             _ = tick.tick() => {
-                                // Watchdog : le bail peut expirer en cours de session. Refus, erreur ou lenteur de la
+                                // Watchdog : l'autorisation peut être retirée en cours de session. Refus, erreur ou lenteur de la
                                 // garde coupent la liaison (les deux côtés sont refermés en quittant la boucle).
                                 if let Some(g) = &gate {
                                     if !tokio::time::timeout(GATE_TIMEOUT, g.still_allowed(peer, &service)).await.unwrap_or(false) {

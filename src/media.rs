@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use astro_bro::broker::Publisher;
+use astro_bro::publisher::Publisher;
 use astro_core::ActivityBus;
 use astro_crypto::KeySource;
 use astro_dav::blob::BlobStore;

@@ -350,10 +350,10 @@ curl http://127.0.0.1:8080/health</code></pre></div>
 <h2 id="h-7"><span class="num" aria-hidden="true">7</span> Entrer dans l&#x27;interface web</h2>
 <p>L'application web a quatre écrans : <strong>Tableau de bord</strong>, <strong>Station</strong> (réservé au Capitaine), <strong>uCloud</strong> (vos fichiers et vos photos) et <strong>Visages &amp; BRO</strong>.</p>
 <p>Pour s'y connecter, il faut un compte hébergé par la station (étape 5) et son <strong>jeton</strong>.</p>
-<figure><svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 540" role="img" aria-labelledby="mpe-t mpe-d" width="520" height="540">
+<figure><svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 460" role="img" aria-labelledby="mpe-t mpe-d" width="520" height="460">
 <title id="mpe-t">Schéma de l&#x27;écran MULTIPASS</title>
-<desc id="mpe-d">Le tableau de bord de l&#x27;interface web montre des cartes : solde, autonomie, empreinte sur les communs, souveraineté, puis deux cartes distinctes, Ẑen Opex pour les redevances d&#x27;usage et Ẑen Capex pour les parts d&#x27;investissement, enfin la copie privée et les baux.</desc>
-<rect class="bg" width="520" height="540" rx="14"/>
+<desc id="mpe-d">Le tableau de bord de l&#x27;interface web montre des cartes : solde, autonomie, empreinte sur les communs, souveraineté, puis deux cartes distinctes, Ẑen Opex pour les redevances d&#x27;usage et Ẑen Capex pour les parts d&#x27;investissement, enfin la copie privée.</desc>
+<rect class="bg" width="520" height="460" rx="14"/>
 <text x="260" y="34" class="t m">L&#x27;écran MULTIPASS (schéma)</text>
 <rect class="pan" x="16" y="52" width="488" height="470" rx="12"/>
 <rect class="pan2" x="16" y="52" width="488" height="42" rx="12"/>
@@ -375,16 +375,13 @@ curl http://127.0.0.1:8080/health</code></pre></div>
 <text x="380.0" y="237" class="s m">fichiers chiffrés</text>
 <rect class="wnp" x="28" y="276" width="224" height="70" rx="10"/>
 <text x="140.0" y="300" class="t m">Ẑen Opex</text>
-<text x="140.0" y="321" class="s m">usage : loyer, baux</text>
+<text x="140.0" y="321" class="s m">usage : loyer</text>
 <rect class="okp" x="268" y="276" width="224" height="70" rx="10"/>
 <text x="380.0" y="300" class="t m">Ẑen Capex</text>
 <text x="380.0" y="321" class="s m">parts : capital, amorti</text>
 <rect class="pan" x="28" y="360" width="464" height="70" rx="10"/>
 <text x="260.0" y="384" class="t m">Copie privée (CPI L. 122-5)</text>
 <text x="260.0" y="405" class="s m">attestation avant tout dépôt de film ou série</text>
-<rect class="pan" x="28" y="444" width="464" height="66" rx="10"/>
-<text x="260.0" y="468" class="t m">Baux 1/24e et paliers de disque</text>
-<text x="260.0" y="489" class="s m">ressource · début · durée · payé · statut</text>
 </svg>
 <figcaption>Schéma de l&#x27;écran MULTIPASS : cartes Solde, Autonomie, Empreinte, Souveraineté, Ẑen Opex et Ẑen Capex.</figcaption></figure>
 <div class="cols">
@@ -394,7 +391,7 @@ curl http://127.0.0.1:8080/health</code></pre></div>
 <p>Le même jeton sert de mot de passe pour monter votre cloud en WebDAV (Finder, Explorateur Windows, application mobile) : adresse <code>https://votre-domaine/dav</code>, identifiant = votre email.</p>
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
-<ol><li>Ouvrez la station dans votre navigateur.</li><li>Une fenêtre <strong>Connexion</strong> s'affiche : saisissez votre email (ou votre clé) et le jeton.</li><li>Le <strong>Tableau de bord</strong> montre votre solde en Ẑen, votre autonomie, votre empreinte sur les communs, vos fichiers chiffrés.</li><li>Deux cartes distinctes : <strong>Ẑen Opex</strong> (ce que vous dépensez : loyer, baux) et <strong>Ẑen Capex</strong> (ce que vous possédez : parts de matériel, avec leur amortissement).</li><li>La carte <strong>Copie privée</strong> vous demande d'attester, une fois, que vos films et séries sont des copies pour votre usage privé.</li></ol>
+<ol><li>Ouvrez la station dans votre navigateur.</li><li>Une fenêtre <strong>Connexion</strong> s'affiche : saisissez votre email (ou votre clé) et le jeton.</li><li>Le <strong>Tableau de bord</strong> montre votre solde en Ẑen, votre autonomie, votre empreinte sur les communs, vos fichiers chiffrés.</li><li>Deux cartes distinctes : <strong>Ẑen Opex</strong> (ce que vous dépensez : loyer) et <strong>Ẑen Capex</strong> (ce que vous possédez : parts de matériel, avec leur amortissement).</li><li>La carte <strong>Copie privée</strong> vous demande d'attester, une fois, que vos films et séries sont des copies pour votre usage privé.</li></ol>
 <p>Sur un téléphone, installez la page comme application (menu du navigateur : <em>Ajouter à l'écran d'accueil</em>).</p>
 </div>
 </div>

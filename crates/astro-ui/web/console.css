@@ -1,0 +1,7 @@
+html, body { height: 100%; margin: 0; background: #0b0d12; color: #d7dae0; font: 14px/1.4 system-ui, sans-serif; }
+body { display: flex; flex-direction: column; }
+header { padding: .4rem .8rem; display: flex; gap: .8rem; align-items: center; border-bottom: 1px solid #262a33; }
+#state { color: #9aa3b2; flex: 1; }
+#state.err { color: #ff8a80; }
+button { background: #262a33; color: inherit; border: 1px solid #3a3f4b; border-radius: 6px; padding: .25rem .7rem; cursor: pointer; }
+#term { flex: 1; min-height: 0; padding: .4rem; }

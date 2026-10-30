@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-astro-economy.workspace = true
 image.workspace = true
 kamadak-exif.workspace = true
 webp.workspace = true

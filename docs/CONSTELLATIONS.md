@@ -170,7 +170,7 @@ astroportd serve ... --p2p-forward 127.0.0.1:2222=<PeerID de l'hôte>/ssh
 ssh -p 2222 utilisateur@127.0.0.1
 ```
 
-- Les services de calcul lourd (`comfyui`, `ollama`) sont, eux, **gardés par un bail** : sans bail valide, le flux n'est pas ouvert (`src/lease_gate.rs`).
+- Tout service exposé par `--p2p-expose` passe par une garde de flux. Pour l'instant c'est une garde provisoire qui **refuse tout** (`src/tunnel_gate.rs`) : la politique de tunnels du Capitaine la remplacera. Le partage d'un Brain GPU entre Capitaines relève de l'entraide, pas d'un paiement.
 - `astroportd route <service>` choisit le meilleur nœud de l'essaim (Power-Score, distance, tirage).
 
 ### Ce qu'astroportd ne fait pas encore
@@ -211,4 +211,4 @@ L'écran **Réplication** de l'interface montre, pour vos derniers événements 
 | Création d'un MULTIPASS | ✔ `multipass create`, page `/register` (version allégée) | ✔ `make_NOSTRCARD.sh` (complet : SSSS, QR, zine, ZenCard) |
 | uCloud chiffré, FaceCloud, liens secrets | ✔ | ✔ (version bash/Python) |
 | Relai Nostr avec pare-feu social N¹/N² | ✔ intégré | ✔ strfry + filtres NIP-101 |
-| Économie Ẑen (3×1/3, baux 1/24e de GPU) | ✔ | ✔ |
+| Économie Ẑen (3×1/3, Love Ledger) | ✔ | ✔ |

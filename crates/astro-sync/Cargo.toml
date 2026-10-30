@@ -8,7 +8,6 @@ license.workspace = true
 [dependencies]
 astro-nostr-proto.workspace = true
 astro-db.workspace = true
-astro-economy.workspace = true
 astro-crypto.workspace = true
 astro-dav.workspace = true
 astro-facecloud.workspace = true

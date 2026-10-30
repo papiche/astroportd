@@ -9,11 +9,8 @@ license.workspace = true
 astro-core.workspace = true
 astro-crypto.workspace = true
 astro-db.workspace = true
-astro-economy.workspace = true
-astro-p2p.workspace = true
 astro-nostr-proto.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "sync"] }
-serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true
 sha2.workspace = true

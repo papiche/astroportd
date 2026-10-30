@@ -110,3 +110,23 @@ async fn a_command_line_engine_locks_the_setting() {
     assert!(FaceControl::stored(&db).await.is_none());
     let _ = std::fs::remove_dir_all(d);
 }
+
+#[tokio::test]
+async fn the_task_queue_health_lists_failures_and_retries_them() {
+    use astroportd::station_admin::{tasks_retry, tasks_view};
+    let d = dir("tasks");
+    let db = Arc::new(Db::open(&d.join("u.db"), 2).unwrap());
+    for (kind, status, payload) in [("facecloud", "pending", "{}"), ("facecloud", "failed", "{}"), ("bro.upload", "failed", r#"{"result":{"error":"source injoignable"}}"#), ("bro.upload", "done", "{}")] {
+        db.writer().execute("INSERT INTO tasks(kind, payload, status, created_at) VALUES (?1, ?2, ?3, 100)", vec![kind.to_owned().into(), payload.to_owned().into(), status.to_owned().into()]).await.unwrap();
+    }
+    let v = tasks_view(&db).await.unwrap();
+    let face = v["kinds"].as_array().unwrap().iter().find(|k| k["kind"] == "facecloud").unwrap();
+    assert_eq!((face["pending"].as_i64(), face["failed"].as_i64(), face["oldest_pending"].as_i64()), (Some(1), Some(1), Some(100)));
+    assert_eq!(v["failed"].as_array().unwrap().len(), 2);
+    assert!(v["failed"].as_array().unwrap().iter().any(|f| f["why"].as_str().is_some_and(|w| w.contains("source injoignable"))));
+    let v = tasks_retry(&db, Some("bro.upload")).await.unwrap();
+    assert_eq!(v["retried"], 1);
+    assert_eq!(v["failed"].as_array().unwrap().len(), 1, "seul le genre demandé est relancé");
+    let v = tasks_retry(&db, None).await.unwrap();
+    assert_eq!((v["retried"].as_i64(), v["failed"].as_array().map(Vec::len)), (Some(1), Some(0)));
+}

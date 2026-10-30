@@ -10,7 +10,7 @@ relais Nostr, cloud personnel chiffré, reconnaissance de visages, agent BRO, é
 P2P et interface web — dans **un seul exécutable** de quelques dizaines de Mo, qui tient sur un Raspberry Pi comme
 sur un serveur GPU.
 
-> **Préversion 0.2.0-beta.** Le code est testé de bout en bout (≈ 410 tests, `clippy` sans avertissement) mais jeune :
+> **Préversion 0.2.2-beta.** Le code est testé de bout en bout (≈ 570 tests, `clippy` sans avertissement) mais jeune :
 > lisez [les limites connues](#8-état-du-projet-et-limites-connues). Licence **AGPL-3.0** · Auteur : Fred
 > (support@qo-op.com) · Rust 2024 (≥ 1.85).
 
@@ -173,7 +173,7 @@ de certification choisie pour vous. `astroportd` applique cette phrase à la let
 > *« Le stockage doit être fait à 100 % dans Nostr et IPFS. »*
 
 Il n'existe qu'**une** source de vérité, répliquée par la constellation : les **événements Nostr** (identités, réseau
-social, registre Ğ1-N², tarifs, manifestes) et les **blobs IPFS** (fichiers chiffrés). `uplanet.db` n'est qu'un
+social, registre Ğ1-N², manifestes) et les **blobs IPFS** (fichiers chiffrés). `uplanet.db` n'est qu'un
 **cache rejouable** : on peut la supprimer, puis `astroportd replay` la reconstruit à l'identique depuis les
 événements. Corollaire testé : chaque projection est *indépendante de l'ordre d'arrivée*, donc le temps réel et le
 replay convergent vers le même état.
@@ -221,8 +221,8 @@ couvre plus les charges, la station bascule en **Bénévolat Actif** (Love Ledge
    ┌────────────────────────────  astroportd  ───────────────────────────────────┐
    │  astro-ui  façade HTTPS (ACME, proxy, app web, /health, SSE)                 │
    │  astro-relay  relai Nostr, pare-feu social NIP-42   astro-dav  uCloud chiffré│
-   │  astro-bro  mémoire + courtier   astro-facecloud  visages   astro-plugins    │
-   │  astro-economy  3×1/3, Love Ledger, baux 1/24   astro-lifecycle  comptes     │
+   │  astro-bro  mémoire, bus         astro-facecloud  visages   astro-plugins    │
+   │  astro-economy  3×1/3, Love Ledger              astro-lifecycle  comptes     │
    │  astro-sync  projections & replay    astro-p2p  maillage libp2p, tunnels     │
    ├────────────┬───────────────────────────────┬─────────────────────────────────┤
    │ astro-db   │ astro-crypto · astro-core     │ astro-duniter  (Ğ1, subxt)      │
@@ -241,19 +241,19 @@ Le workspace compte **16 crates** (+ le binaire `astroportd`, qui est aussi une 
 
 | Crate | Rôle |
 |---|---|
-| **`astro-core`** | Socle pur : les 5 formules de crédentiels (`KeyFormula`), dérivations Ğ1/IPFS/Nostr (scrypt, PBKDF2), SS58 préfixe 4450, `Amount` (centimes entiers), semaine ISO, **horloge solaire 20h12**, **bus d'activité** (flux SSE), **télétrafic d'Erlang** (`telemetry`). |
+| **`astro-core`** | Socle pur : les 5 formules de crédentiels (`KeyFormula`), dérivations Ğ1/IPFS/Nostr (scrypt, PBKDF2), SS58 préfixe 4450, `Amount` (centimes entiers), semaine ISO, **horloge solaire 20h12**, **bus d'activité** (flux SSE). |
 | **`astro-crypto`** | Chiffrement des fichiers **UENC v1 (lecture) / v2 (écriture)**, NIP-44 v2, NIP-59 (gift wrap), NIP-98 durci (anti-rejeu, liaison URL/méthode/`payload`), sources de clés. |
 | **`astro-nostr-proto`** | Événements, filtres, messages NIP-01, kinds du projet, signature Schnorr (secp256k1), validation stricte. |
-| **`astro-db`** | `uplanet.db` : schéma, acteur d'écriture unique, pool de lecteurs WAL, recherche vectorielle `sqlite-vec` (mémoire 1024D, visages 512D), stockage des événements (remplaçables, NIP-09, NIP-40), migrations légères. Base créée en `0600`. |
-| **`astro-relay`** | Relai Nostr WebSocket en **pare-feu social** : lecture publique des kinds publics, tout le reste réservé au cercle N1/N2 authentifié (NIP-42) ; NIP-11 ; anti-abus (débit, tailles). |
+| **`astro-db`** | `uplanet.db` : schéma, acteur d'écriture unique, pool de lecteurs WAL, recherche vectorielle `sqlite-vec` (mémoire 1024D, visages 512D), stockage des événements (remplaçables, NIP-09, NIP-40), recherche plein texte NIP-50 par index FTS5 (préfixes, sans accents ni casse, classée par pertinence), migrations légères. Base créée en `0600`. |
+| **`astro-relay`** | Relai Nostr WebSocket en **pare-feu social** : lecture publique des kinds publics, tout le reste réservé au cercle N1/N2 authentifié (NIP-42) ; NIP-11 ; anti-abus (débit, tailles). NIP-01, 09 (suppressions par id et par adresse, sans réinsertion), 11 (avec CORS), 17, 40, 42, 45 (`COUNT`), 50 (`search`), 59 et 70 (événements protégés). |
 | **`astro-sync`** | `Projector` (événement → requêtes SQL, pur et indépendant de l'ordre), `replay`, `Crawler` N² clé par clé, client WebSocket (`ws://`, `wss://` rustls), envoi de messages chiffrés. |
 | **`astro-dav`** | WebDAV classe 1+2 sur uCloud chiffré (GET/Range, PUT en flux, PROPFIND, MKCOL, MOVE, COPY, LOCK, PROPPATCH), manifeste ancré sur Nostr/IPFS, liens d'invité `/s/<slug>#clé` (lecture seule) et **invitations** `/i/<jeton>` (le destinataire crée son MULTIPASS et reçoit les photos), **miniatures WebP**, dépôt hors WebDAV (`ingest`), magasin de blobs (disque / Kubo), **CardDAV** (`carddav` : carnet `/Contacts` chiffré, vCard 3.0/4.0 avec `X-NOSTR-PUBKEY`/`X-G1-PUBKEY`), **films et séries** (`media` : métadonnées TMDB, sondage, plan H.264/AAC, événement NIP-71, attestation de copie privée). |
 | **`astro-facecloud`** | Reconnaissance de visages : file de photos, moteur d'inférence (Brain HTTP ou ONNX local, commutable à chaud), seuils 0,82 / 0,55, partage automatique aux amis réciproques, validation « est-ce X ? ». |
-| **`astro-bro`** | Agent personnel **BRO LifeOS** : mémoire sémantique `bge-m3` 1024D (4 emplacements), **cycle RÊVE** (condensation à 150 souvenirs), garde-fous anti-secrets, bus de commandes par messages privés, **courtier autonome** de GPU. |
+| **`astro-bro`** | Agent personnel **BRO LifeOS** : mémoire sémantique `bge-m3` 1024D (4 emplacements), **cycle RÊVE** (condensation à 150 souvenirs), garde-fous anti-secrets, bus de commandes par messages privés. |
 | **`astro-p2p`** | Maillage libp2p (TCP/QUIC, Noise, Yamux, réseau privé par `swarm.key`, circuit relay, DCUtR), tunnels DRAGON `/x/<service>-<PeerID>` avec **garde par flux et watchdog de session**, échange de blobs, **routage intelligent** (Power-Score, `power`/`closest`/`random`). |
 | **`astro-duniter`** | Client Duniter v2s natif (subxt) : soldes, virements avec mémo, surveillance des transferts, bascule entre nœuds *avant* envoi seulement, signature hors ligne. |
 | **`astro-g1-runtime`** | Métadonnées du runtime Ğ1, compilées à part pour isoler le coût de `subxt`. |
-| **`astro-economy`** | Registre **Ğ1-N²** (kind 30852) validé intégralement, règle des **3×1/3**, **Love Ledger**, **régie des communs** (tarifs, baux 1/24e de GPU, paliers de disque). |
+| **`astro-economy`** | Registre **Ğ1-N²** (kind 30852) validé intégralement, règle des **3×1/3**, **Love Ledger**. |
 | **`astro-lifecycle`** | Détection des identités locales (NODE, Capitaine, MULTIPASS), machine d'état hebdomadaire (loyer → grâce → suspension), reconstruction au replay, déménagement `home:station`. |
 | **`astro-plugins`** | Runtime **WebAssembly isolé** (wasmtime) : aucune capacité, carburant et mémoire bornés, appels sans état. |
 | **`astro-ui`** | Façade web : ACME, TLS, reverse proxy, **application web embarquée** (HTML/CSS/JS sans framework, ≈ 39,5 Ko bruts, **13,0 Ko en Brotli, 14,6 Ko en Gzip**, PWA), API `/api/v1`, `/health`, flux SSE. |
@@ -311,7 +311,6 @@ automatiquement dans `~/.zen/game` (`--game-dir` ou `ASTRO_GAME_DIR`).
 | `astroportd ylevel [--verify]` | Affiche (ou vérifie, code 1 si faux) la correspondance SSH ↔ PeerID IPFS ↔ Ğ1 ↔ Nostr. |
 | `astroportd multipass create <email> [--captain]` / `multipass list` | Crée (et liste) les MULTIPASS de la station ; secrets affichés une seule fois. |
 | `astroportd token <email>` | Jeton de connexion d'un compte hébergé (interface web, clients WebDAV). |
-| `astroportd tariff --gpu 3.50 --disk128 4.00 --db uplanet.db` | Signe et publie la grille tarifaire du nœud (kind 30850), **en Ẑen par semaine**. |
 | `astroportd media --account <email> consent` | Atteste la copie privée (CPI L. 122-5), une fois. `--show` affiche le texte. |
 | `astroportd media --account <email> --db … --blobs … add --file film.mkv --series "Kaamelott" --season 2 --episode 3` | Dépose un film ou un épisode (≤ 1 024 Mo), encode en H.264/AAC (`--transcode auto\|notify`) et publie l'événement vidéo. |
 | `astroportd replay --db uplanet.db [--from ws://relai --hosted <hex>] [--blobs blobs]` | Reconstruit la base depuis les événements (et restaure uCloud depuis les manifestes). |
@@ -325,19 +324,11 @@ automatiquement dans `~/.zen/game` (`--game-dir` ou `ASTRO_GAME_DIR`).
 - **Loyer** : un MULTIPASS paie chaque semaine ; sociétaire : parts validées.
 - **3×1/3** : chaque semaine, le surplus est ventilé (impôt sur les sociétés marginal 15 %/25 % au seuil de 42 500,
   prime du Capitaine 1 % du net, puis trois tiers égaux : trésorerie, R&D, actifs ; le résidu va à la trésorerie).
-- **Baux 1/24e** : un virement Ẑen `t=lease` réserve une part de GPU (24 baux simultanés au plus par nœud) ou un palier
-  de disque. **Tout se loue à la semaine**, GPU comme disque. Une part hebdomadaire donne **1 heure de calcul par
-  jour** (7 h par semaine) : le tunnel `/x/comfyui-*` ou `/x/ollama-*` ne s'ouvre qu'à un bail valide, un **watchdog**
-  le coupe dès que le créneau expire ou que l'heure du jour est consommée.
-- **Prix figé et historique** : le prix est figé dans la transaction. Chaque grille publiée est gardée pour toujours
-  dans `tariffs_history` (jamais purgée) : un bail est jugé au tarif **en vigueur à la date de son virement**, au
-  direct comme après un `replay`, même si le nœud a changé ses prix depuis.
-- **Opex et Capex** : l'écran MULTIPASS sépare les **redevances d'usage** (Ẑen Opex : loyer, baux) des **parts
-  d'investissement matériel** (Ẑen Capex, ZenCard : capital, amorti). Un virement est soit un loyer, soit un bail,
-  jamais les deux.
+- **Ni location ni vente de ressources** : ni disque, ni GPU ne se louent. Le quota d'un compte est un réglage de sa
+  formule (MULTIPASS ou ZenCard) ; le soutien entre Capitaines, GPU compris, passe par l'entraide.
+- **Opex et Capex** : l'écran MULTIPASS sépare les **redevances d'usage** (Ẑen Opex : loyer) des **parts
+  d'investissement matériel** (Ẑen Capex, ZenCard : capital, amorti).
 - **Films et séries** : voir §10.
-- **Courtier autonome** (`--auto-lease`) : une station *sans GPU* dont la file de tâches dépasse 30 s d'attente estimée
-  (Erlang-C) réserve elle-même 1 semaine de GPU chez le Brain le plus proche. C'est une dépense réelle : option explicite.
 
 ---
 
@@ -360,14 +351,14 @@ automatiquement dans `~/.zen/game` (`--game-dir` ou `ASTRO_GAME_DIR`).
 ## 6. Développer sur astroportd
 
 ```bash
-cargo test --workspace      # ~ 390 tests : unitaires, intégration, bout en bout (vraie base, vrai WebDAV, vrais pairs libp2p)
+cargo test --workspace      # ~ 570 tests : unitaires, intégration, bout en bout (vraie base, vrai WebDAV, vrais pairs libp2p)
 cargo clippy --workspace --all-targets
 ```
 
 Conventions : montants en centimes entiers ; une erreur n'est jamais avalée (elle remonte, ou elle est dite sur le bus
 d'activité) ; les décisions qui dépendent de l'état se prennent **en SQL** pour que le replay soit indépendant de
 l'ordre ; tout test hostile (SSRF, boucle infinie, dépassement mémoire) a son cas. Le dossier `tests/` du binaire
-contient les scénarios complets : cycle de vie et économie, interface web, baux et tunnels, `#upload`.
+contient les scénarios complets : cycle de vie et économie, interface web, `#upload`.
 
 ---
 
@@ -444,8 +435,8 @@ en contient, dont des modules *hostiles* (imports interdits, boucle infinie, mé
 
 ## 8. État du projet et limites connues
 
-Livré et testé : relai, uCloud chiffré avec manifeste rejouable et miniatures, FaceCloud, BRO (mémoire, RÊVE, bus,
-courtier), économie 3×1/3 et baux, cycle de vie, maillage P2P et tunnels gardés, plugins Wasm, application web PWA,
+Livré et testé : relai, uCloud chiffré avec manifeste rejouable et miniatures, FaceCloud, BRO (mémoire, RÊVE, bus),
+économie 3×1/3, cycle de vie, maillage P2P et tunnels gardés, plugins Wasm, application web PWA,
 `doctor`.
 
 À connaître :
@@ -459,12 +450,15 @@ courtier), économie 3×1/3 et baux, cycle de vie, maillage P2P et tunnels gard�
 - le client Duniter (`subxt`) n'a été éprouvé que hors ligne : son comportement sur un nœud réel reste à valider ;
 - une nuit de 20h12 manquée n'est rejouée qu'au démarrage et seulement pour la veille et le jour courant ;
 - l'inférence faciale a deux moteurs : un « Brain » HTTP, ou l'inférence **locale** (SCRFD + ArcFace par ONNX Runtime, `--face-models`, binaire compilé avec `--features onnx`, `astroportd face-check` pour diagnostiquer). Le binaire publié sans la fonction `onnx`, et les binaires statiques (musl, `libonnxruntime` introuvable), n'ont que le Brain HTTP ; les modèles ne sont jamais embarqués dans le binaire ;
-- le tarif d'un bail est jugé au tarif en vigueur à la date du virement (`tariffs_history`, jamais purgée) ; le
-  compteur de calcul GPU (1 h/jour, 7 h/semaine ISO) est persisté dans `kv` (`gpu_meter`, `<PeerID>:<AAAA-MM-JJ>` =
-  secondes) : un redémarrage ne le remet pas à zéro ;
+- **tunnels et accès** (`src/tunnel_policy.rs`) : chaque service partagé (`ssh`, `comfyui`, `ollama`, plus ceux de `--p2p-expose`) a un mode réglé par le Capitaine dans Options › Tunnels, à chaud : `off`, `listed` (liste nominative, durée facultative), `friends` (Capitaines amis réciproques + liste), `swarm` (tout le réseau). **SSH est fermé par défaut en ẐEN** et ouvert aux Capitaines amis en ORIGIN ; il est offert au maillage (`--p2p-ssh`, `--p2p-comfyui`, `--p2p-ollama` : `hôte:port`, ou `none` pour ne pas l'offrir ; le relai Nostr n'est pas un tunnel réglable, son pare-feu NIP-42 le protège) mais refusé tant que le Capitaine ne l'a pas ouvert. Le bloc balisé `astroportd` de `~/.ssh/authorized_keys` suit la politique (clé jumelle de chaque pair nommé : elle n'ouvre une session que pour un Capitaine au niveau Y) ; chaque session SSH est journalisée. Retirer un accès coupe les sessions ouvertes (vérification chaque minute) ;
+- **assistance entre Capitaines amis** (`src/assist.rs`) : Options › Tunnels › Assistance. Le Capitaine demande de l'aide pour un service (SSH, ComfyUI, Ollama), pour une durée, à tous ses Capitaines amis ou à un seul (ou au premier qui accepte). **Rien n'est ouvert à l'envoi** : l'accès n'est accordé, à l'ami qui accepte seulement et jusqu'à expiration, que sur sa réponse. Messages NIP-59 entre Capitaines amis réciproques ; une demande expire sans réponse au bout de 48 h ;
+- **console SSH dans l'interface** (`src/forwards.rs`, `src/console.rs`) : sur une aide acceptée, « Se connecter » ouvre à chaud un accès local `127.0.0.1:<port>` vers la station de l'ami (fermé à l'échéance, sans redémarrage ni `--p2p-forward`), puis « Ouvrir la console » lance un terminal xterm.js (MIT, embarqué, chargé à la demande) relié par WebSocket à un `ssh` que **la station** exécute dans un pseudo-terminal. Ticket de 30 s à usage unique délivré au seul Capitaine, `Origin` vérifiée, utilisateur validé, `ssh` sans configuration, agent, redirection ni mot de passe, clé d'hôte retenue par PeerID, session tuée à l'échéance de l'aide. Seule la page `/ui/console.html` assouplit la CSP, et seulement pour les styles (xterm crée des `<style>`).
+- **bibliothèque** (`src/library.rs`, écran `#/library`) : « ce jour-là » (jour du navigateur), chronologie par mois chargée à la demande, recherche à filtres (nom et description, type, personne, dates, zone) paginée par curseur, doublons exacts (SHA-256 du clair) et visuels (dHash 64 bits calculé avec la miniature, distance de Hamming ≤ 6, rattrapé la nuit pour les photos déjà là) avec suppression **confirmée**, et `POST /api/v1/ucloud/have` pour qu'un client n'envoie que ce qui manque. Tout est par compte : un contenu présent chez un autre compte ne se devine jamais.
+- **santé du stockage et des tâches** : à 20h12, `src/integrity.rs` relit par lots les blobs référencés (absents ou corrompus signalés au Capitaine, rien n'est réparé ni supprimé) ; Options › File de traitement montre les tâches en attente, en cours et abandonnées, avec relance.
+- **code identique entre stations** (`src/build_attest.rs`) : chaque station hache son binaire et publie, toutes les 6 h, une attestation signée par son NODE (kind 30853 : version, SHA-256, cible, PeerID). La carte *Constellation* de l'écran du Capitaine compare chaque pair au binaire local : identique, empreinte différente (même version et même cible : à vérifier), autre version, autre plateforme ou non attesté. L'attestation est déclarative : elle repère une dérive honnête, pas une station qui mentirait.
+- **sauvegarde privée** (`src/private_backup.rs`) : un MULTIPASS peut faire héberger ses fichiers non partagés et ses contacts, chiffrés, chez un ami **qui l'accepte** et fixe le volume (compté dans son quota). Envoi une fois par nuit à 20h12, retrait après 7 jours d'un blob dont le fichier a disparu. La restauration n'est pas encore automatisée ;
 - le registre du capital (**ẐEN Capex**) est projeté depuis `.assets[]` du DID du NODE (kind 30800, `d` = PeerID) :
   l'instantané le plus récent remplace le précédent, identique en temps réel et au replay ;
-- un bail contrôle l'ouverture et la durée d'un tunnel, pas son débit.
 
 ---
 

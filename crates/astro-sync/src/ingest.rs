@@ -51,6 +51,7 @@ pub async fn ingest_event(writer: &Writer, event: Event, owner: &str) -> Result<
                 InsertOutcome::Duplicate => Ingested::Duplicate,
                 InsertOutcome::Superseded => Ingested::Superseded,
                 InsertOutcome::Ephemeral => Ingested::Rejected("kind éphémère non stocké"),
+                InsertOutcome::Deleted => Ingested::Rejected("supprimé par son auteur (NIP-09)"),
             })
         })
         .await?;

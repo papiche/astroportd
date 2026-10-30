@@ -47,6 +47,10 @@ pub enum YLevelError {
     /// Clé publique SSH illisible (attendu : `ssh-ed25519 AAAA… [commentaire]`).
     #[error("clé publique SSH illisible : {0}")]
     BadSshKey(&'static str),
+    /// La clé SSH est déjà une clé Y (jumelle de l'identité IPFS ou du portefeuille NODE) mais `secret.june` manque :
+    /// en dériver une nouvelle changerait l'identité de la station sans que le Capitaine le sache.
+    #[error("la clé SSH est déjà la clé Y de la station {0} (secret.june absent) : la dériver à nouveau changerait son identité IPFS, Ğ1 et Nostr")]
+    AlreadyY(String),
     /// `secret.june` présent mais illisible.
     #[error("secret.june illisible : {0}")]
     BadSecretJune(&'static str),
@@ -246,6 +250,18 @@ pub fn ssh_pub_to_peer_id(line: &str) -> Result<String, YLevelError> {
     Ok(bs58::encode(mh).into_string())
 }
 
+/// Ligne de clé publique SSH correspondant à un PeerID ed25519 (`12D3Koo…`) : l'inverse de [`ssh_pub_to_peer_id`].
+/// Elle n'ouvre une session que si la machine de ce Capitaine est au niveau Y (clé SSH jumelle de son IPFSNODEID).
+pub fn peer_id_to_ssh_pub(peer_id: &str, comment: &str) -> Result<String, YLevelError> {
+    let mh = bs58::decode(peer_id).into_vec().map_err(|_| YLevelError::BadSshKey("PeerID illisible"))?;
+    if mh.len() != 38 || !mh.starts_with(&[0x00, 0x24, 0x08, 0x01, 0x12, 0x20]) {
+        return Err(YLevelError::BadSshKey("seul un PeerID ed25519 correspond à une clé SSH"));
+    }
+    let mut public = [0u8; 32];
+    public.copy_from_slice(&mh[6..]);
+    Ok(ssh_public_line(&public, comment))
+}
+
 /// Clé publique Ğ1 (base58) correspondant à une clé publique SSH.
 pub fn ssh_pub_to_g1(line: &str) -> Result<String, YLevelError> {
     Ok(bs58::encode(ssh_pub_to_ed25519(line)?).into_string())
@@ -320,6 +336,22 @@ pub struct InitOptions {
     pub comment: String,
     /// `~/.ipfs/config` de kubo à aligner sur le PeerID (sauvegarde `config.bkp` faite avant).
     pub kubo_config: Option<PathBuf>,
+    /// Accepte de dériver à nouveau une clé SSH qui est déjà une clé Y (nouvelle identité de station). Refusé par défaut.
+    pub rederive: bool,
+}
+
+/// La clé SSH publique existante est-elle déjà jumelle d'une identité de la station ? Rend son PeerID si oui :
+/// kubo annonce ce PeerID, ou le portefeuille `secret.NODE.dunikey` porte cette clé publique Ğ1.
+fn already_y(paths: &Paths, kubo_config: Option<&Path>) -> Option<String> {
+    let line = std::fs::read_to_string(paths.ssh_pub()).ok()?;
+    let peer = ssh_pub_to_peer_id(&line).ok()?;
+    let g1 = ssh_pub_to_g1(&line).ok()?;
+    let kubo = kubo_config
+        .and_then(|c| std::fs::read_to_string(c).ok())
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|j| j["Identity"]["PeerID"].as_str().map(str::to_owned));
+    let wallet = std::fs::read_to_string(paths.node_dunikey()).ok().and_then(|t| dunikey::Dunikey::parse(&t).ok()).map(|d| d.public);
+    (kubo.as_deref() == Some(peer.as_str()) || wallet.as_deref() == Some(g1.as_str())).then_some(peer)
 }
 
 fn write_secret(path: &Path, content: &str, mode: u32) -> Result<(), YLevelError> {
@@ -356,7 +388,8 @@ fn random_seed() -> Result<Zeroizing<[u8; 32]>, YLevelError> {
 
 /// Exécute le rituel. Idempotent : refait sans effet une station déjà conforme.
 ///
-/// 1. secrets : `secret.june` s'il existe, sinon sha512 de `~/.ssh/id_ed25519`, sinon clé d'origine tirée au hasard ;
+/// 1. secrets : `secret.june` s'il existe, sinon sha512 de `~/.ssh/id_ed25519` (refusé si cette clé est déjà une clé Y,
+///    sauf `rederive`), sinon clé d'origine tirée au hasard ;
 /// 2. écrit `secret.june`, `secret.NODE.dunikey`, `secret.nostr` (0600) ;
 /// 3. clé SSH jumelle dans `~/.ssh/id_ed25519` ; l'ancienne est conservée (`origin.key`) ;
 /// 4. facultatif : identité de kubo alignée sur le PeerID.
@@ -368,6 +401,11 @@ pub fn init(paths: &Paths, opts: &InitOptions, now: u64) -> Result<InitReport, Y
         let text = Zeroizing::new(std::fs::read_to_string(paths.secret_june()).map_err(|e| io(&paths.secret_june(), e))?);
         (Secrets::parse_secret_june(&text)?, Source::SecretJune)
     } else if paths.ssh_key().is_file() {
+        if !opts.rederive {
+            if let Some(peer) = already_y(paths, opts.kubo_config.as_deref()) {
+                return Err(YLevelError::AlreadyY(peer));
+            }
+        }
         let bytes = Zeroizing::new(std::fs::read(paths.ssh_key()).map_err(|e| io(&paths.ssh_key(), e))?);
         (Secrets::from_ssh_private_file(&bytes), Source::SshKey)
     } else {
@@ -632,6 +670,35 @@ mod tests {
         let checks = verify(&paths, None);
         let ssh = checks.iter().find(|c| c.name == "SSH").unwrap();
         assert!(!ssh.ok && ssh.detail.contains("origin.key"), "{ssh:?}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_peer_id_gives_back_its_ssh_public_key() {
+        let line = peer_id_to_ssh_pub(PEER, "x").unwrap();
+        assert!(line.starts_with(SSH) && line.ends_with(" x"), "{line}");
+        assert_eq!(ssh_pub_to_peer_id(&line).unwrap(), PEER);
+        assert!(peer_id_to_ssh_pub("QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", "x").is_err(), "un PeerID RSA n'a pas de clé SSH");
+    }
+
+    #[test]
+    fn a_key_that_is_already_y_is_never_rederived_without_consent() {
+        let dir = tmp("already-y");
+        let paths = Paths { game: dir.join("game"), ssh: dir.join("ssh") };
+        // Station déjà au niveau Y, mais `secret.june` perdu : la clé SSH est jumelle du portefeuille NODE.
+        let twin = Secrets::from_ssh_private_file(FILE).twin().unwrap();
+        std::fs::create_dir_all(&paths.ssh).unwrap();
+        std::fs::create_dir_all(&paths.game).unwrap();
+        std::fs::write(paths.ssh.join("id_ed25519"), twin.ssh_private("x").as_bytes()).unwrap();
+        std::fs::write(paths.ssh.join("id_ed25519.pub"), format!("{}\n", twin.ssh_public("x"))).unwrap();
+        std::fs::write(paths.node_dunikey(), twin.dunikey().as_bytes()).unwrap();
+        let before = std::fs::read(paths.ssh.join("id_ed25519")).unwrap();
+        let err = init(&paths, &InitOptions::default(), 1).unwrap_err();
+        assert!(matches!(err, YLevelError::AlreadyY(ref p) if *p == twin.peer_id()), "{err}");
+        assert_eq!(std::fs::read(paths.ssh.join("id_ed25519")).unwrap(), before, "rien n'est modifié");
+        assert!(!paths.secret_june().exists());
+        init(&paths, &InitOptions { rederive: true, ..InitOptions::default() }, 1).unwrap();
+        assert!(paths.secret_june().exists(), "avec consentement, la dérivation a lieu");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

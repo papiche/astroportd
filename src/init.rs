@@ -59,6 +59,9 @@ pub struct InitArgs {
     /// Ne touche pas aux clés SSH (le lien SSH ⇔ IPFS ne sera pas établi).
     #[arg(long)]
     no_ssh: bool,
+    /// Accepte de dériver à nouveau une clé SSH qui est déjà la clé Y de la station : l'identité (IPFS, Ğ1, Nostr) change.
+    #[arg(long)]
+    rederive_y: bool,
     /// `~/.ipfs/config` de kubo à aligner sur le PeerID de la station (sauvegarde `config.bkp`).
     #[arg(long)]
     kubo_config: Option<PathBuf>,
@@ -193,7 +196,7 @@ pub fn init(a: InitArgs) -> Res {
 
     // 0. Horloge : un Raspberry Pi sans pile démarre en 1970.
     if let Err(e) = astro_core::solar::ensure_clock_sane(now()) {
-        println!("⚠  Horloge : {e}\n   Les échéances (20h12 solaire, baux) refuseront de tourner. Réglez l'heure (timedatectl set-ntp true).\n");
+        println!("⚠  Horloge : {e}\n   Les échéances (20h12 solaire) refuseront de tourner. Réglez l'heure (timedatectl set-ntp true).\n");
     }
 
     // 1. Constellation.
@@ -242,7 +245,20 @@ pub fn init(a: InitArgs) -> Res {
     // 2. Identité : rituel Y-Level.
     println!("\n① Rituel Y-Level — la clé SSH, l'identité IPFS, le portefeuille Ğ1 et la clé Nostr de la station ne font qu'un");
     let paths = Paths { game: game.clone(), ssh };
-    let report = ylevel::init(&paths, &InitOptions { no_ssh: a.no_ssh, comment: format!("astroportd@{}", hostname()), kubo_config: a.kubo_config.clone() }, now())?;
+    let mut rederive = a.rederive_y;
+    let report = loop {
+        let opts = InitOptions { no_ssh: a.no_ssh, comment: format!("astroportd@{}", hostname()), kubo_config: a.kubo_config.clone(), rederive };
+        match ylevel::init(&paths, &opts, now()) {
+            Err(e @ ylevel::YLevelError::AlreadyY(_)) if !a.yes && !rederive => {
+                println!("   ⚠ {e}.\n     Pour garder votre identité, retrouvez `secret.june` (SALT/PEPPER) dans ~/.zen/game ou une sauvegarde.");
+                if ask.ask("Dériver quand même une NOUVELLE identité ? (oui/non)", "non") != "oui" {
+                    return Err("Y-Level interrompu : identité existante conservée, rien n'a été modifié".into());
+                }
+                rederive = true;
+            }
+            other => break other?,
+        }
+    };
     let how = match report.source {
         Source::SecretJune => "secret.june existant (il fait foi, rien n'est recalculé)",
         Source::SshKey => "dérivée de votre clé SSH existante",

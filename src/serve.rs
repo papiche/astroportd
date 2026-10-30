@@ -28,7 +28,7 @@ use clap::Args;
 
 use crate::identity;
 use astroportd::station::{self, StationDeps, StationInfo, StationServices};
-use astroportd::lease_gate::{LeaseGate, resource_for};
+use astroportd::tunnel_policy::{PolicyGate, TunnelPolicy};
 use astroportd::ui_backend::StationUi;
 use astroportd::upload_worker::{Notify, UploadWorker};
 
@@ -110,16 +110,25 @@ pub struct ServeArgs {
     /// Servir de relais (circuit relay v2) aux stations derrière une box.
     #[arg(long)]
     p2p_relay_server: bool,
-    /// Laisse ouverts à tout le maillage les services GPU (`comfyui`, `ollama`) : sans cette option, un flux n'est
-    /// accepté que d'un pair qui détient un bail `gpu_1_24` valide (voir `astroportd tariff`).
-    #[arg(long)]
-    p2p_free_gpu: bool,
     /// Réserver une place de relais chez ce pair (station derrière une box).
     #[arg(long = "p2p-use-relay")]
     p2p_use_relay: Vec<Multiaddr>,
     /// Exposer un service local dans le maillage : `nom=hôte:port` (ex. `ssh=127.0.0.1:22`). Répétable.
     #[arg(long = "p2p-expose")]
     p2p_expose: Vec<String>,
+    /// Service SSH offert au maillage, derrière la politique de tunnels (fermé par défaut en ẐEN, ouvert aux Capitaines amis en
+    /// ORIGIN, réglable dans l'écran du Capitaine) : `hôte:port`, ou `none` pour ne pas l'offrir.
+    #[arg(long = "p2p-ssh", default_value = "127.0.0.1:22")]
+    p2p_ssh: String,
+    /// Service ComfyUI (images) offert aux Capitaines autorisés : `hôte:port`, ou `none`.
+    #[arg(long = "p2p-comfyui", default_value = "127.0.0.1:8188")]
+    p2p_comfyui: String,
+    /// Service Ollama (IA) offert aux Capitaines autorisés : `hôte:port`, ou `none`.
+    #[arg(long = "p2p-ollama", default_value = "127.0.0.1:11434")]
+    p2p_ollama: String,
+    /// Dossier SSH dont `authorized_keys` suit la politique de `ssh` (défaut : `~/.ssh`).
+    #[arg(long = "ssh-dir")]
+    ssh_dir: Option<PathBuf>,
     /// Joindre le service d'un pair depuis un port local : `bind=PeerID/nom` (ex. `127.0.0.1:2222=12D3Koo…/ssh`).
     #[arg(long = "p2p-forward")]
     p2p_forward: Vec<String>,
@@ -175,13 +184,6 @@ pub struct ServeArgs {
     /// Longitude de la station.
     #[arg(long, allow_hyphen_values = true, requires = "lat")]
     lon: Option<f64>,
-    /// Active le courtier autonome : une station **sans GPU** dont la file GPU s'allonge (attente estimée > 30 s)
-    /// réserve 1 h de GPU 1/24 chez le Brain le plus proche par un virement Ẑen signé. Dépense réelle : opt-in.
-    #[arg(long)]
-    auto_lease: bool,
-    /// Prix maximal accepté par le courtier autonome, en centimes de Ẑen par semaine.
-    #[arg(long, default_value_t = 500)]
-    auto_lease_max_price: u64,
     /// Ferme l'inscription web d'un MULTIPASS (`/register`), ouverte par défaut.
     #[arg(long)]
     no_register: bool,
@@ -209,14 +211,14 @@ fn default_swarm_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".zen/tmp/swarm"))
 }
 
-/// Publication des virements du courtier : relai local puis relais de la constellation ; réussi dès qu'un relai accepte.
-pub(crate) struct LeasePublisher {
+/// Publication des événements signés de la station : relai local puis relais de la constellation ; réussi dès qu'un relai accepte.
+pub(crate) struct EventPublisher {
     relay: Arc<Relay>,
     client: WsClient,
     relays: Vec<String>,
 }
 
-impl astro_bro::broker::Publisher for LeasePublisher {
+impl astro_bro::publisher::Publisher for EventPublisher {
     async fn publish(&self, event: Event) -> Result<(), String> {
         let (mut accepted, mut notes) = (false, Vec::new());
         let (ok, msg) = self.relay.publish_local(&event).await;
@@ -302,6 +304,11 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     }
     let activity = ActivityBus::new();
     activity.publish("system", "astroportd", format!("station démarrée (v{})", env!("CARGO_PKG_VERSION")), None);
+    // Politique des tunnels : qui ouvre quel service (SSH fermé par défaut, sauf en ORIGIN), réglée par le Capitaine.
+    let ssh_managed = a.p2p_ssh != "none";
+    let ssh_dir = ssh_managed.then(|| a.ssh_dir.clone().or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ssh")))).flatten();
+    let tunnel_policy = TunnelPolicy::load(db.clone(), a.swarm_key.is_none(), ssh_dir, activity.clone()).await;
+    let mut exposed_names: Vec<String> = a.p2p_expose.iter().filter_map(|s| s.split_once('=').map(|(n, _)| n.to_owned())).collect();
     let local = Arc::new(AutoBlobStore::new(a.kubo.as_deref().map(KuboBlobStore::new), FsBlobStore::open(&a.blobs)?));
 
     let node_hex = match (&station.discovered, &station.node_secret) {
@@ -309,7 +316,6 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
         (None, Some(secret)) => pubkey_of(secret)?,
         (None, None) => String::new(),
     };
-    let activity_for_gate = activity.clone();
 
     // Maillage P2P (facultatif).
     let mut p2p_guards: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
@@ -336,17 +342,20 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
             }
         }
         p2p_guards.push(Box::new(serve_blobs(&handle, local.clone(), ServeOpts::default())?));
-        for spec in &a.p2p_expose {
-            let (name, target) = spec.split_once('=').ok_or("--p2p-expose attend nom=hôte:port")?;
-            // Les services GPU ne s'ouvrent qu'aux détenteurs d'un bail valide (sauf `--p2p-free-gpu`).
-            let mut opts = ExposeOpts::default();
-            if resource_for(name).is_some() && !a.p2p_free_gpu {
-                if node_hex.is_empty() {
-                    return Err(format!("« {name} » exige un bail : la clé Nostr du NODE est introuvable (--game-dir) ; ou --p2p-free-gpu").into());
-                }
-                opts.gate = Some(Arc::new(LeaseGate::new(db.clone(), node_hex.clone(), Some(activity_for_gate.clone()))));
-                println!("P2P : {name} réservé aux détenteurs d'un bail gpu_1_24");
+        let mut specs: Vec<String> = a.p2p_expose.clone();
+        // Les trois services partagés entre Capitaines : SSH, ComfyUI, Ollama (chacun derrière la politique des tunnels).
+        for (name, target) in [("ssh", &a.p2p_ssh), ("comfyui", &a.p2p_comfyui), ("ollama", &a.p2p_ollama)] {
+            if target != "none" && !specs.iter().any(|s| s.split_once('=').is_some_and(|(n, _)| n == name)) {
+                specs.push(format!("{name}={target}"));
+                exposed_names.push(name.to_owned());
             }
+        }
+        for spec in &specs {
+            let (name, target) = spec.split_once('=').ok_or("--p2p-expose attend nom=hôte:port")?;
+            // Chaque flux passe par la politique du Capitaine (voir l'écran Options › Tunnels) : rien n'est ouvert sans elle.
+            let opts = ExposeOpts { gate: Some(Arc::new(PolicyGate::new(tunnel_policy.clone()))), ..ExposeOpts::default() };
+            let mode = tunnel_policy.rule(name).mode;
+            println!("P2P : {name} exposé, accès « {mode:?} » (réglable dans l'interface du Capitaine)");
             p2p_guards.push(Box::new(expose(&handle, name, target.to_owned(), opts)?));
         }
         for spec in &a.p2p_forward {
@@ -375,8 +384,9 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     let policy = astroportd::station_admin::KindsControl::initial_policy(&db, &conf_path).await;
     let relay = Relay::new(db.clone(), circle, RelayConfig { projection: Some(Arc::new(Projector::plan_lossy)), policy, ..RelayConfig::default() });
     let kinds_control = Arc::new(astroportd::station_admin::KindsControl::new(db.clone(), &conf_path, relay.clone()));
-    // Le relai est aussi offert au maillage (`/x/strfry-<PeerID>`, le nom de DRAGON) par une écoute locale : les autres
-    // stations le joignent par `ipfs p2p`, sans port public ni domaine. La politique de lecture (NIP-42) reste celle du relai.
+    // Le relai est aussi offert au maillage par une écoute locale (`/x/strfry-<PeerID>`, le nom de DRAGON) : c'est le transport
+    // que les autres stations, même derrière une box, utilisent pour le lire, sans port public ni domaine. Ce n'est pas un
+    // tunnel réglable : la politique de lecture (pare-feu social NIP-42) reste celle du relai.
     if let Some(handle) = &p2p_handle {
         if a.p2p_expose.iter().any(|s| s.split_once('=').is_some_and(|(n, _)| n == astro_sync::peers::RELAY_SERVICE)) {
             println!("P2P : le service « {} » est déjà exposé par --p2p-expose", astro_sync::peers::RELAY_SERVICE);
@@ -389,7 +399,6 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
         }
     }
     let mut dav_config = DavConfig::new(station_secret);
-    dav_config.lease_node = (!node_hex.is_empty()).then(|| node_hex.clone()); // un bail de disque relève le quota
     if let Some(domain) = a.domains.first() {
         dav_config.public_base_url = Some(format!("https://{domain}")); // liaison NIP-98 derrière notre propre TLS
     }
@@ -414,6 +423,8 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     let account_keys = keys.clone();
     let invites_keys = keys.clone();
     let inbox_keys = keys.clone();
+    let backup_keys = keys.clone();
+    let assist_keys = keys.clone();
     // Sans option : si les deux modèles sont aux emplacements habituels (et le binaire compilé avec `onnx`), l'inférence locale
     // s'active toute seule ; `astroportd face-check` dit ce qui manque.
     // Moteur FaceID : une option de ligne de commande l'impose (réglage figé dans l'interface) ; sinon le choix du Capitaine
@@ -485,6 +496,7 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
         println!("FaceCloud actif ({})", face_label.as_deref().unwrap_or("moteur arrêté : réglable par le Capitaine"));
     }
     let inbox_blobs = blobs.clone();
+    let backup_blobs = blobs.clone();
     let dav = Arc::new(DavState { db: db.clone(), blobs, replay, publisher: Some(publisher.clone()), config: dav_config, on_upload });
     // Annuaire : fiches vCard de /Contacts ↔ visages ↔ MULTIPASS (CardDAV est servi par le routeur WebDAV).
     let links = Arc::new(astroportd::identity_links::IdentityLinks::new(db.clone(), dav.clone(), share_fn, Some(activity.clone())));
@@ -522,7 +534,7 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     let peer_id = p2p_handle.as_ref().map(|h| h.peer_id().to_string()).or_else(|| station.discovered.as_ref().map(|d| d.node.peer_id.clone()));
     let services_peer = peer_id.clone();
     let info = StationInfo { node_hex: node_hex.clone(), peer_id, domain: a.domains.first().cloned(), started: std::time::Instant::now() };
-    let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: station.nostr_dir.clone(), chain, hardware, p2p: p2p_handle.clone(), weekly_rent_cents: a.weekly_rent, activity: activity.clone(), swarm_dir: a.swarm_dir.clone().or_else(default_swarm_dir), origin: a.lat.zip(a.lon), exposed: a.p2p_expose.iter().filter_map(|s| s.split_once('=').map(|(n, _)| n.to_owned())).collect() }));
+    let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: station.nostr_dir.clone(), chain, hardware, p2p: p2p_handle.clone(), weekly_rent_cents: a.weekly_rent, activity: activity.clone(), swarm_dir: a.swarm_dir.clone().or_else(default_swarm_dir), origin: a.lat.zip(a.lon), exposed: exposed_names.clone() }));
     println!("matériel : {}", station::hardware_text(&hardware, None));
     let mut background: Vec<tokio::task::JoinHandle<()>> = vec![tokio::spawn(watch_relay(relay.subscribe(), activity.clone(), stop_watch.clone()))];
     {
@@ -562,28 +574,26 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
         }));
         background.push(tokio::spawn(bus.run(Duration::from_secs(a.bus_poll_secs.max(1)), stop_watch.clone())));
     }
-    // Publication des événements signés (courtier, santé économique, vidéos) : relai local puis relais.
+    // Publication des événements signés (santé économique, vidéos) : relai local puis relais.
     let event_publisher = {
         let mut client = WsClient::new(Duration::from_secs(30));
         if let Some(s) = signer.clone() {
             client = client.with_signer(s);
         }
-        Arc::new(LeasePublisher { relay: relay.clone(), client, relays: a.relays.clone() })
+        Arc::new(EventPublisher { relay: relay.clone(), client, relays: a.relays.clone() })
     };
     let node_publisher = station.node_secret.as_ref().map(|_| event_publisher.clone());
-    // Courtier autonome (opt-in) : réserve du GPU quand la file d'une station sans GPU s'allonge.
-    if a.auto_lease {
-        match (&station.node_secret, &node_publisher) {
-            (Some(secret), Some(publisher)) => {
-                let config = astro_bro::broker::BrokerConfig { max_unit_price_cents: a.auto_lease_max_price, ..Default::default() };
-                let broker = Arc::new(astro_bro::broker::Broker::new(db.clone(), **secret, hardware.vram_gb > 0.0, config, publisher.clone(), Some(activity.clone()))?);
-                let (dir, origin) = (a.swarm_dir.clone().or_else(default_swarm_dir), a.lat.zip(a.lon));
-                let swarm: astro_bro::broker::SwarmSource = Arc::new(move || (dir.as_deref().map(astro_p2p::routing::read_swarm_dir).unwrap_or_default(), origin));
-                println!("BRO : courtier autonome actif (GPU {}, plafond {} centimes/sem.)", if hardware.vram_gb > 0.0 { "local : inactif" } else { "absent : achat si file critique" }, a.auto_lease_max_price);
-                background.push(tokio::spawn(broker.run(Duration::from_secs(15), swarm, stop_watch.clone())));
+    // Attestation de build : empreinte du binaire, publiée par le NODE pour que les autres stations la comparent à la leur.
+    match tokio::task::spawn_blocking(astroportd::build_attest::BuildInfo::current).await {
+        Ok(Ok(info)) => {
+            println!("Build : {} {} ({})", info.version, &info.sha256[..16], info.target);
+            services.set_build(info.clone());
+            if let Some(secret) = station.node_secret.as_ref() {
+                background.push(tokio::spawn(astroportd::build_attest::run(info, services_peer.clone(), **secret, event_publisher.clone(), stop_watch.clone())));
             }
-            _ => return Err("--auto-lease exige la clé Nostr du NODE (--game-dir)".into()),
         }
+        Ok(Err(e)) => eprintln!("Build : empreinte du binaire illisible ({e}) : attestation désactivée"),
+        Err(e) => eprintln!("Build : empreinte du binaire non calculée : {e}"),
     }
     // Envoi de fichiers aux proches et réception de ceux qu'ils envoient depuis d'autres stations (blob rapatrié par le maillage).
     let sharing = Arc::new(astroportd::sharing::Sharing::new(db.clone(), sharing_keys, mesh_outbox.clone(), Some(publisher.clone()), services_peer.clone()));
@@ -602,6 +612,45 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
         background.push(tokio::spawn(Arc::new(inbox).run(Duration::from_secs(20), stop_watch.clone())));
         println!("partage : fichiers des proches reçus par le maillage (un passage toutes les 20 s)");
     }
+    // Sauvegarde privée chez un ami : le proche doit accepter ; le blob part chiffré, sans sa clé.
+    let backup = {
+        let mut b = astroportd::private_backup::PrivateBackup::new(db.clone(), backup_keys, mesh_outbox.clone(), backup_blobs, sharing.clone(), activity.clone()).with_station(Some(publisher.clone()), services_peer.clone()).with_notify(notify.clone());
+        if let Some(handle) = p2p_handle.clone() {
+            let local = local.clone();
+            b = b.with_prefetch(Arc::new(move |cid: String, peer: String| {
+                let (handle, local) = (handle.clone(), local.clone());
+                Box::pin(async move {
+                    let peer: astro_p2p::PeerId = peer.parse().map_err(|e| format!("PeerID illisible : {e}"))?;
+                    astro_p2p::blob::fetch_blob(&handle, &[peer], &cid, local.as_ref(), 1 << 30, Duration::from_secs(120)).await.map(|_| ()).map_err(|e| e.to_string())
+                })
+            }));
+        }
+        Arc::new(b)
+    };
+    // Assistance entre Capitaines amis : demande, réponse ; l'accès n'est ouvert que lorsqu'un ami accepte.
+    let assist = Arc::new(astroportd::assist::Assist::new(db.clone(), assist_keys, mesh_outbox.clone(), tunnel_policy.clone(), exposed_names.clone(), services_peer.clone(), activity.clone()).with_notify(notify.clone()));
+    background.push(tokio::spawn(assist.clone().run(Duration::from_secs(30), stop_watch.clone())));
+    // Les accès temporaires expirent, les amis changent : `authorized_keys` suit la politique toutes les 5 minutes.
+    {
+        let (policy, mut stop) = (tunnel_policy.clone(), stop_watch.clone());
+        background.push(tokio::spawn(async move {
+            loop {
+                let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+                if let Err(e) = policy.sync_ssh(at).await {
+                    eprintln!("tunnels : authorized_keys non mis à jour : {e}");
+                }
+                tokio::select! {
+                    () = tokio::time::sleep(Duration::from_secs(300)) => {}
+                    changed = stop.changed() => {
+                        if changed.is_err() || *stop.borrow() {
+                            return;
+                        }
+                    }
+                }
+            }
+        }));
+    }
+    background.push(tokio::spawn(backup.clone().run(Duration::from_secs(60), stop_watch.clone())));
     // Rattrapage du GPS et de la date de prise de vue des photos reçues avant que la station ne les lise : 25 fichiers par
     // compte et par passage, chacun lu une seule fois ; le rythme s'accélère tant qu'il en reste.
     {
@@ -810,6 +859,26 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
                         Box::pin(async move { astro_dav::share::purge_expired(&dav.db, &*dav.blobs, i64::try_from(now).unwrap_or(0)).await.map(|n| format!("{n} lien(s) d'invité expiré(s) supprimé(s)")).map_err(|e| e.to_string()) })
                     })
                 };
+                let backup_night: astroportd::solar_cron::Hook = {
+                    let backup = backup.clone();
+                    Arc::new(move |_| {
+                        let backup = backup.clone();
+                        Box::pin(async move { backup.sync_night().await })
+                    })
+                };
+                let integrity_night: astroportd::solar_cron::Hook = {
+                    let integrity = Arc::new(astroportd::integrity::Integrity::new(db.clone(), local.clone(), Some(activity.clone())));
+                    let dav = dav.clone();
+                    Arc::new(move |now| {
+                        let (integrity, dav) = (integrity.clone(), dav.clone());
+                        Box::pin(async move {
+                            // Rattrapage des empreintes visuelles des photos déjà là (doublons), puis contrôle des blobs.
+                            let hashed = astro_dav::thumb::backfill_phash(&dav.db, &*dav.blobs, 500).await.map_err(|e| format!("empreintes visuelles : {e}"))?;
+                            let report = integrity.run(now).await?;
+                            Ok(if hashed > 0 { format!("{report} ; {hashed} empreinte(s) visuelle(s) calculée(s)") } else { report })
+                        })
+                    })
+                };
                 let snapshot_dir = a.snapshot_dir.clone().unwrap_or_else(|| a.db.parent().map_or_else(|| PathBuf::from("snapshots"), |p| p.join("snapshots")));
                 let nightly = Arc::new(astroportd::solar_cron::Nightly {
                     db: db.clone(),
@@ -821,6 +890,8 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
                     split: astro_economy::split::SplitConfig::default(),
                     purge_shares: Some(purge_shares),
                     dream,
+                    backup: Some(backup_night),
+                    integrity: Some(integrity_night),
                     publisher: node_publisher.clone(),
                     activity: Some(activity.clone()),
                 });
@@ -867,7 +938,7 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
         let publisher = event_publisher.clone();
         let publish: astroportd::register::PublishFn = Arc::new(move |e| {
             let p = publisher.clone();
-            Box::pin(async move { astro_bro::broker::Publisher::publish(&*p, e).await })
+            Box::pin(async move { astro_bro::publisher::Publisher::publish(&*p, e).await })
         });
         let captain = station.discovered.as_ref().and_then(|d| d.captain()).map(|m| m.hex.clone());
         let limits = astroportd::register::Limits { open: !a.no_register, max_accounts: a.max_accounts, per_ip_per_hour: a.register_per_hour };
@@ -885,7 +956,7 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
         let relays = event_publisher.clone();
         let publish: astroportd::register::PublishFn = Arc::new(move |e| {
             let p = relays.clone();
-            Box::pin(async move { astro_bro::broker::Publisher::publish(&*p, e).await })
+            Box::pin(async move { astro_bro::publisher::Publisher::publish(&*p, e).await })
         });
         Arc::new(astroportd::invites::Invites::new(db.clone(), dav.blobs.clone(), invites_keys, registrar.clone(), publish).with_links(links.clone()).with_publisher(publisher.clone()).with_activity(activity.clone()).with_remote(sharing.clone()))
     };
@@ -893,12 +964,66 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
         let publisher = event_publisher.clone();
         Arc::new(move |e| {
             let p = publisher.clone();
-            Box::pin(async move { astro_bro::broker::Publisher::publish(&*p, e).await })
+            Box::pin(async move { astro_bro::publisher::Publisher::publish(&*p, e).await })
+        })
+    };
+    let forwards = Arc::new(astroportd::forwards::Forwards::new(p2p_handle.clone()));
+    let ssh_home = a.ssh_dir.clone().or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ssh")));
+    let identity = ssh_home.as_ref().map(|d| d.join("id_ed25519")).filter(|p| p.exists());
+    let known_hosts = a.db.parent().map_or_else(|| PathBuf::from("console_known_hosts"), |p| p.join("console_known_hosts"));
+    let consoles = Arc::new(astroportd::console::Consoles::new(identity, known_hosts, Some(activity.clone())));
+    let consoles_ui = consoles.clone();
+    let assist_admin: astroportd::ui_backend::AdminFn = {
+        let assist = assist.clone();
+        Arc::new(move |_section, body| {
+            let (assist, forwards, consoles) = (assist.clone(), forwards.clone(), consoles.clone());
+            Box::pin(async move {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+                let with_local = |mut view: serde_json::Value| {
+                    let open = forwards.list(now);
+                    if let Some(rows) = view["incoming"].as_array_mut() {
+                        for r in rows {
+                            r["local"] = open.iter().find(|o| r["id"].as_str() == Some(o.0.as_str())).map_or(serde_json::Value::Null, |o| serde_json::json!({ "addr": o.1.to_string(), "until": o.2 }));
+                        }
+                    }
+                    view
+                };
+                let Some(b) = body else { return assist.view().await.map(with_local) };
+                match b["action"].as_str() {
+                    Some("connect") => {
+                        let id = b["id"].as_str().unwrap_or("");
+                        let (station, service, hours) = assist.accepted_incoming(id).await.ok_or("demande introuvable ou pas encore acceptée")?;
+                        forwards.open(id, &station, &service, now + hours * 3600, now).await?;
+                        assist.view().await.map(with_local)
+                    }
+                    Some("console") => {
+                        let id = b["id"].as_str().unwrap_or("");
+                        let (station, _, _) = assist.accepted_incoming(id).await.ok_or("demande introuvable ou pas encore acceptée")?;
+                        let (_, addr, until) = forwards.list(now).into_iter().find(|o| o.0 == id).ok_or("ouvrez d'abord l'accès local (Se connecter)")?;
+                        let ticket = consoles.ticket(addr, b["user"].as_str().unwrap_or(""), &station, until)?;
+                        Ok(serde_json::json!({ "ticket": ticket }))
+                    }
+                    Some("disconnect") => {
+                        forwards.close(b["id"].as_str().unwrap_or(""));
+                        assist.view().await.map(with_local)
+                    }
+                    Some("request") => {
+                        let sent = assist.request(b["service"].as_str().unwrap_or(""), b["hours"].as_i64().unwrap_or(0), b["note"].as_str().unwrap_or(""), b["to"].as_str().filter(|t| !t.is_empty()), b["exclusive"].as_bool().unwrap_or(false)).await?;
+                        let mut view = assist.view().await?;
+                        view["sent"] = sent["sent"].clone();
+                        view["error"] = sent["error"].clone();
+                        Ok(view)
+                    }
+                    Some("respond") => assist.respond(b["id"].as_str().unwrap_or(""), b["other"].as_str().unwrap_or(""), b["accept"].as_bool().unwrap_or(false)).await,
+                    Some("cancel") => assist.cancel(b["id"].as_str().unwrap_or("")).await,
+                    _ => Err("action attendue : request, respond, cancel, connect ou disconnect".to_owned()),
+                }
+            })
         })
     };
     let account_origin = a.domains.first().map(|d| format!("https://{d}"));
-    let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_consent(consent_fn).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone())))
-        .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control }).handler());
+    let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_console(consoles_ui).with_consent(consent_fn).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone())))
+        .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), assist: Some(assist_admin), tasks: Some(db.clone()) }).handler());
     if let Some(f) = thumbs_fn {
         ui = ui.with_face_thumbs(f);
     }
@@ -928,6 +1053,21 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
             Box::pin(async move { sharing.send(&owner, &paths, &to).await })
         });
         ui = ui.with_sharing(friends, send);
+        let (b1, b2, b3) = (backup.clone(), backup.clone(), backup.clone());
+        ui = ui.with_backup(astroportd::ui_backend::BackupFns {
+            status: Arc::new(move |owner: String| {
+                let b = b1.clone();
+                Box::pin(async move { b.status(&owner).await })
+            }),
+            set: Arc::new(move |owner: String, enabled: bool, host: Option<String>| {
+                let b = b2.clone();
+                Box::pin(async move { b.set(&owner, enabled, host.as_deref()).await })
+            }),
+            respond: Arc::new(move |host: String, owner: String, accept: bool, quota: u64, max: u64| {
+                let b = b3.clone();
+                Box::pin(async move { b.respond(&host, &owner, accept, quota, max).await })
+            }),
+        });
     }
     let ui = Arc::new(ui);
 

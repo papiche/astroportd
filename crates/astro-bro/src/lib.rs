@@ -6,8 +6,7 @@
 //!   plus récents), purge atomique ;
 //! - [`guard`] : ce qui ne doit **jamais** entrer en mémoire (clés, mots de passe, IBAN…) ;
 //! - [`ollama`] : embeddings et résumés par Ollama (HTTP), derrière les traits [`Embedder`] et [`Summarizer`] ;
-//! - [`broker`] : courtier autonome — une station sans GPU dont la file s'allonge (modèle d'Erlang-C) réserve une heure
-//!   de calcul chez le Brain le plus proche, par un virement Ẑen signé ;
+//! - [`publisher`] : le trait [`Publisher`], publication d'un événement signé ;
 //! - [`bus`] : bus de commandes par messages privés NIP-59 adressés à la station (solde, statut, documents).
 //!
 //! Aucune erreur n'est avalée : un embedding indisponible ou un résumé vide interrompt l'opération **sans rien
@@ -15,17 +14,18 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
-pub mod broker;
 pub mod bus;
 pub mod guard;
 pub mod memory;
 pub mod ollama;
+pub mod publisher;
 pub mod reve;
 #[cfg(test)]
 mod testkit;
 
 pub use memory::{Memory, MemoryStore, Meta, Recalled, Remembered, Slot};
 pub use ollama::{Embedder, HashingEmbedder, OllamaClient, Summarizer};
+pub use publisher::Publisher;
 pub use reve::{DreamReport, REVE_KEEP, REVE_THRESHOLD};
 
 /// Erreurs de BRO.

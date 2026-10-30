@@ -174,7 +174,7 @@ impl<B: BlobStore> UploadWorker<B> {
         let (Some(owner), Some(source)) = (v["owner"].as_str(), v["source"].as_str()) else { return Err(Failure::Permanent("tâche incomplète".into())) };
         let wanted_name = v["name"].as_str().filter(|n| !n.trim().is_empty()).map(str::to_owned);
         let account = astro_dav::auth::lookup_by_hex(&self.dav.db, owner).await.ok_or_else(|| Failure::Permanent("compte non hébergé ici".into()))?;
-        let max = self.dav.limits_for(&account).await.max_file;
+        let max = self.dav.config.limits(account.tier).max_file;
 
         let job = async {
             if is_cid(source) {

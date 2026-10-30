@@ -130,7 +130,7 @@ impl WsClient {
                     send(&mut ws, ClientMessage::Req { sub_id: "crawl".into(), filters: vec![filter.clone()] }.to_json()).await?;
                 }
                 RelayMessage::Closed { message, .. } => return Err(ClientError::Closed(message)),
-                RelayMessage::Notice(_) | RelayMessage::Ok { .. } => {}
+                RelayMessage::Notice(_) | RelayMessage::Ok { .. } | RelayMessage::Count { .. } => {}
             }
         }
     }

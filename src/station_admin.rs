@@ -122,7 +122,7 @@ pub async fn load_local_engine(dir: &Path, threads: usize) -> Result<AnyFaceEngi
 /// Sans la fonction `onnx`, l'inférence locale n'existe pas.
 #[cfg(not(feature = "onnx"))]
 pub async fn load_local_engine(_: &Path, _: usize) -> Result<AnyFaceEngine, String> {
-    Err("ce binaire est compilé sans la fonction `onnx` (cargo build --release --features onnx)".into())
+    Err("cette version d'astroportd n'inclut pas la reconnaissance locale (ONNX) : installez la version « onnx » (cargo build --release --features onnx)".into())
 }
 
 impl FaceControl {
@@ -326,6 +326,43 @@ pub struct Admin {
     pub face: Arc<FaceControl>,
     /// Matrice des kinds.
     pub kinds: Arc<KindsControl>,
+    /// Politique des tunnels P2P et services qu'elle règle.
+    pub tunnels: Option<(Arc<crate::tunnel_policy::TunnelPolicy>, Vec<String>)>,
+    /// Demandes d'assistance entre Capitaines amis (lecture et actions).
+    pub assist: Option<AdminFn>,
+    /// Base, pour la santé de la file de tâches.
+    pub tasks: Option<Arc<Db>>,
+}
+
+/// Santé de la file `tasks` : par genre de tâche, combien attendent, tournent, ont réussi ou ont été abandonnées, et les
+/// dernières abandonnées avec leur raison. Une tâche abandonnée n'est jamais perdue en silence : le Capitaine la voit ici.
+pub async fn tasks_view(db: &Db) -> Result<Value, String> {
+    db.readers()
+        .read(|c| {
+            let mut stmt = c.prepare("SELECT kind, COALESCE(SUM(status = 'pending'), 0), COALESCE(SUM(status = 'running'), 0), COALESCE(SUM(status = 'done'), 0), COALESCE(SUM(status = 'failed'), 0), MIN(CASE WHEN status = 'pending' THEN created_at END) FROM tasks GROUP BY kind ORDER BY kind")?;
+            let kinds = stmt
+                .query_map([], |r| Ok(json!({ "kind": r.get::<_, String>(0)?, "pending": r.get::<_, i64>(1)?, "running": r.get::<_, i64>(2)?, "done": r.get::<_, i64>(3)?, "failed": r.get::<_, i64>(4)?, "oldest_pending": r.get::<_, Option<i64>>(5)? })))?
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut stmt = c.prepare("SELECT id, kind, attempts, created_at, json_extract(payload, '$.result.error'), json_extract(payload, '$.result') FROM tasks WHERE status = 'failed' ORDER BY id DESC LIMIT 20")?;
+            let failed = stmt
+                .query_map([], |r| {
+                    let why: Option<String> = r.get::<_, Option<String>>(4)?.or(r.get::<_, Option<String>>(5)?);
+                    Ok(json!({ "id": r.get::<_, i64>(0)?, "kind": r.get::<_, String>(1)?, "attempts": r.get::<_, i64>(2)?, "created_at": r.get::<_, i64>(3)?, "why": why.map(|w| w.chars().take(200).collect::<String>()) }))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(json!({ "kinds": kinds, "failed": failed }))
+        })
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Remet en file les tâches abandonnées (`kind` précis, ou toutes) avec un compteur d'essais remis à zéro.
+pub async fn tasks_retry(db: &Db, kind: Option<&str>) -> Result<Value, String> {
+    let sql = if kind.is_some() { "UPDATE tasks SET status = 'pending', attempts = 0, not_before = NULL WHERE status = 'failed' AND kind = ?1" } else { "UPDATE tasks SET status = 'pending', attempts = 0, not_before = NULL WHERE status = 'failed' AND ?1 IS NULL" };
+    let n = db.writer().execute(sql, vec![kind.map_or(rusqlite::types::Value::Null, |k| k.to_owned().into())]).await.map_err(|e| e.to_string())?.changes;
+    let mut view = tasks_view(db).await?;
+    view["retried"] = json!(n);
+    Ok(view)
 }
 
 impl Admin {
@@ -339,6 +376,26 @@ impl Admin {
                     ("face", Some(b)) => me.face.set(&b).await,
                     ("kinds", None) => Ok(me.kinds.view().await),
                     ("kinds", Some(b)) => me.kinds.set(&b).await,
+                    ("assist", body) => match &me.assist {
+                        Some(f) => f(section, body).await,
+                        None => Err("assistance non activée sur cette station".to_owned()),
+                    },
+                    ("tasks", body) => {
+                        let db = me.tasks.as_ref().ok_or("file de tâches indisponible")?;
+                        match body {
+                            None => tasks_view(db).await,
+                            Some(b) if b["action"] == "retry" => tasks_retry(db, b["kind"].as_str().filter(|k| !k.is_empty())).await,
+                            Some(_) => Err("action attendue : retry".to_owned()),
+                        }
+                    }
+                    ("tunnels", body) => {
+                        let (policy, exposed) = me.tunnels.as_ref().ok_or("tunnels P2P non activés sur cette station")?;
+                        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+                        match body {
+                            None => Ok(policy.view(exposed, at).await),
+                            Some(b) => policy.set(&b, exposed, at).await,
+                        }
+                    }
                     _ => Err(format!("section inconnue : {section}")),
                 }
             })

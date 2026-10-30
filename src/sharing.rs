@@ -189,7 +189,10 @@ impl<O: Outbox> Sharing<O> {
                     }
                 };
                 match result {
-                    Ok(()) => sent += 1,
+                    Ok(()) => {
+                        sent += 1;
+                        astro_dav::adopt::mark_shared(&self.db, owner, vec![file.cid.clone()], "friend").await;
+                    }
                     Err(e) => errors.push(e),
                 }
             }

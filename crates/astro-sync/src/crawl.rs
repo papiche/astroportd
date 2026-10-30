@@ -37,7 +37,7 @@ impl Default for CrawlConfig {
     fn default() -> Self {
         Self {
             relays: Vec::new(),
-            kinds: vec![0, 1, 3, 1063, 10_002, 30_023, 30_800, 30_850, 30_851, 30_852],
+            kinds: vec![0, 1, 3, 1063, 10_002, 30_023, 30_800, 30_850, 30_851, 30_852, 30_853],
             page_size: 500,
             max_pages: 20,
             overlap_secs: 3600,

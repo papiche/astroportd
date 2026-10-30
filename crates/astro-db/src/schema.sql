@@ -45,6 +45,24 @@ CREATE INDEX IF NOT EXISTS ne_author  ON nostr_events(pubkey, kind, created_at D
 CREATE UNIQUE INDEX IF NOT EXISTS ne_replaceable
   ON nostr_events(pubkey, kind, d_tag) WHERE d_tag IS NOT NULL;
 
+-- Recherche plein texte NIP-50 : index FTS5 « sans contenu » (le texte reste dans `nostr_events`), tenu à jour par
+-- triggers pour que toute insertion, remplacement, suppression NIP-09 ou purge d'expiration le suive. Les messages
+-- chiffrés (kinds 4 et 1059) ne sont pas indexés. `nostr_fts_ids` fait le lien entre l'identifiant d'événement et
+-- le rowid de l'index. Reconstructible : `astro_db::events::rebuild_search_index`.
+CREATE TABLE IF NOT EXISTS nostr_fts_ids (
+  rowid INTEGER PRIMARY KEY,
+  id    TEXT NOT NULL UNIQUE
+) STRICT;
+CREATE VIRTUAL TABLE IF NOT EXISTS nostr_fts USING fts5(content, content='', contentless_delete=1, tokenize='unicode61 remove_diacritics 2');
+CREATE TRIGGER IF NOT EXISTS nostr_fts_ai AFTER INSERT ON nostr_events WHEN new.kind NOT IN (4, 1059) BEGIN
+  INSERT INTO nostr_fts_ids(id) VALUES (new.id);
+  INSERT INTO nostr_fts(rowid, content) VALUES (last_insert_rowid(), new.content);
+END;
+CREATE TRIGGER IF NOT EXISTS nostr_fts_ad AFTER DELETE ON nostr_events BEGIN
+  DELETE FROM nostr_fts WHERE rowid IN (SELECT rowid FROM nostr_fts_ids WHERE id = old.id);
+  DELETE FROM nostr_fts_ids WHERE id = old.id;
+END;
+
 CREATE TABLE IF NOT EXISTS nostr_tags (
   event_id TEXT NOT NULL REFERENCES nostr_events(id) ON DELETE CASCADE,
   name     TEXT NOT NULL,              -- d, p, e, t, g
@@ -70,7 +88,7 @@ CREATE TABLE IF NOT EXISTS identities (
   key_formula  TEXT NOT NULL DEFAULT 'isolated'
                CHECK (key_formula IN ('isolated','legacy','raw','concat_swarm','coop_prefix')),
   home_station TEXT,                   -- '<IPFSNODEID>:<NODE_HEX>'
-  peer_id      TEXT,                   -- PeerID libp2p d'un NODE (flux P2P → bénéficiaire d'un bail)
+  peer_id      TEXT,                   -- PeerID libp2p d'un NODE (flux P2P → NODE)
   contract     TEXT CHECK (contract IN ('active_rental','cooperative_member') OR contract IS NULL),
   status       TEXT,                   -- contractStatus brut du DID
   hosted       INTEGER NOT NULL DEFAULT 0 CHECK (hosted IN (0,1)),  -- 1 = hébergé ici (état LOCAL, jamais écrasé par un DID)
@@ -314,43 +332,6 @@ CREATE TABLE IF NOT EXISTS private_copy_consent (
   src_event   TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
--- Régie des communs : tarifs publiés par un nœud (kind 30850, d = tariffs) et baux payés (kind 30852, t = lease).
-CREATE TABLE IF NOT EXISTS tariffs (
-  node_hex     TEXT NOT NULL,
-  resource     TEXT NOT NULL,          -- disk_10gb | disk_128gb | disk_256gb | gpu_1_24
-  price_cents  INTEGER NOT NULL CHECK (price_cents > 0),   -- centimes de Ẑen par unité
-  unit         TEXT NOT NULL CHECK (unit IN ('hour', 'week')),
-  effective_at INTEGER NOT NULL,
-  src_event    TEXT,
-  PRIMARY KEY (node_hex, resource)
-) STRICT, WITHOUT ROWID;
-
--- Historique immuable des grilles : jamais purgé ; un bail est jugé au tarif en vigueur à la date de son virement.
-CREATE TABLE IF NOT EXISTS tariffs_history (
-  node_hex     TEXT NOT NULL,
-  resource     TEXT NOT NULL,
-  price_cents  INTEGER NOT NULL CHECK (price_cents > 0),
-  unit         TEXT NOT NULL CHECK (unit IN ('hour', 'week')),
-  effective_at INTEGER NOT NULL,
-  src_event    TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (node_hex, resource, effective_at, src_event)
-) STRICT, WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS resource_leases (
-  src_event    TEXT PRIMARY KEY,       -- virement 30852 qui a payé le bail
-  beneficiary  TEXT NOT NULL,          -- payeur (hex)
-  node         TEXT NOT NULL,          -- nœud qui loue (hex)
-  resource     TEXT NOT NULL,
-  start_at     INTEGER NOT NULL,
-  end_at       INTEGER NOT NULL,       -- exclue
-  units        INTEGER NOT NULL,
-  paid_cents   INTEGER NOT NULL,
-  unit_price_cents INTEGER NOT NULL DEFAULT 0,   -- prix unitaire FIGÉ dans la transaction (le tarif courant n'y change rien)
-  status       TEXT NOT NULL CHECK (status IN ('active', 'underpaid', 'unpriced', 'full', 'invalid', 'revoked'))
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS rl_access ON resource_leases(node, resource, status, start_at, end_at);
-CREATE INDEX IF NOT EXISTS rl_beneficiary ON resource_leases(beneficiary, start_at DESC);
-
 -- Permis Oracle (kinds 30500-30504).
 CREATE TABLE IF NOT EXISTS permit_defs (
   id                  TEXT PRIMARY KEY,
@@ -434,6 +415,68 @@ CREATE TABLE IF NOT EXISTS claimed (
   event_id TEXT NOT NULL,
   at       INTEGER NOT NULL,
   PRIMARY KEY (owner, event_id)
+) STRICT, WITHOUT ROWID;
+
+-- Suppressions NIP-09 : empêchent de réinsérer un événement supprimé par son auteur. `ref` est un identifiant d'événement
+-- (`until` = i64::MAX) ou l'adresse `kind:pubkey:d` d'un événement remplaçable (bloque les versions jusqu'à `until`).
+CREATE TABLE IF NOT EXISTS nostr_deleted (
+  pubkey TEXT NOT NULL,
+  ref    TEXT NOT NULL,
+  until  INTEGER NOT NULL,
+  PRIMARY KEY (pubkey, ref)
+) STRICT, WITHOUT ROWID;
+
+-- Demandes d'assistance entre Capitaines amis (état LOCAL). `direction` : `out` (je demande de l'aide, une ligne par ami
+-- sollicité) ou `in` (un ami me la demande). `status` : pending, accepted, declined, closed (déjà aidé ou annulée), expired.
+CREATE TABLE IF NOT EXISTS assist_requests (
+  id         TEXT NOT NULL,
+  direction  TEXT NOT NULL CHECK (direction IN ('out','in')),
+  captain    TEXT NOT NULL,          -- mon Capitaine (clé Nostr)
+  other      TEXT NOT NULL,          -- l'ami (clé Nostr)
+  service    TEXT NOT NULL,
+  hours      INTEGER NOT NULL,
+  note       TEXT NOT NULL DEFAULT '',
+  exclusive  INTEGER NOT NULL DEFAULT 0,
+  station    TEXT,                   -- PeerID de la station de celui qui demande (sens `in`)
+  status     TEXT NOT NULL CHECK (status IN ('pending','accepted','declined','closed','expired')),
+  created_at INTEGER NOT NULL,
+  decided_at INTEGER,
+  PRIMARY KEY (id, direction, other)
+) STRICT, WITHOUT ROWID;
+
+-- Niveau de partage des fichiers du uCloud (état LOCAL) : un fichier absent de cette table, des invitations, des partages
+-- FaceCloud et du dossier /Partages n'a jamais quitté son propriétaire : il est « privé » et sauvegardable chez un ami.
+CREATE TABLE IF NOT EXISTS ucloud_sharing (
+  owner_hex TEXT NOT NULL,
+  cid       TEXT NOT NULL,
+  kind      TEXT NOT NULL CHECK (kind IN ('friend','link','invite')),
+  at        INTEGER NOT NULL,
+  PRIMARY KEY (owner_hex, cid, kind)
+) STRICT, WITHOUT ROWID;
+
+-- Sauvegarde privée chez un ami (état LOCAL, une ligne par couple propriétaire/hébergeur, tenue par chaque station concernée).
+-- `status` : décision de l'hébergeur, qui fixe aussi le volume (`quota_bytes`) ; `enabled` : choix du propriétaire.
+CREATE TABLE IF NOT EXISTS backup_pacts (
+  owner_hex   TEXT NOT NULL,
+  host_hex    TEXT NOT NULL,
+  status      TEXT NOT NULL CHECK (status IN ('pending','accepted','declined','revoked')),
+  quota_bytes INTEGER NOT NULL DEFAULT 0,
+  enabled     INTEGER NOT NULL DEFAULT 0,
+  asked_at    INTEGER NOT NULL,
+  decided_at  INTEGER,
+  PRIMARY KEY (owner_hex, host_hex)
+) STRICT, WITHOUT ROWID;
+
+-- Blobs chiffrés déjà envoyés (côté propriétaire) ou rangés (côté hébergeur) ; `size` en octets de clair. Un blob dont le
+-- fichier a disparu chez le propriétaire est retiré de chez l'ami après 7 jours (nettoyage de 20h12).
+CREATE TABLE IF NOT EXISTS backup_items (
+  owner_hex TEXT NOT NULL,
+  host_hex  TEXT NOT NULL,
+  cid       TEXT NOT NULL,
+  size      INTEGER NOT NULL,
+  at        INTEGER NOT NULL,
+  missing_since INTEGER,                    -- côté propriétaire : depuis quand le fichier n'existe plus chez lui
+  PRIMARY KEY (owner_hex, host_hex, cid)
 ) STRICT, WITHOUT ROWID;
 
 -- Journaux bornés (activité, audit ARBOR, requêtes d'outils).

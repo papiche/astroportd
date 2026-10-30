@@ -83,6 +83,21 @@ pub struct Rendered {
     pub ow: u32,
     /// Hauteur de l'original.
     pub oh: u32,
+    /// Empreinte perceptuelle dHash 64 bits (entier signé) : deux images presque identiques ont des empreintes proches
+    /// en distance de Hamming (recadrage, recompression, redimensionnement).
+    pub phash: i64,
+}
+
+/// dHash 64 bits : l'image réduite à 9×8 niveaux de gris, un bit par comparaison d'un pixel à son voisin de droite.
+pub fn dhash(img: &DynamicImage) -> i64 {
+    let tiny = image::imageops::resize(&img.to_luma8(), 9, 8, image::imageops::FilterType::Triangle);
+    let mut bits = 0u64;
+    for y in 0..8 {
+        for x in 0..8 {
+            bits = (bits << 1) | u64::from(tiny.get_pixel(x, y).0[0] > tiny.get_pixel(x + 1, y).0[0]);
+        }
+    }
+    i64::from_ne_bytes(bits.to_ne_bytes())
 }
 
 /// Les types d'images dont on sait faire une miniature.
@@ -107,12 +122,13 @@ pub fn render(src: &[u8]) -> Result<Rendered, ThumbError> {
     let (ow, oh) = (img.width(), img.height());
     let small = if ow.max(oh) > MAX_EDGE { img.thumbnail(MAX_EDGE, MAX_EDGE) } else { img };
     let (w, h) = (small.width(), small.height());
+    let phash = dhash(&small);
     let rgba = small.to_rgba8();
     let webp = webp::Encoder::from_rgba(&rgba, w, h).encode(QUALITY).to_vec();
     if webp.is_empty() {
         return Err(ThumbError::Encode("sortie vide"));
     }
-    Ok(Rendered { webp, w, h, ow, oh })
+    Ok(Rendered { webp, w, h, ow, oh, phash })
 }
 
 /// Ligne lue pour un fichier : CID, type MIME, taille, clé de fichier.
@@ -125,6 +141,38 @@ fn existing(conn: &rusqlite::Connection, owner: &str, cid: &str) -> rusqlite::Re
         .optional()?
         .flatten();
     Ok(json.and_then(|j| serde_json::from_str(&j).ok()))
+}
+
+/// Calcule l'empreinte perceptuelle des images qui ont déjà une miniature mais pas d'empreinte (photos antérieures à la
+/// détection des doublons visuels), à partir de la **miniature** (320 px, déjà petite : pas de décodage de l'original).
+/// Traite au plus `limit` images et rend le nombre d'empreintes posées ; à rappeler jusqu'à ce qu'il n'en reste plus.
+pub async fn backfill_phash<B: BlobStore>(db: &astro_db::Db, blobs: &B, limit: i64) -> Result<usize, ThumbError> {
+    type Todo = (String, String, String, String);
+    let todo: Vec<Todo> = db
+        .readers()
+        .read(move |c| {
+            let mut stmt = c.prepare(
+                "SELECT e.owner_hex, e.cid, json_extract(e.data, '$.thumb.cid'), k.key_hex FROM ucloud_entries e \
+                 JOIN ucloud_keyring k ON k.owner_hex = e.owner_hex AND k.cid = json_extract(e.data, '$.thumb.cid') \
+                 WHERE e.type = 'file' AND e.phash IS NULL AND e.cid IS NOT NULL AND json_extract(e.data, '$.thumb.cid') IS NOT NULL GROUP BY e.owner_hex, e.cid LIMIT ?1",
+            )?;
+            let rows = stmt.query_map([limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await?;
+    let mut done = 0;
+    for (owner, cid, thumb_cid, key_hex) in todo {
+        let Ok(key) = UencKey::from_hex(&key_hex) else { continue };
+        let Ok((mut reader, _)) = blobs.open(&thumb_cid).await else { continue };
+        let mut webp = Vec::new();
+        if uenc::decrypt_stream(&key, &mut reader, &mut webp).await.is_err() {
+            continue;
+        }
+        let Ok(Ok(hash)) = tokio::task::spawn_blocking(move || image::load_from_memory_with_format(&webp, image::ImageFormat::WebP).map(|img| dhash(&img))).await else { continue };
+        db.writer().execute("UPDATE ucloud_entries SET phash = ?3 WHERE owner_hex = ?1 AND cid = ?2 AND phash IS NULL", vec![owner.into(), cid.into(), hash.into()]).await?;
+        done += 1;
+    }
+    Ok(done)
 }
 
 /// Génère (ou rattache) la miniature du fichier `path` de `owner`. `Ok(None)` : rien à faire (pas une image prise
@@ -172,6 +220,7 @@ pub async fn generate<B: BlobStore>(st: &Arc<DavState<B>>, owner: &str, path: &s
             let mut blob = st.blobs.begin().await?;
             uenc::encrypt_stream(&tkey, Cipher::detect(), &mut rendered.webp.as_slice(), &mut blob).await?;
             let meta = blob.commit().await?;
+            let phash = rendered.phash;
             let info = ThumbInfo { cid: meta.cid.clone(), w: rendered.w, h: rendered.h, ow: rendered.ow, oh: rendered.oh, size: rendered.webp.len() as u64 };
             let (o, c, i, k) = (owner.to_owned(), cid.clone(), serde_json::to_string(&info).unwrap_or_default(), tkey.to_hex());
             let attached = st
@@ -187,8 +236,8 @@ pub async fn generate<B: BlobStore>(st: &Arc<DavState<B>>, owner: &str, path: &s
                     tx.execute("UPDATE ucloud_entries SET data = json_set(data, '$.thumb', json(?3)) WHERE owner_hex = ?1 AND cid = ?2", params![o, c, i])?;
                     // Jamais d'écrasement : une position ou une date déjà notées (import, saisie) gardent la priorité.
                     tx.execute(
-                        "UPDATE ucloud_entries SET lat = COALESCE(lat, ?3), lon = COALESCE(lon, ?4), taken_at = COALESCE(taken_at, ?5), data = json_set(data, '$.exif_scanned', 1) WHERE owner_hex = ?1 AND cid = ?2",
-                        params![o, c, exif_meta.lat, exif_meta.lon, exif_meta.taken_at],
+                        "UPDATE ucloud_entries SET lat = COALESCE(lat, ?3), lon = COALESCE(lon, ?4), taken_at = COALESCE(taken_at, ?5), phash = COALESCE(phash, ?6), data = json_set(data, '$.exif_scanned', 1) WHERE owner_hex = ?1 AND cid = ?2",
+                        params![o, c, exif_meta.lat, exif_meta.lon, exif_meta.taken_at, phash],
                     )?;
                     Ok(true)
                 })
@@ -209,8 +258,8 @@ pub async fn generate<B: BlobStore>(st: &Arc<DavState<B>>, owner: &str, path: &s
     st.db
         .writer()
         .execute(
-            "UPDATE ucloud_entries SET lat = COALESCE(lat, s.lat), lon = COALESCE(lon, s.lon), taken_at = COALESCE(taken_at, s.taken_at), data = json_set(data, '$.exif_scanned', 1) \
-             FROM (SELECT lat, lon, taken_at FROM ucloud_entries WHERE owner_hex = ?1 AND cid = ?3 AND (lat IS NOT NULL OR taken_at IS NOT NULL) LIMIT 1) s \
+            "UPDATE ucloud_entries SET lat = COALESCE(lat, s.lat), lon = COALESCE(lon, s.lon), taken_at = COALESCE(taken_at, s.taken_at), phash = COALESCE(ucloud_entries.phash, s.phash), data = json_set(data, '$.exif_scanned', 1) \
+             FROM (SELECT lat, lon, taken_at, phash FROM ucloud_entries WHERE owner_hex = ?1 AND cid = ?3 AND (lat IS NOT NULL OR taken_at IS NOT NULL OR phash IS NOT NULL) LIMIT 1) s \
              WHERE ucloud_entries.owner_hex = ?1 AND ucloud_entries.path = ?2",
             vec![o.into(), p.into(), cid.clone().into()],
         )
@@ -329,6 +378,23 @@ mod tests {
         assert_eq!((t.w, t.h, t.ow, t.oh), (100, 60, 100, 60));
         assert!(matches!(render(b"ceci n'est pas une image"), Err(ThumbError::Image(_))));
         assert!(matches!(render(&[]), Err(ThumbError::Image(_))));
+    }
+
+    #[test]
+    fn dhash_survives_resizing_and_recompression_but_not_a_different_picture() {
+        // Dégradé diagonal avec un motif : la signature suit la structure, pas la taille.
+        let make = |w: u32, h: u32, flip: bool| {
+            let img = RgbImage::from_fn(w, h, |x, y| {
+                let (u, v) = (x * 255 / w, y * 255 / h);
+                let g = if flip { 255 - ((u * 3 + v) / 4) as u8 } else { ((u * 3 + v) / 4) as u8 };
+                Rgb([g, g / 2, 255 - g])
+            });
+            DynamicImage::ImageRgb8(img)
+        };
+        let (a, small, other) = (dhash(&make(640, 480, false)), dhash(&make(160, 120, false)), dhash(&make(640, 480, true)));
+        let dist = |x: i64, y: i64| (x ^ y).count_ones();
+        assert!(dist(a, small) <= 4, "même image réduite : {}", dist(a, small));
+        assert!(dist(a, other) >= 20, "image différente : {}", dist(a, other));
     }
 
     #[test]

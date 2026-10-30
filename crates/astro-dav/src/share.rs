@@ -131,6 +131,8 @@ pub async fn create_guest_link<B: BlobStore>(db: &Db, blobs: &B, owner: &str, pa
         return Err(ShareError::TooMany);
     }
 
+    let originals: Vec<String> = files.iter().filter_map(|(_, e)| e.cid.clone()).collect();
+
     // 2. Clé du lien ; chaque fichier est déchiffré (clé du propriétaire) puis rechiffré (clé du lien) en flux.
     let link_key = UencKey::generate()?;
     let mut items = Vec::new();
@@ -167,6 +169,7 @@ pub async fn create_guest_link<B: BlobStore>(db: &Db, blobs: &B, owner: &str, pa
             vec![SCOPE.to_owned().into(), slug.clone().into(), record.into(), now.into()],
         )
         .await?;
+    crate::adopt::mark_shared(db, owner, originals, "link").await;
     Ok(GuestLink { path: format!("/s/{slug}"), slug, key_hex: link_key.to_hex(), expires_at, items: items.len() })
 }
 

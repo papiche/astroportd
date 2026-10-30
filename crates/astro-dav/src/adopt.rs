@@ -78,6 +78,41 @@ pub async fn adopt_shared_file(db: &Db, recipient: &str, sender_hex: &str, label
     .await
 }
 
+/// Note que `cids` du compte `owner` ont quitté leur propriétaire (`kind` : `friend`, `link` ou `invite`) : ils ne sont plus « privés ».
+pub async fn mark_shared(db: &Db, owner: &str, cids: Vec<String>, kind: &'static str) {
+    let owner = owner.to_owned();
+    let _ = vfs_tx(db, move |tx| {
+        for cid in &cids {
+            tx.execute("INSERT OR IGNORE INTO ucloud_sharing(owner_hex, cid, kind, at) VALUES (?1, ?2, ?3, ?4)", params![owner, cid, kind, now()])?;
+        }
+        Ok(())
+    })
+    .await;
+}
+
+/// Range chez `host` un blob **chiffré** sauvegardé par `owner_hex` sous `/Sauvegardes/De_<label>/<cid>`. Aucune clé n'est
+/// enregistrée : l'hébergeur ne peut pas le lire. Le blob compte dans le quota de l'hébergeur (entrée de `size` octets).
+pub async fn adopt_backup_blob(db: &Db, host: &str, owner_hex: &str, label: &str, cid: &str, size: u64) -> Result<String, VfsError> {
+    let (host, owner_hex, cid) = (host.to_owned(), owner_hex.to_owned(), cid.to_owned());
+    let dir = format!("/Sauvegardes/De_{}", sender_label(Some(label), &owner_hex));
+    vfs_tx(db, move |tx| {
+        for d in ["/Sauvegardes", dir.as_str()] {
+            match vfs::mkdir_tx(tx, &host, d, now()) {
+                Ok(()) | Err(VfsError::Exists) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        let target = format!("{dir}/{cid}");
+        let data = serde_json::json!({ "type": "file", "cid": cid, "enc": "uenc2", "mime": "application/octet-stream", "size_plain": size, "mtime": now(), "backup_of": owner_hex }).to_string();
+        tx.execute(
+            "INSERT OR REPLACE INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, origin, data) VALUES (?1, ?2, ?3, 'file', ?4, 'application/octet-stream', ?5, ?6, 'backup', ?7)",
+            params![host, target, vfs::parent_of(&target), cid, i64::try_from(size).unwrap_or(0), now(), data],
+        )?;
+        Ok(target)
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

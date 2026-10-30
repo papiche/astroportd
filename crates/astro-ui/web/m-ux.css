@@ -1,0 +1,13 @@
+/* Petits écrans : un tableau devient une pile de fiches, chaque cellule portant le nom de sa colonne (m-ux.js pose data-l). */
+@media (max-width: 40rem) {
+  table, tbody, tr, td { display: block; }
+  caption { display: block; }
+  thead { position: absolute; left: -99rem; }
+  tr { border-top: 1px solid var(--line); padding: .4rem 0; }
+  tr:first-child { border-top: 0; }
+  td { border: 0; padding: .15rem 0; display: flex; gap: .8rem; justify-content: space-between; align-items: center; text-align: right; overflow-wrap: anywhere; }
+  td::before { content: attr(data-l); color: var(--muted); text-align: left; flex: none; }
+  td:empty { display: none; }
+}
+
+.bar input:not([type=checkbox]), .bar select { width: auto; flex: 1 1 11rem; min-width: 0; }

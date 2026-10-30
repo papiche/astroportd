@@ -2,7 +2,6 @@
 //!
 //! - [`formula`] : les cinq formules de crédentiels (`KeyFormula`) et leur détection.
 //! - [`kdf`] : scrypt Duniter, dérivations Ğ1 / IPFS / Nostr, étirement PBKDF2 de la clé LOVE.
-//! - [`telemetry`] : formules d'Erlang-B / Erlang-C et diagnostic de charge des parts de GPU ;
 //! - [`solar`] : équation du temps de Spencer, prochain 20h12 solaire vrai, garde-fou d'horloge.
 //!
 //! Chaque dérivation est vérifiée contre la sortie réelle de `tools/keygen` (voir `tests/`).
@@ -14,7 +13,6 @@ pub mod amount;
 pub mod formula;
 pub mod kdf;
 pub mod solar;
-pub mod telemetry;
 pub mod week;
 
 pub use activity::{Activity, ActivityBus, Audience};

@@ -40,6 +40,13 @@ pub enum ClientMessage {
     Close(String),
     /// Réponse au défi NIP-42.
     Auth(Event),
+    /// Décompte (NIP-45).
+    Count {
+        /// Identifiant de la requête.
+        sub_id: String,
+        /// Filtres (OU logique).
+        filters: Vec<Filter>,
+    },
 }
 
 impl ClientMessage {
@@ -57,6 +64,11 @@ impl ClientMessage {
                 let filters = arr[2..].iter().map(Filter::from_value).collect::<Result<Vec<_>, _>>()?;
                 Ok(Self::Req { sub_id, filters })
             }
+            "COUNT" => {
+                let sub_id = sub_id_at(arr, 1)?;
+                let filters = arr[2..].iter().map(Filter::from_value).collect::<Result<Vec<_>, _>>()?;
+                Ok(Self::Count { sub_id, filters })
+            }
             other => Err(MessageError::Unknown(other.chars().take(32).collect())),
         }
     }
@@ -69,6 +81,11 @@ impl ClientMessage {
             Self::Close(id) => json!(["CLOSE", id]),
             Self::Req { sub_id, filters } => {
                 let mut a = vec![json!("REQ"), json!(sub_id)];
+                a.extend(filters.iter().map(Filter::to_value));
+                Value::Array(a)
+            }
+            Self::Count { sub_id, filters } => {
+                let mut a = vec![json!("COUNT"), json!(sub_id)];
                 a.extend(filters.iter().map(Filter::to_value));
                 Value::Array(a)
             }
@@ -109,6 +126,15 @@ pub enum RelayMessage {
     Notice(String),
     /// Défi d'authentification NIP-42.
     Auth(String),
+    /// Réponse à un `COUNT` (NIP-45).
+    Count {
+        /// Identifiant de la requête.
+        sub_id: String,
+        /// Nombre d'événements.
+        count: u64,
+        /// Le décompte s'est arrêté à la limite du relai : le vrai nombre est au moins celui-ci.
+        approximate: bool,
+    },
 }
 
 impl RelayMessage {
@@ -121,6 +147,7 @@ impl RelayMessage {
             Self::Closed { sub_id, message } => json!(["CLOSED", sub_id, message]),
             Self::Notice(m) => json!(["NOTICE", m]),
             Self::Auth(c) => json!(["AUTH", c]),
+            Self::Count { sub_id, count, approximate } => json!(["COUNT", sub_id, if *approximate { json!({ "count": count, "approximate": true }) } else { json!({ "count": count }) }]),
         }
         .to_string()
     }
@@ -144,6 +171,7 @@ impl RelayMessage {
             "CLOSED" => Ok(Self::Closed { sub_id: s(1)?, message: s(2).unwrap_or_default() }),
             "NOTICE" => Ok(Self::Notice(s(1)?)),
             "AUTH" => Ok(Self::Auth(s(1)?)),
+            "COUNT" => Ok(Self::Count { sub_id: s(1)?, count: arr.get(2).and_then(|c| c["count"].as_u64()).ok_or(MessageError::Malformed("décompte attendu"))?, approximate: arr.get(2).and_then(|c| c["approximate"].as_bool()).unwrap_or(false) }),
             other => Err(MessageError::Unknown(other.chars().take(32).collect())),
         }
     }

@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 540" role="img" aria-labelledby="mpe-t mpe-d" width="520" height="540">
+<svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 460" role="img" aria-labelledby="mpe-t mpe-d" width="520" height="460">
 <title id="mpe-t">Schéma de l&#x27;écran MULTIPASS</title>
-<desc id="mpe-d">Le tableau de bord de l&#x27;interface web montre des cartes : solde, autonomie, empreinte sur les communs, souveraineté, puis deux cartes distinctes, Ẑen Opex pour les redevances d&#x27;usage et Ẑen Capex pour les parts d&#x27;investissement, enfin la copie privée et les baux.</desc>
+<desc id="mpe-d">Le tableau de bord de l&#x27;interface web montre des cartes : solde, autonomie, empreinte sur les communs, souveraineté, puis deux cartes distinctes, Ẑen Opex pour les redevances d&#x27;usage et Ẑen Capex pour les parts d&#x27;investissement, enfin la copie privée.</desc>
 <style>
 .ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 @media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
@@ -11,7 +11,7 @@
 .ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
 .ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
 </style>
-<rect class="bg" width="520" height="540" rx="14"/>
+<rect class="bg" width="520" height="460" rx="14"/>
 <text x="260" y="34" class="t m">L&#x27;écran MULTIPASS (schéma)</text>
 <rect class="pan" x="16" y="52" width="488" height="470" rx="12"/>
 <rect class="pan2" x="16" y="52" width="488" height="42" rx="12"/>
@@ -33,14 +33,11 @@
 <text x="380.0" y="237" class="s m">fichiers chiffrés</text>
 <rect class="wnp" x="28" y="276" width="224" height="70" rx="10"/>
 <text x="140.0" y="300" class="t m">Ẑen Opex</text>
-<text x="140.0" y="321" class="s m">usage : loyer, baux</text>
+<text x="140.0" y="321" class="s m">usage : loyer</text>
 <rect class="okp" x="268" y="276" width="224" height="70" rx="10"/>
 <text x="380.0" y="300" class="t m">Ẑen Capex</text>
 <text x="380.0" y="321" class="s m">parts : capital, amorti</text>
 <rect class="pan" x="28" y="360" width="464" height="70" rx="10"/>
 <text x="260.0" y="384" class="t m">Copie privée (CPI L. 122-5)</text>
 <text x="260.0" y="405" class="s m">attestation avant tout dépôt de film ou série</text>
-<rect class="pan" x="28" y="444" width="464" height="66" rx="10"/>
-<text x="260.0" y="468" class="t m">Baux 1/24e et paliers de disque</text>
-<text x="260.0" y="489" class="s m">ressource · début · durée · payé · statut</text>
 </svg>

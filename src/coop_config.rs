@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use astro_bro::broker::Publisher;
+use astro_bro::publisher::Publisher;
 use astro_core::formula::{FormulaInput, KeyFormula};
 use astro_crypto::coop;
 use astro_db::Db;

@@ -8,7 +8,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use astro_bro::broker::Publisher;
+use astro_bro::publisher::Publisher;
 use astro_crypto::{KeySource, StaticKeySource};
 use astro_dav::media::MediaMeta;
 use astro_dav::{DavConfig, DavState, FsBlobStore};
