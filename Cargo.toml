@@ -1,6 +1,6 @@
 [package]
 name = "astroportd"
-version = "0.2.1-beta"
+version = "0.2.2-beta"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -83,7 +83,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.1-beta"
+version = "0.2.2-beta"
 edition = "2024"
 rust-version = "1.85"
 license = "AGPL-3.0-only"
