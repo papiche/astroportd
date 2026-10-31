@@ -19,6 +19,7 @@ pub mod dunikey;
 pub mod migration;
 pub mod multipass;
 pub mod rebuild;
+pub mod share;
 pub mod state;
 pub mod store;
 pub mod ylevel;

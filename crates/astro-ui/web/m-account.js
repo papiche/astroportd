@@ -86,16 +86,29 @@ export default async function account(root, K) {
       mine.status === 'accepted' ? h('p', {}, `${mine.files} fichier(s) · ${gb(mine.backed_up_bytes)} / ${gb(mine.quota_bytes)}`) : null,
       h('p', {}, h('button', { class: 'ghost', onclick: () => post('/api/v1/backup', { enabled: false }) }, 'Suspendre')));
     else backup.append(h('label', { for: 'bk-friend' }, 'Ami qui héberge ma sauvegarde'), friend, h('p', {}, h('button', { onclick: () => post('/api/v1/backup', { enabled: true, host: friend.value }) }, 'Demander à cet ami')));
+    // Clé de secours : la part P3 est confiée automatiquement aux amis qui hébergent la sauvegarde.
+    if (mine && mine.status === 'accepted') backup.append(h('p', { class: b.rescue_friends ? 'muted' : 'warn' }, b.rescue_friends
+      ? `Clé de secours : la part de vos amis est confiée à ${b.rescue_friends} ami(s). Si vous perdez votre compte, appelez l'un d'eux : avec votre QR imprimé, sa part rétablit votre compte.`
+      : 'Clé de secours : la part de vos amis n\'est pas encore confiée (envoi en cours).'));
     // Côté hébergeur : demandes reçues et sauvegardes hébergées.
     for (const r of b.hosting) {
       const size = h('input', { type: 'number', min: 1, step: 1, value: Math.max(1, Math.round(r.quota_bytes / 2 ** 30)) || 5, 'aria-label': 'Volume en Go' });
       backup.append(h('hr'), h('p', {}, h('strong', {}, r.label), r.status === 'pending' ? ' demande à vous confier sa sauvegarde chiffrée.' : ` : ${gb(r.used_bytes)} / ${gb(r.quota_bytes)} hébergés pour lui.`),
         r.status === 'pending' ? h('p', {}, 'Volume mis à disposition (Go) : ', size, ' ', h('button', { onclick: () => post('/api/v1/backup/respond', { owner: r.owner, accept: true, quota_bytes: Math.round(Number(size.value) * 2 ** 30) }) }, 'Accepter'), ' ', h('button', { class: 'ghost', onclick: () => post('/api/v1/backup/respond', { owner: r.owner, accept: false }) }, 'Refuser'))
           : h('p', {}, h('button', { class: 'ghost', onclick: () => confirm(t('Révoquer : sa sauvegarde sera supprimée de votre espace.')) && post('/api/v1/backup/respond', { owner: r.owner, accept: false }) }, 'Révoquer et libérer l\'espace')));
+      // « J'appelle un ami » : cet ami me confie une part de sa clé de secours ; je la lui montre au téléphone (texte ou QR).
+      if (r.share) {
+        const shown = h('div', { hidden: true });
+        const svg = r.share_svg && new DOMParser().parseFromString(r.share_svg, 'image/svg+xml').documentElement;
+        if (svg && svg.nodeName === 'svg') shown.append(document.importNode(svg, true));
+        shown.append(h('p', { class: 'muted', style: 'word-break:break-all' }, r.share));
+        backup.append(h('p', { class: 'muted' }, `${r.label} vous a confié une part de sa clé de secours. Seule, elle ne sert à rien. Montrez-la-lui seulement s'il vous appelle et que vous reconnaissez sa voix.`),
+          h('p', {}, h('button', { class: 'ghost', onclick: ev => { shown.hidden = !shown.hidden; ev.target.textContent = shown.hidden ? 'Montrer sa part de secours' : 'Cacher'; } }, 'Montrer sa part de secours')), shown);
+      }
     }
   } catch (e) { backup.append(h('p', { class: 'muted' }, e.message)); }
 
   // Compte invité : l'adresse a été générée par la station. On ne promet pas une fonction qui n'existe pas (changer d'adresse).
-  const guest = a.guest ? h('p', { class: 'warn', role: 'note' }, h('strong', {}, 'Compte invité. '), 'Votre adresse a été créée par la station : c\'est votre identifiant UPlanet, pas une boîte aux lettres. Gardez la carte remise à la création (SALT, PEPPER) et votre code PASS : sans email, ce sont vos seuls moyens de récupérer le compte.') : null;
+  const guest = a.guest ? h('p', { class: 'warn', role: 'note' }, h('strong', {}, 'Compte invité. '), 'Votre adresse a été créée par la station : c\'est votre identifiant UPlanet, pas une boîte aux lettres. Gardez la clé de secours imprimée à la création et votre code PASS : sans email, ce sont vos seuls moyens de récupérer le compte.') : null;
   root.replaceChildren(h('h2', {}, 'Mon compte'), guest, h('div', { class: 'grid' }, idCard, profile, dav, backup, keys));
 }

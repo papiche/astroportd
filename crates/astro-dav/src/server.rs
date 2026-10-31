@@ -117,6 +117,7 @@ impl<B: BlobStore> DavState<B> {
 pub fn router<B: BlobStore>(state: Arc<DavState<B>>) -> Router {
     Router::new()
         .route("/.well-known/carddav", any(wellknown_carddav::<B>))
+        .route("/.well-known/caldav", any(wellknown_carddav::<B>))
         .route("/s/{slug}", axum::routing::get(crate::share::page::<B>))
         .route("/s/{slug}/m", axum::routing::get(crate::share::manifest::<B>))
         .route("/s/{slug}/b/{cid}", axum::routing::get(crate::share::blob::<B>))
@@ -234,7 +235,7 @@ async fn dispatch<B: BlobStore>(State(st): State<Arc<DavState<B>>>, req: Request
     if method == "OPTIONS" {
         let mut r = reply(StatusCode::OK, "");
         let h = r.headers_mut();
-        h.insert("DAV", HeaderValue::from_static("1, 2, addressbook"));
+        h.insert("DAV", HeaderValue::from_static("1, 2, addressbook, calendar-access"));
         h.insert("MS-Author-Via", HeaderValue::from_static("DAV"));
         h.insert(header::ALLOW, HeaderValue::from_static("OPTIONS, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, PROPFIND, PROPPATCH, REPORT, LOCK, UNLOCK"));
         return r;
@@ -249,6 +250,9 @@ async fn dispatch<B: BlobStore>(State(st): State<Arc<DavState<B>>>, req: Request
     };
     if crate::carddav::is_carddav_path(&path) {
         return crate::carddav::handle(&st, &auth, &method, &path, req).await;
+    }
+    if crate::caldav::is_caldav_path(&path) {
+        return crate::caldav::handle(&st, &auth, &method, &path, req).await;
     }
     let owner = auth.account.owner.clone();
     let has_body = !HttpBody::is_end_stream(req.body());

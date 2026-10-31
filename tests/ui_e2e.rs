@@ -651,9 +651,10 @@ async fn anyone_can_create_a_multipass_from_the_web_and_log_in_with_the_returned
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(h[header::CACHE_CONTROL], "no-store", "les secrets ne se mettent pas en cache");
     assert_eq!((v["email"].as_str(), v["constellation"].as_str()), (Some("nouveau@exemple.org"), Some("ORIGIN")));
-    for k in ["token", "pass", "salt", "pepper", "nsec", "npub", "hex", "g1pub", "nostrns"] {
+    for k in ["token", "pass", "nsec", "npub", "hex", "g1pub", "nostrns", "card"] {
         assert!(v[k].as_str().is_some_and(|x| !x.is_empty()), "{k} : {v}");
     }
+    assert!(v.get("salt").is_none() && v.get("pepper").is_none(), "le secret de dérivation n'est plus montré : seule la part P1 l'est");
     assert!(v["nsec"].as_str().unwrap().starts_with("nsec1") && v["g1pub"].as_str().unwrap().starts_with('g'));
 
     // Le jeton rendu ouvre l'interface : le compte est connu de la base dès la réponse.
@@ -906,13 +907,17 @@ async fn the_secret_card_given_at_registration_restores_the_account_on_another_s
     let (s, _, body) = call(&old.app, Method::POST, "/api/v1/register", None, json_post, json!({ "email": "Membre@Exemple.org", "lang": "fr" }).to_string().into_bytes()).await;
     let made: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(s, StatusCode::OK, "{made}");
-    let card = made["card"].as_str().unwrap().to_owned();
-    assert!(card.starts_with("astro-secret:v1|membre@exemple.org|") && made["card_svg"].as_str().is_some_and(|s| s.contains("<svg")), "{made}");
+    let p1 = made["card"].as_str().unwrap().to_owned();
+    // P3 est gardée par la station d'accueil, qui la confie à ses amis hébergeurs : elle revient à voix haute ou en QR.
+    let p3 = std::fs::read_to_string(old.dir.join("nostr/membre@exemple.org/.ssss/3")).unwrap();
+    let card = format!("{p1}\n{p3}");
+    let altered_input = |from: &str, to: &str| card.replacen(from, to, 1);
+    assert!(p1.starts_with("astro-share:v1|membre@exemple.org|") && made.get("salt").is_none() && made.get("pepper").is_none() && made["card_svg"].as_str().is_some_and(|s| s.contains("<svg")), "{made}");
 
     // La page, son script et la route sont publics ; la page n'est jamais indexée.
     let (s, h, body) = call(&fresh.app, Method::GET, "/restore", None, &[], vec![]).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(String::from_utf8_lossy(&body).contains("carte secrète") && h["x-robots-tag"].to_str().unwrap().contains("noindex"));
+    assert!(String::from_utf8_lossy(&body).contains("clé de secours") && h["x-robots-tag"].to_str().unwrap().contains("noindex"));
     assert_eq!(call(&fresh.app, Method::GET, "/ui/restore.js", None, &[], vec![]).await.0, StatusCode::OK);
 
     // Autre station : même compte, nouveau PASS, aucune clé ni secret redonné.
@@ -929,9 +934,9 @@ async fn the_secret_card_given_at_registration_restores_the_account_on_another_s
 
     // Refus : déjà rétabli ici, carte altérée, corps illisible.
     assert_eq!(call(&fresh.app, Method::POST, "/api/v1/restore", None, json_post, ask(&card)).await.0, StatusCode::CONFLICT);
-    let altered = card.replacen(made["salt"].as_str().unwrap(), &"x".repeat(24), 1);
     let blank = bench("card-blank", None).await;
-    assert_eq!(call(&blank.app, Method::POST, "/api/v1/restore", None, json_post, ask(&altered)).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(call(&blank.app, Method::POST, "/api/v1/restore", None, json_post, ask(&altered_input("membre@", "membre2@"))).await.0, StatusCode::BAD_REQUEST, "faute de frappe : somme de contrôle");
+    assert_eq!(call(&blank.app, Method::POST, "/api/v1/restore", None, json_post, ask(&p1)).await.0, StatusCode::BAD_REQUEST, "une part seule ne suffit pas");
     assert_eq!(call(&blank.app, Method::POST, "/api/v1/restore", None, json_post, ask("n'importe quoi")).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(call(&blank.app, Method::POST, "/api/v1/restore", None, json_post, b"pas du json".to_vec()).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(call(&blank.app, Method::GET, "/api/v1/me", None, &[], vec![]).await.0, StatusCode::UNAUTHORIZED, "la route n'ouvre aucune autre porte");

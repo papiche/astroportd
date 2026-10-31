@@ -217,11 +217,11 @@ enum MultipassAction {
         #[arg(long)]
         json: bool,
     },
-    /// Rétablit sur cette station un MULTIPASS **existant** depuis sa carte secrète (station en panne, ou déménagement) : même clé, donc
+    /// Rétablit sur cette station un MULTIPASS **existant** depuis sa clé de secours : deux parts (P1 du membre + P3 d'un ami), ou l'ancienne carte complète (station en panne, ou déménagement) : même clé, donc
     /// mêmes amis et mêmes fichiers. La station retrouve ensuite ses événements, annonce sa nouvelle station d'accueil et demande à
     /// chaque proche ce qu'il détient : ses amis n'ont rien à faire. Un nouveau PASS est généré (l'ancien n'est pas récupérable).
     Recover {
-        /// Carte secrète (`astro-secret:v1|…`), ou `-` pour la lire sur l'entrée standard, ou `@fichier` : à éviter en argument, il se lirait dans `ps`.
+        /// Parts de secours (`astro-share:v1|…`, deux, séparées par un espace) ou ancienne carte (`astro-secret:v1|…`), ou `-` pour la lire sur l'entrée standard, ou `@fichier` : à éviter en argument, il se lirait dans `ps`.
         card: String,
         /// Langue du compte (`fr`, `en`, `es`…).
         #[arg(long, default_value = "fr")]
@@ -248,10 +248,14 @@ enum MultipassAction {
         #[arg(long)]
         json: bool,
     },
-    /// Affiche de nouveau la carte secrète d'un MULTIPASS hébergé ici (texte, ou QR en SVG avec `--svg`) : à imprimer et à garder hors ligne.
+    /// Affiche de nouveau une part de la clé de secours d'un MULTIPASS hébergé ici (texte, ou QR en SVG avec `--svg`).
+    /// P1 (défaut) est celle du membre, à imprimer et à garder hors ligne ; P3 est celle que gardent ses amis.
     Card {
         /// Email du compte.
         account: String,
+        /// Numéro de la part : 1 (membre), 2 (station), 3 (amis).
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=3))]
+        part: u8,
         /// Dossier `~/.zen/game`.
         #[arg(long)]
         game_dir: Option<PathBuf>,
@@ -570,7 +574,7 @@ async fn multipass_cmd(action: MultipassAction) -> Result<(), Failure> {
         MultipassAction::Recover { card, lang, game_dir, home, swarm_key, db, relays, rounds, json } => {
             let home = station_home(home)?;
             let uplanet_name = station_uplanet_name(&home, swarm_key)?;
-            let card = astro_lifecycle::multipass::SecretCard::parse(&read_card_text(&card)?)?;
+            let card = astro_lifecycle::share::Recovery::parse(&read_card_text(&card)?)?;
             let station = identity::resolve(game_dir.as_deref(), true)?;
             let nostr_dir = station.nostr_dir.clone().ok_or("dossier des comptes introuvable (--game-dir)")?;
             let db_path = db.unwrap_or_else(|| home.join("uplanet.db"));
@@ -603,13 +607,20 @@ async fn multipass_cmd(action: MultipassAction) -> Result<(), Failure> {
             }
             Ok(())
         }
-        MultipassAction::Card { account, game_dir, home, swarm_key, svg } => {
+        MultipassAction::Card { account, part, game_dir, home, swarm_key, svg } => {
             let home = station_home(home)?;
             let uplanet_name = station_uplanet_name(&home, swarm_key)?;
             let station = identity::resolve(game_dir.as_deref(), true)?;
             let nostr_dir = station.nostr_dir.ok_or("dossier des comptes introuvable (--game-dir)")?;
             let email = astro_lifecycle::multipass::normalize_email(&account)?;
-            let text = astro_lifecycle::multipass::SecretCard::from_dir(&nostr_dir.join(&email), &uplanet_name)?.to_text();
+            let dir = nostr_dir.join(&email);
+            // La part demandée est lue dans le dossier du compte ; un compte plus ancien n'en a pas encore : on la crée une fois (le
+            // même découpage sert ensuite, pour que P1 imprimé et P3 chez les amis restent compatibles).
+            if astro_lifecycle::share::read_share(&dir, 1).is_none() {
+                let shares = astro_lifecycle::share::split_card(&astro_lifecycle::multipass::SecretCard::from_dir(&dir, &uplanet_name)?)?;
+                astro_lifecycle::share::write_shares(&dir, &shares)?;
+            }
+            let text = astro_lifecycle::share::read_share(&dir, part).ok_or_else(|| format!("part P{part} introuvable pour {email}"))?.to_text();
             if svg {
                 println!("{}", astro_ui::qr::svg(&text).ok_or("carte trop longue pour un QR")?);
             } else {
@@ -688,10 +699,9 @@ async fn multipass_cmd(action: MultipassAction) -> Result<(), Failure> {
             } else {
                 println!("MULTIPASS {} créé sur la constellation {}\n", a.email, reg.constellation);
                 println!("  Identifiant web : {}\n  Jeton web       : {}\n  Code PASS       : {}", a.email, reg.token, a.pass);
-                println!("  SALT            : {}\n  PEPPER          : {}", &*a.salt, &*a.pepper);
                 println!("  nsec            : {}\n  npub            : {}\n  Ğ1              : {}\n  IPNS            : {}", &*a.nsec, a.npub, a.g1_ss58, a.nostrns);
-                println!("  Carte secrète   : {}", reg.card);
-                println!("\n⚠ Notez SALT et PEPPER (ou imprimez la carte secrète en QR : `astroportd multipass card {} --svg`) : ils permettent de récupérer le compte sur une autre station et ne seront plus affichés.", a.email);
+                println!("  Clé de secours  : {}", reg.card);
+                println!("\n⚠ Imprimez la clé de secours en QR (`astroportd multipass card {} --svg`) et gardez-la hors ligne : seule, elle ne révèle rien ; avec la part de l'un de vos amis qui héberge votre sauvegarde, elle rétablit le compte sur une autre station. Le SALT et le PEPPER ne sont plus affichés (ils restent dans le dossier du compte, sous `0600`, et dans `--json`).", a.email);
                 println!("  Dossier du compte : {}", a.dir.display());
             }
             if failures > 0 { Err(format!("{failures} publication(s) en échec (le compte est créé)").into()) } else { Ok(()) }

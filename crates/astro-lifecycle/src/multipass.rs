@@ -181,7 +181,7 @@ pub fn ipns_name(public: &[u8; 32]) -> String {
     out
 }
 
-fn write_private(path: &Path, content: &str) -> Result<(), MultipassError> {
+pub(crate) fn write_private(path: &Path, content: &str) -> Result<(), MultipassError> {
     use std::io::Write as _;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);

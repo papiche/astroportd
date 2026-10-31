@@ -4,9 +4,7 @@ const FIELDS = [
   ['email', 'Identifiant de connexion (email)'],
   ['token', 'Jeton de connexion web (avec l’email)'],
   ['pass', 'Code PASS (connexion sur téléphone : email + PASS)'],
-  ['salt', 'SALT (secret de récupération 1/2)'],
-  ['pepper', 'PEPPER (secret de récupération 2/2)'],
-  ['card', 'Carte secrète (rétablit le compte sur une autre station) : ne la montrez à personne'],
+  ['card', 'Clé de secours, part 1 sur 3 (seule, elle ne révèle rien ; avec la part d’un ami qui héberge votre sauvegarde, elle rétablit le compte sur une autre station)'],
   ['nsec', 'Clé secrète Nostr (nsec) : ne la montrez à personne'],
   ['npub', 'Clé publique Nostr (npub)'],
   ['g1pub', 'Portefeuille Ğ1'],
@@ -40,7 +38,7 @@ $('#f').onsubmit = async ev => {
       dt.textContent = label; dd.textContent = j[k];
       dl.append(dt, dd);
     }
-    // QR de la carte secrète, rendu par la station (SVG autonome) : lu comme document SVG, jamais inséré comme HTML.
+    // QR de la clé de secours (part 1), rendu par la station (SVG autonome) : lu comme document SVG, jamais inséré comme HTML.
     const qr = $('#qr');
     qr.querySelector('svg')?.remove();
     const svg = j.card_svg && new DOMParser().parseFromString(j.card_svg, 'image/svg+xml').documentElement;

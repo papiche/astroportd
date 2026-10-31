@@ -5,8 +5,10 @@
 pub mod adopt;
 pub mod auth;
 pub mod blob;
+pub mod caldav;
 pub mod carddav;
 pub mod exif;
+pub mod ical;
 pub mod ingest;
 pub mod kubo;
 pub mod locks;

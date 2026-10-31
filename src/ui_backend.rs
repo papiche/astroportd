@@ -258,7 +258,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
 
     async fn restore(&self, ip: Option<std::net::IpAddr>, card: String, lang: String) -> Result<Value, ApiError> {
         let r = self.registrar.as_ref().ok_or_else(|| ApiError::unavailable("restauration non disponible sur cette station"))?;
-        let card = astro_lifecycle::multipass::SecretCard::parse(&card).map_err(|e| ApiError::bad_request(e.to_string()))?;
+        let card = astro_lifecycle::share::Recovery::parse(&card).map_err(|e| ApiError::bad_request(e.to_string()))?;
         let lang = if lang.is_empty() { "fr".to_owned() } else { lang };
         r.recover(ip, &card, &lang).await.map(|reg| {
             let mut out = registered_json(&reg);
@@ -1111,7 +1111,7 @@ fn register_error(e: crate::register::RegisterError) -> ApiError {
 fn registered_json(reg: &crate::register::Registered) -> Value {
     let a = &reg.account;
     json!({
-        "email": a.email, "token": reg.token, "pass": a.pass, "salt": &*a.salt, "pepper": &*a.pepper, "nsec": &*a.nsec,
+        "email": a.email, "token": reg.token, "pass": a.pass, "nsec": &*a.nsec,
         "npub": a.npub, "hex": a.hex, "g1pub": a.g1_ss58, "nostrns": a.nostrns, "constellation": reg.constellation, "lang": a.lang, "guest": reg.guest,
         "card": reg.card, "card_svg": astro_ui::qr::svg(&reg.card),
     })

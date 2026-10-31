@@ -88,10 +88,6 @@ async fn reports_return_the_cards_with_their_data() {
     assert_eq!(s, 207);
     assert!(body.contains("FN:Alice A") && body.contains("FN:Bob B") && body.contains("404 Not Found") && body.contains("absent.vcf"), "{body}");
 
-    let sync = "<?xml version=\"1.0\"?><D:sync-collection xmlns:D=\"DAV:\"><D:sync-token/><D:sync-level>1</D:sync-level><D:prop><D:getetag/></D:prop></D:sync-collection>";
-    let (s, body) = text(call(&b.app, "REPORT", &format!("{A}/"), Some(&alice()), &[], Body::from(sync)).await).await;
-    assert_eq!(s, 403);
-    assert!(body.contains("valid-sync-token"), "le client retombe sur la synchronisation complète");
     assert_eq!(call(&b.app, "REPORT", &format!("{A}/"), Some(&alice()), &[], Body::from("pas du xml <")).await.status().as_u16(), 400);
 }
 
@@ -124,4 +120,73 @@ async fn nobody_reaches_someone_elses_address_book() {
     for m in ["MKCOL", "PROPPATCH", "MOVE", "COPY"] {
         assert_eq!(call(&b.app, m, &format!("{A}/lea.vcf"), Some(&alice()), &[("destination", "/dav/x")], Body::empty()).await.status().as_u16(), 403, "{m}");
     }
+}
+
+fn sync_body(token: &str) -> String {
+    format!("<?xml version=\"1.0\"?><D:sync-collection xmlns:D=\"DAV:\"><D:sync-token>{token}</D:sync-token><D:sync-level>1</D:sync-level><D:prop><D:getetag/></D:prop></D:sync-collection>")
+}
+
+async fn sync(b: &Bench, token: &str) -> (u16, String) {
+    text(call(&b.app, "REPORT", &format!("{A}/"), Some(&alice()), &[], Body::from(sync_body(token))).await).await
+}
+
+fn token_of(body: &str) -> String {
+    body.split("<D:sync-token>").nth(1).unwrap().split('<').next().unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn sync_collection_reports_only_what_changed_deletions_included() {
+    let b = bench("carddav-sync").await;
+    let card = |uid: &str, name: &str| format!("BEGIN:VCARD\r\nVERSION:3.0\r\nUID:{uid}\r\nFN:{name}\r\nEND:VCARD\r\n");
+    for (f, uid, n) in [("a.vcf", "u1", "Alice A"), ("b.vcf", "u2", "Bob B")] {
+        assert_eq!(put(&b, &format!("{A}/{f}"), &alice(), &card(uid, n), &[]).await.0, 201);
+    }
+    // Annoncé par le carnet, avec son jeton courant.
+    let (_, props) = text(call(&b.app, "PROPFIND", &format!("{A}/"), Some(&alice()), &[("depth", "0")], Body::empty()).await).await;
+    assert!(props.contains("<D:sync-collection/>") && props.contains("<D:sync-token>urn:astro:sync:"), "{props}");
+
+    // Première synchronisation : tout le carnet.
+    let (s, first) = sync(&b, "").await;
+    assert_eq!(s, 207);
+    assert!(first.contains("a.vcf") && first.contains("b.vcf") && !first.contains("404"), "{first}");
+    let t1 = token_of(&first);
+    assert_eq!(props.split("<D:sync-token>").nth(1).unwrap().split('<').next().unwrap(), t1, "le jeton du carnet est celui du rapport");
+
+    // Rien n'a changé : rapport vide, même jeton.
+    let (s, none) = sync(&b, &t1).await;
+    assert_eq!((s, none.matches("<D:response>").count(), token_of(&none)), (207, 0, t1.clone()));
+
+    // Modification de a, suppression de b, création de c.
+    assert_eq!(put(&b, &format!("{A}/a.vcf"), &alice(), &card("u1", "Alice Z"), &[]).await.0, 204);
+    assert_eq!(call(&b.app, "DELETE", &format!("{A}/b.vcf"), Some(&alice()), &[], Body::empty()).await.status().as_u16(), 204);
+    assert_eq!(put(&b, &format!("{A}/c.vcf"), &alice(), &card("u3", "Cléo C"), &[]).await.0, 201);
+    let (s, delta) = sync(&b, &t1).await;
+    assert_eq!(s, 207);
+    assert_eq!(delta.matches("<D:response>").count(), 3, "{delta}");
+    assert!(delta.contains("a.vcf") && delta.contains("c.vcf"), "{delta}");
+    let gone = delta.split("<D:response>").find(|r| r.contains("b.vcf")).unwrap();
+    assert!(gone.contains("404 Not Found") && !gone.contains("getetag"), "{gone}");
+    let t2 = token_of(&delta);
+    assert_ne!(t2, t1);
+    let (_, after) = sync(&b, &t2).await;
+    assert_eq!(after.matches("<D:response>").count(), 0);
+
+    // Jeton illisible, du futur ou d'avant la purge : le client repart de zéro.
+    for bad in ["n'importe quoi", "urn:astro:sync:abc", "urn:astro:sync:-1", "urn:astro:sync:99999999999", "urn:astro:sync:"] {
+        let (s, body) = sync(&b, bad).await;
+        assert_eq!(s, 403, "{bad}");
+        assert!(body.contains("valid-sync-token"), "{bad}");
+    }
+    b.db.writer().execute("INSERT OR REPLACE INTO schema_info(key, value) VALUES ('dav_changes_floor', '3')", vec![]).await.unwrap();
+    assert_eq!(sync(&b, "urn:astro:sync:1").await.0, 403, "jeton antérieur à la purge");
+    assert_eq!(sync(&b, &t2).await.0, 207, "jeton postérieur au plancher");
+}
+
+#[tokio::test]
+async fn sync_collection_never_leaks_another_account() {
+    let b = bench("carddav-sync-iso").await;
+    assert_eq!(put(&b, &format!("{A}/a.vcf"), &alice(), CARD, &[]).await.0, 201);
+    let other = "/dav/addressbooks/bob@example.org/contacts/";
+    let r = call(&b.app, "REPORT", other, Some(&alice()), &[], Body::from(sync_body(""))).await;
+    assert_eq!(r.status().as_u16(), 403);
 }

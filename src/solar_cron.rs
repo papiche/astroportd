@@ -117,6 +117,9 @@ pub struct Nightly<P: Publisher> {
     pub pause: Duration,
 }
 
+/// Durée de garde du journal des changements du carnet d'adresses.
+const DAV_CHANGES_RETENTION_SECS: u64 = 30 * 24 * 3600;
+
 fn int(n: u64) -> Value {
     Value::Integer(i64::try_from(n).unwrap_or(i64::MAX))
 }
@@ -234,7 +237,18 @@ impl<P: Publisher> Nightly<P> {
         };
         // NIP-40 : les événements expirés ne sont plus servis ; la nuit les retire de la base (leurs tags suivent).
         let expired = self.db.writer().execute("DELETE FROM nostr_events WHERE expires_at IS NOT NULL AND expires_at <= ?1", vec![int(now)]).await.map_err(|e| format!("événements expirés : {e}"))?.changes;
-        Ok(format!("{claimed} réclamation(s) purgée(s) ; {expired} événement(s) expiré(s) ; {shares}"))
+        // Journal des changements CardDAV : 30 jours de mémoire ; le dernier numéro purgé devient le plancher des jetons valides.
+        let keep = int(now.saturating_sub(DAV_CHANGES_RETENTION_SECS));
+        self
+            .db
+            .writer()
+            .batch(vec![
+                astro_db::Statement::new("INSERT OR REPLACE INTO schema_info(key, value) SELECT 'dav_changes_floor', CAST(MAX(seq) AS TEXT) FROM dav_changes WHERE at < ?1 HAVING MAX(seq) IS NOT NULL", vec![keep.clone()]),
+                astro_db::Statement::new("DELETE FROM dav_changes WHERE at < ?1", vec![keep]),
+            ])
+            .await
+            .map_err(|e| format!("journal CardDAV : {e}"))?;
+        Ok(format!("{claimed} réclamation(s) purgée(s) ; {expired} événement(s) expiré(s) ; journal CardDAV purgé ; {shares}"))
     }
 
     /// Recettes d'une semaine `[start, end[` : loyers constatés.

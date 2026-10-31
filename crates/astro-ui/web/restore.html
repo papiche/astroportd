@@ -15,12 +15,12 @@
 <a class="skip" href="#main" data-t="skip">Aller au contenu</a>
 <main id="main">
   <h1 data-t="title">Rétablir mon compte ici</h1>
-  <p class="lead" data-t="lead">Votre ancienne station est en panne, ou vous déménagez ? Scannez ou collez la <strong>carte secrète</strong> de votre MULTIPASS : cette station devient votre nouvelle maison. Vos amis, vos contacts et vos fichiers reviennent d’eux-mêmes, sans que personne n’ait rien à faire.</p>
+  <p class="lead" data-t="lead">Votre ancienne station est en panne, ou vous déménagez ? Scannez ou collez votre <strong>clé de secours</strong> (le QR que vous avez imprimé), puis la <strong>part d’un ami</strong> qui héberge votre sauvegarde : appelez-le, il la lit dans Compte › Sauvegarde privée. Cette station devient alors votre nouvelle maison ; vos amis, vos contacts et vos fichiers reviennent d’eux-mêmes.</p>
   <p id="info" class="muted" role="status"></p>
 
   <form id="f" autocomplete="off">
-    <label for="card" data-t="label">Carte secrète</label>
-    <textarea id="card" name="card" rows="4" required spellcheck="false" autocapitalize="off" autocorrect="off" maxlength="600" placeholder="astro-secret:v1|…"></textarea>
+    <label for="card" data-t="label">Votre clé de secours et la part de votre ami (une par ligne)</label>
+    <textarea id="card" name="card" rows="5" required spellcheck="false" autocapitalize="off" autocorrect="off" maxlength="1400" placeholder="astro-share:v1|…"></textarea>
     <p class="row">
       <button id="scan" type="button" hidden data-t="scan">Scanner le QR avec la caméra</button>
       <button id="go" class="primary" data-t="go">Rétablir mon compte</button>

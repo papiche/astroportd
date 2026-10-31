@@ -14,7 +14,7 @@ async fn options_needs_no_auth_and_other_methods_demand_it() {
     let b = bench("auth").await;
     let r = call(&b.app, "OPTIONS", "/dav/", None, &[], Body::empty()).await;
     assert_eq!(r.status(), 200);
-    assert_eq!(r.headers()["dav"], "1, 2, addressbook", "CardDAV annoncé");
+    assert_eq!(r.headers()["dav"], "1, 2, addressbook, calendar-access", "CardDAV et CalDAV annoncés");
 
     let r = call(&b.app, "PROPFIND", "/dav/", None, &[], Body::empty()).await;
     assert_eq!(r.status(), 401);

@@ -46,7 +46,7 @@ INVITES = dict(invites=[dict(token='1' * 32, label='Marc', email=None, contact_p
                         dict(token='2' * 32, label='Zoé', email=None, contact_path=None, count=3, state='opened', created_at=1790000000, expires_at=1791000000, opened_at=1790000100, claimed_at=None, url='https://s.example/i/' + '2' * 32)])
 TOKEN = 'a1' * 16
 QR = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>'
-CARD = 'astro-secret:v1|alice@example.org|SaltSaltSaltSalt|PepperPepperPepper|isolated|0123456789abcdef|' + 'ab' * 32
+CARD = 'astro-share:v1|alice@example.org|' + 'ab' * 32 + '|isolated|0123456789abcdef|1|c2VjcmV0c2VjcmV0|abcd'
 STATE = dict(faces=make_faces(), posts=[], deleted=[])
 
 def people():
@@ -380,7 +380,7 @@ with sync_playwright() as pw:
     sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/register']
     check(sent and sent[-1] == dict(guest=True, alias='léa', lang='fr'), 'l\'inscription sans email envoie un alias, pas d\'adresse : ' + str(sent[-1:]))
     check('lea-x7k2p9@uplanet.local' in p5.inner_text('#card') and '123456' in p5.inner_text('#card'), 'l\'adresse générée et le PASS à 6 chiffres sont remis')
-    check(p5.is_visible('#qr svg') and CARD in p5.inner_text('#card') and p5.is_visible('#print'), 'la carte secrète est remise en texte et en QR imprimable')
+    check(p5.is_visible('#qr svg') and CARD in p5.inner_text('#card') and p5.is_visible('#print'), 'la clé de secours est remise en texte et en QR imprimable')
     # Rétablir son compte sur cette station depuis la carte : le champ est vidé dès la réponse, le nouveau PASS est remis.
     p6 = br.new_context(viewport=dict(width=390, height=800), locale='fr-FR', service_workers='block').new_page()
     p6.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None); p6.on('pageerror', lambda e: errors.append(str(e)))
@@ -388,12 +388,12 @@ with sync_playwright() as pw:
     check(not p6.is_visible('#scan'), 'sans lecteur de QR du navigateur, seul le collage est proposé')
     p6.fill('#card', CARD); p6.click('#go'); p6.wait_for_selector('#done:not([hidden])')
     sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/restore']
-    check(sent and sent[-1] == dict(card=CARD, lang='fr'), 'seule la carte part, vers cette station : ' + str(sent[-1:]))
+    check(sent and sent[-1] == dict(card=CARD, lang='fr'), 'seules les parts saisies partent, vers cette station : ' + str(sent[-1:]))
     check('654321' in p6.inner_text('#out') and 'alice@example.org' in p6.inner_text('#out') and p6.input_value('#card') == '', 'le nouveau PASS est remis et la carte effacée du champ')
     # Compte invité : bandeau honnête (pas de fonction promise qui n'existe pas).
     ACCOUNT['guest'] = True
     page.goto(f'http://127.0.0.1:{port}/#/account'); page.wait_for_selector('#ac-name'); page.wait_for_timeout(200)
-    check('Compte invité' in page.inner_text('main') and 'SALT, PEPPER' in page.inner_text('main'), 'un compte invité voit le bandeau de récupération')
+    check('Compte invité' in page.inner_text('main') and 'clé de secours' in page.inner_text('main'), 'un compte invité voit le bandeau de récupération')
     ACCOUNT['guest'] = False
     # Thème sombre.
     page.emulate_media(color_scheme='dark'); page.goto(f'http://127.0.0.1:{port}/#/people'); page.wait_for_selector('canvas.pe-board'); page.wait_for_timeout(800); page.screenshot(path=str(OUT / 'board-dark.png'))

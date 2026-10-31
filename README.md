@@ -24,9 +24,9 @@ C'est le cœur souverain d'[Astroport.ONE](https://github.com/papiche/Astroport.
 | **Garder mes fichiers chez moi**, accessibles partout | Un cloud personnel (`uCloud`) **chiffré avant de quitter l'appareil**, monté comme un disque réseau (WebDAV : Finder, Explorateur Windows, mobile) et dans le navigateur. |
 | **Retrouver mes photos par visage** et les partager entre amis | `FaceCloud` reconnaît les visages et envoie les photos à vos amis **chiffrées, directement à leur station**. Une zone de doute (« est-ce X ? ») vous laisse valider. |
 | **Faire entrer quelqu'un** dans le réseau en lui envoyant une photo | Un **lien d'invitation** (ou un QR) : la personne crée son compte en un geste, ou l'accepte avec le sien, même sur une autre station ; ses photos arrivent. |
-| **Ne rien perdre si ma machine tombe en panne** | Mes amis hébergent une **copie chiffrée** que seul moi peux lire. Avec ma **carte secrète** (QR), je rétablis mon compte sur n'importe quelle station : mes amis renvoient tout d'eux-mêmes, sans rien faire. |
+| **Ne rien perdre si ma machine tombe en panne** | Mes amis hébergent une **copie chiffrée** que seul moi peux lire. Avec ma **clé de secours** (QR) et la part d'un ami (« j'appelle un ami »), je rétablis mon compte sur n'importe quelle station : mes amis renvoient tout d'eux-mêmes, sans rien faire. |
 | **Changer de station** (déménager chez un Capitaine plus proche) | Le même parcours : la nouvelle station s'annonce comme ma maison, l'ancienne cesse d'héberger mon compte. |
-| **Parler et publier entre amis**, sans plateforme | Un **relai Nostr** intégré, des contacts et un téléphone synchronisables (CardDAV), un cercle social à deux niveaux (amis N¹, amis d'amis N²). |
+| **Parler et publier entre amis**, sans plateforme | Un **relai Nostr** intégré, des contacts et un agenda synchronisables avec le téléphone (CardDAV, CalDAV), un cercle social à deux niveaux (amis N¹, amis d'amis N²). |
 | **Faire vivre une économie coopérative** | Une comptabilité en **Ẑen** adossée à la Ğ1 : règle des 3×1/3, registre signé, micro-dons par simple réaction `+N`. |
 | **Avoir un assistant** qui me connaît | **BRO** : une mémoire personnelle à recherche vectorielle locale (`sqlite-vec`), dont les embeddings sont calculés par votre propre serveur Ollama. |
 
@@ -43,7 +43,7 @@ choix que les services habituels ne font pas :
 | **Fichiers et synchronisation** | Google Drive, Dropbox, Nextcloud | Filecoin, Sia, IPFS Desktop | Chiffrement **UENC v2** (flux authentifié par blocs de 64 Kio, lecture partielle `Range`), déduplication par CID, et un **manifeste de votre cloud ancré sur Nostr** : la base SQLite n'est qu'un cache, tout se rejoue. |
 | **Photos et visages** | Google Photos, Apple Photos | Immich, PhotoPrism | Photos **chiffrées**, empreintes de visages 512D **cloisonnées par propriétaire** (`sqlite-vec`), partage vers les amis reconnus par messages chiffrés **NIP-59/NIP-17**, avec validation de l'utilisateur dans la zone de doute. |
 | **Identité et réseau social** | Keybase, X, Mastodon | Urbit, Farcaster, clients Nostr | Une **identité dérivée de votre clé SSH** (Y-Level : SSH, IPFS, Ğ1 et Nostr sont la même clé) et un **pare-feu social NIP-42 à deux niveaux** : seuls les membres du cercle (hébergés, N¹, N²) publient, et tout contenu non public exige d'être authentifié dans le cercle. |
-| **Sauvegarde et reprise** | Sauvegarde cloud payante | Syncthing, Tahoe-LAFS | Des **amis réciproques hébergent votre copie chiffrée** (ils ne peuvent rien lire), et restituent **d'eux-mêmes** après une panne : une **carte secrète** suffit à retrouver compte, contacts et fichiers sur une autre station. |
+| **Sauvegarde et reprise** | Sauvegarde cloud payante | Syncthing, Tahoe-LAFS | Des **amis réciproques hébergent votre copie chiffrée** (ils ne peuvent rien lire), et restituent **d'eux-mêmes** après une panne : ma **clé de secours** (QR) plus la part d'un ami suffisent à retrouver compte, contacts et fichiers sur une autre station. |
 | **Communication entre machines** | Tailscale, ZeroTier, ngrok | libp2p, Iroh | Tunnels **« DRAGON »** natifs `/x/<service>-<PeerID>` sur le maillage libp2p, sans ouvrir de port sur la box ; une politique réglée par le Capitaine dit qui peut ouvrir quel service. |
 | **Économie et monnaie** | OpenCollective, Stripe | DAO, Lightning | Comptabilité coopérative adossée à la **monnaie libre Ğ1** (Duniter v2s) : **règle des 3×1/3**, registre Ğ1-N² signé et chaîné, **micro-dons sur réaction Nostr `+N`**. Le Ẑen est une unité comptable de la coopérative, pas une monnaie publique. |
 
@@ -132,12 +132,22 @@ d'Astroport.ONE) :
 Les secrets ne sont affichés qu'**une seule fois**. [qo-op.com](https://qo-op.com) reste une option (une station ORIGIN
 publique où s'inscrire), pas une obligation.
 
-### La carte secrète : retrouver son compte après une panne, ou changer de station
+### La clé de secours : retrouver son compte après une panne, ou changer de station
 
-La carte d'identité comprend une **carte secrète** (`astro-secret:v1|…`, avec son **QR imprimable**) : SALT, PEPPER, la formule de
-clé et l'empreinte de la constellation. **Qui la possède a la clé du compte** : imprimez-la, gardez-la hors ligne.
+Le secret du compte (SALT et PEPPER) est découpé en **3 parts, dont 2 suffisent** (partage de Shamir sur GF(2⁸)) :
 
-- **Rétablir** : `/restore` sur la nouvelle station (scan du QR ou collage), ou `astroportd multipass recover -` au terminal.
+| Part | Qui la garde | Seule, elle… |
+|------|--------------|--------------|
+| **P1** | le membre : QR imprimable (`astro-share:v1|…`) remis à la création | ne révèle **rien** (volée, photographiée : sans danger) |
+| **P2** | la station d'accueil (`<compte>/.ssss/2`, `0600`) | sert à réimprimer P1 ou à renvoyer P3 |
+| **P3** | **les amis qui hébergent la sauvegarde** (envoyée d'elle-même, chiffrée pour chacun) | ne révèle rien ; l'ami la montre à celui qui l'appelle |
+
+**« J'appelle un ami »** : sur la nouvelle station, on saisit (ou scanne) P1 et la part que l'ami lit dans *Compte › Sauvegarde
+privée*. Aucun mot de passe, aucun réseau à attendre pour cette étape ; la voix de l'ami est la vérification. L'ancienne carte
+complète (`astro-secret:v1|…`) reste acceptée. Le SALT et le PEPPER ne sont plus affichés à la création.
+
+- **Rétablir** : `/restore` sur la nouvelle station (scan des deux QR ou collage), ou `astroportd multipass recover -` au terminal.
+  La station rétablie retrouve les trois parts d'origine (le P1 imprimé et le P3 des amis restent valables).
   Même clé, donc mêmes amis, contacts et fichiers ; un **nouveau PASS** est généré (l'ancien n'est pas récupérable).
 - **Sans rien demander à vos amis** : chaque nuit, votre station range chez l'ami qui héberge votre sauvegarde vos fichiers
   privés **et le manifeste de votre uCloud**. Après un rétablissement, la nouvelle station republie votre DID avec **sa**
@@ -148,7 +158,7 @@ clé et l'empreinte de la constellation. **Qui la possède a la clé du compte**
 - **Garde-fous** : la carte d'une autre constellation, ou dont les secrets ne redonnent pas la clé annoncée, est refusée avant
   toute écriture ; aucun événement de naissance n'est republié (il écraserait votre vraie liste d'amis) ; aucun manifeste vide
   n'est publié tant que la restauration dure.
-- **Réafficher la carte** : `astroportd multipass card <email> [--svg]`.
+- **Réafficher une part** : `astroportd multipass card <email> [--part 1|2|3] [--svg]`.
 
 Pas à pas : [guide, étape 5](docs/GUIDE.md#etape-5).
 
@@ -303,7 +313,7 @@ Le workspace compte **16 crates** (+ le binaire `astroportd`, qui est aussi une 
 | **`astro-db`** | `uplanet.db` : schéma, acteur d'écriture unique, pool de lecteurs WAL, recherche vectorielle `sqlite-vec` (mémoire 1024D, visages 512D), stockage des événements (remplaçables, NIP-09, NIP-40), recherche plein texte NIP-50 par index FTS5 (préfixes, sans accents ni casse, classée par pertinence), migrations légères. Base créée en `0600`. |
 | **`astro-relay`** | Relai Nostr WebSocket en **pare-feu social** : lecture publique des kinds publics, tout le reste réservé au cercle N1/N2 authentifié (NIP-42) ; NIP-11 ; anti-abus (débit, tailles). NIP-01, 09 (suppressions par id et par adresse, sans réinsertion), 11 (avec CORS), 17, 40, 42, 45 (`COUNT`), 50 (`search`), 59 et 70 (événements protégés). |
 | **`astro-sync`** | `Projector` (événement → requêtes SQL, pur et indépendant de l'ordre), `replay`, `Crawler` N² clé par clé, client WebSocket (`ws://`, `wss://` rustls), envoi de messages chiffrés. |
-| **`astro-dav`** | WebDAV classe 1+2 sur uCloud chiffré (GET/Range, PUT en flux, PROPFIND, MKCOL, MOVE, COPY, LOCK, PROPPATCH), manifeste ancré sur Nostr/IPFS, liens d'invité `/s/<slug>#clé` (lecture seule) et **invitations** `/i/<jeton>` (le destinataire crée son MULTIPASS et reçoit les photos), **miniatures WebP**, dépôt hors WebDAV (`ingest`), magasin de blobs (disque / Kubo), **CardDAV** (`carddav` : carnet `/Contacts` chiffré, vCard 3.0/4.0 avec `X-NOSTR-PUBKEY`/`X-G1-PUBKEY`), **films et séries** (`media` : métadonnées TMDB, sondage, plan H.264/AAC, événement NIP-71, attestation de copie privée). |
+| **`astro-dav`** | WebDAV classe 1+2 sur uCloud chiffré (GET/Range, PUT en flux, PROPFIND, MKCOL, MOVE, COPY, LOCK, PROPPATCH), manifeste ancré sur Nostr/IPFS, liens d'invité `/s/<slug>#clé` (lecture seule) et **invitations** `/i/<jeton>` (le destinataire crée son MULTIPASS et reçoit les photos), **miniatures WebP**, dépôt hors WebDAV (`ingest`), magasin de blobs (disque / Kubo), **CardDAV** (`carddav` : carnet `/Contacts` chiffré, vCard 3.0/4.0 avec `X-NOSTR-PUBKEY`/`X-G1-PUBKEY`), **CalDAV** (`caldav`, `ical` : agenda `/Calendrier` chiffré, objets `.ics`), `sync-collection` pour les deux (journal `dav_changes`), **films et séries** (`media` : métadonnées TMDB, sondage, plan H.264/AAC, événement NIP-71, attestation de copie privée). |
 | **`astro-facecloud`** | Reconnaissance de visages : file de photos, moteur d'inférence (Brain HTTP ou ONNX local, commutable à chaud), seuils 0,82 / 0,55, partage automatique aux amis réciproques, validation « est-ce X ? ». |
 | **`astro-bro`** | Agent personnel **BRO LifeOS** : mémoire sémantique `bge-m3` 1024D (4 emplacements), **cycle RÊVE** (condensation à 150 souvenirs), garde-fous anti-secrets, bus de commandes par messages privés. |
 | **`astro-p2p`** | Maillage libp2p (TCP/QUIC, Noise, Yamux, réseau privé par `swarm.key`, circuit relay, DCUtR), tunnels DRAGON `/x/<service>-<PeerID>` avec **garde par flux et watchdog de session**, échange de blobs, **routage intelligent** (Power-Score, `power`/`closest`/`random`). |
@@ -497,7 +507,7 @@ Livré et testé : relai, uCloud chiffré avec manifeste rejouable et miniatures
 
 À connaître :
 - **MULTIPASS** : la création reprend l'essentiel de `make_NOSTRCARD.sh`, mais **pas** le découpage SSSS 2-sur-3 de
-  DISCO (remplacé par la **carte secrète** : SALT/PEPPER en QR), l'import de la clé IPNS dans Kubo, l'envoi du zine par
+  DISCO (remplacé par la **clé de secours** en 3 parts, P1 en QR), l'import de la clé IPNS dans Kubo, l'envoi du zine par
   email, la ZenCard ni la primo-transaction. Retrouver un compte repose donc sur cette carte, remise **une seule fois** ;
 - **une station = une constellation** (une `swarm.key`, ou aucune). Raccorder une même station à ORIGIN **et** à ẐEN en
   parallèle est *prévu* (deux réseaux P2P parallèles, même identité Y-Level, chaque MULTIPASS rattaché à une

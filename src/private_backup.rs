@@ -71,6 +71,12 @@ const RESTORE_WANT: usize = 200;
 /// Fichiers qui manquent encore après le manifeste : au plus 4 relances espacées de 6 h.
 const RESTORE_MISSING_ROUNDS: u32 = 4;
 /// Tâches de renvoi côté ami : `kv(scope, "<ami>:<propriétaire>")`.
+/// Durée de garde d'un compte déménagé, mis de côté dans `.moved/` (il contient encore ses clés) : 30 jours, puis effacé.
+const MOVED_KEEP_SECS: i64 = 30 * 24 * 3600;
+/// Part P3 de la clé de secours : côté propriétaire, ce qui a déjà été confié (`<owner>:<host>` → empreinte de la part).
+const SHARE_SENT: &str = "backup_share_sent";
+/// Côté hébergeur : la part P3 qu'un ami lui a confiée (`<host>:<owner>` → texte de la part).
+const SHARE_HELD: &str = "backup_share_held";
 const JOB: &str = "backup_restore_job";
 /// Délai avant de retirer chez l'ami le blob d'un fichier disparu chez le propriétaire (suppression ou remplacement).
 pub const GRACE_SECS: i64 = 7 * 24 * 3600;
@@ -191,6 +197,46 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
             .unwrap_or_else(|_| hex.chars().take(8).collect())
     }
 
+    /// Confie la part P3 de la clé de secours de chaque compte hébergé ici aux amis qui ont accepté d'héberger sa sauvegarde
+    /// (un seul message par ami, renvoyé si la part change). Une part seule ne révèle rien à l'ami qui la garde.
+    pub async fn send_shares(&self, at: i64) -> usize {
+        let Some(dir) = self.accounts_dir.clone() else { return 0 };
+        let pacts: Vec<(String, String, String)> = self
+            .db
+            .readers()
+            .read(|c| {
+                let mut stmt = c.prepare("SELECT p.owner_hex, p.host_hex, i.email FROM backup_pacts p JOIN identities i ON i.hex = p.owner_hex AND i.hosted = 1 WHERE p.status = 'accepted' AND i.email IS NOT NULL")?;
+                Ok(stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap_or_default();
+        let mut sent = 0;
+        for (owner, host, email) in pacts {
+            let Some(share) = astro_lifecycle::share::read_share(&dir.join(&email), 3) else { continue };
+            let (text, key) = (share.to_text(), format!("{owner}:{host}"));
+            let fingerprint = hex::encode(&<sha2::Sha256 as sha2::Digest>::digest(text.as_bytes())[..8]);
+            if self.kv_get(SHARE_SENT, &key).await.is_some_and(|(v, _)| v == fingerprint) {
+                continue;
+            }
+            let delivered = if self.hosted_here(&host).await {
+                self.kv_put(SHARE_HELD, &format!("{host}:{owner}"), &text, at).await;
+                Ok(())
+            } else {
+                self.send_to(&owner, &host, kind::CHAT, vec![vec!["op".into(), "share".into()]], &text).await
+            };
+            match delivered {
+                Ok(()) => {
+                    self.kv_put(SHARE_SENT, &key, &fingerprint, at).await;
+                    sent += 1;
+                }
+                Err(e) => {
+                    self.activity.publish_to(Audience::Captain, "alert", "backup", format!("clé de secours : part non confiée à …{} ({e})", &host[..8.min(host.len())]), None);
+                }
+            }
+        }
+        sent
+    }
+
     async fn hosted_here(&self, hex: &str) -> bool {
         let h = hex.to_owned();
         self.db.readers().read(move |c| Ok(c.query_row("SELECT 1 FROM identities WHERE hex = ?1 AND hosted = 1", [h], |r| r.get::<_, i64>(0)).optional()?.is_some())).await.unwrap_or(false)
@@ -259,10 +305,20 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
         };
         let mut hosting_json = Vec::new();
         for (who, status, quota, at, used) in hosting {
-            hosting_json.push(json!({ "owner": who, "label": self.label_of(&who).await, "status": status, "quota_bytes": quota, "used_bytes": used, "asked_at": at }));
+            let mut entry = json!({ "owner": who, "label": self.label_of(&who).await, "status": status, "quota_bytes": quota, "used_bytes": used, "asked_at": at });
+            // « J'appelle un ami » : l'ami hébergeur montre la part P3 (texte et QR) à celui qui rétablit son compte.
+            if status == "accepted" {
+                if let Some((share, _)) = self.kv_get(SHARE_HELD, &format!("{owner}:{who}")).await {
+                    entry["share_svg"] = astro_ui::qr::svg(&share).into();
+                    entry["share"] = share.into();
+                }
+            }
+            hosting_json.push(entry);
         }
+        let o = owner.to_owned();
+        let rescue = self.db.readers().read(move |c| Ok(c.query_row("SELECT COUNT(*) FROM kv WHERE scope = ?1 AND key LIKE ?2", rusqlite::params![SHARE_SENT, format!("{o}:%")], |r| r.get::<_, i64>(0))?)).await.unwrap_or(0);
         let friends = self.sharing.friends(owner).await?.into_iter().map(|f| json!({ "hex": f.hex, "label": f.label })).collect::<Vec<_>>();
-        Ok(json!({ "mine": mine, "hosting": hosting_json, "friends": friends }))
+        Ok(json!({ "mine": mine, "hosting": hosting_json, "friends": friends, "rescue_friends": rescue }))
     }
 
     /// Active la sauvegarde chez `host` (un proche réciproque : la demande lui est envoyée) ou la suspend (`host` absent).
@@ -351,6 +407,9 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
     /// Supprime chez `host` les blobs sauvegardés par `owner` (quota libéré) et oublie l'inventaire de ce couple.
     async fn forget_hosted(&self, host: &str, owner: &str) {
         self.drop_hosted(host, owner, None).await;
+        // La part P3 de la clé de secours suit le sort de la sauvegarde : plus d'accord, plus de part.
+        let key = format!("{host}:{owner}");
+        let _ = self.db.writer().execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", vec![SHARE_HELD.to_owned().into(), key.into()]).await;
     }
 
     /// Supprime chez `host` les blobs de `owner` (tous, ou seulement `only`), puis les blobs que plus aucune entrée ne référence.
@@ -697,6 +756,23 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
                 let accepted = self.db.readers().read(move |c| Ok(c.query_row("SELECT 1 FROM backup_pacts WHERE owner_hex = ?1 AND host_hex = ?2 AND status = 'accepted'", [s, m], |r| r.get::<_, i64>(0)).optional()?.is_some())).await.unwrap_or(false);
                 if accepted {
                     self.drop_hosted(me, &sender, Some(&cids)).await;
+                }
+                self.claim(&wrap.id, at).await;
+                stats.control += 1;
+            }
+            // La part P3 de la clé de secours de mon ami : je la garde, sans pouvoir rien en faire seul.
+            Some("share") => {
+                let accepted = {
+                    let (m, s) = (me.to_owned(), sender.clone());
+                    self.db.readers().read(move |c| Ok(c.query_row("SELECT 1 FROM backup_pacts WHERE owner_hex = ?1 AND host_hex = ?2 AND status = 'accepted'", [s, m], |r| r.get::<_, i64>(0)).optional()?.is_some())).await.unwrap_or(false)
+                };
+                // La part doit être celle de CET ami (clé publique du message) et porter le numéro 3.
+                match astro_lifecycle::share::SecretShare::parse(&rumor.content) {
+                    Ok(share) if accepted && share.index == 3 && share.hex == sender => {
+                        self.kv_put(SHARE_HELD, &format!("{me}:{sender}"), &share.to_text(), at).await;
+                        self.tell(me, format!("🔑 {label} vous a confié une part de sa clé de secours. Seule, elle ne sert à rien : s'il perd son compte, il vous appellera et vous la lui montrerez (Compte › Sauvegarde privée).")).await;
+                    }
+                    _ => stats.ignored += 1,
                 }
                 self.claim(&wrap.id, at).await;
                 stats.control += 1;
@@ -1314,7 +1390,33 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
             total += sent;
         }
         let dropped = self.gc_night(now()).await;
-        Ok(format!("{total} fichier(s) privé(s) sauvegardé(s) chez des amis, {dropped} ancien(s) blob(s) retiré(s)"))
+        let moved = self.purge_moved(now()).await?;
+        Ok(format!("{total} fichier(s) privé(s) sauvegardé(s) chez des amis, {dropped} ancien(s) blob(s) retiré(s) ; {moved} compte(s) déménagé(s) effacé(s) de `.moved`"))
+    }
+
+    /// Efface de `.moved/` les comptes déménagés depuis plus de [`MOVED_KEEP_SECS`] (l'âge est lu dans le nom du dossier,
+    /// `<email>-<horodatage>` : le déplacement conserve la date de modification d'origine). Une erreur est dite, jamais avalée.
+    async fn purge_moved(&self, now: i64) -> Result<usize, String> {
+        let Some(dir) = self.accounts_dir.clone().map(|d| d.join(".moved")) else { return Ok(0) };
+        tokio::task::spawn_blocking(move || {
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(e) => e,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+                Err(e) => return Err(format!("lecture de {} : {e}", dir.display())),
+            };
+            let mut gone = 0;
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Some(at) = name.rsplit_once('-').and_then(|(_, ts)| ts.parse::<i64>().ok()) else { continue };
+                if now.saturating_sub(at) >= MOVED_KEEP_SECS {
+                    std::fs::remove_dir_all(entry.path()).map_err(|e| format!("effacement de {} : {e}", entry.path().display()))?;
+                    gone += 1;
+                }
+            }
+            Ok(gone)
+        })
+        .await
+        .map_err(|e| format!("effacement de .moved : {e}"))?
     }
 
     /// Travailleur de fond : réception des demandes, réponses et blobs jusqu'au signal d'arrêt. L'**envoi** n'a lieu
@@ -1325,6 +1427,7 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
             self.poll_once(at).await;
             self.restore_step(at).await;
             self.serve_restores().await;
+            self.send_shares(at).await;
             tokio::select! {
                 () = tokio::time::sleep(every) => {}
                 changed = stop.changed() => {
@@ -1548,6 +1651,94 @@ mod tests {
             assert!(tag(&r.tags, "decryption-key").is_none() && tag(&r.tags, "cid").is_some(), "le blob part chiffré, sans sa clé");
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // ───────────────── Clé de secours : la part P3 chez les amis hébergeurs ─────────────────
+
+    fn write_rescue_shares(dir: &std::path::Path, secret: &[u8; 32], email: &str) -> Vec<astro_lifecycle::share::SecretShare> {
+        let card = astro_lifecycle::multipass::SecretCard::parse(&format!("astro-secret:v1|{email}|Sel123|Poivre456|legacy||{}", hex(secret))).unwrap();
+        let shares = astro_lifecycle::share::split_card(&card).unwrap();
+        let account = dir.join("nostr").join(email);
+        std::fs::create_dir_all(&account).unwrap();
+        astro_lifecycle::share::write_shares(&account, &shares).unwrap();
+        shares
+    }
+
+    async fn accept_pact(db: &Db, owner: &[u8; 32], host: &[u8; 32]) {
+        db.writer().execute("INSERT OR REPLACE INTO backup_pacts(owner_hex, host_hex, status, quota_bytes, enabled, asked_at) VALUES (?1, ?2, 'accepted', 1000, 1, 1)", vec![hex(owner).into(), hex(host).into()]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn only_the_third_share_goes_to_the_friend_who_hosts_the_backup_and_he_can_show_it_until_he_stops() {
+        let (alice, carol) = (hex(&ALICE), hex(&CAROL));
+        let owner = node("rescue-o", &[(&ALICE, "alice@example.org")], &[(&CAROL, "carol@example.org")], "12D3KooWRescueOwner", None, None).await;
+        let host = node("rescue-h", &[(&CAROL, "carol@example.org")], &[(&ALICE, "alice@example.org")], "12D3KooWRescueHost", None, None).await;
+        let shares = write_rescue_shares(&owner.dir, &ALICE, "alice@example.org");
+        for (n, a, b) in [(&owner, &ALICE, &CAROL), (&host, &CAROL, &ALICE)] {
+            n.db.writer().execute("INSERT INTO social_graph(owner_hex, pubkey, level, updated_at) VALUES (?1, ?2, 1, 0)", vec![hex(a).into(), hex(b).into()]).await.unwrap();
+        }
+        give(&host.db, follows(&ALICE, &[&CAROL])).await;
+
+        // Sans accord d'hébergement, rien ne part : l'ami n'a rien demandé.
+        assert_eq!(owner.backup.send_shares(now()).await, 0);
+        assert!(owner.outbox.0.lock().unwrap().is_empty());
+
+        accept_pact(&owner.db, &ALICE, &CAROL).await;
+        accept_pact(&host.db, &ALICE, &CAROL).await;
+        assert_eq!(owner.backup.send_shares(now()).await, 1);
+        assert_eq!(owner.backup.send_shares(now()).await, 0, "un seul envoi tant que la part ne change pas");
+        let sent = owner.outbox.0.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1);
+        let rumor = nip59::unwrap(&CAROL, &sent[0].1).unwrap().rumor;
+        assert_eq!((tag(&rumor.tags, "op"), rumor.content.as_str()), (Some("share"), shares[2].to_text().as_str()), "P3, ni P1 ni P2");
+        assert!(!rumor.content.contains("Sel123") && !rumor.content.contains("Poivre456"));
+        assert_eq!(owner.backup.status(&alice).await.unwrap()["rescue_friends"], 1);
+
+        // L'ami la reçoit et peut la montrer (texte et QR) à celui qui le rappelle.
+        pump(&owner, &host).await;
+        assert_eq!(host.backup.poll_once(now()).await.control, 1);
+        let shown = host.backup.status(&carol).await.unwrap();
+        assert_eq!(shown["hosting"][0]["share"], shares[2].to_text());
+        assert!(shown["hosting"][0]["share_svg"].as_str().is_some_and(|s| s.contains("<svg")));
+
+        // Une part qui n'est pas la P3 de l'expéditeur est écartée (autre numéro, ou clé publique d'un autre compte).
+        let forged = |text: String| {
+            let r = Rumor { pubkey: alice.clone(), created_at: u64::try_from(now()).unwrap() + 1, kind: kind::CHAT, tags: vec![vec!["t".into(), TAG.into()], vec!["op".into(), "share".into()]], content: text };
+            gift_wrap(&ALICE, &carol, &r, r.created_at).unwrap()
+        };
+        host.db.writer().execute("DELETE FROM kv WHERE scope = ?1", vec![SHARE_HELD.to_owned().into()]).await.unwrap();
+        for bad in [shares[0].to_text(), "n'importe quoi".to_owned()] {
+            let wrap = forged(bad);
+            host.db.writer().transaction(move |tx| insert_event(tx, &wrap).map(|_| ())).await.unwrap();
+        }
+        let stats = host.backup.poll_once(now()).await;
+        assert_eq!(stats.ignored, 2, "P1 et le texte quelconque sont refusés");
+        assert!(host.backup.status(&carol).await.unwrap()["hosting"][0].get("share").is_none());
+
+        // L'hébergeur redonne la part puis arrête d'héberger : la part disparaît avec la sauvegarde.
+        let wrap = forged(shares[2].to_text());
+        host.db.writer().transaction(move |tx| insert_event(tx, &wrap).map(|_| ())).await.unwrap();
+        host.backup.poll_once(now()).await;
+        assert!(host.backup.status(&carol).await.unwrap()["hosting"][0].get("share").is_some());
+        host.backup.respond(&carol, &alice, false, 0, 1000).await.unwrap();
+        assert!(host.backup.kv_get(SHARE_HELD, &format!("{carol}:{alice}")).await.is_none());
+        for n in [owner, host] {
+            let _ = std::fs::remove_dir_all(n.dir);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_friend_hosted_on_the_same_station_holds_the_share_without_any_message() {
+        let (alice, bob) = (hex(&ALICE), hex(&BOB));
+        let n = node("rescue-local", &[(&ALICE, "alice@example.org"), (&BOB, "bob@example.org")], &[], "12D3KooWRescueLocal", None, None).await;
+        let shares = write_rescue_shares(&n.dir, &ALICE, "alice@example.org");
+        accept_pact(&n.db, &ALICE, &BOB).await;
+        assert_eq!(n.backup.send_shares(now()).await, 1);
+        assert!(n.outbox.0.lock().unwrap().is_empty());
+        assert_eq!(n.backup.status(&bob).await.unwrap()["hosting"][0]["share"], shares[2].to_text());
+        // Le même compte n'a pas besoin de la part d'un autre : Alice, hébergeuse de personne, ne détient rien.
+        assert!(n.backup.status(&alice).await.unwrap()["hosting"].as_array().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(n.dir);
     }
 
     // ───────────────── Restauration de bout en bout : trois stations, une panne ─────────────────
@@ -1848,6 +2039,13 @@ mod tests {
         assert_eq!(aside.len(), 1);
         assert!(aside[0].path().join(".secret.nostr").is_file(), "mis de côté, jamais effacé");
         assert_eq!(old.backup.kv_get("moved", &alice).await.map(|v| v.0), Some(new_home.clone()));
+        // `.moved` garde le compte 30 jours (il contient encore ses clés), puis la nuit l'efface ; un nom inattendu est laissé.
+        let stray = old.dir.join("nostr/.moved/pas-de-date");
+        std::fs::create_dir_all(&stray).unwrap();
+        assert_eq!(old.backup.purge_moved(now() + MOVED_KEEP_SECS - 3600).await.unwrap(), 0, "trop tôt");
+        assert!(aside[0].path().exists());
+        assert_eq!(old.backup.purge_moved(now() + MOVED_KEEP_SECS + 3600).await.unwrap(), 1);
+        assert!(!aside[0].path().exists() && stray.exists(), "le compte est effacé, le dossier sans date est laissé");
         assert!(files.secret(&alice).is_none(), "après : la station ne peut plus signer pour ce compte");
 
         // Garde-fous, sur une autre ancienne station (le compte y est hébergé) : rien de tout cela ne doit le débarquer à tort.

@@ -11,8 +11,9 @@
 //! | `/addressbooks/<login>/contacts/<nom>.vcf` | une fiche ↔ `/Contacts/<nom>.vcf` |
 //!
 //! `<login>` est l'email du compte (ou sa clé Nostr s'il n'en a pas) : on n'ouvre jamais le carnet d'un autre.
-//! Limites assumées : pas de `sync-collection` (les clients retombent sur ctag + etags), `addressbook-query` renvoie
-//! tout le carnet sans appliquer les filtres (le client filtre).
+//! `sync-collection` (RFC 6578) s'appuie sur le journal `dav_changes` (alimenté par des triggers SQL, suppressions
+//! comprises) : un client qui présente un jeton récent ne reçoit que les fiches changées. Limite assumée :
+//! `addressbook-query` renvoie tout le carnet sans appliquer les filtres (le client filtre).
 
 use std::collections::BTreeMap;
 
@@ -34,8 +35,8 @@ use crate::xml::{self, escape};
 
 /// Dossier du uCloud qui porte le carnet.
 pub const CONTACTS_DIR: &str = "/Contacts";
-const NS: &str = "xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:carddav\" xmlns:CS=\"http://calendarserver.org/ns/\"";
-const XML: [(header::HeaderName, &str); 1] = [(header::CONTENT_TYPE, "application/xml; charset=utf-8")];
+const NS: &str = "xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:carddav\" xmlns:CS=\"http://calendarserver.org/ns/\" xmlns:A=\"urn:ietf:params:xml:ns:caldav\"";
+pub(crate) const XML: [(header::HeaderName, &str); 1] = [(header::CONTENT_TYPE, "application/xml; charset=utf-8")];
 
 /// Le chemin (hors montage) relève-t-il de CardDAV ?
 pub(crate) fn is_carddav_path(path: &str) -> bool {
@@ -94,6 +95,25 @@ pub fn ctag(cards: &[Entry]) -> String {
     hex::encode(&h.finalize()[..12])
 }
 
+/// Préfixe des jetons de synchronisation ; le reste est un numéro du journal `dav_changes`.
+pub(crate) const TOKEN_PREFIX: &str = "urn:astro:sync:";
+
+/// Dernier numéro attribué au journal des changements (0 : journal vierge).
+pub(crate) async fn journal_head<B: BlobStore>(st: &DavState<B>) -> i64 {
+    st.db.readers().read(|c| Ok(c.query_row("SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'dav_changes'), 0)", [], |r| r.get(0))?)).await.unwrap_or(0)
+}
+
+/// Le jeton `n` est-il encore exploitable ? Non s'il vient du futur (base reconstruite) ou d'avant la dernière purge.
+pub(crate) async fn token_is_valid<B: BlobStore>(st: &DavState<B>, n: i64, head: i64) -> bool {
+    let floor: i64 = st
+        .db
+        .readers()
+        .read(|c| Ok(rusqlite::OptionalExtension::optional(c.query_row("SELECT value FROM schema_info WHERE key = 'dav_changes_floor'", [], |r| r.get::<_, String>(0)))?.and_then(|v| v.parse().ok()).unwrap_or(0)))
+        .await
+        .unwrap_or(0);
+    (floor..=head).contains(&n)
+}
+
 fn etag(e: &Entry) -> String {
     format!("\"{}\"", e.cid.as_deref().unwrap_or(""))
 }
@@ -110,7 +130,7 @@ fn href(st_mount: &str, login: &str, file: Option<&str>) -> String {
     xml::href(st_mount, &path, file.is_none())
 }
 
-fn response(href: &str, props: &str) -> String {
+pub(crate) fn response(href: &str, props: &str) -> String {
     format!("<D:response><D:href>{}</D:href><D:propstat><D:prop>{props}</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>\n", escape(href))
 }
 
@@ -118,11 +138,11 @@ fn multistatus(parts: &[String]) -> Response {
     (StatusCode::MULTI_STATUS, XML, format!("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus {NS}>\n{}</D:multistatus>\n", parts.concat())).into_response()
 }
 
-fn principal_href(mount: &str, login: &str) -> String {
+pub(crate) fn principal_href(mount: &str, login: &str) -> String {
     xml::href(mount, &format!("/principals/{login}"), true)
 }
 
-fn home_href(mount: &str, login: &str) -> String {
+pub(crate) fn home_href(mount: &str, login: &str) -> String {
     xml::href(mount, &format!("/addressbooks/{login}"), true)
 }
 
@@ -206,13 +226,14 @@ pub(crate) async fn handle<B: BlobStore>(st: &DavState<B>, auth: &Auth, method: 
         ("PROPFIND", Target::Home(_)) => {
             let mut parts = vec![home(&mount, &login)];
             if depth != "0" {
-                parts.push(book(&mount, &login, &ctag(&list_cards(st, &owner).await)));
+                parts.push(book(&mount, &login, &ctag(&list_cards(st, &owner).await), journal_head(st).await));
             }
             multistatus(&parts)
         }
         ("PROPFIND", Target::Book(_)) => {
+            let head = journal_head(st).await;
             let all = list_cards(st, &owner).await;
-            let mut parts = vec![book(&mount, &login, &ctag(&all))];
+            let mut parts = vec![book(&mount, &login, &ctag(&all), head)];
             if depth != "0" {
                 parts.extend(all.iter().map(|e| response(&href(&mount, &login, Some(card_name(&e.path))), &card_props(e, None))));
             }
@@ -244,10 +265,11 @@ fn principal(mount: &str, login: &str) -> String {
         &principal_href(mount, login),
         &format!(
             "<D:resourcetype><D:collection/><D:principal/></D:resourcetype><D:displayname>{l}</D:displayname><D:current-user-principal><D:href>{p}</D:href></D:current-user-principal>\
-<D:principal-URL><D:href>{p}</D:href></D:principal-URL><C:addressbook-home-set><D:href>{h}</D:href></C:addressbook-home-set>",
+<D:principal-URL><D:href>{p}</D:href></D:principal-URL><C:addressbook-home-set><D:href>{h}</D:href></C:addressbook-home-set><A:calendar-home-set><D:href>{c}</D:href></A:calendar-home-set>",
             l = escape(login),
             p = escape(&principal_href(mount, login)),
-            h = escape(&home_href(mount, login))
+            h = escape(&home_href(mount, login)),
+            c = escape(&crate::caldav::home_href(mount, login))
         ),
     )
 }
@@ -256,14 +278,14 @@ fn home(mount: &str, login: &str) -> String {
     response(&home_href(mount, login), &format!("<D:resourcetype><D:collection/></D:resourcetype><D:displayname>{}</D:displayname><D:current-user-principal><D:href>{}</D:href></D:current-user-principal>", escape(login), escape(&principal_href(mount, login))))
 }
 
-fn book(mount: &str, login: &str, ctag: &str) -> String {
+fn book(mount: &str, login: &str, ctag: &str, token: i64) -> String {
     response(
         &href(mount, login, None),
         &format!(
-            "<D:resourcetype><D:collection/><C:addressbook/></D:resourcetype><D:displayname>Contacts</D:displayname><CS:getctag>{ctag}</CS:getctag>\
+            "<D:resourcetype><D:collection/><C:addressbook/></D:resourcetype><D:displayname>Contacts</D:displayname><CS:getctag>{ctag}</CS:getctag><D:sync-token>{TOKEN_PREFIX}{token}</D:sync-token>\
 <D:owner><D:href>{p}</D:href></D:owner><C:max-resource-size>{max}</C:max-resource-size>\
 <C:supported-address-data><C:address-data-type content-type=\"text/vcard\" version=\"3.0\"/><C:address-data-type content-type=\"text/vcard\" version=\"4.0\"/></C:supported-address-data>\
-<D:supported-report-set><D:supported-report><D:report><C:addressbook-multiget/></D:report></D:supported-report><D:supported-report><D:report><C:addressbook-query/></D:report></D:supported-report></D:supported-report-set>\
+<D:supported-report-set><D:supported-report><D:report><C:addressbook-multiget/></D:report></D:supported-report><D:supported-report><D:report><C:addressbook-query/></D:report></D:supported-report><D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report></D:supported-report-set>\
 <D:current-user-privilege-set><D:privilege><D:all/></D:privilege></D:current-user-privilege-set>",
             p = escape(&principal_href(mount, login)),
             max = vcard::MAX_CARD
@@ -276,10 +298,10 @@ async fn find<B: BlobStore>(st: &DavState<B>, owner: &str, file: &str) -> Option
     st.db.readers().read(move |c| Ok(vfs::get_entry(c, &o, &p).ok().flatten())).await.ok().flatten().filter(is_card)
 }
 
-/// Corps d'un `REPORT` : nature du rapport et `href` demandés (multiget).
-fn parse_report(body: &[u8]) -> Result<(String, Vec<String>), ()> {
+/// Corps d'un `REPORT` : nature du rapport, `href` demandés (multiget) et jeton présenté (`sync-collection`).
+pub(crate) fn parse_report(body: &[u8]) -> Result<(String, Vec<String>, String), ()> {
     let mut reader = NsReader::from_reader(body);
-    let (mut root, mut hrefs, mut in_href, mut buf) = (None::<String>, Vec::new(), false, Vec::new());
+    let (mut root, mut hrefs, mut in_href, mut in_token, mut token, mut buf) = (None::<String>, Vec::new(), false, false, String::new(), Vec::new());
     loop {
         match reader.read_event_into(&mut buf).map_err(|_| ())? {
             Event::Start(e) | Event::Empty(e) => {
@@ -288,22 +310,29 @@ fn parse_report(body: &[u8]) -> Result<(String, Vec<String>), ()> {
                     root = Some(name);
                 } else if name == "href" {
                     in_href = true;
+                } else if name == "sync-token" {
+                    in_token = true;
                 }
             }
             Event::Text(t) if in_href => hrefs.push(t.unescape().map_err(|_| ())?.trim().to_owned()),
+            Event::Text(t) if in_token => token = t.unescape().map_err(|_| ())?.trim().to_owned(),
             Event::End(e) if e.local_name().as_ref() == b"href" => in_href = false,
+            Event::End(e) if e.local_name().as_ref() == b"sync-token" => in_token = false,
             Event::Eof => break,
             _ => {}
         }
         buf.clear();
     }
-    Ok((root.ok_or(())?, hrefs))
+    Ok((root.ok_or(())?, hrefs, token))
 }
 
 async fn report<B: BlobStore>(st: &DavState<B>, owner: &str, login: &str, req: Request) -> Response {
     let Ok(body) = axum::body::to_bytes(req.into_body(), crate::parse::MAX_XML).await else { return reply(StatusCode::PAYLOAD_TOO_LARGE, "corps trop volumineux") };
-    let Ok((kind, hrefs)) = parse_report(&body) else { return reply(StatusCode::BAD_REQUEST, "XML mal formé") };
+    let Ok((kind, hrefs, token)) = parse_report(&body) else { return reply(StatusCode::BAD_REQUEST, "XML mal formé") };
     let mount = st.config.mount.clone();
+    if kind == "sync-collection" {
+        return sync_collection(st, owner, login, &token).await;
+    }
     let all = list_cards(st, owner).await;
     let by_name: BTreeMap<&str, &Entry> = all.iter().map(|e| (card_name(&e.path), e)).collect();
     let mut parts = Vec::new();
@@ -326,10 +355,62 @@ async fn report<B: BlobStore>(st: &DavState<B>, owner: &str, login: &str, req: R
                 }
             }
         }
-        // `sync-collection` n'est pas annoncé : le jeton n'est jamais valide, le client refait la synchronisation complète.
-        "sync-collection" => return (StatusCode::FORBIDDEN, XML, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:error xmlns:D=\"DAV:\"><D:valid-sync-token/></D:error>\n".to_owned()).into_response(),
         _ => return reply(StatusCode::FORBIDDEN, "rapport non supporté"),
     }
+    multistatus(&parts)
+}
+
+/// Chemins du dossier `dir` touchés par le journal entre `since` (exclu) et `head` (inclus).
+pub(crate) async fn changed_paths<B: BlobStore>(st: &DavState<B>, owner: &str, since: i64, head: i64, dir: &str) -> Vec<String> {
+    let (o, like) = (owner.to_owned(), format!("{dir}/%"));
+    st.db
+        .readers()
+        .read(move |c| {
+            let mut stmt = c.prepare("SELECT DISTINCT path FROM dav_changes WHERE owner_hex = ?1 AND seq > ?2 AND seq <= ?3 AND path LIKE ?4 ORDER BY path")?;
+            let rows = stmt.query_map(rusqlite::params![o, since, head, like], |r| r.get::<_, String>(0))?;
+            Ok(rows.collect::<Result<_, _>>()?)
+        })
+        .await
+        .unwrap_or_default()
+}
+
+pub(crate) fn invalid_token() -> Response {
+    (StatusCode::FORBIDDEN, XML, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:error xmlns:D=\"DAV:\"><D:valid-sync-token/></D:error>\n".to_owned()).into_response()
+}
+
+/// `sync-collection` (RFC 6578) : les fiches changées depuis `token` (404 pour les supprimées), puis le nouveau jeton.
+/// Jeton vide : première synchronisation, tout le carnet. Jeton illisible, périmé ou venu du futur : `valid-sync-token`,
+/// le client repart de zéro.
+async fn sync_collection<B: BlobStore>(st: &DavState<B>, owner: &str, login: &str, token: &str) -> Response {
+    // Le numéro de tête est lu AVANT la liste : un changement survenu entre les deux sera simplement rapporté une fois de plus.
+    let head = journal_head(st).await;
+    let since = if token.is_empty() {
+        None
+    } else {
+        let Some(n) = token.strip_prefix(TOKEN_PREFIX).and_then(|n| n.parse::<i64>().ok()) else { return invalid_token() };
+        if !token_is_valid(st, n, head).await {
+            return invalid_token();
+        }
+        Some(n)
+    };
+    let mount = st.config.mount.clone();
+    let all = list_cards(st, owner).await;
+    let mut parts = Vec::new();
+    match since {
+        None => parts.extend(all.iter().map(|e| response(&href(&mount, login, Some(card_name(&e.path))), &card_props(e, None)))),
+        Some(n) => {
+            let paths = changed_paths(st, owner, n, head, CONTACTS_DIR).await;
+            let by_path: BTreeMap<&str, &Entry> = all.iter().map(|e| (e.path.as_str(), e)).collect();
+            for path in paths {
+                let h = href(&mount, login, Some(card_name(&path)));
+                match by_path.get(path.as_str()) {
+                    Some(e) => parts.push(response(&h, &card_props(e, None))),
+                    None => parts.push(format!("<D:response><D:href>{}</D:href><D:status>HTTP/1.1 404 Not Found</D:status></D:response>\n", escape(&h))),
+                }
+            }
+        }
+    }
+    parts.push(format!("<D:sync-token>{TOKEN_PREFIX}{head}</D:sync-token>\n"));
     multistatus(&parts)
 }
 

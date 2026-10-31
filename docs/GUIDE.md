@@ -247,11 +247,16 @@ L'inscription web est **ouverte par défaut**, avec des garde-fous réglables au
 
 > **À savoir.** Sur une station publique, pensez à fermer l'inscription (`--no-register`) quand vos membres sont inscrits.
 
-### 🔑 La carte secrète : retrouver son compte si la station tombe en panne
+### 🔑 La clé de secours : retrouver son compte si la station tombe en panne
 
-À la création, la carte d'identité contient aussi une **carte secrète** : une ligne `astro-secret:v1|…` (votre email, SALT, PEPPER, la formule de clé et l'empreinte de la constellation) et son **QR**. **Qui la possède a la clé de votre compte** : imprimez-la, gardez-la hors ligne, ne la montrez à personne.
+À la création, la carte d'identité contient une **clé de secours** : le secret de votre compte est découpé en **trois parts, dont deux suffisent**. Vous recevez la **part 1** (une ligne `astro-share:v1|…` et son **QR**). **Seule, elle ne révèle rien** : une photo ou une carte volée ne donne pas accès à votre compte. Imprimez-la et gardez-la hors ligne.
 
-Elle sert à **rétablir le même compte sur une autre station de la même constellation** : station détruite, ou déménagement chez un Capitaine plus proche de chez vous. Même clé, donc mêmes amis, mêmes contacts, mêmes fichiers.
+- **Part 2** : gardée par votre station (dossier du compte, `0600`).
+- **Part 3** : confiée **automatiquement** aux amis qui hébergent votre sauvegarde (message chiffré pour chacun, une seule fois). Chacun la voit dans *Compte › Sauvegarde privée* (bouton *Montrer sa part de secours*), en texte et en QR.
+
+**« J'appelle un ami ».** Station détruite, ou déménagement chez un Capitaine plus proche : sur la nouvelle station, ouvrez `/restore`, scannez votre QR (part 1), puis appelez un ami qui héberge votre sauvegarde : il vous montre sa part (part 3), vous la scannez ou la tapez. Ces deux parts rétablissent **le même compte** : mêmes amis, mêmes contacts, mêmes fichiers. La voix de l'ami est la vérification : ne lui demandez rien d'autre. Le SALT et le PEPPER ne sont plus jamais affichés. L'ancienne carte complète (`astro-secret:v1|…`) reste acceptée.
+
+Tant qu'aucun ami n'a accepté d'héberger votre sauvegarde, la part 3 n'existe nulle part ailleurs que chez votre station : demandez à un proche d'héberger votre sauvegarde (*Compte › Sauvegarde privée*) pour que la clé de secours soit complète.
 
 **Ce qui se passe, sans que vos amis aient quoi que ce soit à faire.** Chaque nuit, votre station range chez l'ami qui héberge votre sauvegarde vos fichiers privés **et le manifeste de votre uCloud** (la liste de vos fichiers et leurs clés, chiffrée). Après un rétablissement, la nouvelle station :
 
@@ -266,10 +271,11 @@ Vous êtes prévenu dans votre messagerie BRO quand c'est fait. Si rien n'est re
 ### 🖥️ Terminal (CLI)
 
 ```bash
-astroportd multipass card alice@exemple.org            # réaffiche la carte secrète d'un compte hébergé ici
+astroportd multipass card alice@exemple.org            # réaffiche la part 1 (celle du membre) d'un compte hébergé ici
 astroportd multipass card alice@exemple.org --svg > carte.svg   # …en QR à imprimer
-# Sur la NOUVELLE station (carte lue sur l'entrée standard : un argument se lirait dans `ps`) :
-astroportd multipass recover - --relay wss://relais.ami.example < carte.txt
+astroportd multipass card alice@exemple.org --part 3    # la part que gardent les amis
+# Sur la NOUVELLE station (les deux parts, une par ligne, lues sur l'entrée standard : un argument se lirait dans `ps`) :
+astroportd multipass recover - --relay wss://relais.ami.example < parts.txt
 ```
 
 `--relay` (répétable) rapatrie tout de suite les événements du compte ; sans lui, le démon (`astroportd serve`) s'en charge au prochain crawl. Un **nouveau code PASS** est généré et affiché une fois : l'ancien est tiré au hasard et n'est pas récupérable.
@@ -394,12 +400,17 @@ curl -u vous@exemple.org:JETON -T photo.jpg https://votre-domaine/dav/Photos/pho
 
 <a id="etape-8b"></a>
 
-## Étape 8 bis — Contacts, CardDAV et Mon compte
+## Étape 8 bis — Contacts, agenda (CardDAV, CalDAV) et Mon compte
 
 **Carnet d'adresses (CardDAV).** Chaque compte a un carnet synchronisable avec « Contacts » d'Android (DAVx⁵) et d'iPhone. Les fiches sont des fichiers `.vcf` chiffrés du dossier `/Contacts` de votre uCloud (donc répliqués, sauvegardés et comptés dans votre quota), servis en CardDAV (RFC 6352) :
 
 - **Serveur** : `https://<station>/dav/` (la découverte `/.well-known/carddav` est prise en charge) ; **identifiant** : votre email ; **mot de passe** : votre jeton (écran *Mon compte*).
-- Limites connues : pas de `sync-collection` (les clients retombent sur ctag + etags, sans conséquence), `addressbook-query` renvoie tout le carnet sans filtrer.
+- Limites connues : `sync-collection` est pris en charge (jeton = numéro du journal des changements, suppressions comprises, gardé 30 jours ; un jeton plus ancien renvoie le client à une synchronisation complète) ; `addressbook-query` renvoie tout le carnet sans filtrer.
+
+**Agenda (CalDAV).** Même principe pour l'agenda : « Agenda » d'Android (DAVx⁵), d'iPhone ou Thunderbird se synchronise avec le dossier `/Calendrier` de votre uCloud. Chaque événement, tâche ou note est un fichier `.ics` **chiffré, répliqué avec vos sauvegardes et jamais publié sur Nostr** (rien de public par défaut).
+
+- **Serveur** : le même `https://<station>/dav/` (découverte `/.well-known/caldav` et `calendar-home-set` du principal) ; mêmes identifiants. Un seul agenda par compte, nommé « Agenda ».
+- Limites connues : `calendar-query` renvoie tout l'agenda sans appliquer le filtre de dates ni développer les récurrences (le client le fait) ; pas d'invitations entre participants ; pas de création d'agendas supplémentaires. `sync-collection` est pris en charge, avec le même journal que le carnet.
 
 **Rapprochement photo ↔ fiche ↔ MULTIPASS.** Une fiche relie un visage à un MULTIPASS de deux façons : la fiche porte une clé Nostr (`X-NOSTR-PUBKEY` ou `X-NOSTR-NPUB`, en hexadécimal ou `npub1…`), ou son email est celui d'un compte **hébergé par cette station** (un email déclaré dans un DID distant n'est jamais une preuve). Les visages de même nom (sans accents ni casse) prennent alors cette clé ; deux fiches du même nom pour deux clés différentes restent ambiguës et ne sont pas rapprochées. Si vous êtes Proches réciproques, les photos déjà analysées de cette personne lui sont partagées aussitôt. L'écran **Contacts** montre les fiches, leur lien, les personnes reconnues sans fiche (*Créer la fiche*) et permet de relier à la main (email d'un MULTIPASS de la station, ou `npub`) ; une clé ajoutée à la main est écrite dans la fiche, donc elle suit le carnet sur votre téléphone.
 

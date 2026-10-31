@@ -19,6 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use astro_core::ActivityBus;
 use astro_db::Db;
 use astro_lifecycle::multipass::{self, MultipassError};
+use astro_lifecycle::share::{self, Recovery};
 use astro_nostr_proto::Event;
 use astro_sync::Projector;
 
@@ -79,8 +80,8 @@ pub struct Registered {
     pub constellation: &'static str,
     /// Compte invité : adresse générée par la station, pas un email réel.
     pub guest: bool,
-    /// Carte secrète (`astro-secret:v1|…`) à imprimer en QR : elle rétablit ce compte sur n'importe quelle station de la même
-    /// UPlanet. Vaut la clé du compte ; remise une seule fois, comme le reste.
+    /// Part P1 de la clé de secours (`astro-share:v1|…`) à imprimer en QR. Seule, elle ne révèle rien ; avec P3 (gardée par les
+    /// amis qui hébergent la sauvegarde) elle rétablit ce compte sur n'importe quelle station de la même UPlanet.
     pub card: String,
 }
 
@@ -247,7 +248,7 @@ impl Registrar {
     /// est marqué « restauration en cours » : la station retrouve ses événements par le crawl, puis demande à chaque proche
     /// ses sauvegardes et annonce sa nouvelle station d'accueil ([`crate::private_backup`]). Tant que le manifeste n'est
     /// pas rétabli, aucun manifeste vide n'est publié : il remplacerait celui que les amis détiennent.
-    pub async fn recover(&self, ip: Option<IpAddr>, card: &multipass::SecretCard, lang: &str) -> Result<Registered, RegisterError> {
+    pub async fn recover(&self, ip: Option<IpAddr>, recovery: &Recovery, lang: &str) -> Result<Registered, RegisterError> {
         if !self.limits.open {
             return Err(RegisterError::Closed);
         }
@@ -258,8 +259,26 @@ impl Registrar {
         let at = now();
         self.throttle(ip, at)?;
         let (root, name, lang) = (self.nostr_root.clone(), self.uplanet_name.clone(), lang.to_owned());
-        let wanted = card.clone();
-        let account = tokio::task::spawn_blocking(move || multipass::recover(&root, &wanted, &name, &lang)).await.map_err(|e| RegisterError::Internal(e.to_string()))?.map_err(create_error)?;
+        let (wanted, given) = (recovery.card.clone(), recovery.shares.clone());
+        let account = tokio::task::spawn_blocking(move || {
+            let account = multipass::recover(&root, &wanted, &name, &lang)?;
+            // Parts retrouvées d'après les deux données (P1 et P3 restent valables) ; une ancienne carte complète donne un nouveau découpage.
+            let shares = match given {
+                Some(s) => s,
+                None => share::split_card(&wanted)?,
+            };
+            match share::write_shares(&account.dir, &shares) {
+                Ok(()) => Ok((account, shares)),
+                Err(e) => {
+                    let _ = std::fs::remove_dir_all(&account.dir);
+                    Err(e)
+                }
+            }
+        })
+        .await
+        .map_err(|e| RegisterError::Internal(e.to_string()))?
+        .map_err(create_error)?;
+        let (account, shares) = account;
 
         let (hex, email, formula) = (account.hex.clone(), account.email.clone(), account.formula.as_str());
         let stored = self
@@ -282,7 +301,7 @@ impl Registrar {
             bus.publish_to(astro_core::Audience::Captain, "system", "register", format!("MULTIPASS {} rétabli depuis sa carte secrète (restauration en cours, {})", account.email, self.constellation()), None);
         }
         let token = (self.token_of)(&account.hex);
-        let card = multipass::SecretCard::of(&account, &self.uplanet_name).to_text();
+        let card = shares.iter().find(|s| s.index == 1).map(share::SecretShare::to_text).unwrap_or_default();
         Ok(Registered { account, token, constellation: self.constellation(), guest: false, card })
     }
 
@@ -309,17 +328,30 @@ impl Registrar {
         let last = emails.len().saturating_sub(1);
         for (i, email) in emails.into_iter().enumerate() {
             let (root, name, lang) = (self.nostr_root.clone(), self.uplanet_name.clone(), lang.to_owned());
-            let result = tokio::task::spawn_blocking(move || multipass::create(&root, &email, &name, &lang)).await.map_err(|e| RegisterError::Internal(e.to_string()))?;
+            let result = tokio::task::spawn_blocking(move || {
+                let account = multipass::create(&root, &email, &name, &lang)?;
+                // La clé de secours en trois parts est écrite avec le compte : P1 pour le membre, P2 gardée ici, P3 pour ses amis.
+                let shares = share::split_card(&multipass::SecretCard::of(&account, &name)).and_then(|s| share::write_shares(&account.dir, &s).map(|()| s));
+                match shares {
+                    Ok(s) => Ok((account, s)),
+                    Err(e) => {
+                        let _ = std::fs::remove_dir_all(&account.dir);
+                        Err(e)
+                    }
+                }
+            })
+            .await
+            .map_err(|e| RegisterError::Internal(e.to_string()))?;
             match result {
-                Ok(account) => {
-                    created = Some(account);
+                Ok(pair) => {
+                    created = Some(pair);
                     break;
                 }
                 Err(MultipassError::Exists(_) | MultipassError::IdentityConflict(_)) if i < last => {}
                 Err(e) => return Err(create_error(e)),
             }
         }
-        let account = created.ok_or_else(|| RegisterError::Internal("aucune adresse libre".into()))?;
+        let (account, shares) = created.ok_or_else(|| RegisterError::Internal("aucune adresse libre".into()))?;
 
         let events = multipass::birth_events(&account, &self.uplanet_name, self.captain_hex.as_deref(), &self.relays, at).map_err(|e| RegisterError::Internal(e.to_string()))?;
         if let Err(e) = self.store(&account.hex, &events, guest).await {
@@ -344,7 +376,7 @@ impl Registrar {
             bus.publish_to(astro_core::Audience::Captain, "system", "register", format!("nouveau MULTIPASS {}{} ({})", account.email, if guest { " [invité]" } else { "" }, self.constellation()), None);
         }
         let token = (self.token_of)(&account.hex);
-        let card = multipass::SecretCard::of(&account, &self.uplanet_name).to_text();
+        let card = shares.iter().find(|s| s.index == 1).map(share::SecretShare::to_text).unwrap_or_default();
         Ok(Registered { account, token, constellation: self.constellation(), guest, card })
     }
 
