@@ -322,7 +322,7 @@ Le workspace compte **16 crates** (+ le binaire `astroportd`, qui est aussi une 
 | **`astro-economy`** | Registre **Ğ1-N²** (kind 30852) validé intégralement, règle des **3×1/3**, **Love Ledger**. |
 | **`astro-lifecycle`** | Détection des identités locales (NODE, Capitaine, MULTIPASS), machine d'état hebdomadaire (loyer → grâce → suspension), reconstruction au replay, déménagement `home:station`. |
 | **`astro-plugins`** | Runtime **WebAssembly isolé** (wasmtime) : aucune capacité, carburant et mémoire bornés, appels sans état. |
-| **`astro-ui`** | Façade web : ACME, TLS, reverse proxy, **application web embarquée** (HTML/CSS/JS sans framework, ≈ 39,5 Ko bruts, **13,0 Ko en Brotli, 14,6 Ko en Gzip**, PWA), API `/api/v1`, `/health`, flux SSE. |
+| **`astro-ui`** | Façade web : ACME, TLS, reverse proxy, **application web embarquée** (HTML/CSS/JS sans framework, ≈ 50,5 Ko bruts, **15,7 Ko en Brotli, 17,7 Ko en Gzip**, PWA), API `/api/v1`, `/health`, flux SSE. |
 
 ---
 

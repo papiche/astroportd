@@ -117,7 +117,7 @@ pub async fn load(db: &Db, author_hex: &str) -> Option<Stored> {
         .readers()
         .read(move |c| {
             Ok(c.query_row(
-                "SELECT e.id, e.created_at, e.content FROM nostr_events e JOIN nostr_tags t ON t.event_id = e.id AND t.name = 'd' AND t.value = ?3 WHERE e.kind = ?1 AND e.pubkey = ?2 ORDER BY e.created_at DESC LIMIT 1",
+                "SELECT e.id, e.created_at, e.content FROM nostr_events e JOIN nostr_tags t ON t.event_id = e.seq AND t.name = 'd' AND t.value = ?3 WHERE e.kind = ?1 AND e.pubkey = ?2 ORDER BY e.created_at DESC LIMIT 1",
                 rusqlite::params![KIND, a, D_TAG],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )

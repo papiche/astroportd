@@ -47,6 +47,9 @@ pub struct StationUi<B: BlobStore> {
     account: Option<Arc<crate::account::AccountService>>,
     contacts: Option<Arc<crate::identity_links::IdentityLinks<B>>>,
     invites: Option<Arc<crate::invites::Invites<B>>>,
+    agents: Option<Arc<crate::agents::Agents>>,
+    pull: Option<Arc<crate::webdav_pull::PullService<B>>>,
+    organize: Option<Arc<crate::organize::OrganizeService<B>>>,
     send_fn: Option<SendFn>,
     board: astro_facecloud::board::BoardCache,
     registrar: Option<Arc<crate::register::Registrar>>,
@@ -96,7 +99,7 @@ pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Fu
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None) }
+        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None) }
     }
 
     /// Active l'attestation de copie privée depuis l'interface.
@@ -109,6 +112,36 @@ impl<B: BlobStore> StationUi<B> {
     pub fn with_invites(mut self, invites: Arc<crate::invites::Invites<B>>) -> Self {
         self.invites = Some(invites);
         self
+    }
+
+    /// Registre des agents et serveur MCP avec demande d'accord.
+    pub fn with_agents(mut self, agents: Arc<crate::agents::Agents>) -> Self {
+        self.agents = Some(agents);
+        self
+    }
+
+    /// Reprise d'un dossier d'un autre serveur WebDAV (Nextcloud…), lancée depuis l'interface.
+    pub fn with_pull(mut self, pull: Arc<crate::webdav_pull::PullService<B>>) -> Self {
+        self.pull = Some(pull);
+        self
+    }
+
+    /// Rangement du uCloud par type, lancé depuis l'interface.
+    pub fn with_organize(mut self, organize: Arc<crate::organize::OrganizeService<B>>) -> Self {
+        self.organize = Some(organize);
+        self
+    }
+
+    fn organize_service(&self) -> Result<&Arc<crate::organize::OrganizeService<B>>, ApiError> {
+        self.organize.as_ref().ok_or_else(|| ApiError::unavailable("rangement non disponible sur cette station"))
+    }
+
+    fn pull_service(&self) -> Result<&Arc<crate::webdav_pull::PullService<B>>, ApiError> {
+        self.pull.as_ref().ok_or_else(|| ApiError::unavailable("reprise depuis un autre serveur WebDAV non disponible sur cette station"))
+    }
+
+    fn agents_service(&self) -> Result<&Arc<crate::agents::Agents>, ApiError> {
+        self.agents.as_ref().ok_or_else(|| ApiError::unavailable("agents non disponibles sur cette station"))
     }
 
     fn invites_service(&self) -> Result<&Arc<crate::invites::Invites<B>>, ApiError> {
@@ -191,6 +224,47 @@ impl<B: BlobStore> StationUi<B> {
         let res = client.ping().await.map_err(|e| e.to_string());
         *self.probe.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), res.clone()));
         Some(res)
+    }
+}
+
+fn device_err(e: astro_dav::devices::DeviceError) -> ApiError {
+    use astro_dav::devices::DeviceError as E;
+    match e {
+        E::Invalid(m) => ApiError::bad_request(m),
+        E::NotFound => ApiError::not_found("appareil inconnu"),
+        E::Db(m) => db_err(m),
+    }
+}
+
+fn organize_err(e: crate::organize::OrganizeError) -> ApiError {
+    match e {
+        crate::organize::OrganizeError::Invalid(m) => ApiError::bad_request(m),
+        crate::organize::OrganizeError::Internal(m) => db_err(m),
+    }
+}
+
+fn organize_options(body: Value) -> Result<crate::organize::Options, ApiError> {
+    serde_json::from_value(body).map_err(|_| ApiError::bad_request("réglages de rangement illisibles"))
+}
+
+fn pull_err(e: crate::webdav_pull::PullError) -> ApiError {
+    use crate::webdav_pull::PullError as E;
+    match e {
+        E::Invalid(m) => ApiError::bad_request(m),
+        E::Remote(m) => ApiError::bad_request(format!("serveur distant : {m}")),
+        E::Fetch(f) => ApiError::bad_request(f.to_string()),
+        E::Internal(m) => db_err(m),
+    }
+}
+
+fn agent_err(e: crate::agents::AgentError) -> ApiError {
+    use crate::agents::AgentError as E;
+    match e {
+        E::Invalid(m) => ApiError::bad_request(m),
+        E::NotFound => ApiError::not_found("agent ou demande introuvable"),
+        E::Limited(m) => ApiError::too_many(m),
+        E::Unauthorized => ApiError { status: axum::http::StatusCode::UNAUTHORIZED, message: "jeton d'agent refusé".into(), code: Some("agent_token") },
+        E::Internal(m) => db_err(m),
     }
 }
 
@@ -553,6 +627,95 @@ impl<B: BlobStore> Backend for StationUi<B> {
             Err(astro_facecloud::FaceError::Invalid(m)) => Err(ApiError::not_found(m)),
             Err(e) => Err(db_err(e)),
         }
+    }
+
+    async fn devices_list(&self, who: &Principal) -> Result<Value, ApiError> {
+        let list = astro_dav::devices::list(&self.services.db, &who.hex).await.map_err(device_err)?;
+        Ok(json!({ "devices": list.iter().map(|d| json!({ "id": d.id, "label": d.label, "root": d.root, "mode": d.mode.as_str(), "created_at": d.created_at, "last_used": d.last_used })).collect::<Vec<_>>(), "max": astro_dav::devices::MAX_DEVICES }))
+    }
+
+    async fn devices_add(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
+        let text = |k: &str| body.get(k).and_then(Value::as_str).unwrap_or_default().to_owned();
+        let mode = astro_dav::devices::Mode::parse(&text("mode")).ok_or_else(|| ApiError::bad_request("mode attendu : write, readwrite ou read"))?;
+        let (d, token) = astro_dav::devices::create(&self.services.db, &who.hex, &text("label"), &text("root"), mode).await.map_err(device_err)?;
+        self.dav.publisher.as_ref().inspect(|p| p.notify(&who.hex));
+        Ok(json!({ "id": d.id, "label": d.label, "root": d.root, "mode": d.mode.as_str(), "token": token, "note": "Ce jeton ne sera plus jamais affiché : copiez-le maintenant dans l'application de l'appareil." }))
+    }
+
+    async fn devices_revoke(&self, who: &Principal, id: String) -> Result<Value, ApiError> {
+        astro_dav::devices::revoke(&self.services.db, &who.hex, &id).await.map_err(device_err)?;
+        Ok(json!({ "revoked": id }))
+    }
+
+    async fn organize_status(&self, who: &Principal) -> Result<Value, ApiError> {
+        self.organize_service()?.status(&who.hex).await.map_err(organize_err)
+    }
+
+    async fn organize_preview(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
+        self.organize_service()?.preview(&who.hex, &organize_options(body)?).await.map_err(organize_err)
+    }
+
+    async fn organize_run(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
+        self.organize_service()?.run(&who.hex, organize_options(body)?).await.map_err(organize_err)?;
+        Ok(json!({ "started": true }))
+    }
+
+    async fn organize_stop(&self, who: &Principal) -> Result<Value, ApiError> {
+        self.organize_service()?.stop(&who.hex).map_err(organize_err)?;
+        Ok(json!({ "stopping": true }))
+    }
+
+    async fn organize_undo(&self, who: &Principal, run: String) -> Result<Value, ApiError> {
+        let n = self.organize_service()?.undo(&who.hex, &run).await.map_err(organize_err)?;
+        Ok(json!({ "restored": n }))
+    }
+
+    async fn pull_list(&self, who: &Principal) -> Result<Value, ApiError> {
+        self.pull_service()?.list(&who.hex).await.map_err(pull_err)
+    }
+
+    async fn pull_add(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
+        let draft: crate::webdav_pull::Draft = serde_json::from_value(body).map_err(|_| ApiError::bad_request("adresse, identifiant et mot de passe attendus"))?;
+        self.pull_service()?.add(&who.hex, draft).await.map_err(pull_err)
+    }
+
+    async fn pull_remove(&self, who: &Principal, id: String) -> Result<Value, ApiError> {
+        self.pull_service()?.remove(&who.hex, &id).await.map_err(pull_err)?;
+        Ok(json!({ "removed": id }))
+    }
+
+    async fn pull_run(&self, who: &Principal, id: String, dry_run: bool) -> Result<Value, ApiError> {
+        self.pull_service()?.run(&who.hex, &id, dry_run).await.map_err(pull_err)?;
+        Ok(json!({ "started": id, "dry_run": dry_run }))
+    }
+
+    async fn pull_stop(&self, who: &Principal) -> Result<Value, ApiError> {
+        self.pull_service()?.stop(&who.hex).map_err(pull_err)?;
+        Ok(json!({ "stopping": true }))
+    }
+
+    async fn agents_list(&self, who: &Principal) -> Result<Value, ApiError> {
+        self.agents_service()?.list(&who.hex).await.map_err(agent_err)
+    }
+
+    async fn agents_enroll(&self, who: &Principal, name: String, group: String, max_secs: u64, totp: bool) -> Result<Value, ApiError> {
+        self.agents_service()?.enroll(&who.hex, &name, &group, max_secs, totp).await.map_err(agent_err)
+    }
+
+    async fn agents_revoke(&self, who: &Principal, id: String) -> Result<Value, ApiError> {
+        self.agents_service()?.revoke(&who.hex, &id).await.map_err(agent_err)
+    }
+
+    async fn agents_requests(&self, who: &Principal) -> Result<Value, ApiError> {
+        Ok(self.agents_service()?.requests(&who.hex))
+    }
+
+    async fn agents_decide(&self, who: &Principal, id: String, approve: bool, secs: Option<u64>) -> Result<Value, ApiError> {
+        self.agents_service()?.decide(&who.hex, &id, approve, secs).await.map_err(agent_err)
+    }
+
+    async fn mcp(&self, bearer: Option<String>, body: Value) -> Result<Option<Value>, ApiError> {
+        self.agents_service()?.mcp(bearer.as_deref(), &body).await.map_err(agent_err)
     }
 
     async fn consent(&self, who: &Principal) -> Result<Value, ApiError> {

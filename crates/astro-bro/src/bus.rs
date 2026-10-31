@@ -165,7 +165,7 @@ impl<S: Services, R: Reply> CommandBus<S, R> {
             .read(move |c| {
                 let mut stmt = c.prepare_cached(
                     "SELECT e.id, e.pubkey, e.kind, e.created_at, e.content, e.sig, e.tags FROM nostr_events e \
-                     JOIN nostr_tags t ON t.event_id = e.id AND t.name = 'p' AND t.value = ?1 \
+                     JOIN nostr_tags t ON t.event_id = e.seq AND t.name = 'p' AND t.value = ?1 \
                      WHERE e.kind = 1059 AND e.created_at >= ?2 \
                        AND NOT EXISTS (SELECT 1 FROM claimed c WHERE c.owner = 'bro:bus' AND c.event_id = e.id) \
                      ORDER BY e.created_at LIMIT ?3",

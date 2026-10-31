@@ -161,7 +161,7 @@ impl TunnelPolicy {
                      JOIN identities i ON i.hex = g.pubkey AND i.role = 'captain' AND i.hosted = 0 \
                      WHERE cap.hosted = 1 AND cap.role = 'captain' \
                        AND COALESCE(i.peer_id, substr(i.home_station, 1, instr(i.home_station, ':') - 1), '') <> '' \
-                       AND EXISTS (SELECT 1 FROM nostr_events k JOIN nostr_tags t ON t.event_id = k.id WHERE k.kind = 3 AND k.pubkey = i.hex AND t.name = 'p' AND t.value = cap.hex)",
+                       AND EXISTS (SELECT 1 FROM nostr_events k JOIN nostr_tags t ON t.event_id = k.seq WHERE k.kind = 3 AND k.pubkey = i.hex AND t.name = 'p' AND t.value = cap.hex)",
                 )?;
                 let rows = stmt.query_map([], |r| {
                     let (hex, peer, email, name): (String, String, Option<String>, Option<String>) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);

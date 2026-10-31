@@ -238,7 +238,12 @@ impl AccountService {
             .map_err(internal)?;
         let denied = || AccountError::Denied("identifiant ou code PASS incorrect".into());
         let Some(hex) = hex else {
-            // Même travail, même réponse : un compte inconnu ne se distingue pas d'un PASS faux.
+            // Même travail, même réponse : un compte inconnu ne se distingue pas d'un PASS faux. Le chemin d'un compte connu
+            // prend le verrou, lit l'état des essais puis le fichier du PASS : on en fait autant (le temps de réponse ne doit pas
+            // révéler qu'une adresse est inscrite). Le fichier lu est fixe : jamais un chemin construit sur la saisie.
+            let _gate = self.pass_gate.lock().await;
+            let _ = self.guard_state(&"0".repeat(64)).await;
+            let _ = std::fs::read_to_string(self.nostr_root.join(".pass-absent"));
             let _ = astro_dav::auth::ct_eq(pass.as_bytes(), b"000000");
             return Err(denied());
         };
@@ -250,7 +255,8 @@ impl AccountService {
         if fails > 0 && fails < PASS_LOCK_AFTER && at.saturating_sub(last) > PASS_FORGET_AFTER {
             fails = 0;
         }
-        let stored = std::fs::read_to_string(self.dir_of(&email).join(".pass")).map_err(|_| AccountError::Invalid("ce compte n'a pas de code PASS : connectez-vous avec votre jeton".into()))?;
+        // Un compte sans PASS répond comme un PASS faux : un message à part dirait à n'importe qui que l'adresse est inscrite.
+        let stored = std::fs::read_to_string(self.dir_of(&email).join(".pass")).map_err(|_| denied())?;
         if astro_dav::auth::ct_eq(pass.as_bytes(), stored.trim().as_bytes()) {
             self.save_guard(&hex, None).await?;
             let token = astro_dav::auth::account_token(&self.db, &self.station_secret, &hex).await;

@@ -39,6 +39,7 @@ bytes.workspace = true
 tokio-util.workspace = true
 url.workspace = true
 percent-encoding.workspace = true
+quick-xml.workspace = true
 futures-util.workspace = true
 thiserror.workspace = true
 astro-crypto.workspace = true

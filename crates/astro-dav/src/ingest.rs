@@ -92,7 +92,7 @@ async fn ingest_with<B: BlobStore, R: AsyncRead + Unpin>(st: &Arc<DavState<B>>, 
     let (o, d, n) = (owner.to_owned(), dir.clone(), name.clone());
     let path = vfs_tx(&st.db, move |tx| {
         match vfs::get_entry(tx, &o, &d)? {
-            None => vfs::mkdir_tx(tx, &o, &d, now())?,
+            None => vfs::mkdir_p_tx(tx, &o, &d, now())?,
             Some(e) if e.kind == EntryKind::File => return Err(VfsError::NotCollection),
             Some(_) => {}
         }

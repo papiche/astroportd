@@ -281,6 +281,83 @@ pub trait Backend: Send + Sync + 'static {
     fn consent_accept(&self, _who: &Principal, _version: u32) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("dépôt de médias non disponible sur cette station")) }
     }
+    /// Agents déclarés par le membre (sans jeton ni empreinte).
+    fn agents_list(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("agents non disponibles sur cette station")) }
+    }
+    /// Déclare un agent ; rend son jeton, montré une seule fois.
+    fn agents_enroll(&self, _who: &Principal, _name: String, _group: String, _max_secs: u64, _totp: bool) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("agents non disponibles sur cette station")) }
+    }
+    /// Retire un agent (son jeton cesse de fonctionner).
+    fn agents_revoke(&self, _who: &Principal, _id: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("agents non disponibles sur cette station")) }
+    }
+    /// Demandes d'accès en cours : `{ requests: [{ id, agent, site, reason, state, until }] }`.
+    fn agents_requests(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("agents non disponibles sur cette station")) }
+    }
+    /// Le membre accorde (`secs` facultatif) ou refuse une demande.
+    fn agents_decide(&self, _who: &Principal, _id: String, _approve: bool, _secs: Option<u64>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("agents non disponibles sur cette station")) }
+    }
+    /// Sources WebDAV externes du compte (sans mot de passe), avec la reprise en cours ou le dernier bilan.
+    fn pull_list(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("reprise depuis un autre serveur WebDAV non disponible sur cette station")) }
+    }
+    /// Enregistre une source (corps JSON : `url`, `username`, `password`, `label`, `remote_path`, `dest`) après l'avoir vérifiée.
+    fn pull_add(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("reprise depuis un autre serveur WebDAV non disponible sur cette station")) }
+    }
+    /// Retire une source.
+    fn pull_remove(&self, _who: &Principal, _id: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("reprise depuis un autre serveur WebDAV non disponible sur cette station")) }
+    }
+    /// Lance une reprise en arrière-plan (`dry_run` : compte sans rien écrire).
+    fn pull_run(&self, _who: &Principal, _id: String, _dry_run: bool) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("reprise depuis un autre serveur WebDAV non disponible sur cette station")) }
+    }
+    /// Demande l'arrêt de la reprise en cours.
+    fn pull_stop(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("reprise depuis un autre serveur WebDAV non disponible sur cette station")) }
+    }
+    /// Rangement du uCloud par type : passage en cours ou dernier bilan, dossiers de type, passages annulables.
+    fn organize_status(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("rangement non disponible sur cette station")) }
+    }
+    /// Aperçu d'un rangement (corps JSON : `scope`, `by_date`, `kinds`), sans rien écrire.
+    fn organize_preview(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("rangement non disponible sur cette station")) }
+    }
+    /// Lance un rangement en arrière-plan.
+    fn organize_run(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("rangement non disponible sur cette station")) }
+    }
+    /// Demande l'arrêt du rangement en cours.
+    fn organize_stop(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("rangement non disponible sur cette station")) }
+    }
+    /// Annule un passage de rangement.
+    fn organize_undo(&self, _who: &Principal, _run: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("rangement non disponible sur cette station")) }
+    }
+    /// Appareils du compte : un jeton WebDAV chacun, confiné à un dossier du uCloud.
+    fn devices_list(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("appareils non disponibles sur cette station")) }
+    }
+    /// Ajoute un appareil (corps JSON : `label`, `root`, `mode`) ; rend son jeton, montré une seule fois.
+    fn devices_add(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("appareils non disponibles sur cette station")) }
+    }
+    /// Révoque un appareil.
+    fn devices_revoke(&self, _who: &Principal, _id: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("appareils non disponibles sur cette station")) }
+    }
+    /// Serveur MCP (JSON-RPC 2.0) : `bearer` = jeton d'agent. `Ok(None)` : notification, rien à répondre ;
+    /// jeton absent ou faux : `Err` en 401.
+    fn mcp(&self, _bearer: Option<String>, _body: Value) -> impl Future<Output = Result<Option<Value>, ApiError>> + Send {
+        async { Err(ApiError::unavailable("agents non disponibles sur cette station")) }
+    }
     /// La table de tri des visages : positions PCA, groupes, suggestions, personnes.
     fn faces_board(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("table de tri non disponible sur cette station")) }
@@ -498,6 +575,22 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/faces/{id}/name", post(face_name::<B>))
         .route("/api/v1/bro/say", post(bro_say::<B>))
         .route("/api/v1/consent/private-copy", get(consent::<B>).post(consent_accept::<B>))
+        .route("/api/v1/agents", get(agents_list::<B>).post(agents_enroll::<B>))
+        .route("/api/v1/agents/revoke", post(agents_revoke::<B>))
+        .route("/api/v1/agents/requests", get(agents_requests::<B>))
+        .route("/api/v1/agents/decide", post(agents_decide::<B>))
+        .route("/api/v1/pull", get(pull_list::<B>).post(pull_add::<B>))
+        .route("/api/v1/pull/remove", post(pull_remove::<B>))
+        .route("/api/v1/pull/run", post(pull_run::<B>))
+        .route("/api/v1/pull/stop", post(pull_stop::<B>))
+        .route("/api/v1/organize", get(organize_status::<B>))
+        .route("/api/v1/organize/preview", post(organize_preview::<B>))
+        .route("/api/v1/organize/run", post(organize_run::<B>))
+        .route("/api/v1/organize/stop", post(organize_stop::<B>))
+        .route("/api/v1/organize/undo", post(organize_undo::<B>))
+        .route("/api/v1/devices", get(devices_list::<B>).post(devices_add::<B>))
+        .route("/api/v1/devices/revoke", post(devices_revoke::<B>))
+        .route("/mcp", post(mcp::<B>))
         .route("/api/v1/me/footprint", get(footprint::<B>))
         .route("/api/v1/register", get(register_info::<B>).post(register::<B>))
         .route("/api/v1/restore", post(restore::<B>))
@@ -859,6 +952,133 @@ struct ConsentBody {
 
 async fn consent_accept<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<ConsentBody>) -> Response {
     reply(st.backend.consent_accept(&p, body.version).await)
+}
+
+async fn agents_list<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.agents_list(&p).await)
+}
+
+#[derive(Deserialize)]
+struct EnrollBody {
+    name: String,
+    group: String,
+    #[serde(default = "default_grant_secs")]
+    max_secs: u64,
+    #[serde(default)]
+    totp: bool,
+}
+
+fn default_grant_secs() -> u64 {
+    600
+}
+
+async fn agents_enroll<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<EnrollBody>) -> Response {
+    reply(st.backend.agents_enroll(&p, body.name, body.group, body.max_secs, body.totp).await)
+}
+
+#[derive(Deserialize)]
+struct AgentIdBody {
+    id: String,
+}
+
+async fn agents_revoke<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<AgentIdBody>) -> Response {
+    reply(st.backend.agents_revoke(&p, body.id).await)
+}
+
+async fn agents_requests<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.agents_requests(&p).await)
+}
+
+#[derive(Deserialize)]
+struct DecideBody {
+    id: String,
+    approve: bool,
+    secs: Option<u64>,
+}
+
+async fn agents_decide<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<DecideBody>) -> Response {
+    reply(st.backend.agents_decide(&p, body.id, body.approve, body.secs).await)
+}
+
+async fn pull_list<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.pull_list(&p).await)
+}
+
+async fn pull_add<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    reply(st.backend.pull_add(&p, body).await)
+}
+
+async fn pull_remove<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<AgentIdBody>) -> Response {
+    reply(st.backend.pull_remove(&p, body.id).await)
+}
+
+#[derive(Deserialize)]
+struct PullRunBody {
+    id: String,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+async fn pull_run<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<PullRunBody>) -> Response {
+    reply(st.backend.pull_run(&p, body.id, body.dry_run).await)
+}
+
+async fn pull_stop<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.pull_stop(&p).await)
+}
+
+async fn organize_status<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.organize_status(&p).await)
+}
+
+async fn organize_preview<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    reply(st.backend.organize_preview(&p, body).await)
+}
+
+async fn organize_run<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    reply(st.backend.organize_run(&p, body).await)
+}
+
+async fn organize_stop<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.organize_stop(&p).await)
+}
+
+#[derive(Deserialize)]
+struct UndoBody {
+    run: String,
+}
+
+async fn organize_undo<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<UndoBody>) -> Response {
+    reply(st.backend.organize_undo(&p, body.run).await)
+}
+
+async fn devices_list<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.devices_list(&p).await)
+}
+
+async fn devices_add<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    reply(st.backend.devices_add(&p, body).await)
+}
+
+async fn devices_revoke<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<AgentIdBody>) -> Response {
+    reply(st.backend.devices_revoke(&p, body.id).await)
+}
+
+/// Serveur MCP : le jeton d'agent (`Authorization: Bearer`) remplace la connexion d'un compte.
+async fn mcp<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
+    let bearer = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(|t| t.trim().to_owned());
+    match st.backend.mcp(bearer, body).await {
+        Ok(Some(v)) => private(Json(v).into_response()),
+        Ok(None) => private(StatusCode::ACCEPTED.into_response()),
+        Err(e) => {
+            // Un jeton refusé annonce le schéma attendu, comme le veut HTTP.
+            let mut r = e.into_response();
+            if r.status() == StatusCode::UNAUTHORIZED {
+                r.headers_mut().insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+            }
+            private(r)
+        }
+    }
 }
 
 async fn bro_say<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<SayBody>) -> Response {

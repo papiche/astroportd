@@ -16,6 +16,20 @@ const store = {
 get: k => { try { return localStorage.getItem(k); } catch { return null; } },
 set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* stockage indisponible : session éphémère */ } },
 };
+// Style (Aurore, Sobre, Kraft) et mode (auto, clair, sombre) : préférences de cet appareil, appliquées dès le chargement.
+const STYLES = ['aurore', 'sobre', 'kraft'], MODES = ['auto', 'light', 'dark'], MODE_ICON = { auto: '◐', light: '☀', dark: '☾' };
+const look = () => {
+  const style = STYLES.includes(store.get('style')) ? store.get('style') : 'aurore', mode = MODES.includes(store.get('mode')) ? store.get('mode') : 'auto';
+  document.documentElement.dataset.style = style;
+  if (mode === 'auto') delete document.documentElement.dataset.mode; else document.documentElement.dataset.mode = mode;
+  return { style, mode };
+};
+{
+  const { style, mode } = look(), pick = document.getElementById('style'), btn = document.getElementById('mode');
+  pick.value = style; btn.textContent = MODE_ICON[mode];
+  pick.onchange = () => { store.set('style', pick.value); look(); };
+  btn.onclick = () => { const next = MODES[(MODES.indexOf(look().mode) + 1) % MODES.length]; store.set('mode', next); btn.textContent = MODE_ICON[next]; look(); };
+}
 const b64 = s => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 const bytes = n => { if (n == null) return '—'; const u = ['o', 'Ko', 'Mo', 'Go', 'To']; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return `${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${u[i]}`; };
 const when = t => (t ? new Date(t * 1000).toLocaleString('fr', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
@@ -222,11 +236,15 @@ box.replaceChildren(h('p', { class: 'muted' }, `Compte ${r.login}. À transmettr
 } catch (e) { box.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }
 }
 async function viewCloud(root, q) {
-const path = q.get('p') || '/', album = q.get('m') === 'album';
+const path = q.get('p') || '/', mode = q.get('m'), album = mode === 'album', sources = mode === 'sources', organize = mode === 'organize';
 const go = (p, m) => { location.hash = '#/cloud?' + new URLSearchParams({ p, ...(m && { m }) }); };
 const tabs = h('div', { class: 'bar' },
-h('button', { class: album ? 'ghost' : '', onclick: () => go(path) }, 'Dossiers'),
-h('button', { class: album ? '' : 'ghost', onclick: () => go(path, 'album') }, 'Album'));
+h('button', { class: album || sources || organize ? 'ghost' : '', onclick: () => go(path) }, 'Dossiers'),
+h('button', { class: album ? '' : 'ghost', onclick: () => go(path, 'album') }, 'Album'),
+h('button', { class: sources ? '' : 'ghost', onclick: () => go(path, 'sources') }, 'Sources'),
+h('button', { class: organize ? '' : 'ghost', onclick: () => go(path, 'organize') }, 'Ranger'));
+if (sources) return (await import('/ui/m-sources.js')).default(root, K, tabs);
+if (organize) return (await import('/ui/m-organize.js')).default(root, K, tabs);
 if (album) {
 const grid = h('div', { class: 'photos' }), more = h('button', { class: 'ghost' }, 'Plus de photos'), list = [];
 root.replaceChildren(tabs, grid, h('p', {}, more));
@@ -264,7 +282,7 @@ grid.append(lazy(h('button', { class: 'tile', 'aria-label': lastName(it.path), o
 }
 }
 async function viewBro(root) {
-const log = h('ol', { id: 'log', 'aria-live': 'polite', 'aria-label': 'Activité de la station' });
+const log = h('ol', { id: 'log', 'aria-live': 'polite', 'aria-label': 'Activité de la station', 'data-empty': t('Rien pour l\'instant : écrivez à BRO ci-dessous, ou attendez l\'activité de la station.') });
 const add = (ev, me) => { const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30; log.append(h('li', { class: me ? 'me' : '' }, h('span', { class: 'k' }, me ? 'vous' : ev.kind), ev.message)); if (stick) log.scrollTop = log.scrollHeight; };
 const input = h('input', { placeholder: 'Parler à BRO… (#solde, #statut, #aide)', 'aria-label': 'Message pour BRO', maxLength: 2000, required: true });
 const say = h('form', { id: 'say', onsubmit: async ev => {
@@ -338,8 +356,10 @@ let me = null;
 async function route() {
 cleanups.forEach(c => c()); cleanups = [];
 blobs.forEach(p => p.then(URL.revokeObjectURL, () => {})); blobs.clear();
-const [p, qs] = (location.hash.slice(1) || '/').split('?'), main = $('#main');
-main.replaceChildren(h('p', { class: 'muted' }, 'Chargement…'));
+// Chaque navigation reçoit un `<main>` neuf : le code encore en cours d'un écran quitté (chargement lent) n'écrit plus que dans
+// un arbre détaché, jamais dans l'écran suivant, et son erreur éventuelle n'y apparaît pas.
+const [p, qs] = (location.hash.slice(1) || '/').split('?'), main = h('main', { id: 'main', tabindex: '-1' }, h('p', { class: 'muted' }, 'Chargement…'));
+$('#main').replaceWith(main);
 try {
 if (!me) { me = await api('/api/v1/me'); import('/ui/m-nostr.js').then(m => m.default(me, api), () => {}); import('/ui/m-ux.js').then(m => m.default(me, api, t), () => {}); }
 document.querySelector('nav a[data-r=station]').hidden = !me.captain; // l'écran Capitaine n'existe pas pour un MULTIPASS

@@ -103,10 +103,11 @@ pub fn insert_event(tx: &Transaction<'_>, e: &Event) -> Result<InsertOutcome, Db
         "INSERT INTO nostr_events(id, pubkey, kind, created_at, content, sig, tags, d_tag, expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
         params![e.id, e.pubkey, e.kind, i64::try_from(e.created_at).unwrap_or(i64::MAX), e.content, e.sig, tags_json, d_tag, expires_at],
     )?;
+    let seq = tx.last_insert_rowid();
     for t in &e.tags {
         if let (Some(name), Some(value)) = (t.first(), t.get(1)) {
             if name.len() == 1 && value.len() <= MAX_INDEXED_TAG_VALUE {
-                tx.execute("INSERT OR IGNORE INTO nostr_tags(event_id, name, value) VALUES (?1,?2,?3)", params![e.id, name, value])?;
+                tx.execute("INSERT OR IGNORE INTO nostr_tags(event_id, name, value) VALUES (?1,?2,?3)", params![seq, name, value])?;
             }
         }
     }
@@ -180,7 +181,7 @@ pub fn query_events(conn: &Connection, filter: &Filter, now: u64, cap: usize) ->
         args.push(Value::Integer(i64::try_from(until).unwrap_or(i64::MAX)));
     }
     for (name, values) in &filter.tags {
-        sql += &format!(" AND EXISTS (SELECT 1 FROM nostr_tags t WHERE t.event_id = e.id AND t.name = ? AND t.value IN ({}))", marks(values.len()));
+        sql += &format!(" AND EXISTS (SELECT 1 FROM nostr_tags t WHERE t.event_id = e.seq AND t.name = ? AND t.value IN ({}))", marks(values.len()));
         args.push(Value::Text(name.to_string()));
         args.extend(values.iter().cloned().map(Value::Text));
     }
@@ -189,7 +190,7 @@ pub fn query_events(conn: &Connection, filter: &Filter, now: u64, cap: usize) ->
     let mut order = "e.created_at DESC, e.id ASC";
     if let Some(query) = filter.search.as_deref().and_then(search_match) {
         let Some(query) = query else { return Ok(Vec::new()) };
-        sql = sql.replacen("FROM nostr_events e WHERE 1=1", "FROM nostr_events e JOIN nostr_fts_ids m ON m.id = e.id JOIN nostr_fts f ON f.rowid = m.rowid AND nostr_fts MATCH ? WHERE 1=1", 1);
+        sql = sql.replacen("FROM nostr_events e WHERE 1=1", "FROM nostr_events e JOIN nostr_fts f ON f.rowid = e.seq AND nostr_fts MATCH ? WHERE 1=1", 1);
         args.insert(0, Value::Text(query));
         order = "f.rank, e.created_at DESC, e.id ASC";
     }
@@ -225,9 +226,8 @@ fn search_match(search: &str) -> Option<Option<String>> {
 /// Reconstruit l'index de recherche NIP-50 depuis `nostr_events` (base ancienne, ou index à refaire).
 pub fn rebuild_search_index(conn: &Connection) -> Result<(), DbError> {
     conn.execute_batch(
-        "DELETE FROM nostr_fts; DELETE FROM nostr_fts_ids; \
-         INSERT INTO nostr_fts_ids(id) SELECT id FROM nostr_events WHERE kind NOT IN (4, 1059); \
-         INSERT INTO nostr_fts(rowid, content) SELECT m.rowid, e.content FROM nostr_fts_ids m JOIN nostr_events e ON e.id = m.id;",
+        "DELETE FROM nostr_fts; \
+         INSERT INTO nostr_fts(rowid, content) SELECT seq, content FROM nostr_events WHERE kind NOT IN (4, 1059);",
     )?;
     Ok(())
 }
@@ -399,7 +399,7 @@ mod tests {
         // Simule une base d'avant l'index : on le vide, puis on rouvre.
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
-            conn.execute_batch("DELETE FROM nostr_fts; DELETE FROM nostr_fts_ids;").unwrap();
+            conn.execute_batch("DELETE FROM nostr_fts;").unwrap();
         }
         let db = Db::open(&path, 1).unwrap();
         assert_eq!(ids(&db, Filter { search: Some("vieux".into()), ..Filter::default() }).await, ["vieux message"]);

@@ -394,6 +394,8 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     let mesh_outbox = Arc::new(astroportd::mesh_outbox::MeshOutbox::new(db.clone(), relay_client.clone(), a.relays.clone(), a.swarm_dir.clone().or_else(default_swarm_dir)));
     let sharing_keys = keys.clone();
     let account_keys = keys.clone();
+    let agent_keys = keys.clone();
+    let pull_keys = keys.clone();
     let invites_keys = keys.clone();
     let inbox_keys = keys.clone();
     let backup_keys = keys.clone();
@@ -446,6 +448,10 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     let inbox_blobs = blobs.clone();
     let backup_blobs = blobs.clone();
     let dav = Arc::new(DavState { db: db.clone(), blobs, replay, publisher: Some(publisher.clone()), config: dav_config, on_upload });
+    // Reprise d'un dossier d'un autre serveur WebDAV (Nextcloud…), lancée depuis l'interface (onglet « Sources » du uCloud).
+    let pull = astroportd::webdav_pull::PullService::new(dav.clone(), pull_keys, Some(activity.clone()));
+    // Rangement du uCloud par type (Documents, Images, Musique, Vidéos, Archives), lancé depuis l'onglet « Ranger ».
+    let organize = astroportd::organize::OrganizeService::new(dav.clone(), Some(activity.clone()));
     // Annuaire : fiches vCard de /Contacts ↔ visages ↔ MULTIPASS (CardDAV est servi par le routeur WebDAV).
     let links = Arc::new(astroportd::identity_links::IdentityLinks::new(db.clone(), dav.clone(), share_fn, Some(activity.clone())));
     let _ = contacts_cell.set(links.clone());
@@ -638,6 +644,8 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
         Arc::new(astroportd::invites::Invites::new(db.clone(), dav.blobs.clone(), invites_keys, registrar.clone(), publish).with_links(links.clone()).with_publisher(publisher.clone()).with_activity(activity.clone()).with_remote(sharing.clone()))
     };
     let account_publish = publish_fn(&event_publisher);
+    // Agents du membre (kind 31903 `d = agents`) et serveur MCP : un agent demande, le membre accorde ou refuse.
+    let agents = Arc::new(astroportd::agents::Agents::new(db.clone(), agent_keys, publish_fn(&event_publisher)).with_activity(activity.clone()));
     let forwards = Arc::new(astroportd::forwards::Forwards::new(p2p_handle.clone()));
     let ssh_home = a.ssh_dir.clone().or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ssh")));
     let identity = ssh_home.as_ref().map(|d| d.join("id_ed25519")).filter(|p| p.exists());
@@ -646,7 +654,7 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     let consoles_ui = consoles.clone();
     let assist_admin = admin::assist_admin(&assist, &forwards, &consoles);
     let account_origin = a.domains.first().map(|d| format!("https://{d}"));
-    let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_console(consoles_ui).with_consent(consent_fn).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone())))
+    let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone())))
         .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), assist: Some(assist_admin), tasks: Some(db.clone()) }).handler());
     if let Some(f) = thumbs_fn {
         ui = ui.with_face_thumbs(f);

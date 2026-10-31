@@ -13,7 +13,7 @@
 <body>
 <a class="skip" href="#main">Aller au contenu</a>
 <header>
-  <h1><img src="/ui/icon.svg" alt="" width="28" height="28"> Astroport</h1>
+  <h1><img src="/ui/icon.svg" alt="" width="28" height="28"> <span>Astroport</span></h1>
   <nav aria-label="Écrans">
     <a href="#/" data-r="home">Tableau de bord</a>
     <a href="#/station" data-r="station" hidden>Station</a>
@@ -24,7 +24,15 @@
     <a href="#/bro" data-r="bro">BRO</a>
     <a href="#/account" data-r="account">Mon compte</a>
   </nav>
-  <button id="out" type="button" hidden>Déconnexion</button>
+  <div class="tools">
+    <select id="style" aria-label="Style de l'interface" title="Style">
+      <option value="aurore">Aurore</option>
+      <option value="sobre">Sobre</option>
+      <option value="kraft">Kraft</option>
+    </select>
+    <button id="mode" class="ghost" type="button" aria-label="Clair, sombre ou automatique" title="Clair / sombre / auto">◐</button>
+    <button id="out" type="button" title="Déconnexion" hidden>Déconnexion</button>
+  </div>
 </header>
 <main id="main" tabindex="-1"><p class="muted">Chargement…</p></main>
 

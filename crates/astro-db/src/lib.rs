@@ -30,6 +30,9 @@ pub enum DbError {
     /// L'acteur d'écriture est arrêté (ou a perdu la commande en cours).
     #[error("acteur d'écriture arrêté")]
     WriterClosed,
+    /// Le point de contrôle du journal WAL n'a pas pu tout rendre : un lecteur tenait encore une transaction.
+    #[error("journal WAL non tronqué : un lecteur est resté ouvert pendant le point de contrôle (à rejouer)")]
+    CheckpointBusy,
     /// Le pool de lecture est fermé.
     #[error("pool de lecture fermé")]
     ReaderPoolClosed,
@@ -134,9 +137,59 @@ pub fn open(path: &Path) -> Result<Connection, DbError> {
     register_sqlite_vec();
     create_private(path)?;
     let conn = Connection::open(path)?;
-    conn.execute_batch(SCHEMA)?;
+    apply_schema(&conn)?;
     migrate(&conn)?;
     Ok(conn)
+}
+
+/// Applique le schéma, en faisant d'abord passer une base d'avant 0.5.0-beta à la nouvelle table d'événements.
+fn apply_schema(conn: &Connection) -> Result<(), DbError> {
+    let exists = |name: &str| -> Result<bool, DbError> { Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)", [name], |r| r.get(0))?) };
+    // Avant 0.5.0-beta, `nostr_events` était WITHOUT ROWID (clé : l'identifiant de 64 caractères) et `nostr_tags` y renvoyait par
+    // cet identifiant. On range l'ancienne paire de côté, le schéma crée la nouvelle, puis les lignes sont recopiées. Les deux étapes
+    // sont reprenables : si le processus s'arrête entre elles, l'ouverture suivante termine la recopie (`nostr_events_old` existe).
+    let legacy: bool = exists("nostr_events")? && !conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('nostr_events') WHERE name = 'seq')", [], |r| r.get::<_, bool>(0))?;
+    if legacy {
+        conn.execute_batch(
+            "PRAGMA foreign_keys = OFF; BEGIN; \
+             DROP TRIGGER IF EXISTS nostr_fts_ai; DROP TRIGGER IF EXISTS nostr_fts_ad; \
+             DROP TABLE IF EXISTS nostr_fts; DROP TABLE IF EXISTS nostr_fts_ids; \
+             DROP INDEX IF EXISTS ne_kind_ts; DROP INDEX IF EXISTS ne_author; DROP INDEX IF EXISTS ne_replaceable; DROP INDEX IF EXISTS nt_lookup; \
+             ALTER TABLE nostr_tags RENAME TO nostr_tags_old; ALTER TABLE nostr_events RENAME TO nostr_events_old; COMMIT;",
+        )?;
+    }
+    // Même passage pour `ucloud_entries` (WITHOUT ROWID avant 0.5.0-beta) : même méthode, mêmes garanties de reprise.
+    let legacy_vfs: bool = exists("ucloud_entries")? && !conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('ucloud_entries') WHERE name = 'id')", [], |r| r.get::<_, bool>(0))?;
+    if legacy_vfs {
+        conn.execute_batch(
+            "BEGIN; \
+             DROP TRIGGER IF EXISTS dav_changes_ai; DROP TRIGGER IF EXISTS dav_changes_au; DROP TRIGGER IF EXISTS dav_changes_ad; \
+             DROP TRIGGER IF EXISTS dav_changes_ics_ai; DROP TRIGGER IF EXISTS dav_changes_ics_au; DROP TRIGGER IF EXISTS dav_changes_ics_ad; \
+             DROP INDEX IF EXISTS ue_parent; DROP INDEX IF EXISTS ue_cid; DROP INDEX IF EXISTS ue_sha_orig; DROP INDEX IF EXISTS ue_sha_plain; \
+             DROP INDEX IF EXISTS ue_taken; DROP INDEX IF EXISTS ue_phash; DROP INDEX IF EXISTS ue_geo; \
+             ALTER TABLE ucloud_entries RENAME TO ucloud_entries_old; COMMIT;",
+        )?;
+    }
+    conn.execute_batch(SCHEMA)?;
+    if exists("ucloud_entries_old")? {
+        conn.execute_batch(
+            "BEGIN; \
+             INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, taken_at, sha_orig, sha_plain, faceid_status, origin, phash, lat, lon, desc_text, data, src_cid) \
+               SELECT owner_hex, path, parent, type, cid, mime, size, mtime, taken_at, sha_orig, sha_plain, faceid_status, origin, phash, lat, lon, desc_text, data, src_cid FROM ucloud_entries_old ORDER BY owner_hex, path; \
+             DROP TABLE ucloud_entries_old; COMMIT;",
+        )?;
+    }
+    if exists("nostr_events_old")? {
+        // L'ordre d'insertion fixe les `seq` (du plus ancien au plus récent) ; les triggers remplissent l'index plein texte.
+        conn.execute_batch(
+            "BEGIN; \
+             INSERT INTO nostr_events(id, pubkey, kind, created_at, content, sig, tags, d_tag, expires_at) \
+               SELECT id, pubkey, kind, created_at, content, sig, tags, d_tag, expires_at FROM nostr_events_old ORDER BY created_at, id; \
+             INSERT INTO nostr_tags(event_id, name, value) SELECT e.seq, t.name, t.value FROM nostr_tags_old t JOIN nostr_events e ON e.id = t.event_id; \
+             DROP TABLE nostr_tags_old; DROP TABLE nostr_events_old; COMMIT;",
+        )?;
+    }
+    Ok(())
 }
 
 /// Colonnes ajoutées après la première version du schéma : `(table, colonne, définition)`.
@@ -152,7 +205,7 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
         }
     }
     // Base antérieure à l'index de recherche : les événements déjà là sont indexés une fois (les triggers font le reste).
-    let (indexed, stored): (i64, i64) = conn.query_row("SELECT (SELECT count(*) FROM nostr_fts_ids), (SELECT count(*) FROM nostr_events WHERE kind NOT IN (4, 1059))", [], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let (indexed, stored): (i64, i64) = conn.query_row("SELECT (SELECT count(*) FROM nostr_fts_docsize), (SELECT count(*) FROM nostr_events WHERE kind NOT IN (4, 1059))", [], |r| Ok((r.get(0)?, r.get(1)?)))?;
     if indexed == 0 && stored > 0 {
         events::rebuild_search_index(conn)?;
     }
@@ -163,7 +216,7 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
 pub fn open_in_memory() -> Result<Connection, DbError> {
     register_sqlite_vec();
     let conn = Connection::open_in_memory()?;
-    conn.execute_batch(SCHEMA)?;
+    apply_schema(&conn)?;
     migrate(&conn)?;
     Ok(conn)
 }
@@ -202,6 +255,66 @@ mod tests {
 
     fn vec_literal(dim: usize, hot: usize) -> Vec<u8> {
         (0..dim).flat_map(|i| if i == hot { 1.0f32 } else { 0.0 }.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn a_database_from_before_0_5_keeps_its_events_tags_and_search_after_the_table_change() {
+        let tmp = testutil::TempDir::new("legacy-events");
+        let path = tmp.path().join("old.db");
+        {
+            // Ancienne forme : WITHOUT ROWID, tags rattachés par l'identifiant de 64 caractères, index plein texte à part.
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(
+                "CREATE TABLE nostr_events(id TEXT PRIMARY KEY, pubkey TEXT NOT NULL, kind INTEGER NOT NULL, created_at INTEGER NOT NULL, content TEXT NOT NULL, sig TEXT NOT NULL, tags TEXT NOT NULL, d_tag TEXT, expires_at INTEGER) STRICT, WITHOUT ROWID;
+                 CREATE INDEX ne_kind_ts ON nostr_events(kind, created_at DESC);
+                 CREATE TABLE nostr_tags(event_id TEXT NOT NULL REFERENCES nostr_events(id) ON DELETE CASCADE, name TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(event_id, name, value)) STRICT, WITHOUT ROWID;
+                 CREATE INDEX nt_lookup ON nostr_tags(name, value);
+                 CREATE TABLE nostr_fts_ids(rowid INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE) STRICT;
+                 INSERT INTO nostr_events VALUES ('aa', 'pk1', 1, 100, 'premier message', 's', '[[\"p\",\"zz\"]]', NULL, NULL), ('bb', 'pk1', 7, 200, 'second', 's', '[]', NULL, NULL);
+                 INSERT INTO nostr_tags VALUES ('aa', 'p', 'zz');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        let (events, tagged, found): (i64, String, String) = c
+            .query_row(
+                "SELECT (SELECT count(*) FROM nostr_events), (SELECT e.id FROM nostr_events e JOIN nostr_tags t ON t.event_id = e.seq WHERE t.name = 'p' AND t.value = 'zz'), \
+                        (SELECT e.id FROM nostr_events e JOIN nostr_fts f ON f.rowid = e.seq AND nostr_fts MATCH 'premier*')",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((events, tagged.as_str(), found.as_str()), (2, "aa", "aa"));
+        let leftovers: i64 = c.query_row("SELECT count(*) FROM sqlite_master WHERE name IN ('nostr_events_old', 'nostr_tags_old', 'nostr_fts_ids')", [], |r| r.get(0)).unwrap();
+        assert_eq!(leftovers, 0);
+        drop(c);
+        // Réouverture : rien ne change.
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row::<i64, _, _>("SELECT count(*) FROM nostr_events", [], |r| r.get(0)).unwrap(), 2);
+    }
+
+    #[test]
+    fn a_database_from_before_0_5_keeps_its_virtual_filesystem_after_the_table_change() {
+        let tmp = testutil::TempDir::new("legacy-vfs");
+        let path = tmp.path().join("old.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(
+                "CREATE TABLE ucloud_entries(owner_hex TEXT NOT NULL, path TEXT NOT NULL, parent TEXT NOT NULL, type TEXT NOT NULL, cid TEXT, mime TEXT, size INTEGER, mtime INTEGER, taken_at INTEGER, sha_orig TEXT, sha_plain TEXT, faceid_status TEXT, origin TEXT, phash INTEGER, lat REAL, lon REAL, desc_text TEXT, data TEXT NOT NULL, src_cid TEXT, PRIMARY KEY(owner_hex, path)) STRICT, WITHOUT ROWID;
+                 CREATE INDEX ue_parent ON ucloud_entries(owner_hex, parent);
+                 INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, data) VALUES ('o', '/Contacts', '/', 'dir', NULL, NULL, 0, 1, '{}'), ('o', '/Contacts/a.vcf', '/Contacts', 'file', 'bafy1', 'text/vcard', 9, 2, '{}');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        let kids: Vec<String> = c.prepare("SELECT path FROM ucloud_entries WHERE owner_hex = 'o' AND parent = '/Contacts' ORDER BY path").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+        assert_eq!(kids, ["/Contacts/a.vcf"]);
+        // Unicité conservée, déclencheurs du journal CardDAV reposés sur la nouvelle table.
+        assert!(c.execute("INSERT INTO ucloud_entries(owner_hex, path, parent, type, data) VALUES ('o', '/Contacts/a.vcf', '/Contacts', 'file', '{}')", []).is_err());
+        c.execute("DELETE FROM ucloud_entries WHERE path = '/Contacts/a.vcf'", []).unwrap();
+        let logged: i64 = c.query_row("SELECT count(*) FROM dav_changes WHERE path = '/Contacts/a.vcf'", [], |r| r.get(0)).unwrap();
+        assert!(logged >= 2, "ajout recopié puis suppression, journalisés");
+        assert_eq!(c.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master WHERE name = 'ucloud_entries_old'", [], |r| r.get(0)).unwrap(), 0);
     }
 
     #[test]

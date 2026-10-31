@@ -350,6 +350,8 @@ Sur un téléphone, installez la page comme application (menu du navigateur : *A
 
 <a id="etape-8"></a>
 
+**Style de l'interface.** Dans l'en-tête, le sélecteur propose trois styles : **Aurore** (par défaut : dégradés, icônes, liseré coloré sur les cartes), **Sobre** (sans décor) et **Kraft** (papier chaud, inspiré des pochettes de FaceCloud). Le bouton voisin (◐ ☀ ☾) choisit le mode : automatique (celui de l'appareil), clair ou sombre. Ces choix restent sur l'appareil et ne sont envoyés nulle part.
+
 ## Étape 8 — FaceCloud : retrouver et partager vos photos entre amis
 
 C'est l'application phare. Vous déposez vos photos dans votre **uCloud** (chiffré avant de quitter votre appareil). La station y repère les **visages**, les compare, et vous aide à les nommer. Les photos où figure un ami peuvent alors lui être **partagées automatiquement**.
@@ -415,6 +417,94 @@ curl -u vous@exemple.org:JETON -T photo.jpg https://votre-domaine/dav/Photos/pho
 **Rapprochement photo ↔ fiche ↔ MULTIPASS.** Une fiche relie un visage à un MULTIPASS de deux façons : la fiche porte une clé Nostr (`X-NOSTR-PUBKEY` ou `X-NOSTR-NPUB`, en hexadécimal ou `npub1…`), ou son email est celui d'un compte **hébergé par cette station** (un email déclaré dans un DID distant n'est jamais une preuve). Les visages de même nom (sans accents ni casse) prennent alors cette clé ; deux fiches du même nom pour deux clés différentes restent ambiguës et ne sont pas rapprochées. Si vous êtes Proches réciproques, les photos déjà analysées de cette personne lui sont partagées aussitôt. L'écran **Contacts** montre les fiches, leur lien, les personnes reconnues sans fiche (*Créer la fiche*) et permet de relier à la main (email d'un MULTIPASS de la station, ou `npub`) ; une clé ajoutée à la main est écrite dans la fiche, donc elle suit le carnet sur votre téléphone.
 
 **Mon compte.** Identité et clés publiques, profil Nostr (nom, présentation, image : un nouveau kind 0 signé par la station pour votre compte), langue de l'interface (français, English, Español), relais annoncés (NIP-65), **changement du jeton** (l'ancien cesse de fonctionner immédiatement ; la génération est conservée dans la base) et **export de vos clés** (case à cocher de confirmation, 3 exports par heure, chaque export est tracé et vous est signalé).
+
+## Étape 8 bis-b — Mon coffre de mots de passe (KeePass)
+
+Votre uCloud accueille un **coffre KeePass** (`.kdbx`) dans le dossier `/Coffre`. Le fichier est chiffré par **votre** mot de passe maître, que la station ne connaît pas : l'hébergeur, le Capitaine et les amis qui gardent votre sauvegarde n'en voient qu'un fichier opaque. Il est répliqué avec vos sauvegardes et comptabilisé dans votre quota. **Il n'est jamais partageable** : ni lien d'invité, ni envoi à un ami, même en désignant le dossier racine.
+
+**Deux coffres, deux niveaux de confiance.**
+
+- **`Coffre/perso.kdbx`** : tout ce qui compte (banque, impôts, santé). Il n'est lu que par vos applications.
+- **`Coffre/agents.kdbx`** : seulement les comptes que vous choisissez de confier à un assistant (BRO ou un agent que vous déclarez). Créez d'abord `perso.kdbx`, puis **copiez-y les entrées** à déléguer vers `agents.kdbx` (dans KeePassXC, ouvrez les deux bases et déplacez ou copiez l'entrée de l'une à l'autre). Une entrée copiée n'est plus liée à l'original : changer un mot de passe se fait aux deux endroits.
+
+*Les agents (BRO ou un autre) passent par le serveur MCP décrit plus bas : ils **demandent**, vous décidez. L'ouverture de `agents.kdbx` par la station n'est pas encore faite.*
+
+**Brancher une application** (serveur et identifiants comme pour les contacts : `https://<station>/dav/`, votre email, votre jeton de *Mon compte*) :
+
+| Plateforme | Application | Branchement |
+|---|---|---|
+| Android | Keepass2Android | *Ouvrir un fichier › WebDAV*, adresse `https://<station>/dav/Coffre/perso.kdbx` |
+| iPhone | Strongbox | *Ajouter une base › WebDAV* |
+| Ordinateur | KeePassXC | monter `/dav/` comme lecteur réseau (WebDAV du gestionnaire de fichiers), ou télécharger le fichier à la main |
+
+À chaque enregistrement, l'application écrase le fichier (la station renvoie `204`) et relit la dernière version à l'ouverture. Si deux appareils modifient en même temps, KeePass propose de fusionner : acceptez.
+
+**Agents et serveur MCP (demande d'accord).** La station parle MCP (JSON-RPC 2.0, `POST https://<station>/mcp`). Un agent s'y présente avec **son propre jeton**, jamais avec votre compte :
+
+1. Vous déclarez l'agent (`POST /api/v1/agents` avec `{ "name": "BRO", "group": "Agents", "max_secs": 600 }`, authentifié comme pour le reste de l'API). La réponse contient son **jeton `ag1_…`, montré une seule fois** : la station n'en garde que l'empreinte SHA-256. Huit agents au plus par compte ; pour en retirer un : `POST /api/v1/agents/revoke`.
+2. Le registre est un événement Nostr **kind 31903, `d = agents`**, signé de votre clé et **chiffré pour vous seul** (NIP-44) ; il suit vos sauvegardes et se reconstruit au `replay`.
+3. L'agent appelle l'outil `demander_acces` (`site` = nom d'hôte seul, par exemple `impots.gouv.fr`, et une `raison` de 200 caractères) puis interroge `statut_acces`. Vous recevez la demande dans le flux d'activité et la tranchez par `POST /api/v1/agents/decide` (`{ "id", "approve", "secs" }`). Une demande non traitée expire au bout de 5 minutes ; la durée d'un accord est plafonnée par l'agent et par une heure.
+4. Chaque demande, accord, refus et retrait est écrit dans le journal d'audit (`audit.agent`).
+
+**Ce que cette étape ne fait pas :** un agent ne reçoit jamais de mot de passe (il reçoit « en attente », « accordé », « refusé » ou « expiré »), et pour l'instant l'accord n'ouvre pas non plus `agents.kdbx` : il est seulement enregistré et tracé. La remise d'un identifiant à un navigateur reste à construire. Pas d'écran dédié non plus : l'API et le flux d'activité suffisent aux premiers essais. Limites : 5 demandes en attente et 20 par heure et par agent.
+
+**Quitter le coffre de Firefox.**
+
+1. Dans Firefox : `about:logins` › menu **⋯** › *Exporter les identifiants…* (un mot de passe principal éventuel est demandé).
+2. Dans KeePassXC : *Base de données › Importer › Fichier CSV*, vérifier l'association des colonnes (URL, identifiant, mot de passe), enregistrer sous `perso.kdbx`.
+3. **Supprimer le fichier CSV tout de suite** : il contient tous vos mots de passe en clair. Idéalement, faites l'opération sur un disque chiffré.
+4. Installer l'extension **KeePassXC-Browser** et désactiver l'enregistrement des mots de passe de Firefox, pour ne pas garder deux coffres.
+
+Les codes à usage unique (TOTP) ne migrent pas : Firefox n'en stocke pas ; KeePass sait les générer, saisissez-les à la main.
+
+**Si vous oubliez le mot de passe maître**, personne ne peut le retrouver, ni vous aider : ni la station, ni le Capitaine, ni vos amis (la clé de secours rétablit votre compte, pas ce mot de passe). Notez-le sur papier, ou ajoutez un fichier clé à votre coffre.
+
+## Étape 8 bis-c — Reprendre son uCloud d'Astroport.ONE
+
+`astroportd import-ucloud <email>` reprend le uCloud d'un compte (`~/.zen/game/nostr/<email>/.ucloud`) **sans rien recopier ni ré-encoder** : le nouveau VFS référence les **mêmes blobs chiffrés** (UENC v1, déjà dans IPFS) avec **les mêmes clés**. L'ancienne base n'est ouverte qu'en lecture seule et n'est jamais modifiée.
+
+1. **À blanc d'abord** : `astroportd import-ucloud fred@example.org --dry-run`. Il lit l'ancien uCloud, dit ce qu'il reprendrait (fichiers, taille, dossiers, clés) et ce qu'il **écarterait avec la raison** (liste complète dans `import-ucloud-ecartes.tsv`), puis **relit, déchiffre et compare** un échantillon de fichiers (`--verify`, 60 par défaut) : taille et SHA-256 du clair doivent être ceux annoncés par l'ancienne base. Au moindre échec, rien n'est écrit.
+2. **Pour de bon** : même commande sans `--dry-run`. Le compte ne doit pas déjà avoir de fichiers dans astroportd (sinon `--replace`). Le manifeste Nostr est publié à la fin (`--no-publish` pour s'en abstenir).
+3. **`astroportd serve` doit tourner avec `--kubo http://127.0.0.1:5001`** : les anciens blobs n'existent que dans IPFS (CID v0 `Qm…`). Sans cela, les entrées s'affichent mais leur contenu est illisible.
+
+Ce qui change pour ces fichiers : ils se lisent et se téléchargent comme les autres (`Range` compris) ; **les supprimer retire l'entrée sans jamais désépingler le blob** (l'ancienne station le référence encore) ; ils **ne sont pas** sauvegardés chez les amis ni répliqués par P2P tant qu'ils n'ont pas été ré-enregistrés au format natif, et le contrôle d'intégrité de nuit les laisse de côté. Non repris : empreintes de visages (Qdrant) et vignettes, qui se recalculent ; les index vectoriels de descriptions.
+
+**Avant un import réel, mettez le démon à jour** : cette version migre le schéma de `uplanet.db` à l'ouverture, un démon d'une version antérieure qui tourne encore ne s'y retrouverait pas. Arrêtez-le, sauvegardez la base, lancez l'import, redémarrez.
+
+## Étape 8 bis-d — Remplir son uCloud depuis un autre serveur (Nextcloud, ownCloud…)
+
+Le uCloud peut se remplir en **tirant** (mode « pull ») un dossier d'un autre serveur WebDAV : un Nextcloud, un ownCloud, ou une autre station astroportd. À lancer depuis l'interface : **uCloud › Sources**.
+
+1. **Ajouter une source** : adresse WebDAV du serveur (par exemple `https://nextcloud.example/remote.php/dav/files/votre-identifiant`), identifiant et **mot de passe d'application** (à créer côté serveur : vous pouvez le révoquer à tout moment). Dossier distant, libellé et dossier de dépôt sont facultatifs. L'adresse et les identifiants sont vérifiés avant l'enregistrement, et le mot de passe est rangé **chiffré pour vous seul**.
+2. **Aperçu** : compte ce qui serait repris, sans rien écrire. **Reprendre** : lance le passage en arrière-plan, avec une barre de progression ; **Arrêter** l'interrompt (le fichier en cours s'achève). Un seul passage à la fois par compte.
+3. **Les fichiers arrivent tels quels** sous le dossier de dépôt (`/Imports/<libellé>` par défaut), avec l'arborescence du serveur : **aucun tri par dates**. Les ranger comme un seul disque, alimenté par plusieurs sources, est le rôle d'une fonction de rangement à part.
+4. **Rejouable** : un fichier déjà repris n'est ni repris ni écrasé, même si vous l'avez déplacé ailleurs dans le uCloud depuis (la station retient ce qui vient de quelle source). Un fichier modifié depuis sur le serveur est signalé, jamais dupliqué.
+
+Garde-fous : seules les adresses **publiques** sont jointes depuis l'interface (un serveur sur votre réseau local se branche par la ligne de commande de l'opérateur, `--allow-private`) ; les identifiants ne suivent **jamais** une redirection vers un autre serveur ; un serveur qui désignerait des chemins hors du dossier demandé ne peut rien écrire ailleurs ; fichiers de 200 Mo au plus, 50 000 fichiers au plus par passage.
+
+En ligne de commande : `astroportd pull-webdav <compte> add --url … --user … --password-stdin --remote-path Photos [--dest /Imports/X] [--allow-private]`, puis `list`, `run [id] [--dry-run] [--limit N]` et `remove <id>`. Le mot de passe se lit sur l'entrée standard, jamais en argument.
+
+## Étape 8 bis-e — Ranger son uCloud par type
+
+Le uCloud est alimenté par de nombreuses sources (dépôts, reprises WebDAV, téléphones). **uCloud › Ranger** le réorganise **comme un ordinateur de bureau** : Documents, Images, Musique, Vidéos, Archives.
+
+1. **Voir ce qui serait rangé** : un aperçu par type (nombre de fichiers, taille, exemples de destination), et ce qui reste en place. Rien n'est écrit.
+2. **Réglages** : le dossier à ranger (`/` pour tout le uCloud, ou par exemple `/Imports`), des sous-dossiers par date (aucun, par année, par année et mois : la date de prise de vue, sinon de modification) et les types à ranger.
+3. **Ranger maintenant** : le rangement tourne en arrière-plan, avec une barre de progression et un bouton **Arrêter**. Les dossiers laissés vides disparaissent.
+4. **Annuler ce rangement** : chaque passage est journalisé, et un bouton remet chaque fichier à sa place d'avant (les dossiers sont recréés ; si une place a été reprise entre-temps, le fichier revient sous un numéro).
+
+Seuls les **chemins** changent : aucun fichier n'est recopié ni re-chiffré (le rangement de 30 000 photos est donc quasi instantané), vos **visages** et vos **partages** suivent leur photo. Jamais touchés : le coffre, les contacts, l'agenda, les partages reçus, les sauvegardes et tous les dossiers cachés. Un fichier de type inconnu reste où il est, un fichier déjà dans un dossier de type aussi, et un nom déjà pris reçoit un numéro (jamais d'écrasement).
+
+## Étape 8 bis-f — Un jeton par appareil (téléphones, tablettes, ordinateurs)
+
+**Mon compte › Appareils** donne à chaque appareil **son propre jeton WebDAV**, **confiné à un dossier** de votre uCloud : son envoi arrive dans le répertoire que vous choisissez (par exemple `/Photos/Téléphone de Léa`), et il ne voit ni ne touche rien d'autre.
+
+1. **Ajouter un appareil** : un nom, un dossier (créé s'il manque ; par défaut `/Photos/<nom>`) et des droits : **envoi seul** (déposer, créer des dossiers, déplacer ; ni lire, ni supprimer : le bon choix pour une appli de sauvegarde de photos), **lecture et écriture**, ou **lecture seule** (un écran qui montre un album).
+2. Le **jeton** (`dv_…`) est montré **une seule fois**, avec l'adresse du serveur et votre identifiant : à saisir dans l'application de l'appareil (adresse WebDAV, identifiant = votre email, mot de passe = ce jeton). La station n'en garde que l'empreinte.
+3. L'appareil voit son dossier comme la **racine** du WebDAV : les liens renvoyés n'indiquent jamais le chemin au-dessus. Aucun `..` ne l'en fait sortir. Contacts et agenda lui sont fermés (utilisez le jeton principal pour synchroniser le carnet d'adresses et l'agenda).
+4. **Révoquer** coupe le jeton tout de suite ; ce que l'appareil a déjà déposé reste dans votre uCloud. Le **dernier envoi** de chaque appareil est affiché. 16 appareils au plus. Un jeton d'appareil n'ouvre jamais l'interface : seulement ce dossier, en WebDAV.
+
+Le jeton principal du compte (et NIP-98) fonctionne comme avant, sans confinement.
 
 <a id="etape-8c"></a>
 

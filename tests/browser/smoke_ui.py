@@ -37,6 +37,7 @@ COOP = dict(exists=True, updated_at=1790000000, did='did:nostr:' + 'ab' * 32, un
 ADMIN = dict(face=dict(mode='off', label=None, locked=None, onnx_compiled=True, models='/m', library=None, pending=3, failed=0),
              kinds=dict(kinds=[dict(kind=1, label='Note publique', read='public', write='circle', project=True, default='read=public write=circle project=on', source='défaut'), dict(kind=7, label='Réaction (+N = Ẑen)', read='circle', write='circle', project=True, default='read=circle write=circle project=on', source='défaut')],
                         choices=dict(read=['public', 'addressed', 'friends', 'circle', 'deny'], write=['circle', 'open', 'deny']), fixed={'1059': 'x', '22242': 'y'}))
+ADMIN.update(tunnels=None, tasks=None, assist=dict(services=['ssh'], friends=[], incoming=[], outgoing=[]))  # réglages facultatifs de m-options.js : absents, l'écran s'en passe sans erreur
 ACCOUNT = dict(hex='aa' * 32, npub='npub1test', email='alice@example.org', role='multipass', g1pub='G1TEST', home_station='Qm:ab', lang='fr', langs=['fr', 'en', 'es'], profile=dict(name='Alice', about='Bonjour', picture=None),
                dav=dict(url='https://s.example/dav', login='alice@example.org'), token_generation=0, keys_exportable=True, has_g1_key=True, relays=[dict(url='wss://s.example', read=True, write=True)])
 CONTACTS = dict(contacts=[dict(path='/Contacts/Lea.vcf', name='Léa Martin', emails=['lea@example.org'], pubkey='ab' * 32, via='vcard', g1pub=None, warning=None, hosted_here=None, friends=True, faces=12, faces_linked=12),
@@ -97,10 +98,16 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/v1/station/coop': return self.send(200, COOP)
         if p == '/api/v1/account': return self.send(200, ACCOUNT)
         if p == '/api/v1/contacts': return self.send(200, CONTACTS)
-        if p.startswith('/api/v1/station/admin/'): return self.send(200, ADMIN[p.rsplit('/', 1)[1]])
+        if p.startswith('/api/v1/station/admin/'): k = p.rsplit('/', 1)[1]; return self.send(200, ADMIN[k]) if k in ADMIN else self.send(404, dict(error='non simulé'))
         if p == '/api/v1/faces/board':
             return self.send(200, dict(enabled=True, dav='/dav', faces=STATE['faces'], people=people(), unknown=sum(1 for f in STATE['faces'] if not f['named']), groups_skipped=False, truncated=False))
         if p == '/api/v1/replication': return self.send(200, REPL)
+        if p == '/api/v1/devices': return self.send(200, dict(devices=[dict(id='d1', label='Téléphone de Léa', root='/Photos/Léa', mode='write', created_at=1790000000, last_used=None)], max=16))
+        if p == '/api/v1/organize': return self.send(200, dict(folders=[], job=None, runs=[dict(run_id='r1', at=1790000000, moved=7, undone=False, options={})]))
+        if p == '/api/v1/pull': return self.send(200, dict(sources=[dict(id='s1', label='Mon Nextcloud', url='https://nc.example/remote.php/dav/files/fred', username='fred', remote_path='Photos', dest_prefix='/Imports/Mon Nextcloud', private_ok=False,
+            job=dict(state='running', dry_run=False, started=1, finished=None, progress=dict(done=40, total=100, imported=30, skipped=8, errors=2), report=None, error=None), last=None)]))
+        if p == '/api/v1/backup': return self.send(200, dict(mine=None, friends=[], hosting=[], share=None))
+        if p == '/api/v1/faces/pending-shares': return self.send(200, dict(pending=[]))
         if p == '/api/v1/activity': return self.send(200, b': ok\n\n', 'text/event-stream')
         self.send(404, dict(error='simulé : ' + p))
     def do_DELETE(self):
@@ -114,7 +121,12 @@ class H(BaseHTTPRequestHandler):
                 if f['id'] in body['ids']: f.update(name=body['name'], pubkey=body.get('pubkey'), named=True, group_id=None, group_size=None, suggest=None)
             return self.send(200, dict(assigned=len(body['ids']), name=body['name']))
         if p == '/api/v1/station/coop': return self.send(200, COOP)
-        if p.startswith('/api/v1/station/admin/'): return self.send(200, ADMIN[p.rsplit('/', 1)[1]])
+        if p == '/api/v1/devices': return self.send(200, dict(id='d2', label=body['label'], root=body['root'], mode=body['mode'], token='dv_' + 'ab' * 16, note='Ce jeton ne sera plus jamais affiché : copiez-le maintenant.'))
+        if p == '/api/v1/devices/revoke': return self.send(200, dict(revoked=body['id']))
+        if p == '/api/v1/organize/preview': return self.send(200, dict(total=7, placed=1, protected=4, unknown=1, capped=False, by_kind=[dict(kind='images', folder='Images', files=2, bytes=3000, sample=[dict(**{'from': '/Imports/A/p.jpg', 'to': '/Images/p.jpg'})]), dict(kind='documents', folder='Documents', files=5, bytes=900, sample=[])]))
+        if p == '/api/v1/organize/undo': return self.send(200, dict(restored=7))
+        if p.startswith('/api/v1/organize') or p.startswith('/api/v1/pull'): return self.send(200, dict(ok=True))
+        if p.startswith('/api/v1/station/admin/'): k = p.rsplit('/', 1)[1]; return self.send(200, ADMIN[k]) if k in ADMIN else self.send(404, dict(error='non simulé'))
         if p == '/api/v1/register': return self.send(200, dict(email='lea-x7k2p9@uplanet.local', token='JT', pass_='123456', salt='S', pepper='P', nsec='nsec1x', npub='npub1x', hex='cd' * 32, g1pub='G', nostrns='/ipns/k', constellation='ORIGIN', lang='fr', guest=True, card=CARD, card_svg=QR, **{'pass': '123456'}))
         if p == '/api/v1/restore': return self.send(200, dict(email='alice@example.org', token='JT2', hex='ab' * 32, constellation='ORIGIN', restoring=True, **{'pass': '654321'}))
         if p == '/api/v1/invites': return self.send(200, dict(token=TOKEN, count=3, label=body.get('label'), expires_at=1791000000, url='https://s.example/i/' + TOKEN, qr_svg=QR))
@@ -222,12 +234,12 @@ with sync_playwright() as pw:
     sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/station/coop']
     check(sent and sent[-1] == dict(values=dict(OCSLUG='autre')), 'seule la clé modifiée est envoyée : ' + str(sent[-1:]))
     # Options : moteur FaceID et matrice des kinds ; seules les lignes modifiées partent.
-    page.goto(f'http://127.0.0.1:{port}/#/options'); page.wait_for_selector('input[name=fo-mode]'); page.wait_for_timeout(200)
+    page.goto(f'http://127.0.0.1:{port}/#/options'); page.wait_for_selector('details.fold', state='attached'); page.evaluate("document.querySelectorAll('details.fold').forEach(d => d.open = true)"); page.wait_for_selector('input[name=fo-mode]'); page.wait_for_timeout(200)
     check('Aucun moteur en service' in page.inner_text('main') and '3 photo(s) en attente' in page.inner_text('main'), 'l\'état du moteur FaceID et la file en attente sont visibles')
     page.check('input[name=fo-mode][value=remote]'); page.fill('#fo-url', 'http://brain.local:8190/faces'); page.click('button:text-is("Appliquer")'); page.wait_for_timeout(500)
     sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/station/admin/face']
     check(sent and sent[-1] == dict(mode='remote', url='http://brain.local:8190/faces'), 'la bascule du moteur part avec son adresse : ' + str(sent[-1:]))
-    page.goto(f'http://127.0.0.1:{port}/#/options'); page.wait_for_selector('table select'); page.wait_for_timeout(200)
+    page.goto(f'http://127.0.0.1:{port}/#/options'); page.wait_for_selector('details.fold', state='attached'); page.evaluate("document.querySelectorAll('details.fold').forEach(d => d.open = true)"); page.wait_for_selector('table select'); page.wait_for_timeout(200)
     page.locator('table tbody tr').nth(1).locator('select').nth(1).select_option('deny')
     page.click('button:has-text("Appliquer la matrice")'); page.wait_for_timeout(500)
     sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/station/admin/kinds']
@@ -397,6 +409,60 @@ with sync_playwright() as pw:
     ACCOUNT['guest'] = False
     # Thème sombre.
     page.emulate_media(color_scheme='dark'); page.goto(f'http://127.0.0.1:{port}/#/people'); page.wait_for_selector('canvas.pe-board'); page.wait_for_timeout(800); page.screenshot(path=str(OUT / 'board-dark.png'))
+    # Quitter un écran lent avant la fin de son chargement ne doit pas faire apparaître son erreur dans l'écran suivant.
+    page.route('**/api/v1/faces/board', lambda route: (page.wait_for_timeout(2500), route.continue_()))
+    page.goto(f'http://127.0.0.1:{port}/#/people'); page.wait_for_timeout(300)
+    page.goto(f'http://127.0.0.1:{port}/#/contacts'); page.wait_for_selector('main >> text=Synchroniser avec mon téléphone'); page.wait_for_timeout(4500)
+    txt = page.inner_text('main')
+    check('Synchroniser avec mon téléphone' in txt and 'Cannot' not in txt and 'null' not in txt and 'Table de tri' not in txt, "l'écran quitté en cours de chargement n'écrit rien dans le suivant")
+    page.unroute('**/api/v1/faces/board')
+    # Appareils : un jeton WebDAV par téléphone, confiné à un dossier.
+    page.goto(f'http://127.0.0.1:{port}/#/account'); page.wait_for_selector('#dv-label'); page.wait_for_timeout(300)
+    txt = page.inner_text('main')
+    check('Téléphone de Léa' in txt and '/Photos/Léa' in txt and 'Envoi seul' in txt and 'Jamais utilisé' in txt, "l'appareil est listé avec son dossier, ses droits et son dernier usage")
+    page.fill('#dv-label', 'Tablette'); page.select_option('#dv-mode', 'readwrite'); page.click('button:text-is("Ajouter cet appareil")'); page.wait_for_selector('text=ajouté'); page.wait_for_timeout(300)
+    sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/devices']
+    check(len(sent) == 1 and sent[0] == dict(label='Tablette', root='/Photos/Tablette', mode='readwrite'), "le dossier par défaut est /Photos/<nom> et les droits choisis partent")
+    check(page.input_value('input[aria-label=Jeton]') == 'dv_' + 'ab' * 16 and 'ne sera plus jamais affiché' in page.inner_text('main'), 'le jeton est montré une fois, avec le serveur et le dossier')
+    page.click('button:text-is("Révoquer")'); page.wait_for_timeout(400)
+    check(any(p_ == '/api/v1/devices/revoke' and b_ == {'id': 'd1'} for p_, b_ in STATE['posts']), "« Révoquer » révoque le bon appareil")
+    # Sources : reprise depuis un autre serveur WebDAV, lancée depuis l'interface.
+    page.goto(f'http://127.0.0.1:{port}/#/cloud?m=sources'); page.wait_for_selector('#src-url'); page.wait_for_timeout(300)
+    txt = page.inner_text('main')
+    check('Mon Nextcloud' in txt and 'Photos' in txt and '/Imports/Mon Nextcloud' in txt, 'la source est listée avec son dossier distant et son dépôt')
+    check(page.evaluate("document.querySelector('progress')?.value") == 40 and page.get_by_role('button', name='Arrêter').is_visible(), 'une reprise en cours montre sa progression et un bouton Arrêter')
+    check('fred@' not in txt and 'mot de passe' not in txt.lower().replace("mot de passe d'application", ''), 'aucun secret affiché')
+    page.fill('#src-url', 'https://nc2.example/remote.php/dav/files/fred'); page.fill('#src-user', 'fred'); page.fill('#src-pass', 'secret-app'); page.fill('#src-rp', 'Docs')
+    page.click('button:text-is("Vérifier et ajouter")'); page.wait_for_timeout(400)
+    sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/pull']
+    check(len(sent) == 1 and sent[0]['url'].startswith('https://nc2.example') and sent[0]['password'] == 'secret-app' and sent[0]['remote_path'] == 'Docs' and 'allow_private' not in sent[0], "le formulaire envoie l'adresse et le mot de passe, jamais d'adresse privée admise")
+    page.click('button:text-is("Arrêter")'); page.wait_for_timeout(300)
+    check(any(p_ == '/api/v1/pull/stop' for p_, _ in STATE['posts']), "« Arrêter » demande l'arrêt de la reprise")
+    # Ranger : le uCloud par type, avec aperçu, lancement et annulation.
+    page.goto(f'http://127.0.0.1:{port}/#/cloud?m=organize'); page.wait_for_selector('#og-scope'); page.wait_for_timeout(300)
+    page.click('button:text-is("Voir ce qui serait rangé")'); page.wait_for_selector('text=seraient rangés'); txt = page.inner_text('main')
+    check('7 fichier(s) seraient rangés' in txt and 'Images' in txt and '/Images/p.jpg' in txt and '4 protégé(s)' in txt, "l'aperçu dit combien, par type, avec des exemples et ce qui reste en place")
+    page.uncheck('input[name=archives]'); page.select_option('#og-date', 'month'); page.click('button:text-is("Ranger maintenant")'); page.wait_for_timeout(400)
+    sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/organize/run']
+    check(len(sent) == 1 and sent[0]['by_date'] == 'month' and 'archives' not in sent[0]['kinds'] and len(sent[0]['kinds']) == 4 and sent[0]['scope'] == '/', 'le rangement part avec le dossier, les types et les sous-dossiers par date choisis')
+    page.click('button:text-is("Annuler ce rangement")'); page.wait_for_timeout(400)
+    check(any(p_ == '/api/v1/organize/undo' and b_ == {'run': 'r1'} for p_, b_ in STATE['posts']), "« Annuler ce rangement » demande l'annulation du bon passage")
+    # Style (Aurore par défaut, Sobre, Kraft) et mode clair/sombre : choisis dans l'en-tête, retenus par l'appareil.
+    page.emulate_media(color_scheme='light'); page.goto(f'http://127.0.0.1:{port}/#/account'); page.wait_for_selector('#style')
+    check(page.evaluate("document.documentElement.dataset.style") == 'aurore', 'le style par défaut est Aurore')
+    page.select_option('#style', 'kraft')
+    check(page.evaluate("[document.documentElement.dataset.style, localStorage.getItem('style')]") == ['kraft', 'kraft'], 'le style choisi est appliqué et retenu')
+    page.reload(); page.wait_for_selector('#style'); page.wait_for_timeout(200)
+    check(page.evaluate("document.documentElement.dataset.style") == 'kraft' and page.input_value('#style') == 'kraft', 'le style survit au rechargement')
+    page.click('#mode')
+    check(page.evaluate("document.documentElement.dataset.mode") == 'light', 'le bouton de mode passe de automatique à clair')
+    page.click('#mode')
+    check(page.evaluate("[document.documentElement.dataset.mode, getComputedStyle(document.body).colorScheme]") == ['dark', 'dark'], 'puis à sombre : la page suit')
+    page.set_viewport_size(dict(width=1280, height=800)); page.wait_for_timeout(200)
+    check(page.evaluate("(() => { const n = [...document.querySelectorAll('header nav a')].filter(a => !a.hidden).map(a => a.getBoundingClientRect().top); return Math.max(...n) - Math.min(...n) < 8; })()"), 'les écrans tiennent sur une seule ligne à 1280 px')
+    page.select_option('#style', 'sobre'); page.click('#mode')
+    check(page.evaluate("[document.documentElement.dataset.style, document.documentElement.dataset.mode]") == ['sobre', None], 'Sobre et retour au mode automatique')
+    page.evaluate("localStorage.removeItem('style'); localStorage.removeItem('mode')")
     # Mobile.
     page.set_viewport_size(dict(width=390, height=800)); page.wait_for_timeout(300); page.screenshot(path=str(OUT / 'board-mobile.png'))
     br.close()

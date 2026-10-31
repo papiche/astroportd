@@ -27,7 +27,8 @@ use tokio_util::io::{ReaderStream, StreamReader};
 use zeroize::Zeroizing;
 
 use crate::auth::{Account, Tier, account_token, ct_eq, lookup_by_hex, lookup_by_login, parse_basic};
-use crate::blob::{BlobStore, BlobWriter, is_cid};
+use crate::devices::{self, Scope};
+use crate::blob::{BlobStore, BlobWriter, is_cid, is_legacy_cid};
 use crate::locks::{self, blocked, parse_timeout, token_of_header, tokens_in_if};
 use crate::parse::{MAX_XML, parse_lockinfo, parse_propertyupdate};
 use crate::manifest::ManifestPublisher;
@@ -162,6 +163,15 @@ pub(crate) struct Auth {
     pub(crate) account: Account,
     /// Tag `payload` NIP-98 à confronter au corps après un téléversement en flux.
     pub(crate) payload: Option<String>,
+    /// Jeton d'appareil : dossier auquel le client est confiné et ce qu'il peut y faire. `None` : jeton principal ou NIP-98.
+    pub(crate) scope: Option<Scope>,
+}
+
+impl Auth {
+    /// Racine vue comme `/` par le client (vide sans confinement).
+    pub(crate) fn root(&self) -> &str {
+        self.scope.as_ref().map_or("", |s| s.root.as_str())
+    }
 }
 
 // L'erreur est la réponse HTTP elle-même, renvoyée telle quelle : la boxer n'apporterait rien.
@@ -176,8 +186,16 @@ async fn authenticate<B: BlobStore>(st: &DavState<B>, headers: &HeaderMap, metho
             // Le jeton est calculé même pour un compte inconnu : pas de différence de temps observable.
             let expected = account_token(&st.db, &st.config.station_secret, account.as_ref().map_or("-", |a| a.owner.as_str())).await;
             match account {
-                Some(a) if ct_eq(expected.as_bytes(), pass.as_bytes()) => Ok(Auth { account: a, payload: None }),
-                _ => Err(unauthorized()),
+                Some(a) if ct_eq(expected.as_bytes(), pass.as_bytes()) => Ok(Auth { account: a, payload: None, scope: None }),
+                // Pas le jeton principal : est-ce celui d'un appareil (confiné à un dossier) ?
+                Some(a) => match devices::lookup(&st.db, &a.owner, &pass).await {
+                    Some(scope) => Ok(Auth { account: a, payload: None, scope: Some(scope) }),
+                    None => Err(unauthorized()),
+                },
+                None => {
+                    let _ = devices::lookup(&st.db, "-", &pass).await; // même travail pour un compte inconnu
+                    Err(unauthorized())
+                }
             }
         }
         "nostr" => {
@@ -198,7 +216,7 @@ async fn authenticate<B: BlobStore>(st: &DavState<B>, headers: &HeaderMap, metho
                 r
             })?;
             let account = lookup_by_hex(&st.db, &verified.pubkey).await.ok_or_else(|| reply(StatusCode::FORBIDDEN, "compte non hébergé ici"))?;
-            Ok(Auth { account, payload: verified.payload })
+            Ok(Auth { account, payload: verified.payload, scope: None })
         }
         _ => Err(unauthorized()),
     }
@@ -248,6 +266,23 @@ async fn dispatch<B: BlobStore>(State(st): State<Arc<DavState<B>>>, req: Request
         Ok(a) => a,
         Err(r) => return r,
     };
+    // Jeton d'appareil : mode permis, ni contacts ni agenda, et tous les chemins replacés sous sa racine.
+    let path = if let Some(scope) = &auth.scope {
+        if !scope.mode.allows(&method) {
+            return reply(StatusCode::FORBIDDEN, "ce jeton d'appareil n'autorise pas cette opération");
+        }
+        if crate::carddav::is_carddav_path(&path) || crate::caldav::is_caldav_path(&path) {
+            return reply(StatusCode::FORBIDDEN, "ce jeton d'appareil n'ouvre que son dossier");
+        }
+        // Le dossier de l'appareil peut avoir disparu depuis (rangé, supprimé) : il est recréé avant un dépôt.
+        if matches!(method.as_str(), "PUT" | "MKCOL") {
+            let (o, root) = (auth.account.owner.clone(), scope.root.clone());
+            let _ = vfs_tx(&st.db, move |tx| if vfs::get_entry(tx, &o, &root)?.is_none() { vfs::mkdir_p_tx(tx, &o, &root, now_secs()) } else { Ok(()) }).await;
+        }
+        scope.real(&path)
+    } else {
+        path
+    };
     if crate::carddav::is_carddav_path(&path) {
         return crate::carddav::handle(&st, &auth, &method, &path, req).await;
     }
@@ -259,7 +294,7 @@ async fn dispatch<B: BlobStore>(State(st): State<Arc<DavState<B>>>, req: Request
     let headers = req.headers().clone();
     let dest = if matches!(method.as_str(), "MOVE" | "COPY") {
         match destination(&st, &headers) {
-            Ok(d) => Some(d),
+            Ok(d) => Some(auth.scope.as_ref().map_or(d.clone(), |s| s.real(&d))),
             Err(r) => return r,
         }
     } else {
@@ -440,7 +475,7 @@ pub(crate) async fn get<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str,
         return builder.body(Body::empty()).unwrap_or_else(|_| reply(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne"));
     }
     let Ok(key) = UencKey::from_hex(&key_hex) else { return reply(StatusCode::INTERNAL_SERVER_ERROR, "clé du fichier invalide") };
-    if !is_cid(&cid) {
+    if !is_cid(&cid) && !is_legacy_cid(&cid) {
         return reply(StatusCode::INTERNAL_SERVER_ERROR, "CID invalide");
     }
     let Ok((mut reader, blob_len)) = st.blobs.open(&cid).await else { return reply(StatusCode::INTERNAL_SERVER_ERROR, "blob indisponible") };
@@ -484,7 +519,7 @@ async fn propfind<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, heade
         )
             .into_response(),
         Ok(Some(entries)) => {
-            let mut body = xml::multistatus(&st.config.mount, &entries, &active, now_secs());
+            let mut body = xml::multistatus_in(&st.config.mount, auth.root(), &entries, &active, now_secs());
             if path == "/" {
                 // Découverte CardDAV : où est mon principal, donc mon carnet d'adresses.
                 body = crate::carddav::announce_principal(st, &auth.account.owner, body).await;
@@ -682,10 +717,10 @@ async fn create_empty<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str) -
     vfs_tx(&st.db, move |tx| vfs::commit_file_tx(tx, &o, &p, &file, limits)).await.map(|_| ()).map_err(|e| vfs_error(&e))
 }
 
-fn lock_response(status: StatusCode, mount: &str, l: &locks::Lock) -> Response {
+fn lock_response(status: StatusCode, mount: &str, root: &str, l: &locks::Lock) -> Response {
     let body = format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:prop xmlns:D=\"DAV:\"><D:lockdiscovery>{}</D:lockdiscovery></D:prop>\n",
-        xml::activelock(mount, l, now_secs())
+        xml::activelock_in(mount, root, l, now_secs())
     );
     let mut r = (status, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response();
     if let Ok(v) = HeaderValue::from_str(&format!("<{}>", l.token)) {
@@ -704,7 +739,7 @@ async fn lock<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, req: Requ
         let presented = tokens_in_if(headers.get("if").and_then(|v| v.to_str().ok()).unwrap_or(""));
         for token in presented {
             if let Ok(Some(l)) = locks::refresh(&st.db, owner, &token, timeout, now).await {
-                return lock_response(StatusCode::OK, &st.config.mount, &l);
+                return lock_response(StatusCode::OK, &st.config.mount, auth.root(), &l);
             }
         }
         return reply(StatusCode::PRECONDITION_FAILED, "aucun verrou à prolonger");
@@ -734,10 +769,10 @@ async fn lock<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, req: Requ
         Err(locks::LockError::Db(_)) => return reply(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne"),
     };
     if existing.is_some() {
-        return lock_response(StatusCode::OK, &st.config.mount, &lock);
+        return lock_response(StatusCode::OK, &st.config.mount, auth.root(), &lock);
     }
     match create_empty(st, auth, path).await {
-        Ok(()) => lock_response(StatusCode::CREATED, &st.config.mount, &lock),
+        Ok(()) => lock_response(StatusCode::CREATED, &st.config.mount, auth.root(), &lock),
         Err(r) => {
             let _ = locks::release(&st.db, owner, &lock.token, now).await;
             r
@@ -779,7 +814,7 @@ async fn proppatch<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, req:
         (false, _, false) => "HTTP/1.1 200 OK",
     };
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus xmlns:D=\"DAV:\"><D:response>");
-    out.push_str(&format!("<D:href>{}</D:href>", xml::escape(&xml::href(&st.config.mount, path, false))));
+    out.push_str(&format!("<D:href>{}</D:href>", xml::escape(&xml::href_in(&st.config.mount, auth.root(), path, false))));
     for (i, (ns, name, _)) in changes.iter().enumerate() {
         let tag = if ns == "DAV:" {
             format!("<D:{}/>", xml::escape(name))

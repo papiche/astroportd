@@ -33,7 +33,7 @@ export default async function contacts(root, K) {
   const share = inv => navigator.share ? h('button', { class: 'ghost', type: 'button', onclick: () => navigator.share({ title: t('Photos pour vous'), url: inv.url }).catch(() => {}) }, 'Partager') : null;
   const STATES = { pending: 'pas encore ouverte', opened: 'ouverte', claiming: 'en cours', claimed: 'a rejoint', expired: 'expirée', revoked: 'retirée' };
 
-  const phone = h('section', { class: 'card' }, h('h2', {}, 'Synchroniser avec mon téléphone'),
+  const phone = h('section', { class: 'card wide' }, h('h2', {}, 'Synchroniser avec mon téléphone'),
     h('p', { class: 'muted' }, 'Android : DAVx⁵ → Ajouter un compte → URL et identifiant. iPhone : Réglages → Contacts → Comptes → Autre → CardDAV. Le mot de passe est votre jeton (voir Mon compte).'),
     h('dl', {}, h('dt', {}, 'Serveur'), h('dd', {}, h('code', {}, v.carddav.server)), h('dt', {}, 'Identifiant'), h('dd', {}, h('code', {}, v.carddav.login))),
     h('p', {}, h('button', { class: 'ghost', onclick: act(() => api('/sync', {}), 'Carnet relu') }, 'Relire le carnet')));

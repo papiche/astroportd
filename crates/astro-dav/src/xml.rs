@@ -55,14 +55,36 @@ pub fn iso8601(unix: i64) -> String {
 
 /// `href` d'une entrée : préfixe de montage + chemin encodé ; les dossiers finissent par `/`.
 pub fn href(mount: &str, path: &str, dir: bool) -> String {
+    href_in(mount, "", path, dir)
+}
+
+/// Comme [`href`] pour un client confiné à `root` (jeton d'appareil) : le dossier racine devient `/`, le préfixe disparaît.
+pub fn href_in(mount: &str, root: &str, path: &str, dir: bool) -> String {
     let mount = mount.trim_end_matches('/');
+    let path = &strip_root(root, path);
     let encoded = if path == "/" { String::new() } else { utf8_percent_encode(path, HREF).to_string() };
     let slash = if dir && !encoded.ends_with('/') { "/" } else { "" };
     format!("{mount}{encoded}{slash}")
 }
 
+/// Chemin vu par un client confiné à `root` ; hors de `root` (jamais en pratique), le chemin est rendu tel quel.
+fn strip_root(root: &str, path: &str) -> String {
+    if root.is_empty() {
+        path.to_owned()
+    } else if path == root {
+        "/".to_owned()
+    } else {
+        path.strip_prefix(root).filter(|r| r.starts_with('/')).map_or_else(|| path.to_owned(), str::to_owned)
+    }
+}
+
 /// Fragment `<D:activelock>` d'un verrou.
 pub fn activelock(mount: &str, l: &Lock, now: i64) -> String {
+    activelock_in(mount, "", l, now)
+}
+
+/// Comme [`activelock`] pour un client confiné à `root`.
+pub fn activelock_in(mount: &str, root: &str, l: &Lock, now: i64) -> String {
     format!(
         "<D:activelock><D:locktype><D:write/></D:locktype><D:lockscope><D:exclusive/></D:lockscope><D:depth>{}</D:depth>\
 <D:owner>{}</D:owner><D:timeout>Second-{}</D:timeout><D:locktoken><D:href>{}</D:href></D:locktoken>\
@@ -71,7 +93,7 @@ pub fn activelock(mount: &str, l: &Lock, now: i64) -> String {
         escape(&l.holder),
         (l.expires_at - now).max(0),
         escape(&l.token),
-        escape(&href(mount, &l.path, false)),
+        escape(&href_in(mount, root, &l.path, false)),
     )
 }
 
@@ -82,11 +104,16 @@ fn safe_name(name: &str) -> bool {
 
 /// Corps `207 Multi-Status` listant `entries`, avec leurs verrous actifs et propriétés mortes.
 pub fn multistatus(mount: &str, entries: &[Entry], locks: &[Lock], now: i64) -> String {
+    multistatus_in(mount, "", entries, locks, now)
+}
+
+/// Comme [`multistatus`] pour un client confiné à `root` : aucun `href` ne révèle le chemin au-dessus de sa racine.
+pub fn multistatus_in(mount: &str, root: &str, entries: &[Entry], locks: &[Lock], now: i64) -> String {
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus xmlns:D=\"DAV:\">\n");
     for e in entries {
         let dir = e.kind == EntryKind::Dir;
         out.push_str("<D:response>\n<D:href>");
-        out.push_str(&escape(&href(mount, &e.path, dir)));
+        out.push_str(&escape(&href_in(mount, root, &e.path, dir)));
         out.push_str("</D:href>\n<D:propstat>\n<D:prop>\n");
         out.push_str(&format!("<D:displayname>{}</D:displayname>\n", escape(name_of(&e.path))));
         if dir {
@@ -106,7 +133,7 @@ pub fn multistatus(mount: &str, entries: &[Entry], locks: &[Lock], now: i64) -> 
         out.push_str("<D:supportedlock><D:lockentry><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockentry></D:supportedlock>\n");
         out.push_str("<D:lockdiscovery>");
         for l in locks.iter().filter(|l| l.covers(&e.path, false)) {
-            out.push_str(&activelock(mount, l, now));
+            out.push_str(&activelock_in(mount, root, l, now));
         }
         out.push_str("</D:lockdiscovery>\n");
         for (i, (ns, name, value)) in e.dead_props.iter().enumerate() {

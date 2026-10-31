@@ -248,7 +248,7 @@ fn apply(conn: &mut Connection, cmd: Command) {
             let _ = reply.send(vacuum_atomic(conn, &dest));
         }
         Command::Checkpoint { reply } => {
-            let _ = reply.send(conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).map_err(DbError::from));
+            let _ = reply.send(checkpoint_truncate(conn));
         }
         Command::Job(job) => job(conn),
         Command::Shutdown { .. } => {}
@@ -297,6 +297,13 @@ fn vacuum_atomic(conn: &Connection, dest: &Path) -> Result<(), DbError> {
         let _ = std::fs::remove_file(&partial);
     }
     copied
+}
+
+/// `PRAGMA wal_checkpoint(TRUNCATE)` rend `(busy, log, checkpointed)` : `busy = 1` veut dire qu'un lecteur a empêché la
+/// troncature (le fichier `-wal` continue de grossir). Ce n'est plus passé sous silence.
+pub(crate) fn checkpoint_truncate(conn: &Connection) -> Result<(), DbError> {
+    let busy: i64 = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))?;
+    if busy == 0 { Ok(()) } else { Err(DbError::CheckpointBusy) }
 }
 
 #[cfg(test)]
@@ -447,6 +454,21 @@ mod tests {
         db.writer().checkpoint().await.unwrap();
         let wal = tmp.path().join("uplanet.db-wal");
         assert_eq!(std::fs::metadata(&wal).map_or(0, |m| m.len()), 0);
+    }
+
+    #[test]
+    fn a_reader_holding_a_transaction_makes_the_checkpoint_report_busy_instead_of_silently_succeeding() {
+        let tmp = TempDir::new("checkpoint-busy");
+        let path = tmp.path().join("busy.db");
+        let writer = Connection::open(&path).unwrap();
+        writer.execute_batch("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 50; CREATE TABLE t(x); INSERT INTO t VALUES (1);").unwrap();
+        // Un lecteur ouvre une transaction, puis le journal reçoit de nouvelles pages : la troncature ne peut pas aboutir.
+        let reader = Connection::open(&path).unwrap();
+        reader.execute_batch("BEGIN; SELECT * FROM t;").unwrap();
+        writer.execute_batch("INSERT INTO t VALUES (2);").unwrap();
+        assert!(matches!(checkpoint_truncate(&writer), Err(DbError::CheckpointBusy)));
+        reader.execute_batch("COMMIT").unwrap();
+        checkpoint_truncate(&writer).unwrap();
     }
 
     #[tokio::test]

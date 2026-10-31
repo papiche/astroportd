@@ -1,20 +1,19 @@
-:root{--bg:#fff;--fg:#14171f;--mut:#5a6272;--ac:#0b5fff;--bd:#d7dbe4;--card:#f5f7fb;--warn:#8a4b00;--wbg:#fff4e0;--err:#b00020}
-@media (prefers-color-scheme:dark){:root{--bg:#10131a;--fg:#e8ebf2;--mut:#a3abbb;--ac:#7aa5ff;--bd:#2b3140;--card:#181c26;--warn:#ffc978;--wbg:#2a2113;--err:#ff8a9b}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
-main{max-width:34rem;margin:0 auto;padding:1.5rem 16px 3rem}
+/* Pages autonomes (inscription, restauration, invitations) : mêmes jetons et mêmes styles que l'application (app.css). */
+:root{--fg:var(--ink);--mut:var(--muted);--ac:var(--accent);--bd:var(--line);--card:var(--panel2);--wbg:color-mix(in srgb,var(--warn) 14%,var(--panel));--err:var(--bad)}
+main{background:var(--panel);border:1px solid var(--line);border-radius:var(--rc);box-shadow:0 1px 2px var(--sh),0 14px 36px var(--sh);margin:1.5rem auto;padding:1.6rem 1.5rem 1.8rem}
+h1{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;width:fit-content}
+:root[data-style=sobre] h1{background:none;color:var(--ink)}
+label{margin:1rem 0 .25rem}
+button{margin-top:1rem}
+button:not(.primary):not(#go){background:var(--panel2);color:var(--ink);border-color:var(--line);box-shadow:none}
+button[disabled]{opacity:.6;cursor:wait}
+@media (max-width:40rem){main{margin:.6rem;padding:1.2rem 1rem 1.5rem}}
+main{max-width:34rem}
 h1{font-size:1.6rem;margin:.2rem 0 .6rem}
 .lead{margin-top:0}
 .muted{color:var(--mut)}
 .small{font-size:.9rem;margin-top:2rem}
-a{color:var(--ac)}
 .skip{position:absolute;left:-999px}.skip:focus{left:8px;top:8px;background:var(--bg);padding:.4rem .7rem;z-index:2}
-label{display:block;margin:1rem 0 .25rem;font-weight:600}
-input,select,textarea{width:100%;padding:.7rem;border:1px solid var(--bd);border-radius:.5rem;background:var(--card);color:var(--fg);font:inherit}
-button{margin-top:1rem;padding:.7rem 1.1rem;border:1px solid var(--bd);border-radius:.5rem;background:var(--card);color:var(--fg);font:inherit;cursor:pointer}
-button.primary,#go{background:var(--ac);border-color:var(--ac);color:#fff}
-button[disabled]{opacity:.6;cursor:wait}
-:focus-visible{outline:3px solid var(--ac);outline-offset:2px}
 .err{color:var(--err);min-height:1.5em}
 .warn{background:var(--wbg);color:var(--warn);padding:.8rem 1rem;border-radius:.5rem}
 dl{margin:1rem 0}
@@ -23,7 +22,6 @@ dd{margin:.15rem 0 0;padding:.5rem .7rem;background:var(--card);border:1px solid
 .row{display:flex;flex-wrap:wrap;gap:.6rem}
 
 .check{display:flex;gap:.5rem;align-items:center;font-weight:400;margin:.9rem 0 .3rem}.check input{width:auto}
-code{background:var(--card);padding:.05rem .3rem;border-radius:.25rem}
 
 textarea{font-family:ui-monospace,monospace;font-size:.85rem;resize:vertical}
 #cam{width:100%;max-height:18rem;margin-top:.8rem;border-radius:.5rem;background:#000}

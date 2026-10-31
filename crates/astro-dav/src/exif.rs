@@ -16,7 +16,10 @@ pub struct ExifMeta {
     pub lat: Option<f64>,
     /// Longitude en degrés décimaux (est positif).
     pub lon: Option<f64>,
-    /// Prise de vue, secondes UNIX (heure locale lue comme UTC si l'appareil n'a pas noté le décalage).
+    /// **Heure murale** de la prise de vue : la date et l'heure que l'appareil affichait, lues comme si c'était de l'UTC (le
+    /// décalage `OffsetTimeOriginal` n'est volontairement pas appliqué). C'est la date civile que le membre reconnaît : « ce
+    /// jour-là », la chronologie et les mois s'alignent dessus avec `strftime` sans aucune conversion de fuseau, que l'appareil
+    /// ait noté son décalage ou non. Ce n'est donc pas un instant : ne pas la comparer à `mtime` pour ordonner à la seconde.
     pub taken_at: Option<i64>,
 }
 
@@ -59,8 +62,8 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// `YYYY:MM:DD HH:MM:SS` (+ décalage `±HH:MM` facultatif) → secondes UNIX.
-fn timestamp(text: &str, offset: Option<&str>) -> Option<i64> {
+/// `YYYY:MM:DD HH:MM:SS` → heure murale en secondes UNIX (voir [`ExifMeta::taken_at`]).
+fn timestamp(text: &str) -> Option<i64> {
     let (date, time) = text.split_once(' ')?;
     let num = |s: &str| s.trim().parse::<i64>().ok();
     let d: Vec<i64> = date.split(':').filter_map(num).collect();
@@ -68,15 +71,7 @@ fn timestamp(text: &str, offset: Option<&str>) -> Option<i64> {
     if d.len() != 3 || t.len() != 3 || !(1..=12).contains(&d[1]) || !(1..=31).contains(&d[2]) || t[0] > 23 || t[1] > 59 || t[2] > 60 {
         return None;
     }
-    let local = days_from_civil(d[0], d[1], d[2]) * 86_400 + t[0] * 3600 + t[1] * 60 + t[2];
-    let shift = offset
-        .and_then(|o| {
-            let (sign, rest) = (if o.starts_with('-') { -1 } else { 1 }, o.trim_start_matches(['+', '-']));
-            let (h, m) = rest.split_once(':')?;
-            Some(sign * (num(h)? * 3600 + num(m)? * 60))
-        })
-        .unwrap_or(0);
-    Some(local - shift)
+    Some(days_from_civil(d[0], d[1], d[2]) * 86_400 + t[0] * 3600 + t[1] * 60 + t[2])
 }
 
 /// Lit l'EXIF de `bytes` (JPEG, TIFF, HEIF, PNG, WebP). Rend `ExifMeta::default()` quand il n'y a rien d'exploitable.
@@ -88,7 +83,7 @@ pub fn read(bytes: &[u8], now_secs: i64) -> ExifMeta {
     };
     let taken_at = ascii(&e, Tag::DateTimeOriginal)
         .or_else(|| ascii(&e, Tag::DateTimeDigitized))
-        .and_then(|t| timestamp(&t, ascii(&e, Tag::OffsetTimeOriginal).as_deref()))
+        .and_then(|t| timestamp(&t))
         .filter(|t| (631_152_000..=now_secs + 86_400).contains(t)); // 1990-01-01 → demain
     ExifMeta { lat, lon, taken_at }
 }
@@ -155,7 +150,7 @@ mod tests {
         let m = read(&jpeg_with(&tiff((43, 36, 0, "N"), (1, 26, 2400, "E"), "2024:07:14 15:03:22")), NOW);
         let (lat, lon) = (m.lat.unwrap(), m.lon.unwrap());
         assert!((lat - 43.6).abs() < 1e-6 && (lon - 1.44).abs() < 1e-6, "{m:?}");
-        assert_eq!(m.taken_at, Some(1_720_969_402), "2024-07-14T15:03:22Z");
+        assert_eq!(m.taken_at, Some(1_720_969_402), "heure murale 2024-07-14 15:03:22");
         // Sud et ouest : négatifs.
         let m = read(&jpeg_with(&tiff((33, 51, 0, "S"), (151, 12, 0, "W"), "2024:07:14 15:03:22")), NOW);
         assert!(m.lat.unwrap() < -33.8 && m.lon.unwrap() < -151.1, "{m:?}");
@@ -178,8 +173,10 @@ mod tests {
     fn civil_dates_convert_to_unix_time() {
         assert_eq!(days_from_civil(1970, 1, 1), 0);
         assert_eq!(days_from_civil(2000, 3, 1), 11_017);
-        assert_eq!(timestamp("2024:07:14 15:03:22", Some("+02:00")), Some(1_720_969_402 - 7200));
-        assert_eq!(timestamp("2024:07:14 15:03:22", Some("-05:30")), Some(1_720_969_402 + 19_800));
-        assert_eq!(timestamp("2024:13:14 15:03:22", None), None);
+        assert_eq!(timestamp("2024:07:14 15:03:22"), Some(1_720_969_402));
+        assert_eq!(timestamp("2024:13:14 15:03:22"), None);
+        // Heure murale : 23 h 30 le 14 juillet reste le 14 juillet (jamais le 15 par un décalage de fuseau).
+        let late = timestamp("2024:07:14 23:30:00").unwrap();
+        assert_eq!((late / 86_400, (late % 86_400) / 3600), (days_from_civil(2024, 7, 14), 23));
     }
 }

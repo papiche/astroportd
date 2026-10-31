@@ -55,7 +55,11 @@ pub async fn resolve_files(db: &Db, owner: &str, paths: &[String]) -> Result<Vec
                     Ok((path, SharedFile { cid: r.get(1)?, mime: r.get(2)?, size: u64::try_from(r.get::<_, i64>(3)?).unwrap_or(0), sha_plain: r.get(4)?, key_hex: r.get(5)?, name }))
                 })?;
                 for row in rows {
-                    out.push(row?);
+                    let row = row?;
+                    // Le coffre de mots de passe ne part jamais, même en désignant `/` ou `/Coffre`.
+                    if !astro_dav::vfs::is_vault(&row.0) {
+                        out.push(row);
+                    }
                 }
             }
             Ok(out)
@@ -94,7 +98,7 @@ impl<O: Outbox> Sharing<O> {
                             (SELECT email FROM identities i WHERE i.hex = g.pubkey), \
                             (SELECT json_extract(e.content, '$.name') FROM nostr_events e WHERE e.pubkey = g.pubkey AND e.kind = 0 ORDER BY e.created_at DESC LIMIT 1) \
                      FROM social_graph g WHERE g.owner_hex = ?1 AND g.level = 1 \
-                       AND EXISTS (SELECT 1 FROM nostr_events k JOIN nostr_tags t ON t.event_id = k.id WHERE k.kind = 3 AND k.pubkey = g.pubkey AND t.name = 'p' AND t.value = ?1) \
+                       AND EXISTS (SELECT 1 FROM nostr_events k JOIN nostr_tags t ON t.event_id = k.seq WHERE k.kind = 3 AND k.pubkey = g.pubkey AND t.name = 'p' AND t.value = ?1) \
                      ORDER BY 1",
                 )?;
                 let rows = stmt
@@ -307,6 +311,27 @@ mod tests {
         let tag = |n: &str| opened.rumor.tags.iter().find(|t| t[0] == n).map(|t| t[1].clone());
         assert_eq!((tag("station").as_deref(), tag("decryption-key").as_deref(), opened.rumor.kind), (Some("12D3KooWSender"), Some("ab".repeat(32).as_str()), kind::FILE));
         assert!(nip59::unwrap(&BOB, &sent[0].1).is_err(), "personne d'autre ne l'ouvre");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn the_password_vault_is_never_sent_to_a_friend() {
+        let (dir, db, outbox, sharing) = rig("vault").await;
+        let owner = hex(&ALICE);
+        let cid = "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e";
+        db.writer()
+            .execute(
+                "INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, sha_plain, data) VALUES (?1, '/Coffre/perso.kdbx', '/Coffre', 'file', ?2, 'application/x-keepass2', 10, 1, ?3, '{}')",
+                vec![owner.clone().into(), cid.to_owned().into(), "ee".repeat(32).into()],
+            )
+            .await
+            .unwrap();
+        // Désigné seul, par son dossier ou par la racine : le coffre n'est jamais résolu.
+        assert!(sharing.send(&owner, &["/Coffre/perso.kdbx".into()], &[hex(&CAROL)]).await.unwrap_err().contains("aucun fichier"));
+        assert!(sharing.send(&owner, &["/Coffre".into()], &[hex(&CAROL)]).await.is_err());
+        let all = resolve_files(&db, &owner, &["/".to_owned()]).await.unwrap();
+        assert!(all.iter().all(|(p, _)| !p.starts_with("/Coffre")) && all.len() == 2, "{all:?}");
+        assert!(outbox.0.lock().unwrap().is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
 

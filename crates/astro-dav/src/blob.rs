@@ -102,6 +102,16 @@ pub fn is_cid(s: &str) -> bool {
     s.len() == 59 && (s.starts_with("bafkrei") || s.starts_with("bafybei")) && s.bytes().all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
 }
 
+/// `true` si `s` est un CID v0 (`Qm…`, sha2-256 en base58 : 46 caractères), le format des blobs qu'Astroport.ONE a mis dans IPFS.
+///
+/// Ces blobs ne se **lisent** que depuis Kubo (`KuboBlobStore`) : ce n'est pas un CID natif ([`is_cid`]) et le magasin disque,
+/// la réplication P2P, le contrôle d'intégrité et la sauvegarde chez les amis les laissent de côté. Alphabet base58 : aucun
+/// caractère de chemin ni de requête.
+#[must_use]
+pub fn is_legacy_cid(s: &str) -> bool {
+    s.len() == 46 && s.starts_with("Qm") && s.bytes().all(|b| b.is_ascii_alphanumeric() && !matches!(b, b'0' | b'O' | b'I' | b'l'))
+}
+
 /// Magasin sur disque.
 #[derive(Debug, Clone)]
 pub struct FsBlobStore {

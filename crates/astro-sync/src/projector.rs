@@ -79,6 +79,7 @@ impl Projector {
             "DELETE FROM done WHERE src_event IS NOT NULL",
             "DELETE FROM kv WHERE scope = 'economic_health'",
             "DELETE FROM kv WHERE scope = 'station_build'",
+            "DELETE FROM kv WHERE scope = 'agents'",
         ]
         .into_iter()
         .map(|sql| Statement::new(sql, vec![]))
@@ -376,10 +377,19 @@ fn tag_map(e: &Event) -> Json {
     Json::Object(m)
 }
 
-/// Kind 31903 : paramètres applicatifs (un `d` par usage). Seule l'attestation de copie privée (`d = private_copy`)
-/// est projetée ; elle n'est valable que signée par le titulaire et avec le texte légal exact (voir
+/// Kind 31903 : paramètres applicatifs (un `d` par usage). Sont projetés : le registre des agents (`d = agents`, voir
+/// `src/agents.rs`) et l'attestation de copie privée (`d = private_copy`) ; elle n'est valable que signée par le titulaire et avec le texte légal exact (voir
 /// `astro_dav::media::parse_consent`). La plus récente remplace l'ancienne, quel que soit l'ordre d'arrivée.
 fn app_params(e: &Event) -> Vec<Statement> {
+    // Registre des agents du membre : contenu chiffré pour lui seul, gardé tel quel (le plus récent l'emporte).
+    if e.tag_value("d") == Some("agents") {
+        return vec![Statement::new(
+            "INSERT INTO kv(scope, key, value, updated_at) VALUES ('agents', ?1, ?2, ?3) \
+             ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at \
+             WHERE excluded.updated_at >= kv.updated_at",
+            vec![text(&e.pubkey), text(&e.content), int(e.created_at)],
+        )];
+    }
     let Some(version) = astro_dav::media::parse_consent(&e.tags, &e.content) else { return Vec::new() };
     vec![Statement::new(
         "INSERT INTO private_copy_consent(owner_hex, version, accepted_at, src_event) VALUES (?1, ?2, ?3, ?4) \

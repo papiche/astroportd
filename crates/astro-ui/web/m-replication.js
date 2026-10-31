@@ -35,7 +35,7 @@ export default async function replication(root, K) {
             p.error ? [K.pill('down'), ' ', p.error] : K.pill(p.have === m.events ? 'ok' : p.have ? 'degraded' : 'disabled')])))
       : h('section', { class: 'card wide' }, h('h2', {}, 'Qui détient quoi'), h('p', { class: 'muted' }, m ? 'Aucune autre station connue (dossier --swarm-dir).' : '—'));
     const md = m?.media;
-    const media = h('section', { class: 'card' }, h('h2', {}, 'Vos fichiers'),
+    const media = h('section', { class: 'card wide' }, h('h2', {}, 'Vos fichiers'),
       md ? [h('p', { class: 'big' }, `${md.replicated} sur ${md.files}`, h('small', { class: 'muted' }, ' fournis par d\'autres stations')),
         md.peers.length ? h('ul', { class: 'muted' }, md.peers.map(p => h('li', {}, `${p.name} : ${p.have} fichier(s)`))) : h('p', { class: 'muted' }, 'Aucune autre station ne fournit encore vos derniers fichiers.'),
         md.lookup_failed ? h('p', { class: 'degraded' }, `${md.lookup_failed} recherche(s) sans réponse.`) : null]

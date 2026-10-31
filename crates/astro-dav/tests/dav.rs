@@ -261,3 +261,75 @@ async fn a_generic_content_type_falls_back_to_the_extension() {
         assert_eq!(mime, expected, "{ct}");
     }
 }
+
+/// Un `.kdbx` (KeePass) traverse le WebDAV sans altération : les applications (Keepass2Android, Strongbox, KeePassXC) écrasent
+/// le fichier à chaque synchronisation. Le coffre n'est ni partageable ni listé dans un lien d'invité.
+#[tokio::test]
+async fn a_keepass_vault_round_trips_replaces_and_is_never_shared() {
+    use astro_dav::share::create_guest_link;
+    let b = bench("vault").await;
+    assert_eq!(call(&b.app, "MKCOL", "/dav/Coffre", Some(&alice()), &[], Body::empty()).await.status(), 201);
+    // En-tête réel d'un fichier KDBX 4 (signatures 0x9AA2D903 et 0xB54BFB67), suivi d'octets quelconques.
+    let mut vault = vec![0x03, 0xD9, 0xA2, 0x9A, 0x67, 0xFB, 0x4B, 0xB5, 0x00, 0x00, 0x04, 0x00];
+    vault.extend(sample(250_000, 11));
+    let put = call(&b.app, "PUT", "/dav/Coffre/perso.kdbx", Some(&alice()), &[], streamed(vault.clone(), 40_000)).await;
+    assert_eq!(put.status(), 201);
+    let (status, headers, body) = bytes(call(&b.app, "GET", "/dav/Coffre/perso.kdbx", Some(&alice()), &[], Body::empty()).await).await;
+    assert_eq!((status, body == vault), (200, true), "octets identiques");
+    assert_eq!(headers["content-type"], "application/x-keepass2");
+
+    // Synchronisation suivante : le client écrase (204) et relit la nouvelle version.
+    let mut newer = vault.clone();
+    newer.extend_from_slice(b"entree-ajoutee");
+    assert_eq!(call(&b.app, "PUT", "/dav/Coffre/perso.kdbx", Some(&alice()), &[], Body::from(newer.clone())).await.status(), 204);
+    let (_, _, body) = bytes(call(&b.app, "GET", "/dav/Coffre/perso.kdbx", Some(&alice()), &[], Body::empty()).await).await;
+    assert_eq!(body, newer);
+    assert_eq!(call(&b.app, "PUT", "/dav/Coffre/agents.kdbx", Some(&alice()), &[], Body::from(vault)).await.status(), 201);
+
+    // Garde de partage : ni par le fichier, ni par le dossier, ni par la racine, quelle que soit la casse.
+    let owner = hex(&ALICE);
+    for path in ["/Coffre/perso.kdbx", "/Coffre", "/coffre/agents.kdbx"] {
+        let r = create_guest_link(&b.db, b.blobs.as_ref(), &owner, &[path.to_owned()], "x", 3600, 1_000).await;
+        assert!(r.is_err(), "{path} ne doit pas être partageable");
+    }
+    assert_eq!(call(&b.app, "PUT", "/dav/ordinaire.txt", Some(&alice()), &[], Body::from("ok")).await.status(), 201);
+    let link = create_guest_link(&b.db, b.blobs.as_ref(), &owner, &["/".to_owned()], "tout", 3600, 1_000).await.unwrap();
+    assert_eq!(link.items, 1, "la racine partagée omet le coffre");
+}
+
+#[test]
+fn only_the_vault_folder_counts_as_the_vault() {
+    use astro_dav::vfs::is_vault;
+    assert!(is_vault("/Coffre") && is_vault("/Coffre/perso.kdbx") && is_vault("/coffre/x") && is_vault("/COFFRE/a/b"));
+    assert!(!is_vault("/Coffres") && !is_vault("/Coffre.txt") && !is_vault("/Docs/Coffre/x") && !is_vault("/"));
+}
+
+/// Déplacer une photo (ou un dossier) par WebDAV garde le lien avec ses visages : l'écran Personnes en dépend.
+#[tokio::test]
+async fn moving_a_photo_or_a_folder_keeps_its_faces_attached() {
+    let b = bench("move-faces").await;
+    assert_eq!(call(&b.app, "MKCOL", "/dav/Vacances", Some(&alice()), &[], Body::empty()).await.status(), 201);
+    for name in ["Vacances/a.jpg", "Vacances/b.jpg", "autre.jpg"] {
+        assert_eq!(call(&b.app, "PUT", &format!("/dav/{name}"), Some(&alice()), &[], Body::from("x")).await.status(), 201);
+    }
+    let owner = hex(&ALICE);
+    for (n, path) in ["/Vacances/a.jpg", "/Vacances/b.jpg", "/autre.jpg"].into_iter().enumerate() {
+        b.db.writer()
+            .execute("INSERT INTO faces(owner_hex, name, embed_hash, ts, ucloud_path, source_path) VALUES (?1, 'Marie', ?2, 1, ?3, ?3)", vec![owner.clone().into(), format!("h{n}").into(), path.to_owned().into()])
+            .await
+            .unwrap();
+    }
+    let faces = |db: &astro_db::Db| {
+        let db = db.readers().clone();
+        async move { db.read(|c| Ok(c.prepare("SELECT ucloud_path || '|' || source_path FROM faces ORDER BY embed_hash")?.query_map([], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?)).await.unwrap() }
+    };
+    // Un fichier.
+    let r = call(&b.app, "MOVE", "/dav/Vacances/a.jpg", Some(&alice()), &[("destination", "/dav/Images/a.jpg")], Body::empty()).await;
+    assert_eq!(r.status(), 409, "le dossier parent doit exister");
+    assert_eq!(call(&b.app, "MKCOL", "/dav/Images", Some(&alice()), &[], Body::empty()).await.status(), 201);
+    assert_eq!(call(&b.app, "MOVE", "/dav/Vacances/a.jpg", Some(&alice()), &[("destination", "/dav/Images/a.jpg")], Body::empty()).await.status(), 201);
+    assert_eq!(faces(&b.db).await, ["/Images/a.jpg|/Images/a.jpg", "/Vacances/b.jpg|/Vacances/b.jpg", "/autre.jpg|/autre.jpg"]);
+    // Un dossier entier.
+    assert_eq!(call(&b.app, "MOVE", "/dav/Vacances", Some(&alice()), &[("destination", "/dav/Images/Vacances")], Body::empty()).await.status(), 201);
+    assert_eq!(faces(&b.db).await, ["/Images/a.jpg|/Images/a.jpg", "/Images/Vacances/b.jpg|/Images/Vacances/b.jpg", "/autre.jpg|/autre.jpg"]);
+}

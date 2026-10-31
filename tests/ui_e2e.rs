@@ -108,7 +108,22 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
     let mut local = astroportd::fetch::FetchLimits::new(256 * 1024);
     local.allow_private = true;
     let invites = Arc::new(astroportd::invites::Invites::new(db.clone(), dav.blobs.clone(), Arc::new(astro_crypto::FileKeySource::new(dir.join("nostr"))), registrar.clone(), Arc::new(|_| Box::pin(async { Ok(()) }))).with_links(links.clone()).with_fetch_limits(local));
-    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_registrar(registrar).with_invites(invites).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), Arc::new(|_| Box::pin(async { Ok(()) })), None).with_activity(bus.clone()))).with_contacts(links).with_coop(
+    let circle = Arc::new(DbCircle::new());
+    circle.refresh(&db).await.unwrap();
+    let relay = Relay::new(db.clone(), circle, RelayConfig::default());
+    // Le registre des agents passe par le vrai relai (stockage + projection), comme sur une station.
+    let agents = {
+        let relay = relay.clone();
+        let publish: astroportd::register::PublishFn = Arc::new(move |e| {
+            let relay = relay.clone();
+            Box::pin(async move {
+                let (ok, why) = relay.publish_local(&e).await;
+                if ok { Ok(()) } else { Err(why) }
+            })
+        });
+        Arc::new(astroportd::agents::Agents::new(db.clone(), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), publish).with_activity(bus.clone()))
+    };
+    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_agents(agents).with_registrar(registrar).with_invites(invites).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), Arc::new(|_| Box::pin(async { Ok(()) })), None).with_activity(bus.clone()))).with_contacts(links).with_coop(
         Arc::new(|| Box::pin(async { Ok(json!({ "exists": false, "sections": [] })) })),
         Arc::new(|values| Box::pin(async move { Ok(json!({ "saved": values.keys().collect::<Vec<_>>() })) })),
     ).with_admin(Arc::new(|section, body| Box::pin(async move {
@@ -119,7 +134,6 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
             _ => Err(format!("section inconnue : {section}")),
         }
     }))));
-    let relay = Relay::new(db.clone(), Arc::new(DbCircle::new()), RelayConfig::default());
     let app = astro_dav::router(dav)
         .merge(relay.router())
         .merge(astro_ui::web::static_router())
@@ -882,6 +896,13 @@ async fn the_pass_logs_in_locks_progressively_and_the_captain_can_unlock() {
     assert_eq!(post("/api/v1/account/sign".into(), json!({ "kind": 1 }), None).await.0, StatusCode::UNAUTHORIZED);
     assert_eq!(post("/api/v1/account/sign".into(), json!({ "kind": 30800, "content": "{}" }), Some(session)).await.0, StatusCode::BAD_REQUEST);
 
+    // Une adresse inconnue et un compte sans fichier PASS (Bob) répondent exactement comme un PASS faux sur une adresse connue
+    // d'un autre type : aucune réponse ne dit « cette adresse est inscrite » à qui ne connaît pas le PASS.
+    let (s_unknown, unknown) = post("/api/v1/account/unlock".into(), json!({ "email": "inconnu@example.org", "pass": "123456" }), None).await;
+    let (s_nopass, nopass) = post("/api/v1/account/unlock".into(), json!({ "email": "bob@example.org", "pass": "123456" }), None).await;
+    assert_eq!((s_unknown, s_nopass), (StatusCode::UNAUTHORIZED, StatusCode::UNAUTHORIZED));
+    assert_eq!(unknown, nopass, "même message pour une adresse inconnue et pour un compte sans PASS");
+
     // Quatre échecs : 401 avec les essais restants ; le cinquième verrouille (429), même pour le bon code.
     for _ in 0..4 {
         assert_eq!(post("/api/v1/account/unlock".into(), json!({ "email": "alice@example.org", "pass": "000000" }), None).await.0, StatusCode::UNAUTHORIZED);
@@ -1046,7 +1067,7 @@ async fn an_invitation_from_another_station_is_accepted_with_a_signature_made_by
     // écarterait l'enveloppe.
     let (bob_follows, alice_follows_bob): (i64, i64) = b.db.readers().read({ let bob_hex = hex(&BOB); move |c| Ok((
         c.query_row("SELECT COUNT(*) FROM social_graph WHERE owner_hex = ?1 AND pubkey = ?2 AND level = 1", [&bob_hex, &hex(&ALICE)], |r| r.get(0))?,
-        c.query_row("SELECT COUNT(*) FROM nostr_events e JOIN nostr_tags t ON t.event_id = e.id WHERE e.kind = 3 AND e.pubkey = ?1 AND t.name = 'p' AND t.value = ?2", [hex(&ALICE), bob_hex], |r| r.get(0))?,
+        c.query_row("SELECT COUNT(*) FROM nostr_events e JOIN nostr_tags t ON t.event_id = e.seq WHERE e.kind = 3 AND e.pubkey = ?1 AND t.name = 'p' AND t.value = ?2", [hex(&ALICE), bob_hex], |r| r.get(0))?,
     )) }).await.unwrap();
     assert_eq!((bob_follows, alice_follows_bob), (1, 1));
 
@@ -1070,4 +1091,66 @@ async fn an_invitation_from_another_station_is_accepted_with_a_signature_made_by
     // Signature valide de celui qui a accepté : autorisé (ici, sans maillage configuré, la station le dit) ; rejouée : refusée.
     assert_eq!(post(url.clone(), h.clone(), "{}".into()).await.0, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(post(url, h, "{}".into()).await.0, StatusCode::UNAUTHORIZED, "une signature ne sert qu'une fois");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_asks_over_mcp_and_the_member_decides_through_the_api() {
+    let b = bench("agents", None).await;
+    let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
+    // Sans compte, pas de registre.
+    assert_eq!(b.get("/api/v1/agents", "Basic !!!").await.0, StatusCode::UNAUTHORIZED);
+
+    let (s, made) = b.post("/api/v1/agents", &alice, json!({ "name": "BRO", "group": "Agents", "max_secs": 300 })).await;
+    assert_eq!(s, StatusCode::OK, "{made}");
+    let token = made["token"].as_str().unwrap().to_owned();
+    // Le registre est un 31903 `d = agents` stocké et projeté par le relai, chiffré pour Alice seule.
+    let (n, content): (i64, String) = b.db.readers().read(|c| Ok((c.query_row("SELECT COUNT(*) FROM nostr_events WHERE kind = 31903", [], |r| r.get(0))?, c.query_row("SELECT value FROM kv WHERE scope = 'agents'", [], |r| r.get(0))?))).await.unwrap();
+    assert_eq!(n, 1);
+    assert!(!content.contains("BRO") && !content.contains(&token));
+    let (_, list) = b.get("/api/v1/agents", &alice).await;
+    assert_eq!(list["agents"][0]["name"], "BRO");
+    assert!(!list.to_string().contains(&token));
+    // Bob ne voit pas les agents d'Alice.
+    assert_eq!(b.get("/api/v1/agents", &bob).await.1["agents"].as_array().map(Vec::len), Some(0));
+
+    let rpc = |auth: Option<String>, body: Value| {
+        let app = b.app.clone();
+        async move {
+            let hdrs: Vec<(&str, String)> = std::iter::once(("content-type", "application/json".to_owned())).chain(auth.map(|a| ("authorization", a))).collect();
+            let refs: Vec<(&str, &str)> = hdrs.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            let (s, h, bytes) = call(&app, Method::POST, "/mcp", None, &refs, body.to_string().into_bytes()).await;
+            (s, h, serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null))
+        }
+    };
+    // Un jeton absent ou faux : 401 annonçant Bearer, rien n'est traité ; un compte de la station n'ouvre pas /mcp.
+    let ping = json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" });
+    for auth in [None, Some("Bearer ag1_faux".to_owned()), Some(alice.clone())] {
+        let (s, h, _) = rpc(auth, ping.clone()).await;
+        assert_eq!((s, h.get("www-authenticate").map(|v| v.to_str().unwrap())), (StatusCode::UNAUTHORIZED, Some("Bearer")));
+    }
+    let bearer = Some(format!("Bearer {token}"));
+    let (s, _, tools) = rpc(bearer.clone(), json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" })).await;
+    assert_eq!((s, tools["result"]["tools"].as_array().map(Vec::len)), (StatusCode::OK, Some(2)));
+    let (s, _, none) = rpc(bearer.clone(), json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).await;
+    assert_eq!((s, none), (StatusCode::ACCEPTED, Value::Null));
+
+    let (_, _, asked) = rpc(bearer.clone(), json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "demander_acces", "arguments": { "site": "impots.gouv.fr", "raison": "télécharger mon avis" } } })).await;
+    let id = serde_json::from_str::<Value>(asked["result"]["content"][0]["text"].as_str().unwrap()).unwrap()["id"].as_str().unwrap().to_owned();
+    // Alice est prévenue sur son flux d'activité, et elle seule.
+    let mine: Vec<_> = b.bus.recent(20).into_iter().filter(|a| a.kind == "agent").collect();
+    assert!(mine.len() == 1 && mine[0].message.contains("impots.gouv.fr"), "{mine:?}");
+    let (_, pending) = b.get("/api/v1/agents/requests", &alice).await;
+    assert_eq!(pending["requests"][0]["state"], "pending");
+    assert_eq!(b.get("/api/v1/agents/requests", &bob).await.1["requests"].as_array().map(Vec::len), Some(0));
+    // Bob ne peut pas trancher la demande d'Alice.
+    assert_eq!(b.post("/api/v1/agents/decide", &bob, json!({ "id": id, "approve": true })).await.0, StatusCode::NOT_FOUND);
+    let (s, granted) = b.post("/api/v1/agents/decide", &alice, json!({ "id": id, "approve": true, "secs": 9999 })).await;
+    assert_eq!((s, granted["state"].as_str()), (StatusCode::OK, Some("granted")));
+    let (_, _, status) = rpc(bearer.clone(), json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": { "name": "statut_acces", "arguments": { "id": id } } })).await;
+    assert!(status["result"]["content"][0]["text"].as_str().unwrap().contains("\"granted\""));
+
+    // Retrait : le jeton ne marche plus.
+    let aid = list["agents"][0]["id"].as_str().unwrap();
+    assert_eq!(b.post("/api/v1/agents/revoke", &alice, json!({ "id": aid })).await.0, StatusCode::OK);
+    assert_eq!(rpc(bearer, ping).await.0, StatusCode::UNAUTHORIZED);
 }

@@ -55,6 +55,12 @@ enum Command {
     },
     /// Génère une clé de réseau privé `swarm.key` pour une constellation (à copier sur chaque station).
     SwarmKey,
+    /// Reprend le uCloud d'Astroport.ONE d'un compte (`~/.zen/game/nostr/<email>/.ucloud`) : mêmes blobs chiffrés, mêmes clés,
+    /// rien n'est recopié. L'ancienne base n'est jamais modifiée. Voir `--dry-run`.
+    ImportUcloud(Box<ImportUcloudArgs>),
+    /// Remplit le uCloud d'un compte depuis un dossier d'un autre serveur WebDAV (Nextcloud, ownCloud, une autre station) :
+    /// mode « pull ». Rejouable : ce qui est déjà là n'est jamais écrasé ni dupliqué. Voir `pull-webdav <compte> add`.
+    PullWebdav(Box<PullArgs>),
     /// Diagnostic : permissions 0600, base WAL, certificats ACME, horloge solaire. Code 1 si une vérification échoue.
     Doctor(doctor::DoctorArgs),
     /// Affiche le jeton de connexion d'un compte hébergé (interface web et clients WebDAV).
@@ -290,6 +296,111 @@ enum PluginAction {
     },
 }
 
+/// Options de `pull-webdav`.
+#[derive(clap::Args)]
+struct PullArgs {
+    /// Email ou clé Nostr (64 hex) du compte, hébergé ici.
+    account: String,
+    #[command(subcommand)]
+    action: PullAction,
+    /// Base `uplanet.db` d'astroportd (défaut : `~/.zen/astroportd/uplanet.db`).
+    #[arg(long, global = true)]
+    db: Option<PathBuf>,
+    /// Dossier des blobs d'astroportd (défaut : `~/.zen/astroportd/blobs`).
+    #[arg(long, global = true)]
+    blobs: Option<PathBuf>,
+    /// Dossier `~/.zen/game` (défaut : `$ASTRO_GAME_DIR`, sinon `$HOME/.zen/game`).
+    #[arg(long, global = true)]
+    game_dir: Option<PathBuf>,
+    /// API RPC d'IPFS Kubo où ranger les fichiers repris ; sans Kubo joignable, ils restent sur disque.
+    #[arg(long, global = true, default_value = "http://127.0.0.1:5001")]
+    kubo: String,
+}
+
+#[derive(Subcommand)]
+enum PullAction {
+    /// Liste les sources du compte (sans leur mot de passe).
+    List,
+    /// Enregistre une source après avoir vérifié l'adresse et les identifiants. Le mot de passe se lit sur l'entrée standard.
+    Add {
+        /// Racine WebDAV, par exemple `https://nextcloud.example/remote.php/dav/files/fred`.
+        #[arg(long)]
+        url: String,
+        /// Identifiant de connexion.
+        #[arg(long)]
+        user: String,
+        /// Lit le mot de passe (d'application de préférence) sur la première ligne de l'entrée standard.
+        #[arg(long)]
+        password_stdin: bool,
+        /// Libellé de la source.
+        #[arg(long, default_value = "")]
+        label: String,
+        /// Dossier distant à reprendre, relatif à la racine (défaut : tout).
+        #[arg(long, default_value = "")]
+        remote_path: String,
+        /// Dossier du uCloud où déposer la reprise, **telle qu'elle est sur le serveur** (défaut : `/Imports/<libellé>`).
+        /// Aucun tri par dates : réorganiser le uCloud est le rôle de la fonction de rangement.
+        #[arg(long)]
+        dest: Option<String>,
+        /// Admet une adresse privée (serveur sur le réseau local). Sans cette option, seules les adresses publiques sont jointes.
+        #[arg(long)]
+        allow_private: bool,
+    },
+    /// Retire une source (ce qui a déjà été repris reste dans le uCloud).
+    Remove {
+        /// Identifiant donné par `list`.
+        id: String,
+    },
+    /// Reprend une source (ou toutes) : télécharge ce qui manque, chiffre, range.
+    Run {
+        /// Identifiant d'une source (défaut : toutes).
+        id: Option<String>,
+        /// Compte et n'écrit rien.
+        #[arg(long)]
+        dry_run: bool,
+        /// Fichiers repris au plus pendant ce passage (0 : aucune borne).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+        /// Plafond par fichier, en Mo.
+        #[arg(long, default_value_t = 200)]
+        max_file_mb: u64,
+    },
+}
+
+/// Options de `import-ucloud`.
+#[derive(clap::Args)]
+struct ImportUcloudArgs {
+    /// Email ou clé Nostr (64 hex) du compte, hébergé ici.
+    account: String,
+    /// Dossier `.ucloud` d'Astroport.ONE (défaut : `<game-dir>/nostr/<email>/.ucloud`).
+    #[arg(long)]
+    legacy_dir: Option<PathBuf>,
+    /// Base `uplanet.db` d'astroportd (défaut : `~/.zen/astroportd/uplanet.db`).
+    #[arg(long)]
+    db: Option<PathBuf>,
+    /// Dossier des blobs d'astroportd (défaut : `~/.zen/astroportd/blobs`).
+    #[arg(long)]
+    blobs: Option<PathBuf>,
+    /// Dossier `~/.zen/game` (défaut : `$ASTRO_GAME_DIR`, sinon `$HOME/.zen/game`).
+    #[arg(long)]
+    game_dir: Option<PathBuf>,
+    /// API RPC d'IPFS Kubo, où vivent les blobs d'Astroport.ONE.
+    #[arg(long, default_value = "http://127.0.0.1:5001")]
+    kubo: String,
+    /// Lit, contrôle et compte, sans rien écrire dans astroportd.
+    #[arg(long)]
+    dry_run: bool,
+    /// Remplace les entrées que le compte aurait déjà dans astroportd.
+    #[arg(long)]
+    replace: bool,
+    /// Fichiers relus, déchiffrés et comparés (taille, SHA-256) avant d'écrire ; 0 pour ne rien contrôler.
+    #[arg(long, default_value_t = 60)]
+    verify: usize,
+    /// Ne publie pas le manifeste Nostr (sauvegarde et réplication) à la fin.
+    #[arg(long)]
+    no_publish: bool,
+}
+
 /// Options communes aux commandes `media`.
 #[derive(clap::Args)]
 struct MediaArgs {
@@ -416,6 +527,8 @@ async fn run(cli: Cli) -> Result<(), Failure> {
             }
         }
         Command::Media(args) => media_cmd(*args).await,
+        Command::ImportUcloud(args) => import_ucloud_cmd(*args).await,
+        Command::PullWebdav(args) => pull_webdav_cmd(*args).await,
         Command::Multipass { action } => multipass_cmd(action).await,
         Command::Route { service, mode, swarm_dir, lat, lon } => route(&service, mode, swarm_dir, lat.zip(lon)),
         Command::SwarmKey => {
@@ -756,6 +869,152 @@ async fn stored_birth_events(db: &Db, hex: &str) -> Result<Vec<astro_nostr_proto
 }
 
 /// `astroportd media …` : copie privée et dépôt d'un film ou d'un épisode.
+async fn pull_webdav_cmd(args: PullArgs) -> Result<(), Failure> {
+    use astroportd::webdav_pull as pull;
+    let PullArgs { account, action, db, blobs, game_dir, kubo } = args;
+    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or("$HOME introuvable")?;
+    let (db_path, blobs_path) = (db.unwrap_or_else(|| home.join(".zen/astroportd/uplanet.db")), blobs.unwrap_or_else(|| home.join(".zen/astroportd/blobs")));
+    let station = identity::resolve(game_dir.as_deref(), true)?;
+    let found = station.discovered.as_ref().ok_or("identités locales introuvables (--game-dir)")?;
+    let owner = found.multipasses.iter().find(|m| m.email.eq_ignore_ascii_case(&account) || m.hex == account.to_ascii_lowercase()).ok_or_else(|| format!("compte « {account} » non hébergé ici"))?;
+    let secrets_dir = station.nostr_dir.clone().ok_or("dossier des comptes introuvable (--game-dir)")?;
+    let db = Arc::new(Db::open(&db_path, 2)?);
+    db.writer().batch(astro_lifecycle::store::identity_statements(found)).await?;
+    let keys: Arc<dyn KeySource> = Arc::new(FileKeySource::new(&secrets_dir));
+    let sources = pull::Sources::new(db.clone(), keys.clone());
+
+    match action {
+        PullAction::List => {
+            let all = sources.list(&owner.hex).await?;
+            if all.is_empty() {
+                println!("aucune source pour {}", owner.email);
+            }
+            for s in &all {
+                println!("{}  {}  {} (identifiant {}) dossier distant « {} » → {}{}", s.id, s.label, s.url, s.username, s.remote_path, s.dest_prefix, if s.allow_private { "  [adresses privées admises]" } else { "" });
+            }
+        }
+        PullAction::Add { url, user, password_stdin, label, remote_path, dest, allow_private } => {
+            if !password_stdin {
+                return Err("le mot de passe se donne sur l'entrée standard : ajoutez --password-stdin (jamais en argument, il serait visible dans la liste des processus)".into());
+            }
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            let password = line.trim_end_matches(['\r', '\n']).to_owned();
+            let name = if label.trim().is_empty() { url::Url::parse(&url).ok().and_then(|u| u.host_str().map(str::to_owned)).unwrap_or_else(|| "source".into()) } else { label.clone() };
+            let dest = dest.unwrap_or_else(|| format!("/Imports/{}", astro_dav::ingest::sanitize_name(&name).unwrap_or_else(|| "source".into())));
+            let draft = pull::Source { id: String::new(), label, url, username: user, password, remote_path, dest_prefix: dest, allow_private, created_at: 0 };
+            let mut probe = draft.clone();
+            probe.dest_prefix = "/Verification".into();
+            let seen = pull::check(&probe).await.map_err(|e| format!("source refusée : {e}"))?;
+            let saved = sources.add(&owner.hex, draft).await?;
+            println!("source {} enregistrée : {seen} entrée(s) au premier niveau du dossier distant. Lancer : astroportd pull-webdav {} run {}", saved.id, owner.email, saved.id);
+        }
+        PullAction::Remove { id } => {
+            sources.remove(&owner.hex, &id).await?;
+            println!("source {id} retirée");
+        }
+        PullAction::Run { id, dry_run, limit, max_file_mb } => {
+            let all = sources.list(&owner.hex).await?;
+            let chosen: Vec<_> = all.iter().filter(|s| id.as_deref().is_none_or(|i| s.id == i)).collect();
+            if chosen.is_empty() {
+                return Err(match id {
+                    Some(i) => format!("source {i} inconnue (voir `pull-webdav {} list`)", owner.email),
+                    None => format!("aucune source pour {} : en ajouter une avec `pull-webdav {} add`", owner.email, owner.email),
+                }
+                .into());
+            }
+            let local = Arc::new(AutoBlobStore::new(Some(KuboBlobStore::new(&kubo)), FsBlobStore::open(&blobs_path)?));
+            let manifests = ManifestPublisher::spawn(db.clone(), local.clone(), keys.clone(), Duration::from_secs(3600));
+            let dav = Arc::new(DavState { db: db.clone(), blobs: local, replay: Arc::new(SqliteReplayStore::open(&db_path)?), publisher: Some(manifests.clone()), config: DavConfig::new(station.secret.clone()), on_upload: None });
+            let opts = pull::PullOptions { dry_run, limit, max_file: max_file_mb << 20, stop: None };
+            let mut failed = false;
+            for s in chosen {
+                println!("== {} ({}) → {}{}", s.label, s.url, s.dest_prefix, if dry_run { "  [à blanc]" } else { "" });
+                let r = pull::pull(&dav, &owner.hex, s, &opts, |p| {
+                    if p.done == 0 && p.total > 0 {
+                        println!("   {} fichiers sur le serveur", p.total);
+                    } else if p.done > 0 && (p.done % 100 == 0 || p.done == p.total) {
+                        println!("   {} / {} : {} repris, {} déjà repris, {} échecs", p.done, p.total, p.imported, p.skipped, p.errors);
+                    }
+                })
+                .await?;
+                println!("   bilan : {} vus, {} {}, {} déjà repris ({} modifiés depuis sur le serveur, laissés tels quels), {} trop gros, {} échecs, {:.2} Go{}", r.remote, r.imported, if dry_run { "à reprendre" } else { "repris" }, r.skipped, r.changed, r.too_large, r.errors.len(), r.bytes as f64 / 1e9, if r.capped { " ; parcours borné" } else { "" });
+                if !r.errors.is_empty() {
+                    failed = true;
+                    let list = db_path.parent().map_or_else(|| PathBuf::from("pull-webdav-erreurs.tsv"), |p| p.join("pull-webdav-erreurs.tsv"));
+                    let text: String = r.errors.iter().map(|(p, why)| format!("{p}\t{why}\n")).collect();
+                    tokio::fs::write(&list, text).await?;
+                    println!("   ÉCHECS : liste complète dans {}", list.display());
+                    for (p, why) in r.errors.iter().take(10) {
+                        println!("     {p} : {why}");
+                    }
+                }
+            }
+            for (who, why) in manifests.flush().await {
+                eprintln!("manifeste de {who} non publié : {why}");
+            }
+            if failed {
+                return Err("certains fichiers n'ont pas pu être repris (rejouer la commande pour réessayer ceux qui manquent)".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn import_ucloud_cmd(args: ImportUcloudArgs) -> Result<(), Failure> {
+    use astroportd::legacy_ucloud as legacy;
+    let ImportUcloudArgs { account, legacy_dir, db, blobs, game_dir, kubo, dry_run, replace, verify, no_publish } = args;
+    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or("$HOME introuvable")?;
+    let (db_path, blobs_path) = (db.unwrap_or_else(|| home.join(".zen/astroportd/uplanet.db")), blobs.unwrap_or_else(|| home.join(".zen/astroportd/blobs")));
+    let station = identity::resolve(game_dir.as_deref(), true)?;
+    let found = station.discovered.as_ref().ok_or("identités locales introuvables (--game-dir)")?;
+    let owner = found.multipasses.iter().find(|m| m.email.eq_ignore_ascii_case(&account) || m.hex == account.to_ascii_lowercase()).ok_or_else(|| format!("compte « {account} » non hébergé ici"))?;
+    let secrets_dir = station.nostr_dir.clone().ok_or("dossier des comptes introuvable (--game-dir)")?;
+    let legacy_dir = legacy_dir.unwrap_or_else(|| secrets_dir.join(&owner.email).join(".ucloud"));
+
+    println!("compte {} ({}), ancien uCloud : {}", owner.email, owner.hex, legacy_dir.display());
+    let (manifest, report) = legacy::read_legacy(&legacy_dir.join("ucloud.db"), &owner.hex)?;
+    println!("lu : {} fichiers ({:.1} Go), {} dossiers dont {} à créer, {} clés au trousseau", report.files, report.bytes as f64 / 1e9, report.dirs, report.dirs_created, manifest.keyring.len());
+    if !report.skipped.is_empty() {
+        let list = db_path.parent().map_or_else(|| PathBuf::from("import-ucloud-ecartes.tsv"), |p| p.join("import-ucloud-ecartes.tsv"));
+        legacy::write_skipped(&list, &report.skipped).await?;
+        println!("ÉCARTÉES : {} entrées (liste complète : {})", report.skipped.len(), list.display());
+        for (p, why) in report.skipped.iter().take(10) {
+            println!("  {p} : {why}");
+        }
+    }
+
+    let local = Arc::new(AutoBlobStore::new(Some(KuboBlobStore::new(&kubo)), FsBlobStore::open(&blobs_path)?));
+    if verify > 0 {
+        let v = legacy::verify_sample(&*local, &manifest, verify).await;
+        println!("contrôle : {} fichiers relus, déchiffrés et comparés sur {} demandés", v.checked, verify.min(report.files));
+        if !v.failures.is_empty() {
+            for (p, why) in v.failures.iter().take(10) {
+                println!("  ÉCHEC {p} : {why}");
+            }
+            return Err(format!("{} fichiers du contrôle ne sont pas lisibles : rien n'a été écrit (kubo atteignable sur {kubo} ?)", v.failures.len()).into());
+        }
+    }
+    if dry_run {
+        println!("--dry-run : rien n'a été écrit dans astroportd.");
+        return Ok(());
+    }
+
+    let db = Arc::new(Db::open(&db_path, 2)?);
+    db.writer().batch(astro_lifecycle::store::identity_statements(found)).await?;
+    legacy::apply(&db, &manifest, replace).await?;
+    println!("importé : {} entrées et {} clés dans {}", manifest.entries.len(), manifest.keyring.len(), db_path.display());
+    if no_publish {
+        println!("manifeste non publié (--no-publish) : le démon le publiera à la prochaine modification du uCloud.");
+    } else {
+        let keys: Arc<dyn KeySource> = Arc::new(FileKeySource::new(&secrets_dir));
+        let published = astro_dav::manifest::publish(&db, &*local, &*keys, &owner.hex).await?;
+        println!("manifeste publié : révision {}, {} fichiers (événement {})", published.pointer.rev, published.pointer.files, published.event.id);
+    }
+    println!("Pour lire ces fichiers, `astroportd serve` doit tourner avec --kubo {kubo}.");
+    Ok(())
+}
+
 async fn media_cmd(args: MediaArgs) -> Result<(), Failure> {
     use astro_nostr_proto::Event;
     let MediaArgs { action, account, db, blobs, game_dir, kubo, relays } = args;

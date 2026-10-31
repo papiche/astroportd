@@ -611,6 +611,7 @@ dependencies = [
  "hyper-util",
  "image",
  "percent-encoding",
+ "quick-xml",
  "rcgen 0.13.2",
  "rusqlite",
  "rustix",

@@ -4,6 +4,7 @@
 // canvas 2D, grappes en spirale de Vogel, disques empilés sans chevauchement, zoom et déplacement au pointeur.
 // Les empreintes 512D ne quittent jamais la station : le serveur ne donne que des positions PCA et des groupes.
 const R = 18, VOGEL = 1.1 * R, GOLDEN = 2.399963229728653, MAXZ = 4, CELL = 160;
+const IMG_CAP = [2500, 400]; // vignettes gardées en mémoire par niveau (petite, grande) : au-delà, les plus anciennes sont lâchées
 const THUMB = [96, 192]; // vignettes demandées au serveur : petite, grande (visage affiché en grand)
 let K, S, root, cv, cx, tip, tray, dirty = false, dpr = 1, colors = {};
 
@@ -121,7 +122,17 @@ async function flush() {
   if (!ids.length) return;
   try {
     const r = await K.api('/api/v1/faces/thumbs', { method: 'POST', body: { ids, size: THUMB[level] } });
-    for (const [id, url] of Object.entries(r.thumbs)) { const im = new Image(); im.onload = () => { S.img[level].set(+id, im); redraw(); }; im.src = url; }
+    for (const [id, url] of Object.entries(r.thumbs)) {
+      const im = new Image();
+      im.onload = () => {
+        // Mémoire bornée : au-delà du plafond, les vignettes les plus anciennes sont lâchées (elles seront redemandées si on les revoit).
+        const m = S.img[level];
+        m.delete(+id); m.set(+id, im);
+        for (const old of m.keys()) { if (m.size <= IMG_CAP[level]) break; m.delete(old); }
+        redraw();
+      };
+      im.src = url;
+    }
     for (const [id] of r.failed) S.bad.add(id);
   } catch (e) { ids.forEach(i => S.bad.add(i)); if (!S.warned) { S.warned = true; K.toast('Vignettes indisponibles : ' + e.message); } }
   if (queue.size) timer = setTimeout(flush, 60);

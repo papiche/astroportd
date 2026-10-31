@@ -83,6 +83,8 @@ pub fn timeline_month(c: &Connection, owner: &str, ym: &str) -> rusqlite::Result
 }
 
 /// « Ce jour-là » : les photos et vidéos prises le même jour (`"10-31"`) les années précédentes, groupées par année décroissante.
+/// `taken_at` est une heure murale (voir `ExifMeta::taken_at`) : `strftime` donne directement la date civile du membre, quel
+/// que soit son fuseau ou celui de l'appareil.
 pub fn memories(c: &Connection, owner: &str, month_day: &str, this_year: i64) -> rusqlite::Result<Vec<Value>> {
     if month_day.len() != 5 || !month_day.bytes().enumerate().all(|(i, b)| if i == 2 { b == b'-' } else { b.is_ascii_digit() }) {
         return Ok(Vec::new());

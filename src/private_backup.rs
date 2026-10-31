@@ -248,7 +248,7 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
             .readers()
             .read(move |c| {
                 let follows = c.query_row("SELECT 1 FROM social_graph WHERE owner_hex = ?1 AND pubkey = ?2 AND level = 1", [&o, &s], |r| r.get::<_, i64>(0)).optional()?.is_some();
-                let back = c.query_row("SELECT 1 FROM nostr_events e JOIN nostr_tags t ON t.event_id = e.id WHERE e.kind = 3 AND e.pubkey = ?1 AND t.name = 'p' AND t.value = ?2 LIMIT 1", [&s, &o], |r| r.get::<_, i64>(0)).optional()?.is_some();
+                let back = c.query_row("SELECT 1 FROM nostr_events e JOIN nostr_tags t ON t.event_id = e.seq WHERE e.kind = 3 AND e.pubkey = ?1 AND t.name = 'p' AND t.value = ?2 LIMIT 1", [&s, &o], |r| r.get::<_, i64>(0)).optional()?.is_some();
                 Ok(follows && back)
             })
             .await
@@ -526,6 +526,7 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
                 let mut stmt = c.prepare(
                     "SELECT DISTINCT e.cid, COALESCE(e.size, 0) FROM ucloud_entries e \
                      WHERE e.owner_hex = ?1 AND e.type = 'file' AND e.cid IS NOT NULL \
+                       AND e.cid NOT LIKE 'Qm%' /* anciens blobs d'Astroport.ONE (CID v0) : lisibles par Kubo, pas transférables */ \
                        AND e.path NOT LIKE '/Partages/%' AND e.path NOT LIKE '/Sauvegardes/%' \
                        AND NOT EXISTS (SELECT 1 FROM ucloud_sharing s WHERE s.owner_hex = e.owner_hex AND s.cid = e.cid) \
                        AND NOT EXISTS (SELECT 1 FROM face_shares f WHERE f.owner_hex = e.owner_hex AND f.cid = e.cid) \
@@ -658,7 +659,7 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
                 .read(move |c| {
                     let mut stmt = c.prepare_cached(
                         "SELECT e.id, e.pubkey, e.kind, e.created_at, e.content, e.sig, e.tags FROM nostr_events e \
-                         JOIN nostr_tags t ON t.event_id = e.id AND t.name = 'p' AND t.value = ?1 \
+                         JOIN nostr_tags t ON t.event_id = e.seq AND t.name = 'p' AND t.value = ?1 \
                          WHERE e.kind = 1059 AND e.created_at >= ?2 \
                            AND NOT EXISTS (SELECT 1 FROM claimed c WHERE c.owner = 'backup_inbox' AND c.event_id = e.id) \
                            AND NOT EXISTS (SELECT 1 FROM kv k WHERE k.scope = 'backup_inbox_tries' AND k.key = e.id AND CAST(substr(k.value, instr(k.value, ':') + 1) AS INTEGER) > ?3) \

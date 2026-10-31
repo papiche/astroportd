@@ -42,7 +42,7 @@ fn mime_of(path: &str) -> &'static str {
     }
 }
 
-/// Taille cumulée des fichiers embarqués, en octets (budget : 48 Ko bruts, 15 Ko transférés compressés).
+/// Taille cumulée des fichiers embarqués, en octets (budget : 52 Ko bruts, 20 Ko transférés compressés ; 48 Ko et 15 Ko avant la refonte visuelle du 2026-10-31 : trois styles et leurs icônes).
 pub fn embedded_bytes() -> usize {
     shell_files().map(|(_, f)| f.data.len()).sum()
 }
@@ -50,7 +50,7 @@ pub fn embedded_bytes() -> usize {
 /// Fichiers chargés à la demande : la page d'inscription (`register.*`, pour les seuls nouveaux venus) et les écrans
 /// lourds (`m-*.js` / `m-*.css`, tri des visages, réplication) n'entrent pas dans le budget de la coque ; ils ont le leur.
 fn is_lazy(path: &str) -> bool {
-    path.starts_with("register.") || path.starts_with("restore.") || path.starts_with("invite.") || path.starts_with("claim.") || path.starts_with("m-") || path.starts_with("console.") || path.starts_with("xterm")
+    path.starts_with("look.") || path.starts_with("register.") || path.starts_with("restore.") || path.starts_with("invite.") || path.starts_with("claim.") || path.starts_with("m-") || path.starts_with("console.") || path.starts_with("xterm")
 }
 
 /// Fichiers de la coque de l'application (tout sauf les fichiers chargés à la demande).
@@ -325,15 +325,15 @@ mod tests {
     fn the_whole_app_stays_under_its_budgets_raw_and_on_the_wire() {
         let size = embedded_bytes();
         assert!(size > 5_000, "l'application est-elle vraiment embarquée ? {size}");
-        assert!(size < 48 * 1024, "{size} octets bruts : budget de 48 Ko dépassé");
+        assert!(size < 52 * 1024, "{size} octets bruts : budget de 52 Ko dépassé");
         let (br, gz) = (transfer_bytes(Some("br, gzip")), transfer_bytes(Some("gzip")));
-        assert!(br < 15 * 1024, "{br} octets en Brotli : budget réseau de 15 Ko dépassé");
-        assert!(gz < 15 * 1024, "{gz} octets en Gzip : budget réseau de 15 Ko dépassé");
+        assert!(br < 20 * 1024, "{br} octets en Brotli : budget réseau de 20 Ko dépassé");
+        assert!(gz < 20 * 1024, "{gz} octets en Gzip : budget réseau de 20 Ko dépassé");
         eprintln!("poids de l'application : {size} o bruts, {gz} o en gzip, {br} o en brotli");
         let (mraw, mgz) = module_bytes();
         eprintln!("écrans à la demande : {mraw} o bruts, {mgz} o en gzip");
         // Le cumul des écrans (qu'un visiteur ne télécharge qu'à la demande) est borné, et chaque écran garde sa propre limite.
-        assert!(mraw > 0 && mraw < 128 * 1024 && mgz < 48 * 1024, "écrans à la demande : {mraw} o bruts (budget 128 Ko), {mgz} o en gzip (budget 48 Ko)");
+        assert!(mraw > 0 && mraw < 160 * 1024 && mgz < 56 * 1024, "écrans à la demande : {mraw} o bruts (budget 160 Ko), {mgz} o en gzip (budget 56 Ko ; 128 Ko et 48 Ko avant les écrans Sources et Ranger)");
         for (name, f) in module_files().filter(|(p, _)| !p.starts_with("m-lang-")) {
             let gz = compressed(&name, Encoding::Gzip, &f.data).len();
             assert!(gz < 12 * 1024, "{name} : {gz} o en gzip, au-delà des 12 Ko par écran");

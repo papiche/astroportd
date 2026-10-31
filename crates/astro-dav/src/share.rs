@@ -119,7 +119,7 @@ pub async fn create_guest_link<B: BlobStore>(db: &Db, blobs: &B, owner: &str, pa
             return Err(ShareError::Nothing(path));
         }
         let base = vfs::parent_of(&path);
-        for e in found.into_iter().filter(|e| e.kind == EntryKind::File) {
+        for e in found.into_iter().filter(|e| e.kind == EntryKind::File && !vfs::is_vault(&e.path)) {
             let rel = e.path.strip_prefix(&base).unwrap_or(&e.path).trim_start_matches('/').to_owned();
             files.push((rel, e));
         }

@@ -11,7 +11,7 @@ export default async function account(root, K) {
   const code = v => h('code', {}, v || '—');
 
   // ── Identité ──
-  const idCard = h('section', { class: 'card' }, h('h2', {}, 'Identité'), h('dl', {},
+  const idCard = h('section', { class: 'card' }, h('h2', {}, 'Identité'), h('dl', { class: 'stack' },
     h('dt', {}, 'Compte'), h('dd', {}, a.email || '—', ' ', h('span', { class: 'pill ok' }, ROLE[a.role] || a.role)),
     h('dt', {}, 'Clé publique Nostr'), h('dd', {}, code(a.npub), ' ', copy(a.npub, 'npub')),
     h('dt', {}, 'Clé Ğ1'), h('dd', {}, code(a.g1pub)),
@@ -73,6 +73,38 @@ export default async function account(root, K) {
     h('p', { class: 'muted' }, 'Votre station garde vos clés. Vous pouvez les récupérer pour reprendre le contrôle de votre identité ailleurs (3 exports par heure ; chaque export est tracé).'),
     h('p', {}, ok, h('label', { for: 'ac-ok' }, ' Je comprends que quiconque possède ces clés possède mon compte.')), h('p', {}, exp), out);
 
+  // ── Appareils : un jeton WebDAV par téléphone ou ordinateur, confiné à un dossier ──
+  const devices = h('section', { class: 'card' }, h('h2', {}, 'Appareils'),
+    h('p', { class: 'muted' }, 'Un jeton par appareil : son envoi WebDAV arrive dans le dossier de votre choix, et il ne voit ni ne touche rien d\'autre. Révocable à tout moment.'));
+  try {
+    const MODES = { write: 'Envoi seul', readwrite: 'Lecture et écriture', read: 'Lecture seule' };
+    const shownToken = h('div');
+    const label = h('input', { id: 'dv-label', placeholder: 'Mon téléphone', maxlength: 60 }), root = h('input', { id: 'dv-root', placeholder: '/Photos/Mon téléphone' });
+    const mode = h('select', { id: 'dv-mode' }, Object.entries(MODES).map(([v, n]) => h('option', { value: v }, t(n))));
+    const add = h('button', { type: 'button', onclick: async ev => {
+      ev.target.disabled = true;
+      try {
+        const r = await K.api('/api/v1/devices', { method: 'POST', body: { label: label.value, root: root.value || `/Photos/${label.value.trim()}`, mode: mode.value } });
+        const inp = h('input', { value: r.token, readOnly: true, 'aria-label': 'Jeton', onfocus: () => inp.select() });
+        shownToken.replaceChildren(h('div', { class: 'card wide' }, h('h3', {}, t('Appareil « {0} » ajouté', r.label)),
+          h('p', { class: 'warn', role: 'note' }, r.note),
+          h('dl', {}, h('dt', {}, 'Serveur'), h('dd', {}, code(a.dav.url), ' ', copy(a.dav.url, 'adresse')), h('dt', {}, 'Identifiant'), h('dd', {}, code(a.dav.login)), h('dt', {}, 'Mot de passe (jeton)'), h('dd', {}, inp, ' ', copy(r.token, 'jeton')), h('dt', {}, 'Dossier du uCloud'), h('dd', {}, code(r.root), ' · ', t(MODES[r.mode])))));
+        K.toast(t('Appareil ajouté'), 1); label.value = ''; root.value = '';
+        refresh();
+      } catch (e) { K.toast(e.message); } finally { ev.target.disabled = false; }
+    } }, 'Ajouter cet appareil');
+    const rows = h('div');
+    const refresh = async () => {
+      const l = await K.api('/api/v1/devices');
+      rows.replaceChildren(...(l.devices.length ? l.devices.map(d => h('div', { class: 'row' },
+        h('div', { class: 't' }, h('b', {}, d.label), h('span', { class: 'muted' }, ` · ${t(MODES[d.mode])} · `), code(d.root), h('br'), h('span', { class: 'muted' }, d.last_used ? t('Dernier envoi : {0}', K.when(d.last_used)) : t('Jamais utilisé'))),
+        h('button', { class: 'ghost', onclick: async ev => { if (!confirm(t('Révoquer « {0} » ? Son jeton cesse de fonctionner tout de suite ; ce qu\'il a déposé reste dans votre uCloud.', d.label))) return; ev.target.disabled = true; try { await K.api('/api/v1/devices/revoke', { method: 'POST', body: { id: d.id } }); K.toast(t('Appareil révoqué'), 1); } catch (e) { K.toast(e.message); } refresh(); } }, 'Révoquer')))
+        : [h('p', { class: 'muted' }, 'Aucun appareil : le jeton principal ci-dessus ouvre tout votre uCloud.')]));
+    };
+    devices.append(rows, shownToken, h('h3', {}, 'Ajouter un appareil'), h('label', { for: 'dv-label' }, 'Nom'), label, h('label', { for: 'dv-root' }, 'Dossier du uCloud (créé s\'il manque)'), root, h('label', { for: 'dv-mode' }, 'Droits'), mode, h('p', {}, add));
+    await refresh();
+  } catch (e) { devices.append(h('p', { class: 'muted' }, e.message)); }
+
   // ── Sauvegarde privée chez un ami ──
   const gb = n => n >= 2 ** 30 ? `${(n / 2 ** 30).toFixed(1)} Go` : `${(n / 2 ** 20).toFixed(0)} Mo`;
   const backup = h('section', { class: 'card' }, h('h2', {}, 'Sauvegarde privée'));
@@ -110,5 +142,9 @@ export default async function account(root, K) {
 
   // Compte invité : l'adresse a été générée par la station. On ne promet pas une fonction qui n'existe pas (changer d'adresse).
   const guest = a.guest ? h('p', { class: 'warn', role: 'note' }, h('strong', {}, 'Compte invité. '), 'Votre adresse a été créée par la station : c\'est votre identifiant UPlanet, pas une boîte aux lettres. Gardez la clé de secours imprimée à la création et votre code PASS : sans email, ce sont vos seuls moyens de récupérer le compte.') : null;
-  root.replaceChildren(h('h2', {}, 'Mon compte'), guest, h('div', { class: 'grid' }, idCard, profile, dav, backup, keys));
+  // Bandeau d'identité (comme « Mon compte » d'UPlanet). `replaceChildren` écrirait le texte « null » pour un nœud absent : on filtre.
+  const title = a.profile.name || a.email || 'Mon compte';
+  const hero = h('div', { class: 'hero' }, h('div', { class: 'avatar', 'aria-hidden': 'true' }, [...title][0].toUpperCase()),
+    h('div', { class: 'who' }, h('h2', {}, title), a.email && a.email !== title ? h('div', { class: 'sub' }, a.email) : null, h('span', { class: 'pill' }, ROLE[a.role] || a.role), a.guest ? h('span', { class: 'pill' }, 'Invité') : null));
+  root.replaceChildren(...[hero, guest, h('div', { class: 'grid' }, idCard, profile, dav, devices, backup, keys)].filter(Boolean));
 }

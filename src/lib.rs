@@ -4,6 +4,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 pub mod account;
+pub mod agents;
 pub mod assist;
 pub mod build_attest;
 pub mod coop_config;
@@ -17,9 +18,11 @@ pub mod identity_links;
 pub mod init;
 pub mod integrity;
 pub mod invites;
+pub mod legacy_ucloud;
 pub mod library;
 pub mod media;
 pub mod mesh_outbox;
+pub mod organize;
 pub mod p2p_relay;
 pub mod private_backup;
 pub mod register;
@@ -28,6 +31,7 @@ pub mod station_admin;
 pub mod sharing;
 pub mod solar_cron;
 pub mod upload_worker;
+pub mod webdav_pull;
 pub mod zen_react;
 pub mod station;
 pub mod tunnel_policy;

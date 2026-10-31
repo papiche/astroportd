@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use astro_dav::blob::{AutoBlobStore, BlobError, BlobStore, BlobWriter, FsBlobStore, KuboBlobStore, cid_raw_sha256, is_cid};
+use astro_dav::blob::{AutoBlobStore, BlobError, BlobStore, BlobWriter, FsBlobStore, KuboBlobStore, cid_raw_sha256, is_cid, is_legacy_cid};
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
@@ -320,4 +320,79 @@ async fn providers_keeps_what_arrived_before_the_deadline() {
     let got = store.providers(&cid, 3, std::time::Duration::from_millis(400)).await.unwrap();
     assert_eq!(got, ["12D3KooWA"]);
     assert!(store.providers("../x", 3, std::time::Duration::from_millis(100)).await.is_err(), "CID invalide refusé avant toute requête");
+}
+
+/// Les blobs qu'Astroport.ONE a mis dans IPFS (CID v0 `Qm…`) se lisent par Kubo, avec accès aléatoire, et ne sont jamais désépinglés.
+#[tokio::test]
+async fn legacy_cid_v0_blobs_are_readable_from_kubo_and_never_unpinned() {
+    let legacy = "QmNLgdgGvnDoGDLMktDDhM7Qdf2aJogNqdX3njxwqi44LL";
+    assert!(is_legacy_cid(legacy) && !is_cid(legacy));
+    for bad in ["", "Qm", "../etc/passwd", "QmNLgdgGvnDoGDLMktDDhM7Qdf2aJogNqdX3njxwqi44L", "QmNLgdgGvnDoGDLMktDDhM7Qdf2aJogNqdX3njxwqi44L0", "Xm\0LgdgGvnDoGDLMktDDhM7Qdf2aJogNqdX3njxwqi44LL", "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"] {
+        assert!(!is_legacy_cid(bad), "{bad}");
+    }
+    let (url, mock) = mock_kubo().await;
+    let content: Vec<u8> = (0..50_000u32).map(|i| (i % 251) as u8).collect();
+    {
+        let mut g = mock.lock().unwrap();
+        g.blobs.insert(legacy.to_owned(), content.clone());
+        g.pinned.insert(legacy.to_owned());
+    }
+    let dir = std::env::temp_dir().join(format!("astroportd-legacy-cid-{}", std::process::id()));
+    let auto = AutoBlobStore::new(Some(KuboBlobStore::new(&url)), FsBlobStore::open(&dir).unwrap());
+    let (mut r, len) = auto.open(legacy).await.unwrap();
+    assert_eq!(len, 50_000);
+    r.seek(std::io::SeekFrom::Start(40_000)).await.unwrap();
+    let mut tail = vec![0u8; 100];
+    r.read_exact(&mut tail).await.unwrap();
+    assert_eq!(tail, content[40_000..40_100]);
+    // Supprimer côté astroportd ne touche pas à IPFS : ni erreur, ni `pin/rm`.
+    auto.remove(legacy).await.unwrap();
+    KuboBlobStore::new(&url).remove(legacy).await.unwrap();
+    {
+        let g = mock.lock().unwrap();
+        assert!(g.pinned.contains(legacy) && !g.calls.iter().any(|c| c.ends_with("pin/rm")), "l'ancien blob reste épinglé");
+    }
+    // Kubo éteint : le disque local ne connaît pas ce blob, la lecture échoue proprement.
+    let offline = AutoBlobStore::new(None, FsBlobStore::open(&dir).unwrap());
+    assert!(matches!(offline.open(legacy).await, Err(BlobError::NotFound)));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Un fichier venu d'Astroport.ONE (CID v0, UENC v1, clé du trousseau d'origine) se sert par WebDAV, avec `Range`, et le supprimer
+/// retire l'entrée sans désépingler le blob que l'ancienne station référence encore.
+#[tokio::test]
+async fn webdav_serves_an_imported_legacy_v1_file_and_deleting_it_keeps_the_blob_pinned() {
+    let legacy = "QmNLgdgGvnDoGDLMktDDhM7Qdf2aJogNqdX3njxwqi44LL";
+    let (url, mock) = mock_kubo().await;
+    let key = astro_crypto::UencKey::from_bytes([5; 32]);
+    let plain = sample(30_000, 33);
+    let blob = astro_crypto::uenc::v1::encrypt(&key, &plain).unwrap();
+    assert_eq!(&blob[..6], b"UENC\x01\x01");
+    {
+        let mut g = mock.lock().unwrap();
+        g.blobs.insert(legacy.to_owned(), blob);
+        g.pinned.insert(legacy.to_owned());
+    }
+    let dir = TempDir::new("davlegacy");
+    let store = Arc::new(AutoBlobStore::new(Some(KuboBlobStore::new(&url)), FsBlobStore::open(dir.0.join("blobs")).unwrap()));
+    let (db, app, _publisher) = serve_on(&dir, store, |_| {}).await;
+    let owner = hex(&ALICE);
+    db.writer()
+        .execute(
+            "INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, sha_plain, data, src_cid) VALUES (?1, '/ancienne.jpg', '/', 'file', ?2, 'image/jpeg', 30000, 1700000000, ?3, '{}', 'legacy-import')",
+            vec![owner.clone().into(), legacy.to_owned().into(), hex::encode(Sha256::digest(&plain)).into()],
+        )
+        .await
+        .unwrap();
+    db.writer().execute("INSERT INTO ucloud_keyring(owner_hex, cid, key_hex, enc) VALUES (?1, ?2, ?3, 'uenc-aes256gcm')", vec![owner.into(), legacy.to_owned().into(), key.to_hex().into()]).await.unwrap();
+
+    let a = alice();
+    let (status, headers, body) = bytes(call(&app, "GET", "/dav/ancienne.jpg", Some(&a), &[], Body::empty()).await).await;
+    assert_eq!((status, body == plain, headers["content-length"].to_str().unwrap()), (200, true, "30000"));
+    let (status, headers, part) = bytes(call(&app, "GET", "/dav/ancienne.jpg", Some(&a), &[("range", "bytes=10000-10009")], Body::empty()).await).await;
+    assert_eq!((status, part.as_slice(), headers["content-range"].to_str().unwrap()), (206, &plain[10_000..10_010], "bytes 10000-10009/30000"));
+
+    assert_eq!(call(&app, "DELETE", "/dav/ancienne.jpg", Some(&a), &[], Body::empty()).await.status(), 204);
+    let g = mock.lock().unwrap();
+    assert!(g.pinned.contains(legacy) && !g.calls.iter().any(|c| c.ends_with("pin/rm")), "l'ancien blob reste épinglé");
 }

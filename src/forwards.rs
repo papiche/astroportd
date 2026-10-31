@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use astro_p2p::tunnel::{Forward, forward};
 use astro_p2p::{P2pHandle, PeerId};
@@ -22,13 +22,13 @@ struct Open {
 /// Accès locaux ouverts, par identifiant de demande.
 pub struct Forwards {
     handle: Option<P2pHandle>,
-    open: Mutex<HashMap<String, Open>>,
+    open: Arc<Mutex<HashMap<String, Open>>>,
 }
 
 impl Forwards {
     /// `handle` : le maillage P2P (`None` : rien ne peut être ouvert).
     pub fn new(handle: Option<P2pHandle>) -> Self {
-        Self { handle, open: Mutex::new(HashMap::new()) }
+        Self { handle, open: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Open>> {
@@ -49,6 +49,17 @@ impl Forwards {
         let fwd = forward(handle, SocketAddr::from(([127, 0, 0, 1], 0)), peer, service).await.map_err(|e| e.to_string())?;
         let addr = fwd.local_addr;
         self.lock().insert(id.to_owned(), Open { fwd, until });
+        // L'accès se referme à l'échéance, même si personne n'ouvre plus l'écran d'assistance : sans minuteur, le port local
+        // resterait actif jusqu'au prochain `open` ou `list`. Si la demande a été rouverte entre-temps (autre échéance), on n'y touche pas.
+        let (map, key) = (self.open.clone(), id.to_owned());
+        let wait = std::time::Duration::from_secs(u64::try_from(until.saturating_sub(now)).unwrap_or(0));
+        tokio::spawn(async move {
+            tokio::time::sleep(wait).await;
+            let mut g = map.lock().unwrap_or_else(|e| e.into_inner());
+            if g.get(&key).is_some_and(|o| o.until == until) {
+                g.remove(&key);
+            }
+        });
         Ok(addr)
     }
 

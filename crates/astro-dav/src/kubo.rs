@@ -28,7 +28,7 @@ use tokio::task::JoinHandle;
 use tokio_util::io::StreamReader;
 use tokio_util::sync::PollSender;
 
-use crate::blob::{BlobError, BlobMeta, BlobStore, BlobWriter, FsBlobStore, FsBlobWriter, is_cid};
+use crate::blob::{BlobError, BlobMeta, BlobStore, BlobWriter, FsBlobStore, FsBlobWriter, is_cid, is_legacy_cid};
 
 type ReqBody = UnsyncBoxBody<Bytes, io::Error>;
 type HttpClient = Client<HttpConnector, ReqBody>;
@@ -313,7 +313,7 @@ impl BlobStore for KuboBlobStore {
     }
 
     async fn open(&self, cid: &str) -> Result<(KuboReader, u64), BlobError> {
-        if !is_cid(cid) {
+        if !is_cid(cid) && !is_legacy_cid(cid) {
             return Err(BlobError::BadCid);
         }
         let stat = self.json(&format!("/api/v0/files/stat?arg=/ipfs/{cid}")).await?;
@@ -322,6 +322,11 @@ impl BlobStore for KuboBlobStore {
     }
 
     async fn remove(&self, cid: &str) -> Result<(), BlobError> {
+        // Un blob d'Astroport.ONE est partagé avec l'ancienne station, qui le référence encore : supprimer un fichier ici
+        // ne le désépingle jamais (le ramasse-miettes de Kubo emporterait aussi la copie de l'ancien uCloud).
+        if is_legacy_cid(cid) {
+            return Ok(());
+        }
         if !is_cid(cid) {
             return Err(BlobError::BadCid);
         }
@@ -466,6 +471,13 @@ impl BlobStore for AutoBlobStore {
     }
 
     async fn open(&self, cid: &str) -> Result<(AutoReader, u64), BlobError> {
+        // Un blob d'Astroport.ONE (CID v0) n'existe que dans IPFS : le disque local ne le connaît pas.
+        if is_legacy_cid(cid) {
+            return match self.kubo_up().await {
+                Some(kubo) => kubo.open(cid).await.map(|(r, len)| (AutoReader::Kubo(Box::new(r)), len)),
+                None => Err(BlobError::NotFound),
+            };
+        }
         match self.fs.open(cid).await {
             Ok((r, len)) => return Ok((AutoReader::Fs(r), len)),
             Err(BlobError::NotFound) => {}
@@ -478,6 +490,9 @@ impl BlobStore for AutoBlobStore {
     }
 
     async fn remove(&self, cid: &str) -> Result<(), BlobError> {
+        if is_legacy_cid(cid) {
+            return Ok(()); // partagé avec l'ancienne station : jamais désépinglé d'ici
+        }
         self.fs.remove(cid).await?;
         if let Some(kubo) = self.kubo_up().await {
             kubo.remove(cid).await?;

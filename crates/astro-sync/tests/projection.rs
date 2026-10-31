@@ -398,3 +398,30 @@ async fn station_build_attestations_keep_the_latest_and_reject_malformed_ones() 
         .unwrap();
     assert_eq!(version, "0.2.2-beta");
 }
+
+#[tokio::test]
+async fn the_agents_registry_is_projected_as_is_and_the_newest_wins_in_any_order() {
+    let dir = TempDir::new("agents");
+    let db = open_db(&dir);
+    let registry = |at: u64, body: &str| ev(&ALICE, 31_903, at, vec![t(&["d", "agents"])], body);
+    let (older, newer) = (registry(100, "chiffre-ancien"), registry(200, "chiffre-recent"));
+    // Le plus récent d'abord, puis l'ancien : l'ancien ne remplace rien.
+    db.writer().batch(Projector::plan(&newer).unwrap()).await.unwrap();
+    db.writer().batch(Projector::plan(&older).unwrap()).await.unwrap();
+    let read = |db: &Db| {
+        let hex = hex(&ALICE);
+        let db = db.readers().clone();
+        async move { db.read(move |c| Ok(c.query_row("SELECT value FROM kv WHERE scope = 'agents' AND key = ?1", [hex], |r| r.get::<_, String>(0))?)).await.unwrap() }
+    };
+    assert_eq!(read(&db).await, "chiffre-recent");
+    // Un autre `d` du même kind n'écrase pas le registre.
+    db.writer().batch(Projector::plan(&ev(&ALICE, 31_903, 300, vec![t(&["d", "memory_sources"])], "autre")).unwrap()).await.unwrap();
+    assert_eq!(read(&db).await, "chiffre-recent");
+    // Un replay vide puis rejoue : le registre revient des événements stockés, il n'est pas perdu ni dupliqué.
+    db.writer().batch(Projector::reset()).await.unwrap();
+    let n: i64 = db.readers().read(|c| Ok(c.query_row("SELECT COUNT(*) FROM kv WHERE scope = 'agents'", [], |r| r.get(0))?)).await.unwrap();
+    assert_eq!(n, 0, "remis à zéro avant le rejeu");
+    db.writer().batch(Projector::plan(&older).unwrap()).await.unwrap();
+    db.writer().batch(Projector::plan(&newer).unwrap()).await.unwrap();
+    assert_eq!(read(&db).await, "chiffre-recent");
+}
