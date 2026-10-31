@@ -1,6 +1,6 @@
 //! Traitement d'une photo : détection, appariement vectoriel, catalogage, partage.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -69,11 +69,18 @@ pub struct FaceConfig {
     pub max_image_bytes: u64,
     /// Partager automatiquement avec les amis réciproques.
     pub share_enabled: bool,
+    /// Écart aléatoire (min, max) en ms entre deux envois NIP-59 vers des stations distantes : lisse les rafales et
+    /// brouille le profil temporel vu des relais.
+    pub send_jitter_ms: (u64, u64),
+    /// Détection minimale (visage net, de face) pour un partage sans confirmation.
+    pub share_det_min: f32,
+    /// Score cosinus minimal pour un partage sans confirmation ; entre `match_threshold` et ce seuil, le partage attend un clic.
+    pub share_auto_min: f64,
 }
 
 impl Default for FaceConfig {
     fn default() -> Self {
-        Self { match_threshold: 0.82, maybe_min: 0.55, det_min: 0.60, knn_k: 5, max_image_bytes: 50 << 20, share_enabled: true }
+        Self { match_threshold: 0.82, maybe_min: 0.55, det_min: 0.60, knn_k: 5, max_image_bytes: 50 << 20, share_enabled: true, send_jitter_ms: (200, 800), share_det_min: 0.80, share_auto_min: 0.88 }
     }
 }
 
@@ -109,6 +116,8 @@ pub struct FaceReport {
     pub pubkey: Option<String>,
     /// Décision.
     pub decision: Decision,
+    /// Confiance de détection du visage dans la photo traitée.
+    pub det_score: f32,
 }
 
 /// Mode de livraison d'un partage.
@@ -270,7 +279,7 @@ impl<B: BlobStore, E: FaceEngine, O: Outbox> FaceCloud<B, E, O> {
             .read(move |c| Ok(c.query_row("SELECT face_id, name, pubkey FROM faces WHERE owner_hex = ?1 AND embed_hash = ?2", params![o, h], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))).optional()?))
             .await?;
         if let (Some((face_id, name, pubkey)), None) = (&existing, forced) {
-            return Ok(FaceReport { face_id: *face_id, name: name.clone(), pubkey: pubkey.clone(), decision: Decision::AlreadyKnown });
+            return Ok(FaceReport { face_id: *face_id, name: name.clone(), pubkey: pubkey.clone(), decision: Decision::AlreadyKnown, det_score: face.det_score });
         }
 
         let (name, pubkey, decision, suggest, reference) = if let Some((pk, nm)) = forced {
@@ -311,7 +320,7 @@ impl<B: BlobStore, E: FaceEngine, O: Outbox> FaceCloud<B, E, O> {
                 Ok(id)
             })
             .await?;
-        Ok(FaceReport { face_id, name, pubkey, decision })
+        Ok(FaceReport { face_id, name, pubkey, decision, det_score: face.det_score })
     }
 
     /// Analyse une photo du VFS : catalogue ses visages et partage avec les amis reconnus.
@@ -339,13 +348,105 @@ impl<B: BlobStore, E: FaceEngine, O: Outbox> FaceCloud<B, E, O> {
         }
         self.set_status(owner, path, "faces", report.faces.len()).await?;
         if self.config.share_enabled {
-            let friends: BTreeSet<(String, String)> =
-                report.faces.iter().filter(|f| matches!(f.decision, Decision::Recognized { .. } | Decision::AlreadyKnown)).filter_map(|f| f.pubkey.clone().map(|pk| (pk, f.name.clone()))).filter(|(pk, _)| pk != owner).collect();
-            for (friend, _) in friends {
-                self.share_with(owner, path, &photo, &friend, &mut report).await?;
-            }
+            self.dispatch_shares(owner, path, &photo, &mut report).await?;
         }
         Ok(report)
+    }
+
+    /// Envoie tout de suite aux amis reconnus avec certitude (visage net, score ≥ `share_auto_min`) ; les cas ambigus
+    /// attendent la confirmation de l'utilisateur dans `face_share_pending`.
+    async fn dispatch_shares(&self, owner: &str, path: &str, photo: &Photo, report: &mut PhotoReport) -> Result<(), FaceError> {
+        // ami → (envoi direct ?, meilleure détection, meilleur score, visage déjà catalogué ?)
+        let mut friends: BTreeMap<String, (bool, f32, f64, bool)> = BTreeMap::new();
+        for f in &report.faces {
+            let Some(pk) = f.pubkey.clone().filter(|pk| pk != owner) else { continue };
+            let (score, known) = match f.decision {
+                Decision::Recognized { score } => (score, false),
+                Decision::AlreadyKnown => (1.0, true),
+                _ => continue,
+            };
+            let auto = !known && f.det_score >= self.config.share_det_min && score >= self.config.share_auto_min;
+            let e = friends.entry(pk).or_insert((false, f.det_score, score, known));
+            e.0 |= auto;
+            e.1 = e.1.max(f.det_score);
+            e.2 = e.2.max(score);
+            e.3 &= known;
+        }
+        for (friend, (auto, det, score, known)) in friends {
+            // Visage déjà catalogué : décidé à un passage précédent (envoi, attente ou nom donné par l'humain). Une
+            // photo déjà en attente reste en attente ; sinon c'est une identité validée à la main, on envoie.
+            let direct = auto || (known && !self.is_pending(owner, &friend, &photo.cid).await?);
+            if direct {
+                self.share_with(owner, path, photo, &friend, report).await?;
+            } else if !known {
+                self.queue_share(owner, path, photo, &friend, det, score, report).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn is_pending(&self, owner: &str, friend: &str, cid: &str) -> Result<bool, FaceError> {
+        let (o, f, c) = (owner.to_owned(), friend.to_owned(), cid.to_owned());
+        Ok(self
+            .db
+            .readers()
+            .read(move |conn| Ok(conn.query_row("SELECT 1 FROM face_share_pending WHERE owner_hex = ?1 AND recipient_hex = ?2 AND cid = ?3", params![o, f, c], |r| r.get::<_, i64>(0)).optional()?.is_some()))
+            .await?)
+    }
+
+    /// Met un envoi en attente de confirmation (sauf ami non réciproque ou déjà servi : rien à confirmer).
+    #[allow(clippy::too_many_arguments)]
+    async fn queue_share(&self, owner: &str, path: &str, photo: &Photo, friend: &str, det: f32, score: f64, report: &mut PhotoReport) -> Result<(), FaceError> {
+        let (o, c, f) = (owner.to_owned(), photo.cid.clone(), friend.to_owned());
+        let done = self.db.readers().read(move |conn| Ok(conn.query_row("SELECT 1 FROM face_shares WHERE owner_hex = ?1 AND cid = ?2 AND recipient_hex = ?3", params![o, c, f], |r| r.get::<_, i64>(0)).optional()?.is_some())).await?;
+        if done || !self.reciprocal(owner, friend).await? {
+            return Ok(());
+        }
+        self.db
+            .writer()
+            .execute(
+                "INSERT OR IGNORE INTO face_share_pending(owner_hex, recipient_hex, path, cid, det_score, score, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                vec![owner.to_owned().into(), friend.to_owned().into(), path.to_owned().into(), photo.cid.clone().into(), f64::from(det).into(), score.into(), now().into()],
+            )
+            .await?;
+        report.skipped.push(Skipped { recipient: friend.to_owned(), reason: "en attente de confirmation".into() });
+        Ok(())
+    }
+
+    /// Réponse de l'utilisateur au lot en attente pour `friend`. `accept` : envoie les photos ; sinon les oublie.
+    /// Un envoi qui échoue (relais injoignable) reste en attente pour un nouvel essai. Rend `(envoyées, retirées sans envoi)`.
+    pub async fn resolve_pending(&self, owner: &str, friend: &str, accept: bool) -> Result<(usize, usize), FaceError> {
+        let (o, f) = (owner.to_owned(), friend.to_owned());
+        let rows: Vec<(i64, String)> = self
+            .db
+            .readers()
+            .read(move |c| {
+                let mut stmt = c.prepare("SELECT id, path FROM face_share_pending WHERE owner_hex = ?1 AND recipient_hex = ?2 ORDER BY id")?;
+                Ok(stmt.query_map(params![o, f], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?)
+            })
+            .await?;
+        let (mut sent, mut dropped) = (0_usize, 0_usize);
+        for (id, path) in rows {
+            let mut keep = false;
+            if accept {
+                match self.photo(owner, &path).await {
+                    Ok(photo) if photo.origin != "facecloud-share" => {
+                        let mut report = PhotoReport::default();
+                        self.share_with(owner, &path, &photo, friend, &mut report).await?;
+                        sent += report.shares.len();
+                        // Panne d'envoi : on garde la ligne ; amitié perdue ou déjà partagé : rien à réessayer.
+                        keep = report.skipped.iter().any(|s| s.reason.starts_with("envoi impossible") || s.reason.starts_with("clé de l'expéditeur"));
+                    }
+                    _ => {}
+                }
+            }
+            if keep {
+                continue;
+            }
+            self.db.writer().execute("DELETE FROM face_share_pending WHERE id = ?1", vec![id.into()]).await?;
+            dropped += 1;
+        }
+        Ok((sent, dropped.saturating_sub(sent)))
     }
 
     /// Enrôlement supervisé : chaque visage de `image` est catalogué sous l'identité `(pubkey, name)`.
@@ -397,6 +498,16 @@ impl<B: BlobStore, E: FaceEngine, O: Outbox> FaceCloud<B, E, O> {
             self.share_with(owner, path, &photo, friend, &mut report).await?;
         }
         Ok((report.shares.len(), report.skipped.len()))
+    }
+
+    /// Pause aléatoire après un envoi distant (bornes de `send_jitter_ms`).
+    async fn pace(&self) {
+        let (lo, hi) = self.config.send_jitter_ms;
+        if hi == 0 {
+            return;
+        }
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| u64::from(d.subsec_nanos()));
+        tokio::time::sleep(std::time::Duration::from_millis(lo + nanos % (hi.saturating_sub(lo) + 1))).await;
     }
 
     /// `owner` et `friend` se suivent-ils mutuellement ?
@@ -471,6 +582,7 @@ impl<B: BlobStore, E: FaceEngine, O: Outbox> FaceCloud<B, E, O> {
                 skip(report, &format!("envoi impossible : {e}"));
                 return Ok(());
             }
+            self.pace().await;
             ShareVia::Nip17
         };
         let (o, cid, f) = (owner.to_owned(), photo.cid.clone(), friend.to_owned());

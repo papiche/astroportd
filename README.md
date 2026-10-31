@@ -4,15 +4,51 @@
 [![Release](https://img.shields.io/github/v/release/papiche/astroportd?include_prereleases&label=release)](https://github.com/papiche/astroportd/releases)
 [![CI](https://github.com/papiche/astroportd/actions/workflows/ci.yml/badge.svg)](https://github.com/papiche/astroportd/actions/workflows/ci.yml)
 
-**Une station, un binaire, aucune dépendance de confiance.**
-Le cœur souverain d'[Astroport.ONE](https://github.com/papiche/Astroport.ONE) et d'UPlanet, réécrit en Rust :
-relais Nostr, cloud personnel chiffré, reconnaissance de visages, agent BRO, économie coopérative en Ẑen, maillage
-P2P et interface web — dans **un seul exécutable** de quelques dizaines de Mo, qui tient sur un Raspberry Pi comme
-sur un serveur GPU.
+**Votre cloud, vos photos, vos amis et votre économie coopérative, sur une machine qui est à vous.**
+astroportd est une **station personnelle** : un seul programme, de quelques dizaines de Mo, qui tient sur un Raspberry Pi
+comme sur un serveur GPU. Il garde vos fichiers **chiffrés**, retrouve les visages dans vos photos et les partage avec
+vos amis, vous fait **sauvegarder par vos proches** (et retrouver votre compte si votre machine brûle), et fait tourner
+une **comptabilité coopérative en Ẑen** (monnaie libre Ğ1) — sans plateforme, sans abonnement, sans serveur central.
+C'est le cœur souverain d'[Astroport.ONE](https://github.com/papiche/Astroport.ONE) et d'UPlanet, réécrit en Rust.
 
-> **Préversion 0.3.0-beta.** Le code est testé de bout en bout (≈ 585 tests, `clippy` sans avertissement) mais jeune :
+> **Préversion 0.4.0-beta.** Le code est testé de bout en bout (≈ 600 tests, `clippy` sans avertissement) mais jeune :
 > lisez [les limites connues](#8-état-du-projet-et-limites-connues). Licence **AGPL-3.0** · Auteur : Fred
 > (support@qo-op.com) · Rust 2024 (≥ 1.85).
+
+---
+
+## Ce que vous pouvez faire avec astroportd
+
+| Je veux… | astroportd… |
+|---|---|
+| **Garder mes fichiers chez moi**, accessibles partout | Un cloud personnel (`uCloud`) **chiffré avant de quitter l'appareil**, monté comme un disque réseau (WebDAV : Finder, Explorateur Windows, mobile) et dans le navigateur. |
+| **Retrouver mes photos par visage** et les partager entre amis | `FaceCloud` reconnaît les visages et envoie les photos à vos amis **chiffrées, directement à leur station**. Une zone de doute (« est-ce X ? ») vous laisse valider. |
+| **Faire entrer quelqu'un** dans le réseau en lui envoyant une photo | Un **lien d'invitation** (ou un QR) : la personne crée son compte en un geste, ou l'accepte avec le sien, même sur une autre station ; ses photos arrivent. |
+| **Ne rien perdre si ma machine tombe en panne** | Mes amis hébergent une **copie chiffrée** que seul moi peux lire. Avec ma **carte secrète** (QR), je rétablis mon compte sur n'importe quelle station : mes amis renvoient tout d'eux-mêmes, sans rien faire. |
+| **Changer de station** (déménager chez un Capitaine plus proche) | Le même parcours : la nouvelle station s'annonce comme ma maison, l'ancienne cesse d'héberger mon compte. |
+| **Parler et publier entre amis**, sans plateforme | Un **relai Nostr** intégré, des contacts et un téléphone synchronisables (CardDAV), un cercle social à deux niveaux (amis N¹, amis d'amis N²). |
+| **Faire vivre une économie coopérative** | Une comptabilité en **Ẑen** adossée à la Ğ1 : règle des 3×1/3, registre signé, micro-dons par simple réaction `+N`. |
+| **Avoir un assistant** qui me connaît | **BRO** : une mémoire personnelle à recherche vectorielle locale (`sqlite-vec`), dont les embeddings sont calculés par votre propre serveur Ollama. |
+
+**Pour qui ?** Un **membre** s'inscrit sur la station d'un Capitaine (ou la sienne) ; un **Capitaine** héberge des membres et
+règle sa station ; un **développeur** étend l'ensemble par des plugins WebAssembly.
+
+## Ce qui le distingue
+
+Beaucoup d'outils font une partie de cela. astroportd les réunit **dans un seul programme que vous possédez**, avec des
+choix que les services habituels ne font pas :
+
+| Domaine | Services habituels | Alternatives libres / P2P | Ce que fait astroportd |
+|---|---|---|---|
+| **Fichiers et synchronisation** | Google Drive, Dropbox, Nextcloud | Filecoin, Sia, IPFS Desktop | Chiffrement **UENC v2** (flux authentifié par blocs de 64 Kio, lecture partielle `Range`), déduplication par CID, et un **manifeste de votre cloud ancré sur Nostr** : la base SQLite n'est qu'un cache, tout se rejoue. |
+| **Photos et visages** | Google Photos, Apple Photos | Immich, PhotoPrism | Photos **chiffrées**, empreintes de visages 512D **cloisonnées par propriétaire** (`sqlite-vec`), partage vers les amis reconnus par messages chiffrés **NIP-59/NIP-17**, avec validation de l'utilisateur dans la zone de doute. |
+| **Identité et réseau social** | Keybase, X, Mastodon | Urbit, Farcaster, clients Nostr | Une **identité dérivée de votre clé SSH** (Y-Level : SSH, IPFS, Ğ1 et Nostr sont la même clé) et un **pare-feu social NIP-42 à deux niveaux** : seuls les membres du cercle (hébergés, N¹, N²) publient, et tout contenu non public exige d'être authentifié dans le cercle. |
+| **Sauvegarde et reprise** | Sauvegarde cloud payante | Syncthing, Tahoe-LAFS | Des **amis réciproques hébergent votre copie chiffrée** (ils ne peuvent rien lire), et restituent **d'eux-mêmes** après une panne : une **carte secrète** suffit à retrouver compte, contacts et fichiers sur une autre station. |
+| **Communication entre machines** | Tailscale, ZeroTier, ngrok | libp2p, Iroh | Tunnels **« DRAGON »** natifs `/x/<service>-<PeerID>` sur le maillage libp2p, sans ouvrir de port sur la box ; une politique réglée par le Capitaine dit qui peut ouvrir quel service. |
+| **Économie et monnaie** | OpenCollective, Stripe | DAO, Lightning | Comptabilité coopérative adossée à la **monnaie libre Ğ1** (Duniter v2s) : **règle des 3×1/3**, registre Ğ1-N² signé et chaîné, **micro-dons sur réaction Nostr `+N`**. Le Ẑen est une unité comptable de la coopérative, pas une monnaie publique. |
+
+Ce qu'on ne prétend pas : astroportd n'est pas un réseau social grand public, ni un service hébergé. C'est **votre** station,
+avec ses [limites connues](#8-état-du-projet-et-limites-connues).
 
 ---
 
@@ -63,9 +99,9 @@ astroportd multipass create capitaine@exemple.org --captain
 
 # 4. Démarrer
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
-# → http://127.0.0.1:8080 : l'application web ; la même adresse sert le relai Nostr
+# → http://127.0.0.1:18080 : l'application web ; la même adresse sert le relai Nostr
 
-# 5. Les membres s'inscrivent sur http://127.0.0.1:8080/register (ou : astroportd multipass create <email>)
+# 5. Les membres s'inscrivent sur http://127.0.0.1:18080/register (ou : astroportd multipass create <email>)
 ```
 
 `astroportd init --mode origin` ou `--mode zen --swarm-key ./swarm.key` s'utilisent aussi sans questions (`--yes`).
@@ -95,6 +131,26 @@ d'Astroport.ONE) :
 
 Les secrets ne sont affichés qu'**une seule fois**. [qo-op.com](https://qo-op.com) reste une option (une station ORIGIN
 publique où s'inscrire), pas une obligation.
+
+### La carte secrète : retrouver son compte après une panne, ou changer de station
+
+La carte d'identité comprend une **carte secrète** (`astro-secret:v1|…`, avec son **QR imprimable**) : SALT, PEPPER, la formule de
+clé et l'empreinte de la constellation. **Qui la possède a la clé du compte** : imprimez-la, gardez-la hors ligne.
+
+- **Rétablir** : `/restore` sur la nouvelle station (scan du QR ou collage), ou `astroportd multipass recover -` au terminal.
+  Même clé, donc mêmes amis, contacts et fichiers ; un **nouveau PASS** est généré (l'ancien n'est pas récupérable).
+- **Sans rien demander à vos amis** : chaque nuit, votre station range chez l'ami qui héberge votre sauvegarde vos fichiers
+  privés **et le manifeste de votre uCloud**. Après un rétablissement, la nouvelle station republie votre DID avec **sa**
+  station d'accueil, prévient vos proches (leurs stations mettent à jour votre adresse), et **leurs stations renvoient d'elles-mêmes**
+  le manifeste, puis les fichiers sauvegardés ou partagés. Les fichiers qui manquent encore sont redemandés par leur CID.
+- **Déménager** (l'ancienne station tourne encore) : la nouvelle écrit à l'ancienne un message `moved`, signé de la clé du
+  compte ; l'ancienne cesse d'héberger ce compte et met son dossier de côté (`.moved/`, jamais effacé).
+- **Garde-fous** : la carte d'une autre constellation, ou dont les secrets ne redonnent pas la clé annoncée, est refusée avant
+  toute écriture ; aucun événement de naissance n'est republié (il écraserait votre vraie liste d'amis) ; aucun manifeste vide
+  n'est publié tant que la restauration dure.
+- **Réafficher la carte** : `astroportd multipass card <email> [--svg]`.
+
+Pas à pas : [guide, étape 5](docs/GUIDE.md#etape-5).
 
 ---
 
@@ -288,7 +344,7 @@ solaire). Code de sortie `1` si une vérification échoue.
 ### Démarrer une station
 
 ```bash
-# Essai local, sans domaine (HTTP en clair sur 127.0.0.1:8080) :
+# Essai local, sans domaine (HTTP en clair sur 127.0.0.1:18080) :
 astroportd serve --db uplanet.db --blobs blobs
 
 # Station publique : HTTPS automatique, maillage P2P, BRO, soldes Ğ1 :
@@ -441,9 +497,8 @@ Livré et testé : relai, uCloud chiffré avec manifeste rejouable et miniatures
 
 À connaître :
 - **MULTIPASS** : la création reprend l'essentiel de `make_NOSTRCARD.sh`, mais **pas** le découpage SSSS 2-sur-3 de
-  DISCO chiffré vers le Capitaine, les QR codes, l'import de la clé IPNS dans Kubo, l'envoi du zine par email, la
-  ZenCard ni la primo-transaction ; retrouver un compte repose sur le SALT/PEPPER remis une fois au titulaire (et le
-  `nsec`) ;
+  DISCO (remplacé par la **carte secrète** : SALT/PEPPER en QR), l'import de la clé IPNS dans Kubo, l'envoi du zine par
+  email, la ZenCard ni la primo-transaction. Retrouver un compte repose donc sur cette carte, remise **une seule fois** ;
 - **une station = une constellation** (une `swarm.key`, ou aucune). Raccorder une même station à ORIGIN **et** à ẐEN en
   parallèle est *prévu* (deux réseaux P2P parallèles, même identité Y-Level, chaque MULTIPASS rattaché à une
   constellation), pas encore disponible ;
@@ -456,7 +511,7 @@ Livré et testé : relai, uCloud chiffré avec manifeste rejouable et miniatures
 - **bibliothèque** (`src/library.rs`, écran `#/library`) : « ce jour-là » (jour du navigateur), chronologie par mois chargée à la demande, recherche à filtres (nom et description, type, personne, dates, zone) paginée par curseur, doublons exacts (SHA-256 du clair) et visuels (dHash 64 bits calculé avec la miniature, distance de Hamming ≤ 6, rattrapé la nuit pour les photos déjà là) avec suppression **confirmée**, et `POST /api/v1/ucloud/have` pour qu'un client n'envoie que ce qui manque. Tout est par compte : un contenu présent chez un autre compte ne se devine jamais.
 - **santé du stockage et des tâches** : à 20h12, `src/integrity.rs` relit par lots les blobs référencés (absents ou corrompus signalés au Capitaine, rien n'est réparé ni supprimé) ; Options › File de traitement montre les tâches en attente, en cours et abandonnées, avec relance.
 - **code identique entre stations** (`src/build_attest.rs`) : chaque station hache son binaire et publie, toutes les 6 h, une attestation signée par son NODE (kind 30853 : version, SHA-256, cible, PeerID). La carte *Constellation* de l'écran du Capitaine compare chaque pair au binaire local : identique, empreinte différente (même version et même cible : à vérifier), autre version, autre plateforme ou non attesté. L'attestation est déclarative : elle repère une dérive honnête, pas une station qui mentirait.
-- **sauvegarde privée** (`src/private_backup.rs`) : un MULTIPASS peut faire héberger ses fichiers non partagés et ses contacts, chiffrés, chez un ami **qui l'accepte** et fixe le volume (compté dans son quota). Envoi une fois par nuit à 20h12, retrait après 7 jours d'un blob dont le fichier a disparu. La restauration n'est pas encore automatisée ;
+- **sauvegarde privée** (`src/private_backup.rs`) : un MULTIPASS peut faire héberger ses fichiers non partagés et ses contacts, chiffrés, chez un ami **qui l'accepte** et fixe le volume (compté dans son quota). Envoi une fois par nuit à 20h12, retrait après 7 jours d'un blob dont le fichier a disparu. Le **manifeste** de l'uCloud part chez l'ami avec les fichiers. **Restauration automatique** (carte secrète, voir plus haut) : l'ami renvoie sans rien faire, mais seulement s'il est **joignable** et **réciproque** ; un fichier qu'un autre ami vous avait envoyé revient seulement si cet ami est en ligne. Sans manifeste retrouvé en 3 jours, le compte repart à neuf ;
 - le registre du capital (**ẐEN Capex**) est projeté depuis `.assets[]` du DID du NODE (kind 30800, `d` = PeerID) :
   l'instantané le plus récent remplace le précédent, identique en temps réel et au replay ;
 

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0b5fff">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<title>Rétablir mon compte</title>
+<link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/register.css">
+</head>
+<body>
+<a class="skip" href="#main" data-t="skip">Aller au contenu</a>
+<main id="main">
+  <h1 data-t="title">Rétablir mon compte ici</h1>
+  <p class="lead" data-t="lead">Votre ancienne station est en panne, ou vous déménagez ? Scannez ou collez la <strong>carte secrète</strong> de votre MULTIPASS : cette station devient votre nouvelle maison. Vos amis, vos contacts et vos fichiers reviennent d’eux-mêmes, sans que personne n’ait rien à faire.</p>
+  <p id="info" class="muted" role="status"></p>
+
+  <form id="f" autocomplete="off">
+    <label for="card" data-t="label">Carte secrète</label>
+    <textarea id="card" name="card" rows="4" required spellcheck="false" autocapitalize="off" autocorrect="off" maxlength="600" placeholder="astro-secret:v1|…"></textarea>
+    <p class="row">
+      <button id="scan" type="button" hidden data-t="scan">Scanner le QR avec la caméra</button>
+      <button id="go" class="primary" data-t="go">Rétablir mon compte</button>
+    </p>
+    <video id="cam" playsinline muted hidden></video>
+    <p id="err" class="err" role="alert"></p>
+  </form>
+
+  <section id="done" hidden aria-labelledby="done-t">
+    <h2 id="done-t" tabindex="-1" data-t="done">Votre compte est rétabli</h2>
+    <p class="warn" data-t="after"><strong>Notez votre nouveau code PASS</strong> : l’ancien ne peut pas être retrouvé. Ne modifiez rien tant que la restauration n’est pas terminée : la station retrouve vos amis, puis vos fichiers, qui reviennent de chez eux au fil des heures. Vous serez prévenu.</p>
+    <dl id="out"></dl>
+    <p class="row"><button id="open" type="button" class="primary" data-t="open">Ouvrir mon espace</button></p>
+  </section>
+</main>
+<script src="/ui/restore.js"></script>
+</body>
+</html>

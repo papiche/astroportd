@@ -2,7 +2,7 @@
 
 Ce document explique **ce qui se passe sous le capot** quand on démarre une station. Pour le pas-à-pas, voir le [guide](GUIDE.md) ([version illustrée](index.html)).
 
-> **Comment lire ce document.** Chaque point est marqué : **astroportd** (implémenté dans ce dépôt et testé) ou **Astroport.ONE** (hérité : fait par les scripts bash du dépôt [papiche/Astroport.ONE](https://github.com/papiche/Astroport.ONE), pas encore réécrit en Rust). Les deux fonctionnent ensemble ; astroportd 0.2.0-beta est une **préversion**.
+> **Comment lire ce document.** Chaque point est marqué : **astroportd** (implémenté dans ce dépôt et testé) ou **Astroport.ONE** (hérité : fait par les scripts bash du dépôt [papiche/Astroport.ONE](https://github.com/papiche/Astroport.ONE), pas encore réécrit en Rust). Les deux fonctionnent ensemble ; astroportd 0.4.0-beta est une **préversion**.
 
 ![Individus, Astroports et territoire](img/individu-astroport-territoire.svg)
 
@@ -202,7 +202,7 @@ L'écran **Réplication** de l'interface montre, pour vos derniers événements 
 
 ## 7. Résumé : qui fait quoi
 
-| Fonction | astroportd 0.2.0-beta | Astroport.ONE |
+| Fonction | astroportd 0.4.0-beta | Astroport.ONE |
 |---|:---:|:---:|
 | Rituel Y-Level (SSH → IPFS → Ğ1 → Nostr) | ✔ `init`, `ylevel` | ✔ `Ylevel.sh` |
 | Réseau privé `swarm.key` (ẐEN), réseau ouvert (ORIGIN) | ✔ | ✔ |

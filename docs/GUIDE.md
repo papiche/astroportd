@@ -1,6 +1,6 @@
 # Guide pas à pas : démarrer sa station astroportd
 
-> Version texte du [guide illustré](index.html). Préversion **0.2.0-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
+> Version texte du [guide illustré](index.html). Préversion **0.4.0-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
 
 **Sommaire** : [0. Avant de commencer](#etape-0) · [1. Installer astroportd](#etape-1) · [2. Activer Y-Level ](#etape-2) · [3. Choisir sa constellation ](#etape-3) · [4. Démarrer la station](#etape-4) · [5. Créer mon MULTIPASS](#etape-5) · [6. Vérifier que tout va bien](#etape-6) · [7. Entrer dans l'interface web](#etape-7) · [8. FaceCloud ](#etape-8) · [9. Relier sa station aux autres Capitaines](#etape-9) · [10. En cas de problème](#etape-10)
 
@@ -33,7 +33,7 @@ date       # l'année doit être 2026 ou plus
 
 Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.
 
-> **À savoir.** astroportd est en **préversion 0.2.0-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
+> **À savoir.** astroportd est en **préversion 0.4.0-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
 
 Vous aurez aussi besoin d'un compte **MULTIPASS** (votre identité Nostr) : astroportd le crée pour vous à l'étape 5.
 
@@ -49,7 +49,7 @@ Le plus simple : l'installeur. Il choisit le bon fichier pour votre machine et *
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 ```
 
-Options utiles : `--version v0.2.0-beta`, `--static` (binaire statique, x86_64), `--prefix DIR`, `--no-init`, `--yes`. Ensuite :
+Options utiles : `--version v0.4.0-beta`, `--static` (binaire statique, x86_64), `--prefix DIR`, `--no-init`, `--yes`. Ensuite :
 
 ```bash
 astroportd --version
@@ -169,7 +169,7 @@ Il n'y a pas d'assistant web pour choisir sa constellation : ce choix engage une
 
 ```bash
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
-# → http://127.0.0.1:8080
+# → http://127.0.0.1:18080
 ```
 
 **Station publique** (HTTPS automatique, réseau P2P, 20h12 solaire) — ajoutez vos coordonnées, elles règlent l'entretien de nuit sur le soleil :
@@ -194,7 +194,7 @@ journalctl --user -u astroportd -f   # suivre les journaux
 
 ### 🌐 Navigateur (Web)
 
-Rien à cliquer pour démarrer : c'est le terminal qui lance le programme. Quand il tourne, ouvrez [http://127.0.0.1:8080](http://127.0.0.1:8080) (essai local) ou `https://votre-domaine/`.
+Rien à cliquer pour démarrer : c'est le terminal qui lance le programme. Quand il tourne, ouvrez [http://127.0.0.1:18080](http://127.0.0.1:18080) (essai local) ou `https://votre-domaine/`.
 
 Sur une **même adresse**, un navigateur reçoit l'application, et un client Nostr reçoit le relai de la station.
 
@@ -247,6 +247,43 @@ L'inscription web est **ouverte par défaut**, avec des garde-fous réglables au
 
 > **À savoir.** Sur une station publique, pensez à fermer l'inscription (`--no-register`) quand vos membres sont inscrits.
 
+### 🔑 La carte secrète : retrouver son compte si la station tombe en panne
+
+À la création, la carte d'identité contient aussi une **carte secrète** : une ligne `astro-secret:v1|…` (votre email, SALT, PEPPER, la formule de clé et l'empreinte de la constellation) et son **QR**. **Qui la possède a la clé de votre compte** : imprimez-la, gardez-la hors ligne, ne la montrez à personne.
+
+Elle sert à **rétablir le même compte sur une autre station de la même constellation** : station détruite, ou déménagement chez un Capitaine plus proche de chez vous. Même clé, donc mêmes amis, mêmes contacts, mêmes fichiers.
+
+**Ce qui se passe, sans que vos amis aient quoi que ce soit à faire.** Chaque nuit, votre station range chez l'ami qui héberge votre sauvegarde vos fichiers privés **et le manifeste de votre uCloud** (la liste de vos fichiers et leurs clés, chiffrée). Après un rétablissement, la nouvelle station :
+
+1. retrouve votre liste d'amis et vos événements Nostr par le crawl ;
+2. **annonce qu'elle est votre nouvelle maison** (elle republie votre DID avec sa station d'accueil, et prévient chaque proche) : leurs stations mettent à jour votre adresse d'elles-mêmes ;
+3. demande à chaque proche ce qu'il détient pour vous : leurs stations **renvoient d'elles-mêmes** le manifeste d'abord, puis les fichiers sauvegardés et ceux que vous leur aviez partagés ;
+4. applique le manifeste : votre uCloud et son trousseau reviennent, les fichiers au fil des heures ; l'accord de sauvegarde est rétabli, rien n'est renvoyé inutilement ;
+5. redemande par leur identifiant les fichiers qui manquent encore (ceux que d'autres amis vous avaient envoyés) : un ami ne rend que ce qu'il a lui-même partagé avec vous.
+
+Vous êtes prévenu dans votre messagerie BRO quand c'est fait. Si rien n'est retrouvé en 3 jours, le compte repart à neuf (vos amis et contacts restent les vôtres) et le Capitaine est alerté.
+
+### 🖥️ Terminal (CLI)
+
+```bash
+astroportd multipass card alice@exemple.org            # réaffiche la carte secrète d'un compte hébergé ici
+astroportd multipass card alice@exemple.org --svg > carte.svg   # …en QR à imprimer
+# Sur la NOUVELLE station (carte lue sur l'entrée standard : un argument se lirait dans `ps`) :
+astroportd multipass recover - --relay wss://relais.ami.example < carte.txt
+```
+
+`--relay` (répétable) rapatrie tout de suite les événements du compte ; sans lui, le démon (`astroportd serve`) s'en charge au prochain crawl. Un **nouveau code PASS** est généré et affiché une fois : l'ancien est tiré au hasard et n'est pas récupérable.
+
+### 🌐 Navigateur (Web)
+
+Ouvrez `https://votre-nouvelle-station/restore`, **scannez le QR** (si votre navigateur sait le lire) ou **collez la carte**, puis **« Rétablir mon compte »**. Notez le nouveau PASS, puis **« Ouvrir mon espace »**.
+
+> **À savoir.** La station refuse la carte d'une autre constellation, et toute carte dont les secrets ne redonnent pas la clé annoncée (faute de frappe). **Ne modifiez rien tant que la restauration n'est pas terminée** : tant qu'elle dure, la station ne publie pas de manifeste (un manifeste vide remplacerait celui que vos amis détiennent).
+>
+> **Déménagement volontaire.** Si l'ancienne station tourne encore, la nouvelle lui écrit un message `moved`, signé de la clé de votre compte : l'ancienne cesse d'héberger ce compte (plus de connexion ni de sauvegarde pour lui) et met son dossier de côté dans `nostr/.moved/`, sans rien effacer. Si elle est détruite, il n'y a personne à prévenir.
+>
+> **Limites actuelles.** (1) Un fichier qu'un ami vous avait envoyé revient seulement si cet ami est joignable. (2) Seuls les amis réciproques participent. (3) L'ancienne station doit être à jour pour comprendre `moved` ; sinon arrêtez-la.
+
 <a id="etape-6"></a>
 
 ## Étape 6 — Vérifier que tout va bien
@@ -258,7 +295,7 @@ Trois vérifications, de la plus complète à la plus rapide. Aucune ne modifie 
 ```bash
 astroportd doctor --db ~/.zen/astroportd/uplanet.db --game-dir ~/.zen/game
 astroportd ylevel --verify
-curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:18080/health
 ```
 
 `doctor` contrôle l'identité, les permissions `0600` des secrets, la base, les certificats HTTPS et l'horloge (il affiche le prochain 20h12 solaire). Code de sortie `1` si une vérification échoue.
@@ -266,14 +303,14 @@ curl http://127.0.0.1:8080/health
 Pour voir le relai Nostr de la station :
 
 ```bash
-curl -H 'Accept: application/nostr+json' http://127.0.0.1:8080/
+curl -H 'Accept: application/nostr+json' http://127.0.0.1:18080/
 ```
 
 ### 🌐 Navigateur (Web)
 
-Ouvrez `http://127.0.0.1:8080/health` : une page courte indique l'état de chaque partie de la station (OK ou en panne).
+Ouvrez `http://127.0.0.1:18080/health` : une page courte indique l'état de chaque partie de la station (OK ou en panne).
 
-Si l'application se charge sur `http://127.0.0.1:8080/`, c'est que le serveur web fonctionne.
+Si l'application se charge sur `http://127.0.0.1:18080/`, c'est que le serveur web fonctionne.
 
 <a id="etape-7"></a>
 
@@ -525,10 +562,10 @@ Deux façons de s'en servir, de la plus simple à la plus aventureuse.
 pkg install curl openssh            # ssh-keygen sert au rituel Y-Level
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | sh
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs \
-  --game-dir ~/.zen/game --http-listen 127.0.0.1:8080
+  --game-dir ~/.zen/game --http-listen 127.0.0.1:18080
 ```
 
-Puis ouvrez `http://127.0.0.1:8080` dans le navigateur du téléphone (« localhost » est un contexte sécurisé : l'application s'installe) et, dans votre gestionnaire de fichiers, ajoutez un serveur WebDAV `http://127.0.0.1:8080/dav`. Le téléphone devient alors une station : ses photos sont chiffrées sur place, et vos proches les voient par le maillage.
+Puis ouvrez `http://127.0.0.1:18080` dans le navigateur du téléphone (« localhost » est un contexte sécurisé : l'application s'installe) et, dans votre gestionnaire de fichiers, ajoutez un serveur WebDAV `http://127.0.0.1:18080/dav`. Le téléphone devient alors une station : ses photos sont chiffrées sur place, et vos proches les voient par le maillage.
 
 Limites à connaître (non vérifiées sur un appareil réel) :
 - **DNS** : un binaire statique musl lit `/etc/resolv.conf`, que Android n'a pas. Si la station n'arrive pas à joindre un nom d'hôte (nœuds Duniter, pairs), lancez-la dans `termux-chroot` (paquet `proot`), qui fournit ce fichier.

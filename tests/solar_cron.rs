@@ -53,6 +53,7 @@ async fn nightly(dir: &std::path::Path, db: Arc<Db>, sink: Arc<Sink>, dream: Hoo
         integrity: None,
         publisher: Some(sink),
         activity: None,
+        pause: std::time::Duration::ZERO,
     }
 }
 
@@ -81,7 +82,7 @@ async fn the_solar_night_runs_every_step_once_per_solar_day() {
 
     let report = n.run_night(monday_night, lon).await;
     assert!(report.all_ok(), "{:?}", report.steps);
-    assert_eq!(report.steps.iter().map(|s| s.name).collect::<Vec<_>>(), ["rtc", "snapshot", "purge", "rêve", "sauvegarde", "intégrité", "clôture", "santé"]);
+    assert_eq!(report.steps.iter().map(|s| s.name).collect::<Vec<_>>(), ["rtc", "snapshot", "checkpoint", "purge", "rêve", "sauvegarde", "intégrité", "clôture", "santé"]);
 
     // 3. Snapshot : un fichier SQLite lisible qui contient la loyer et le verrou posé avant le travail.
     let snap = dir.join("snapshots").join(format!("uplanet-{}.db", report.date));

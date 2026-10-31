@@ -12,7 +12,20 @@
 //! supprimés ou remplacés chez le propriétaire sont retirés de chez l'ami au bout de 7 jours (nettoyage de la même nuit),
 //! pour qu'une suppression accidentelle reste rattrapable.
 //!
-//! La restauration d'un compte depuis ces blobs n'est pas encore automatisée.
+//! **Restauration** (station détruite, ou déménagement) : le membre rétablit son compte sur une autre station depuis sa carte
+//! secrète ([`astro_lifecycle::multipass::SecretCard`]), et tout se passe ensuite **sans aucune action de ses amis** :
+//!
+//! - l'envoi nocturne range chez l'ami, avec les fichiers privés, le **blob du manifeste** (VFS + trousseau, chiffré) : sans lui
+//!   l'événement 30078 retrouvé sur les relais ne désignerait rien ;
+//! - la nouvelle station annonce sa **station d'accueil** en republiant le DID du membre (`home_station`, répliqué par le crawl)
+//!   et envoie à chaque proche un message `restore` ; la station de l'ami met à jour la station d'accueil, puis renvoie d'elle-même
+//!   ce qu'elle détient : le manifeste d'abord, puis les fichiers sauvegardés et ceux que le membre lui avait partagés (`restored`) ;
+//! - le manifeste rétabli, le VFS et le trousseau reviennent ; les fichiers qui manquent encore (reçus d'autres amis) sont redemandés
+//!   par leur CID, qu'un ami ne rend qu'à qui le connaît et seulement s'il l'a partagé ;
+//! - tant que la restauration est en cours, aucun manifeste vide n'est publié ([`astro_dav::manifest::restoring`]) ;
+//! - **déménagement** : la nouvelle station écrit à l'ancienne Home un message `moved`, signé de la clé du compte (le seul message
+//!   qu'un compte s'adresse à lui-même). L'ancienne station, si elle tourne encore, cesse d'héberger ce compte : il passe à
+//!   « non hébergé », pointe vers la nouvelle Home, et son dossier est mis de côté dans `.moved/` (rien n'est effacé).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,15 +34,17 @@ use astro_core::{ActivityBus, Audience};
 use astro_crypto::KeySource;
 use astro_crypto::nip59::{self, Rumor, gift_wrap};
 use astro_dav::adopt::{adopt_backup_blob, sender_label};
+use astro_dav::manifest::{self, Pointer};
 use astro_dav::{BlobStore, ManifestPublisher};
 use astro_db::Db;
 use astro_db::events::row_to_event;
 use astro_facecloud::Outbox;
-use astro_nostr_proto::{Event, kind};
+use astro_nostr_proto::{Event, UnsignedEvent, kind};
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
+use crate::register::PublishFn;
 use crate::share_inbox::Prefetch;
 use crate::sharing::Sharing;
 use crate::upload_worker::Notify;
@@ -40,10 +55,23 @@ const CLAIM: &str = "backup_inbox";
 const TRIES: &str = "backup_inbox_tries";
 /// Fichiers envoyés au plus par passage et par compte.
 const PER_PASS: usize = 100;
+/// Pause entre deux envois NIP-59 vers une autre station.
+const SEND_PACE: std::time::Duration = std::time::Duration::from_millis(250);
 const LOOKBACK_SECS: i64 = 30 * 24 * 3600;
 const BATCH: usize = 50;
 const MAX_TRIES: u32 = 12;
 const MAX_BYTES: u64 = 1 << 30;
+/// Une demande de restauration est renouvelée toutes les 6 h tant que le manifeste n'est pas rétabli.
+const RESTORE_RETRY_SECS: i64 = 6 * 3600;
+/// Sans manifeste retrouvé au bout de 3 jours, le compte repart à neuf : la publication de manifestes est débloquée.
+const RESTORE_GIVE_UP_SECS: i64 = 3 * 24 * 3600;
+/// Fichiers renvoyés à un propriétaire par passage, et CID redemandés par message.
+const RESTORE_PER_PASS: usize = 40;
+const RESTORE_WANT: usize = 200;
+/// Fichiers qui manquent encore après le manifeste : au plus 4 relances espacées de 6 h.
+const RESTORE_MISSING_ROUNDS: u32 = 4;
+/// Tâches de renvoi côté ami : `kv(scope, "<ami>:<propriétaire>")`.
+const JOB: &str = "backup_restore_job";
 /// Délai avant de retirer chez l'ami le blob d'un fichier disparu chez le propriétaire (suppression ou remplacement).
 pub const GRACE_SECS: i64 = 7 * 24 * 3600;
 
@@ -57,6 +85,16 @@ fn backoff(tries: u32) -> i64 {
 
 fn tag<'a>(tags: &'a [Vec<String>], name: &str) -> Option<&'a str> {
     tags.iter().find(|t| t.first().map(String::as_str) == Some(name)).and_then(|t| t.get(1)).map(String::as_str)
+}
+
+/// Plus aucun CID prioritaire à renvoyer dans cette tâche ?
+fn rest_is_empty(job: &Value) -> bool {
+    job["priority"].as_array().is_none_or(Vec::is_empty)
+}
+
+/// `<PeerID>:<NODE_HEX>` (même règle que le projecteur du DID).
+fn valid_home(h: &str) -> bool {
+    h.split_once(':').is_some_and(|(peer, node)| (10..=64).contains(&peer.len()) && peer.bytes().all(|b| b.is_ascii_alphanumeric()) && is_hex64(node))
 }
 
 fn is_hex64(s: &str) -> bool {
@@ -85,6 +123,11 @@ pub struct PrivateBackup<O: Outbox, B: BlobStore> {
     sharing: Arc<Sharing<O>>,
     publisher: Option<ManifestPublisher>,
     station_peer: Option<String>,
+    /// `<PeerID>:<NODE_HEX>` de cette station, annoncé dans le DID d'un compte rétabli ici.
+    home: Option<String>,
+    publish: Option<PublishFn>,
+    /// Dossier des comptes (`~/.zen/game/nostr`) : un compte déménagé y est mis de côté dans `.moved/`.
+    accounts_dir: Option<std::path::PathBuf>,
     activity: ActivityBus,
     notify: Option<Notify>,
     prefetch: Option<Prefetch>,
@@ -93,13 +136,26 @@ pub struct PrivateBackup<O: Outbox, B: BlobStore> {
 impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
     /// `sharing` fournit la liste des proches réciproques ; `station_peer` est indiqué à l'hébergeur pour rapatrier les blobs.
     pub fn new(db: Arc<Db>, keys: Arc<dyn KeySource>, outbox: Arc<O>, blobs: Arc<B>, sharing: Arc<Sharing<O>>, activity: ActivityBus) -> Self {
-        Self { db, keys, outbox, blobs, sharing, publisher: None, station_peer: None, activity, notify: None, prefetch: None }
+        Self { db, keys, outbox, blobs, sharing, publisher: None, station_peer: None, home: None, publish: None, accounts_dir: None, activity, notify: None, prefetch: None }
     }
 
     /// Republie le manifeste de l'hébergeur après chaque rangement, et indique la station aux amis.
     pub fn with_station(mut self, publisher: Option<ManifestPublisher>, station_peer: Option<String>) -> Self {
         self.publisher = publisher;
         self.station_peer = station_peer;
+        self
+    }
+
+    /// Station d'accueil annoncée (`<PeerID>:<NODE_HEX>`) et publication des événements signés, pour la restauration d'un compte.
+    pub fn with_home(mut self, home: Option<String>, publish: Option<PublishFn>) -> Self {
+        self.home = home;
+        self.publish = publish;
+        self
+    }
+
+    /// Dossier des comptes, pour mettre de côté celui d'un membre qui a déménagé.
+    pub fn with_accounts_dir(mut self, dir: Option<std::path::PathBuf>) -> Self {
+        self.accounts_dir = dir;
         self
     }
 
@@ -346,7 +402,9 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
     /// « disparu » ; s'il le reste [`GRACE_SECS`], il est retiré de chez l'ami. Un fichier revenu efface la marque.
     /// Rend le nombre de blobs retirés.
     pub async fn gc_night(&self, at: i64) -> usize {
-        const GONE: &str = "NOT EXISTS (SELECT 1 FROM ucloud_entries e WHERE e.owner_hex = backup_items.owner_hex AND e.cid = backup_items.cid AND e.path NOT LIKE '/Sauvegardes/%')";
+        // Le manifeste courant n'est pas une entrée du VFS : il ne doit jamais être pris pour un fichier disparu.
+        const GONE: &str = "(NOT EXISTS (SELECT 1 FROM ucloud_entries e WHERE e.owner_hex = backup_items.owner_hex AND e.cid = backup_items.cid AND e.path NOT LIKE '/Sauvegardes/%') \
+                            AND backup_items.cid <> COALESCE((SELECT k.value FROM kv k WHERE k.scope = 'ucloud_manifest_cid' AND k.key = backup_items.owner_hex), ''))";
         let pacts: Vec<(String, String)> = self
             .db
             .readers()
@@ -423,6 +481,29 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
             .unwrap_or_default()
     }
 
+    /// Le blob du manifeste uCloud de `owner` (son VFS et son trousseau, chiffrés), s'il n'est pas encore chez `host`.
+    /// Sans lui, un compte dont la station a brûlé retrouverait l'événement 30078 mais pas son contenu.
+    async fn manifest_item(&self, owner: &str, host: &str) -> Option<(String, u64)> {
+        let (o, h) = (owner.to_owned(), host.to_owned());
+        let cid: String = self
+            .db
+            .readers()
+            .read(move |c| {
+                Ok(c.query_row(
+                    "SELECT k.value FROM kv k WHERE k.scope = 'ucloud_manifest_cid' AND k.key = ?1 \
+                       AND NOT EXISTS (SELECT 1 FROM backup_items b WHERE b.owner_hex = ?1 AND b.host_hex = ?2 AND b.cid = k.value)",
+                    [o, h],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?)
+            })
+            .await
+            .ok()
+            .flatten()?;
+        let (_, size) = self.blobs.open(&cid).await.ok()?;
+        Some((cid, size))
+    }
+
     async fn record_item(&self, owner: &str, host: &str, cid: &str, size: u64) -> Result<(), String> {
         self.db
             .writer()
@@ -454,18 +535,25 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
             let label = self.label_of(&owner).await;
             let mut used = self.used(&owner, &host).await;
             let mut stored_here = false;
-            for (cid, size) in self.pending_files(&owner, &host, PER_PASS).await {
+            let mut todo: Vec<(String, u64)> = self.manifest_item(&owner, &host).await.into_iter().collect();
+            todo.extend(self.pending_files(&owner, &host, PER_PASS).await);
+            for (cid, size) in todo {
                 if used.saturating_add(size) > quota {
                     continue; // trop gros pour le volume restant : les plus petits peuvent encore passer
                 }
                 let result = if local {
                     adopt_backup_blob(&self.db, &host, &owner, &label, &cid, size).await.map(|_| ()).map_err(|e| e.to_string())
                 } else {
+                    // Compromis assumé : la déduplication zéro-copie (CID = SHA-256 du blob chiffré) prévaut sur l'anonymisation
+                    // de la taille, qui reste visible de l'hébergeur.
                     let mut tags = vec![vec!["cid".to_owned(), cid.clone()], vec!["size".into(), size.to_string()], vec!["op".into(), "item".into()]];
                     if let Some(peer) = &self.station_peer {
                         tags.push(vec!["station".into(), peer.clone()]);
                     }
-                    self.send_to(&owner, &host, kind::FILE, tags, &format!("ipfs://{cid}")).await
+                    let sent = self.send_to(&owner, &host, kind::FILE, tags, &format!("ipfs://{cid}")).await;
+                    // Pas de rafale de gift wraps : un premier envoi de milliers de fichiers ne doit pas saturer la box ni les relais.
+                    tokio::time::sleep(SEND_PACE).await;
+                    sent
                 };
                 match result {
                     Ok(()) => {
@@ -543,6 +631,13 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
             return;
         };
         let (sender, rumor) = (opened.sender, opened.rumor);
+        // Le seul message qu'un compte s'adresse à lui-même : « j'habite ailleurs ». La signature est la sienne, donc c'est lui.
+        if sender == me && tag(&rumor.tags, "t") == Some(TAG) && tag(&rumor.tags, "op") == Some("moved") {
+            self.moved_away(me, &rumor, at).await;
+            self.claim(&wrap.id, at).await;
+            stats.control += 1;
+            return;
+        }
         if sender == me || tag(&rumor.tags, "t") != Some(TAG) {
             self.claim(&wrap.id, at).await; // pas une sauvegarde : le partage entre amis s'en occupe
             return;
@@ -608,6 +703,14 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
             }
             // Un blob chiffré à ranger.
             Some("item") if rumor.kind == kind::FILE => self.store_item(me, &sender, &wrap.id, &rumor, at, stats).await,
+            // Mon ami, rétabli sur une autre station, demande ce que je détiens pour lui.
+            Some("restore") => {
+                self.accept_restore(me, &sender, &rumor, at).await;
+                self.claim(&wrap.id, at).await;
+                stats.control += 1;
+            }
+            // Mon ami me renvoie ce que je lui avais confié (ou partagé).
+            Some("restored") if rumor.kind == kind::FILE => self.store_restored(me, &sender, &wrap.id, &rumor, at, stats).await,
             _ => {
                 self.claim(&wrap.id, at).await;
                 stats.ignored += 1;
@@ -615,23 +718,9 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
         }
     }
 
-    async fn store_item(&self, me: &str, sender: &str, wrap_id: &str, rumor: &Rumor, at: i64, stats: &mut BackupStats) {
-        let (Some(cid), Some(size)) = (tag(&rumor.tags, "cid"), tag(&rumor.tags, "size").and_then(|s| s.parse::<u64>().ok())) else {
-            self.claim(wrap_id, at).await;
-            stats.ignored += 1;
-            return;
-        };
-        let (m, s) = (me.to_owned(), sender.to_owned());
-        let pact: Option<(String, i64)> = self.db.readers().read(move |c| Ok(c.query_row("SELECT status, quota_bytes FROM backup_pacts WHERE owner_hex = ?1 AND host_hex = ?2", [&s, &m], |r| Ok((r.get(0)?, r.get(1)?))).optional()?)).await.ok().flatten();
-        let quota = match pact {
-            Some((status, q)) if status == "accepted" => u64::try_from(q).unwrap_or(0),
-            _ => 0,
-        };
-        if !astro_dav::blob::is_cid(cid) || size > MAX_BYTES || self.used(sender, me).await.saturating_add(size) > quota {
-            self.claim(wrap_id, at).await; // hors accord ou volume dépassé : refusé, sans bruit
-            stats.ignored += 1;
-            return;
-        }
+    /// Le blob `cid` est-il disponible ici ? Sinon le rapatrie depuis la station indiquée par l'expéditeur ; en cas d'échec,
+    /// remet le message à plus tard (reculade exponentielle), ou l'écarte après [`MAX_TRIES`] essais.
+    async fn ensure_blob(&self, cid: &str, rumor: &Rumor, wrap_id: &str, at: i64, stats: &mut BackupStats) -> bool {
         if self.blobs.open(cid).await.is_err() {
             if let (Some(peer), Some(prefetch)) = (tag(&rumor.tags, "station"), &self.prefetch) {
                 let _ = prefetch(cid.to_owned(), peer.to_owned()).await;
@@ -651,6 +740,29 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
                     .await;
                 stats.deferred += 1;
             }
+            return false;
+        }
+        true
+    }
+
+    async fn store_item(&self, me: &str, sender: &str, wrap_id: &str, rumor: &Rumor, at: i64, stats: &mut BackupStats) {
+        let (Some(cid), Some(size)) = (tag(&rumor.tags, "cid"), tag(&rumor.tags, "size").and_then(|s| s.parse::<u64>().ok())) else {
+            self.claim(wrap_id, at).await;
+            stats.ignored += 1;
+            return;
+        };
+        let (m, s) = (me.to_owned(), sender.to_owned());
+        let pact: Option<(String, i64)> = self.db.readers().read(move |c| Ok(c.query_row("SELECT status, quota_bytes FROM backup_pacts WHERE owner_hex = ?1 AND host_hex = ?2", [&s, &m], |r| Ok((r.get(0)?, r.get(1)?))).optional()?)).await.ok().flatten();
+        let quota = match pact {
+            Some((status, q)) if status == "accepted" => u64::try_from(q).unwrap_or(0),
+            _ => 0,
+        };
+        if !astro_dav::blob::is_cid(cid) || size > MAX_BYTES || self.used(sender, me).await.saturating_add(size) > quota {
+            self.claim(wrap_id, at).await; // hors accord ou volume dépassé : refusé, sans bruit
+            stats.ignored += 1;
+            return;
+        }
+        if !self.ensure_blob(cid, rumor, wrap_id, at, stats).await {
             return;
         }
         let label = self.label_of(sender).await;
@@ -668,6 +780,527 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
                 stats.deferred += 1;
             }
         }
+    }
+
+    // ───────────────────────────── Restauration ─────────────────────────────
+
+    async fn kv_get(&self, scope: &'static str, key: &str) -> Option<(String, i64)> {
+        let key = key.to_owned();
+        self.db
+            .readers()
+            .read(move |c| Ok(c.query_row("SELECT value, updated_at FROM kv WHERE scope = ?1 AND key = ?2", rusqlite::params![scope, key], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).optional()?))
+            .await
+            .ok()
+            .flatten()
+    }
+
+    async fn kv_put(&self, scope: &'static str, key: &str, value: &str, at: i64) {
+        let stored = self
+            .db
+            .writer()
+            .execute(
+                "INSERT INTO kv(scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                vec![scope.to_owned().into(), key.to_owned().into(), value.to_owned().into(), at.into()],
+            )
+            .await;
+        if let Err(e) = stored {
+            self.activity.publish_to(Audience::Captain, "alert", "backup", format!("restauration : état « {scope} » non enregistré ({e})"), None);
+        }
+    }
+
+    /// Dernier événement de `owner` de ce kind (et de ce tag `d`), tel que le crawl l'a rapatrié.
+    async fn latest_event(&self, owner: &str, k: u32, d: Option<&str>) -> Option<Event> {
+        let (o, d) = (owner.to_owned(), d.map(str::to_owned));
+        self.db
+            .readers()
+            .read(move |c| {
+                let mut stmt = c.prepare_cached("SELECT e.id, e.pubkey, e.kind, e.created_at, e.content, e.sig, e.tags FROM nostr_events e WHERE e.pubkey = ?1 AND e.kind = ?2 AND (?3 IS NULL OR e.d_tag = ?3) ORDER BY e.created_at DESC LIMIT 1")?;
+                let mut rows = stmt.query(rusqlite::params![o, k, d])?;
+                Ok(match rows.next()? {
+                    Some(r) => Some(row_to_event(r)?),
+                    None => None,
+                })
+            })
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// Comptes hébergés ici dont la restauration est dans l'état `state` (`pending`, `done`).
+    async fn restore_owners(&self, state: &'static str) -> Vec<String> {
+        self.db
+            .readers()
+            .read(move |c| {
+                let mut stmt = c.prepare("SELECT k.key FROM kv k JOIN identities i ON i.hex = k.key AND i.hosted = 1 WHERE k.scope = 'restore' AND k.value = ?1")?;
+                Ok(stmt.query_map([state], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Proches réciproques de `owner` hébergés ailleurs : ceux à qui écrire.
+    async fn remote_friends(&self, owner: &str) -> Vec<String> {
+        self.sharing.friends(owner).await.map(|f| f.into_iter().filter(|f| !f.hosted).map(|f| f.hex).collect()).unwrap_or_default()
+    }
+
+    /// Un passage côté propriétaire : pour chaque compte rétabli ici dont les sauvegardes ne sont pas encore revenues, annonce la
+    /// station d'accueil, demande à chaque proche ce qu'il détient (renouvelé toutes les 6 h) et applique le manifeste dès que son
+    /// blob est là ; puis redemande les fichiers qui manquent encore. Rend le nombre de messages envoyés.
+    pub async fn restore_step(&self, at: i64) -> usize {
+        let mut sent = 0;
+        for owner in self.restore_owners("pending").await {
+            sent += self.restore_owner(&owner, at).await;
+        }
+        for owner in self.restore_owners("done").await {
+            // Le manifeste a pu revenir avant que le DID soit rapatrié : la station d'accueil s'annonce quand même.
+            self.announce_home(&owner, at).await;
+            self.announce_moved(&owner, at).await;
+            sent += self.restore_missing(&owner, at).await;
+        }
+        sent
+    }
+
+    async fn restore_owner(&self, owner: &str, at: i64) -> usize {
+        self.announce_home(owner, at).await;
+        self.announce_moved(owner, at).await;
+        if self.try_restore_manifest(owner, at).await {
+            return 0;
+        }
+        let started = self.kv_get("restore", owner).await.map_or(at, |(_, t)| t);
+        if at - started > RESTORE_GIVE_UP_SECS {
+            self.kv_put("restore", owner, "abandoned", at).await;
+            let text = "⚠️ Restauration : aucune sauvegarde de votre uCloud n'a été retrouvée chez vos proches en 3 jours. Le compte repart à neuf ; vos amis et vos contacts restent les vôtres.".to_owned();
+            self.activity.publish_to(Audience::Captain, "alert", "backup", format!("restauration abandonnée pour {} : aucun manifeste retrouvé", &owner[..8.min(owner.len())]), None);
+            self.tell(owner, text).await;
+            return 0;
+        }
+        let last = self.kv_get("restore_asked", owner).await.map_or(0, |(_, t)| t);
+        if last > 0 && at - last < RESTORE_RETRY_SECS {
+            return 0;
+        }
+        let friends = self.remote_friends(owner).await;
+        if friends.is_empty() {
+            return 0; // la liste d'amis n'est pas encore rapatriée par le crawl : on réessaiera au prochain passage
+        }
+        let mut tags = Vec::new();
+        if let Some(home) = &self.home {
+            tags.push(vec!["home".to_owned(), home.clone()]);
+        }
+        if let Some(pointer) = self.latest_event(owner, kind::APP_DATA, Some(manifest::D_TAG)).await.and_then(|e| manifest::open_pointer(&e, &*self.keys).ok()) {
+            tags.push(vec!["cid".to_owned(), pointer.manifest_cid]);
+        }
+        tags.push(vec!["all".to_owned(), "1".to_owned()]);
+        let mut sent = 0;
+        for friend in &friends {
+            match self.control(owner, friend, "restore", tags.clone()).await {
+                Ok(()) => sent += 1,
+                Err(e) => {
+                    self.activity.publish_to(Audience::Captain, "alert", "backup", format!("restauration : demande non envoyée à …{} ({e})", &friend[..8.min(friend.len())]), None);
+                }
+            }
+        }
+        if sent > 0 {
+            self.kv_put("restore_asked", owner, &sent.to_string(), at).await;
+        }
+        sent
+    }
+
+    /// Applique le manifeste d'origine dès que son blob est revenu. Rend `true` quand la restauration n'a plus rien à attendre.
+    async fn try_restore_manifest(&self, owner: &str, at: i64) -> bool {
+        if self.kv_get("restore", owner).await.is_none_or(|(state, _)| state != "pending") {
+            return false;
+        }
+        let Some(event) = self.latest_event(owner, kind::APP_DATA, Some(manifest::D_TAG)).await else { return false };
+        let Ok(pointer) = manifest::open_pointer(&event, &*self.keys) else { return false };
+        if self.blobs.open(&pointer.manifest_cid).await.is_err() {
+            return false;
+        }
+        let o = owner.to_owned();
+        let files: i64 = self.db.readers().read(move |c| Ok(c.query_row("SELECT COUNT(*) FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file'", [o], |r| r.get(0))?)).await.unwrap_or(0);
+        if files > 0 {
+            // Appliquer le manifeste remplacerait tout le VFS : on ne détruit pas ce que le membre a ajouté depuis.
+            self.kv_put("restore", owner, "abandoned", at).await;
+            self.activity.publish_to(Audience::Captain, "alert", "backup", format!("restauration de …{} : des fichiers ont été ajoutés avant le manifeste, non appliqué", &owner[..8.min(owner.len())]), None);
+            self.tell(owner, "⚠️ Des fichiers ont été ajoutés avant la fin de la restauration : pour ne rien perdre, le manifeste d'origine n'a pas été appliqué. Prévenez le Capitaine.".to_owned()).await;
+            return true;
+        }
+        match manifest::restore_from_event(&self.db, &*self.blobs, &*self.keys, &event).await {
+            Ok(Pointer { manifest_cid, rev, files, .. }) => {
+                self.kv_put("ucloud_manifest_rev", owner, &rev.to_string(), at).await;
+                self.kv_put("ucloud_manifest_cid", owner, &manifest_cid, at).await;
+                self.kv_put("restore_missing", owner, "0", at).await;
+                self.kv_put("restore", owner, "done", at).await;
+                if let Some(p) = &self.publisher {
+                    p.notify(owner);
+                }
+                self.tell(owner, format!("✅ Votre compte est rétabli : {files} fichier(s) retrouvé(s) dans votre uCloud. Les fichiers eux-mêmes reviennent de chez vos proches au fil des heures.")).await;
+                true
+            }
+            Err(e) => {
+                self.activity.publish_to(Audience::Captain, "alert", "backup", format!("restauration de …{} : manifeste illisible ({e})", &owner[..8.min(owner.len())]), None);
+                false
+            }
+        }
+    }
+
+    /// Annonce la station d'accueil en republiant le DID du compte (le crawl la propage à toutes les stations, même celles dont
+    /// l'ami est hors ligne) : `home_station`, tag que le projecteur lit sur le DID.
+    async fn announce_home(&self, owner: &str, at: i64) {
+        let (Some(home), Some(secret)) = (self.home.as_deref().filter(|h| valid_home(h)), self.keys.secret(owner)) else { return };
+        if self.kv_get("restore_home", owner).await.is_some() {
+            return;
+        }
+        let Some(did) = self.latest_event(owner, kind::DID, Some("did")).await else { return }; // pas encore rapatrié : plus tard
+        // L'ancienne station d'accueil, avant que la nouvelle ne l'écrase : c'est à elle que s'adresse le message `moved`.
+        let o = owner.to_owned();
+        let old_home: Option<String> = self.db.readers().read(move |c| Ok(c.query_row("SELECT home_station FROM identities WHERE hex = ?1", [o], |r| r.get::<_, Option<String>>(0)).optional()?.flatten())).await.ok().flatten();
+        if let Some(old) = old_home.filter(|h| valid_home(h) && h != home) {
+            self.kv_put("restore_old_home", owner, &old, at).await;
+        }
+        let mut doc: Value = serde_json::from_str(&did.content).unwrap_or(Value::Null);
+        if let Some(meta) = doc.get_mut("metadata").and_then(Value::as_object_mut) {
+            meta.insert("astroportStation".to_owned(), json!(home));
+        }
+        let mut tags: Vec<Vec<String>> = did.tags.iter().filter(|t| t.first().map(String::as_str) != Some("home_station")).cloned().collect();
+        tags.push(vec!["home_station".to_owned(), home.to_owned()]);
+        let created_at = u64::try_from(at).unwrap_or(0).max(did.created_at + 1);
+        let event = match (UnsignedEvent { created_at, kind: kind::DID, tags, content: doc.to_string() }).sign(&secret) {
+            Ok(e) => e,
+            Err(e) => {
+                self.activity.publish_to(Audience::Captain, "alert", "backup", format!("restauration : DID non signé ({e})"), None);
+                return;
+            }
+        };
+        let stored = event.clone();
+        let local = self
+            .db
+            .writer()
+            .transaction(move |tx| {
+                astro_db::events::insert_event(tx, &stored)?;
+                astro_db::apply_statements(tx, &astro_sync::Projector::plan(&stored).map_err(|e| astro_db::DbError::Corrupt(e.to_string()))?)?;
+                Ok(())
+            })
+            .await;
+        if let Err(e) = local {
+            self.activity.publish_to(Audience::Captain, "alert", "backup", format!("restauration : nouvelle station d'accueil non enregistrée ({e})"), None);
+            return;
+        }
+        if let Some(publish) = &self.publish {
+            if let Err(e) = publish(event).await {
+                self.activity.publish_to(Audience::Captain, "alert", "backup", format!("restauration : nouvelle station d'accueil non publiée ({e})"), None);
+                return;
+            }
+        }
+        self.kv_put("restore_home", owner, home, at).await;
+    }
+
+    /// Dit à l'**ancienne** station d'accueil que le compte l'a quittée : un message `moved` que le compte s'adresse à lui-même,
+    /// donc signé de sa clé, acheminé vers l'ancienne Home (encore inscrite dans la base à cet instant). Si cette station est
+    /// détruite, il n'y a personne à prévenir et l'échec reste visible dans l'état ; sinon elle cesse d'héberger.
+    async fn announce_moved(&self, owner: &str, at: i64) {
+        let (Some((old, _)), Some(home)) = (self.kv_get("restore_old_home", owner).await, self.home.clone()) else { return };
+        if self.kv_get("restore_moved", owner).await.is_some_and(|(state, t)| state == "sent" || at - t < RESTORE_RETRY_SECS) {
+            return;
+        }
+        let state = match self.control(owner, owner, "moved", vec![vec!["home".to_owned(), home]]).await {
+            Ok(()) => "sent".to_owned(),
+            Err(e) => format!("injoignable ({old}) : {e}"), // station en panne, ou hors ligne : nouvel essai dans 6 h
+        };
+        self.kv_put("restore_moved", owner, &state, at).await;
+    }
+
+    /// Côté ancienne station : le compte `me` a écrit, de sa propre clé, qu'il habite désormais ailleurs. Il cesse d'être hébergé
+    /// ici (plus de connexion, de sauvegarde ni de crawl pour lui) et son dossier est mis de côté, jamais effacé.
+    async fn moved_away(&self, me: &str, rumor: &Rumor, at: i64) {
+        let Some(home) = tag(&rumor.tags, "home").filter(|h| valid_home(h)) else { return };
+        if self.home.as_deref() == Some(home) {
+            return; // c'est cette station : rien à quitter
+        }
+        // Rejeu d'un ancien message après un nouveau rétablissement ici : seul un message postérieur compte.
+        if self.kv_get("restore", me).await.is_some_and(|(_, since)| i64::try_from(rumor.created_at).unwrap_or(0) <= since) {
+            return;
+        }
+        let m = me.to_owned();
+        let row: Option<(String, Option<String>)> = self.db.readers().read(move |c| Ok(c.query_row("SELECT role, email FROM identities WHERE hex = ?1 AND hosted = 1", [m], |r| Ok((r.get(0)?, r.get(1)?))).optional()?)).await.ok().flatten();
+        let Some((role, email)) = row else { return };
+        if role != "multipass" {
+            // Le Capitaine tient la station : un message ne le débarque pas, le Capitaine tranche.
+            self.activity.publish_to(Audience::Captain, "alert", "backup", format!("{role} …{} annonce un déménagement vers {home} : non appliqué, à traiter à la main", &me[..8.min(me.len())]), None);
+            return;
+        }
+        let (m, h) = (me.to_owned(), home.to_owned());
+        if let Err(e) = self.db.writer().execute("UPDATE identities SET hosted = 0, home_station = ?2 WHERE hex = ?1 AND hosted = 1", vec![m.into(), h.into()]).await {
+            self.activity.publish_to(Audience::Captain, "alert", "backup", format!("déménagement de …{} non enregistré ({e})", &me[..8.min(me.len())]), None);
+            return;
+        }
+        self.kv_put("moved", me, home, at).await;
+        let label = email.clone().unwrap_or_else(|| me.chars().take(8).collect());
+        let mut aside = String::new();
+        if let (Some(dir), Some(email)) = (self.accounts_dir.clone(), email) {
+            let target = dir.join(".moved").join(format!("{email}-{at}"));
+            let from = dir.join(&email);
+            let moved = tokio::task::spawn_blocking(move || std::fs::create_dir_all(target.parent().unwrap_or(&target)).and_then(|()| std::fs::rename(&from, &target)).map(|()| target)).await;
+            match moved {
+                Ok(Ok(target)) => aside = format!(" ; dossier mis de côté dans {}", target.display()),
+                Ok(Err(e)) => {
+                    self.activity.publish_to(Audience::Captain, "alert", "backup", format!("déménagement de {label} : dossier du compte non déplacé ({e}), à ranger à la main"), None);
+                }
+                Err(e) => {
+                    self.activity.publish_to(Audience::Captain, "alert", "backup", format!("déménagement de {label} : dossier du compte non déplacé ({e})"), None);
+                }
+            }
+        }
+        self.activity.publish_to(Audience::Captain, "system", "backup", format!("{label} a déménagé vers {home} : cette station n'héberge plus son compte{aside}"), None);
+    }
+
+    /// Après le manifeste : redemande par leur CID les fichiers dont le blob manque encore (ceux que des amis ont partagés avec le
+    /// membre, jamais sauvegardés chez un hôte). Un ami ne rend que ce qu'il a lui-même partagé.
+    async fn restore_missing(&self, owner: &str, at: i64) -> usize {
+        let Some((rounds, last)) = self.kv_get("restore_missing", owner).await else { return 0 };
+        let rounds: u32 = rounds.parse().unwrap_or(RESTORE_MISSING_ROUNDS);
+        if rounds >= RESTORE_MISSING_ROUNDS || at - last < RESTORE_RETRY_SECS {
+            return 0;
+        }
+        let o = owner.to_owned();
+        let candidates: Vec<String> = self
+            .db
+            .readers()
+            .read(move |c| {
+                let mut stmt = c.prepare("SELECT DISTINCT cid FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file' AND cid IS NOT NULL ORDER BY cid LIMIT 2000")?;
+                Ok(stmt.query_map([o], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap_or_default();
+        let mut missing = Vec::new();
+        for cid in candidates {
+            if self.blobs.open(&cid).await.is_err() {
+                missing.push(cid);
+                if missing.len() >= RESTORE_WANT {
+                    break;
+                }
+            }
+        }
+        if missing.is_empty() {
+            self.kv_put("restore_missing", owner, &RESTORE_MISSING_ROUNDS.to_string(), at).await;
+            return 0;
+        }
+        let tags: Vec<Vec<String>> = missing.iter().map(|c| vec!["cid".to_owned(), c.clone()]).collect();
+        let mut sent = 0;
+        for friend in self.remote_friends(owner).await {
+            if self.control(owner, &friend, "restore", tags.clone()).await.is_ok() {
+                sent += 1;
+            }
+        }
+        self.kv_put("restore_missing", owner, &(rounds + 1).to_string(), at).await;
+        sent
+    }
+
+    /// Côté ami : `owner` rétabli sur une autre station demande ce que je détiens pour lui. Aucune action de ma part : j'enregistre
+    /// sa nouvelle station d'accueil (jamais pour un compte hébergé ici) et je programme le renvoi.
+    async fn accept_restore(&self, me: &str, owner: &str, rumor: &Rumor, at: i64) {
+        if let Some(home) = tag(&rumor.tags, "home").filter(|h| valid_home(h)) {
+            let (o, h) = (owner.to_owned(), home.to_owned());
+            let updated = self
+                .db
+                .writer()
+                .execute(
+                    "INSERT INTO identities(hex, role, home_station, hosted) VALUES (?1, 'multipass', ?2, 0) ON CONFLICT(hex) DO UPDATE SET home_station = excluded.home_station WHERE hosted = 0",
+                    vec![o.into(), h.into()],
+                )
+                .await;
+            if let Err(e) = updated {
+                self.activity.publish_to(Audience::Captain, "alert", "backup", format!("restauration : station d'accueil de …{} non enregistrée ({e})", &owner[..8.min(owner.len())]), None);
+            }
+        }
+        if self.hosted_here(owner).await {
+            return; // même station : rien à renvoyer, tout est déjà ici
+        }
+        let all = tag(&rumor.tags, "all") == Some("1");
+        let mut priority = Vec::new();
+        for cid in rumor.tags.iter().filter(|t| t.first().map(String::as_str) == Some("cid")).filter_map(|t| t.get(1)).take(RESTORE_WANT) {
+            if astro_dav::blob::is_cid(cid) && self.held(me, owner, cid).await.is_some() {
+                priority.push(cid.clone());
+            }
+        }
+        if !all && priority.is_empty() {
+            return;
+        }
+        let key = format!("{me}:{owner}");
+        let mut job = match self.kv_get(JOB, &key).await.and_then(|(v, _)| serde_json::from_str::<Value>(&v).ok()) {
+            // Demande renouvelée alors qu'un renvoi est en cours : on le complète sans le recommencer.
+            Some(mut old) => {
+                let mut merged: Vec<String> = old["priority"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
+                let fresh: Vec<String> = priority.iter().filter(|c| !merged.contains(c)).cloned().collect();
+                merged.extend(fresh);
+                old["priority"] = json!(merged);
+                old["all"] = json!(all || old["all"].as_bool().unwrap_or(false));
+                old
+            }
+            None => json!({ "priority": priority, "all": all, "cursor": "" }),
+        };
+        job["asked_at"] = json!(at);
+        self.kv_put(JOB, &key, &job.to_string(), at).await;
+    }
+
+    /// Ce que je détiens pour `owner` sous ce CID, et pourquoi je peux le lui rendre : une sauvegarde qu'il m'a confiée, un fichier
+    /// qu'il m'a partagé, ou un fichier que j'ai moi-même partagé (connaître son CID en est la preuve). Le blob doit être là.
+    async fn held(&self, host: &str, owner: &str, cid: &str) -> Option<(u64, &'static str)> {
+        let (h, o, c) = (host.to_owned(), owner.to_owned(), cid.to_owned());
+        let found = self
+            .db
+            .readers()
+            .read(move |conn| {
+                let backup = conn.query_row("SELECT size FROM backup_items WHERE owner_hex = ?1 AND host_hex = ?2 AND cid = ?3", [&o, &h, &c], |r| r.get::<_, i64>(0)).optional()?;
+                if let Some(size) = backup {
+                    return Ok(Some((size, "backup")));
+                }
+                let shared = conn
+                    .query_row(
+                        "SELECT COALESCE(e.size, 0) FROM ucloud_entries e WHERE e.owner_hex = ?2 AND e.cid = ?3 AND e.type = 'file' AND e.path NOT LIKE '/Sauvegardes/%' \
+                           AND (json_extract(e.data, '$.shared_by') = ?1 OR EXISTS (SELECT 1 FROM ucloud_sharing s WHERE s.owner_hex = e.owner_hex AND s.cid = e.cid)) LIMIT 1",
+                        [&o, &h, &c],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .optional()?;
+                Ok(shared.map(|size| (size, "share")))
+            })
+            .await
+            .ok()
+            .flatten()?;
+        self.blobs.open(cid).await.ok()?;
+        Some((u64::try_from(found.0).unwrap_or(0), found.1))
+    }
+
+    async fn send_restored(&self, host: &str, owner: &str, cid: &str, size: u64, quota: i64, src: &str) -> Result<(), String> {
+        let mut tags = vec![vec!["cid".to_owned(), cid.to_owned()], vec!["size".into(), size.to_string()], vec!["op".into(), "restored".into()], vec!["src".into(), src.to_owned()], vec!["quota".into(), quota.to_string()]];
+        if let Some(peer) = &self.station_peer {
+            tags.push(vec!["station".into(), peer.clone()]);
+        }
+        let sent = self.send_to(host, owner, kind::FILE, tags, &format!("ipfs://{cid}")).await;
+        tokio::time::sleep(SEND_PACE).await; // pas de rafale de gift wraps
+        sent
+    }
+
+    /// Côté ami : avance les renvois programmés par [`Self::accept_restore`], par petits lots. Rend le nombre de blobs envoyés.
+    pub async fn serve_restores(&self) -> usize {
+        let jobs: Vec<(String, String)> = self
+            .db
+            .readers()
+            .read(|c| {
+                let mut stmt = c.prepare("SELECT key, value FROM kv WHERE scope = ?1")?;
+                Ok(stmt.query_map([JOB], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap_or_default();
+        let mut sent = 0;
+        for (key, value) in jobs {
+            let Some((host, owner)) = key.split_once(':') else { continue };
+            let Ok(mut job) = serde_json::from_str::<Value>(&value) else {
+                let _ = self.db.writer().execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", vec![JOB.to_owned().into(), key.clone().into()]).await;
+                continue;
+            };
+            let (h, o) = (host.to_owned(), owner.to_owned());
+            let quota: i64 = self.db.readers().read(move |c| Ok(c.query_row("SELECT quota_bytes FROM backup_pacts WHERE owner_hex = ?2 AND host_hex = ?1 AND status = 'accepted'", [h, o], |r| r.get(0)).optional()?)).await.ok().flatten().unwrap_or(0);
+            let all = job["all"].as_bool().unwrap_or(false);
+            let mut priority: Vec<String> = job["priority"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
+            let later = priority.split_off(RESTORE_PER_PASS.min(priority.len()));
+            // CID prioritaires déjà renvoyés : le lot « tout le reste » ne les renvoie pas une seconde fois.
+            let mut skip: Vec<String> = job["skip"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
+            let mut failed = false;
+            for (n, cid) in priority.iter().enumerate() {
+                let Some((size, src)) = self.held(host, owner, cid).await else { continue };
+                if let Err(e) = self.send_restored(host, owner, cid, size, quota, src).await {
+                    self.activity.publish_to(Audience::Captain, "alert", "backup", format!("restauration d'un ami : envoi impossible ({e})"), None);
+                    priority.drain(..n); // reprend au CID qui a échoué
+                    failed = true;
+                    break;
+                }
+                skip.push(cid.clone());
+                sent += 1;
+            }
+            let mut rest = if failed { priority } else { Vec::new() };
+            rest.extend(later);
+            job["priority"] = json!(rest);
+            job["skip"] = json!(skip);
+            if !failed && rest_is_empty(&job) && all {
+                let cursor = job["cursor"].as_str().unwrap_or_default().to_owned();
+                let (h, o) = (host.to_owned(), owner.to_owned());
+                let batch: Vec<(String, i64, String)> = self
+                    .db
+                    .readers()
+                    .read(move |c| {
+                        let mut stmt = c.prepare(
+                            "SELECT cid, size, src FROM (\
+                               SELECT cid, size, 'backup' AS src FROM backup_items WHERE owner_hex = ?1 AND host_hex = ?2 \
+                               UNION \
+                               SELECT cid, COALESCE(size, 0), 'share' FROM ucloud_entries WHERE owner_hex = ?2 AND type = 'file' AND cid IS NOT NULL AND path NOT LIKE '/Sauvegardes/%' AND json_extract(data, '$.shared_by') = ?1\
+                             ) WHERE cid > ?3 ORDER BY cid LIMIT ?4",
+                        )?;
+                        Ok(stmt.query_map(rusqlite::params![o, h, cursor, RESTORE_PER_PASS as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)))?.collect::<Result<Vec<_>, _>>()?)
+                    })
+                    .await
+                    .unwrap_or_default();
+                if batch.is_empty() {
+                    let _ = self.db.writer().execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", vec![JOB.to_owned().into(), key.clone().into()]).await;
+                    continue;
+                }
+                for (cid, size, src) in batch {
+                    if !skip.contains(&cid) && self.blobs.open(&cid).await.is_ok() {
+                        let src: &str = if src == "backup" { "backup" } else { "share" };
+                        if let Err(e) = self.send_restored(host, owner, &cid, u64::try_from(size).unwrap_or(0), quota, src).await {
+                            self.activity.publish_to(Audience::Captain, "alert", "backup", format!("restauration d'un ami : envoi impossible ({e})"), None);
+                            break;
+                        }
+                        sent += 1;
+                    }
+                    job["cursor"] = json!(cid);
+                }
+            } else if !failed && rest_is_empty(&job) {
+                let _ = self.db.writer().execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", vec![JOB.to_owned().into(), key.clone().into()]).await;
+                continue;
+            }
+            self.kv_put(JOB, &key, &job.to_string(), now()).await;
+        }
+        sent
+    }
+
+    /// Côté propriétaire : un blob que mon ami me renvoie. Seul un compte en cours de restauration (ou récemment rétabli) l'accepte.
+    async fn store_restored(&self, me: &str, sender: &str, wrap_id: &str, rumor: &Rumor, at: i64, stats: &mut BackupStats) {
+        let (Some(cid), Some(size)) = (tag(&rumor.tags, "cid"), tag(&rumor.tags, "size").and_then(|s| s.parse::<u64>().ok())) else {
+            self.claim(wrap_id, at).await;
+            stats.ignored += 1;
+            return;
+        };
+        if self.kv_get("restore", me).await.is_none() || !astro_dav::blob::is_cid(cid) || size > MAX_BYTES {
+            self.claim(wrap_id, at).await; // aucune restauration demandée, ou message mal formé : écarté sans bruit
+            stats.ignored += 1;
+            return;
+        }
+        if !self.ensure_blob(cid, rumor, wrap_id, at, stats).await {
+            return;
+        }
+        let quota: i64 = tag(&rumor.tags, "quota").and_then(|q| q.parse().ok()).unwrap_or(0);
+        if tag(&rumor.tags, "src") == Some("backup") && quota > 0 {
+            // L'ami héberge ma sauvegarde : l'accord est rétabli sans qu'il ait rien à faire, et ce blob n'a pas à repartir.
+            let _ = self.record_item(me, sender, cid, size).await;
+            let (m, s) = (me.to_owned(), sender.to_owned());
+            let pact = self
+                .db
+                .writer()
+                .execute(
+                    "INSERT INTO backup_pacts(owner_hex, host_hex, status, quota_bytes, enabled, asked_at, decided_at) \
+                     VALUES (?1, ?2, 'accepted', ?3, NOT EXISTS (SELECT 1 FROM backup_pacts WHERE owner_hex = ?1 AND enabled = 1), ?4, ?4) \
+                     ON CONFLICT(owner_hex, host_hex) DO UPDATE SET status = 'accepted', quota_bytes = excluded.quota_bytes, decided_at = excluded.decided_at",
+                    vec![m.into(), s.into(), quota.into(), at.into()],
+                )
+                .await;
+            if let Err(e) = pact {
+                self.activity.publish_to(Audience::Captain, "alert", "backup", format!("restauration : accord de sauvegarde non rétabli ({e})"), None);
+            }
+        }
+        self.claim(wrap_id, at).await;
+        stats.stored += 1;
+        self.try_restore_manifest(me, at).await;
     }
 
     /// Étape de la nuit (20h12 solaire) : envoie tout ce qui reste à sauvegarder, par lots, jusqu'à épuisement.
@@ -688,7 +1321,10 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
     /// qu'à 20h12 ([`Self::sync_night`]) : un lot par nuit plutôt qu'un envoi à chaque modification.
     pub async fn run(self: Arc<Self>, every: Duration, mut stop: watch::Receiver<bool>) {
         loop {
-            self.poll_once(now()).await;
+            let at = now();
+            self.poll_once(at).await;
+            self.restore_step(at).await;
+            self.serve_restores().await;
             tokio::select! {
                 () = tokio::time::sleep(every) => {}
                 changed = stop.changed() => {
@@ -833,6 +1469,58 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    async fn count2(db: &Db, sql: &'static str, a: String, b: String) -> i64 {
+        db.readers().read(move |c| Ok(c.query_row(sql, [a, b], |r| r.get(0))?)).await.unwrap()
+    }
+
+    async fn put_blob(backup: &PrivateBackup<Capture, FsBlobStore>, bytes: &[u8]) -> String {
+        use astro_dav::BlobWriter as _;
+        use tokio::io::AsyncWriteExt as _;
+        let mut w = backup.blobs.begin().await.unwrap();
+        w.write_all(bytes).await.unwrap();
+        w.commit().await.unwrap().cid
+    }
+
+    async fn set_manifest(db: &Db, owner: &str, cid: &str) {
+        db.writer()
+            .execute("INSERT INTO kv(scope, key, value, updated_at) VALUES ('ucloud_manifest_cid', ?1, ?2, 0) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value", vec![owner.to_owned().into(), cid.to_owned().into()])
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_manifest_blob_goes_to_the_friend_and_outlives_the_night_cleanup_until_replaced() {
+        const HAS: &str = "SELECT COUNT(*) FROM backup_items WHERE owner_hex = ?1 AND cid = ?2";
+        let (dir, db, _, backup) = rig("manifest").await;
+        let (alice, bob) = (hex(&ALICE), hex(&BOB));
+        let m1 = put_blob(&backup, b"manifest-v1").await;
+        set_manifest(&db, &alice, &m1).await;
+        backup.set(&alice, true, Some(&bob)).await.unwrap();
+        backup.respond(&bob, &alice, true, 1000, 1000).await.unwrap();
+
+        assert_eq!(backup.run_once().await, 4, "le manifeste et les trois fichiers privés");
+        assert_eq!(count2(&db, HAS, alice.clone(), m1.clone()).await, 1);
+        assert_eq!(backup.run_once().await, 0, "rien à renvoyer tant que le manifeste ne change pas");
+
+        // Le manifeste n'est pas une entrée du VFS : le nettoyage de nuit ne doit pas le prendre pour un fichier disparu.
+        let t0 = 1_000_000;
+        assert_eq!(backup.gc_night(t0).await, 0);
+        assert_eq!(backup.gc_night(t0 + 2 * GRACE_SECS).await, 0);
+        assert_eq!(count2(&db, HAS, alice.clone(), m1.clone()).await, 1, "le manifeste courant reste chez l'ami");
+
+        // Un nouveau manifeste part tout de suite ; l'ancien est retiré après 7 jours, le courant reste.
+        let m2 = put_blob(&backup, b"manifest-v2-plus-long").await;
+        set_manifest(&db, &alice, &m2).await;
+        assert_eq!(backup.run_once().await, 1);
+        assert_eq!(count2(&db, HAS, alice.clone(), m2.clone()).await, 1);
+        let t1 = t0 + 4 * GRACE_SECS;
+        assert_eq!(backup.gc_night(t1).await, 0);
+        assert_eq!(backup.gc_night(t1 + GRACE_SECS).await, 1);
+        assert_eq!(count2(&db, HAS, alice.clone(), m1).await, 0);
+        assert_eq!(count2(&db, HAS, alice, m2).await, 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test]
     async fn a_remote_friend_gets_a_request_then_sealed_blobs_without_the_file_key() {
         let (dir, db, outbox, backup) = rig("remote").await;
@@ -860,5 +1548,334 @@ mod tests {
             assert!(tag(&r.tags, "decryption-key").is_none() && tag(&r.tags, "cid").is_some(), "le blob part chiffré, sans sa clé");
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // ───────────────── Restauration de bout en bout : trois stations, une panne ─────────────────
+
+    struct Node {
+        dir: std::path::PathBuf,
+        db: Arc<Db>,
+        outbox: Arc<Capture>,
+        blobs: Arc<FsBlobStore>,
+        backup: PrivateBackup<Capture, FsBlobStore>,
+    }
+
+    /// Station de test : `hosted` (clé, email) y sont hébergés, `remote` sont des amis d'ailleurs. `from` : station dont le
+    /// maillage rapatrie les blobs (copie entre dossiers, le CID étant le SHA-256 du blob chiffré).
+    async fn node(tag: &str, hosted: &[(&[u8; 32], &str)], remote: &[(&[u8; 32], &str)], peer: &str, home: Option<String>, from: Option<Arc<FsBlobStore>>) -> Node {
+        let dir = std::env::temp_dir().join(format!("astroportd-restore-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Arc::new(Db::open(&dir.join("u.db"), 2).unwrap());
+        let mut keys = StaticKeySource::new();
+        for (secret, email) in hosted {
+            db.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, 'multipass', ?2, 1)", vec![hex(secret).into(), (*email).to_owned().into()]).await.unwrap();
+            keys = keys.with(**secret);
+        }
+        for (secret, email) in remote {
+            db.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, 'multipass', ?2, 0)", vec![hex(secret).into(), (*email).to_owned().into()]).await.unwrap();
+        }
+        let keys: Arc<dyn KeySource> = Arc::new(keys);
+        let outbox = Arc::new(Capture::default());
+        let sharing = Arc::new(Sharing::new(db.clone(), keys.clone(), outbox.clone(), None, None));
+        let blobs = Arc::new(FsBlobStore::open(dir.join("blobs")).unwrap());
+        let mut backup = PrivateBackup::new(db.clone(), keys, outbox.clone(), blobs.clone(), sharing, ActivityBus::new()).with_station(None, Some(peer.to_owned())).with_home(home, None).with_accounts_dir(Some(dir.join("nostr")));
+        if let Some(origin) = from {
+            let target = blobs.clone();
+            backup = backup.with_prefetch(Arc::new(move |cid: String, _peer: String| {
+                let (origin, target) = (origin.clone(), target.clone());
+                Box::pin(async move {
+                    use astro_dav::BlobWriter as _;
+                    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+                    let (mut reader, _) = origin.open(&cid).await.map_err(|e| e.to_string())?;
+                    let mut bytes = Vec::new();
+                    reader.read_to_end(&mut bytes).await.map_err(|e| e.to_string())?;
+                    let mut w = target.begin().await.map_err(|e| e.to_string())?;
+                    w.write_all(&bytes).await.map_err(|e| e.to_string())?;
+                    let got = w.commit().await.map_err(|e| e.to_string())?.cid;
+                    if got == cid { Ok(()) } else { Err(format!("blob altéré : {got} au lieu de {cid}")) }
+                })
+            }));
+        }
+        Node { dir, db, outbox, blobs, backup }
+    }
+
+    /// Ce que le crawl rapatrie : l'événement est rangé et projeté (graphe social, DID).
+    async fn give(db: &Db, event: Event) {
+        db.writer()
+            .transaction(move |tx| {
+                astro_db::events::insert_event(tx, &event)?;
+                astro_db::apply_statements(tx, &astro_sync::Projector::plan(&event).map_err(|e| astro_db::DbError::Corrupt(e.to_string()))?)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
+    /// Les messages que `from` a envoyés arrivent chez `to` (un relais les lui sert).
+    async fn pump(from: &Node, to: &Node) -> usize {
+        let msgs: Vec<(String, Event)> = from.outbox.0.lock().unwrap().drain(..).collect();
+        let n = msgs.len();
+        for (_, wrap) in msgs {
+            to.db.writer().transaction(move |tx| insert_event(tx, &wrap).map(|_| ())).await.unwrap();
+        }
+        n
+    }
+
+    fn follows(secret: &[u8; 32], who: &[&[u8; 32]]) -> Event {
+        UnsignedEvent { created_at: 100, kind: 3, tags: who.iter().map(|w| vec!["p".to_owned(), hex(w)]).collect(), content: String::new() }.sign(secret).unwrap()
+    }
+
+    fn did_of(secret: &[u8; 32], email: &str) -> Event {
+        let id = hex(secret);
+        let doc = json!({ "id": format!("did:nostr:{id}"), "type": "DIDNostr", "metadata": { "email": email, "contractStatus": "active_rental", "language": "fr" } });
+        UnsignedEvent { created_at: 100, kind: kind::DID, tags: vec![vec!["d".into(), "did".into()], vec!["t".into(), "uplanet".into()], vec!["t".into(), "did-document".into()]], content: doc.to_string() }.sign(secret).unwrap()
+    }
+
+    async fn scalar(db: &Db, sql: &'static str, args: Vec<String>) -> i64 {
+        db.readers().read(move |c| Ok(c.query_row(sql, rusqlite::params_from_iter(args), |r| r.get(0))?)).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_member_whose_station_burned_gets_back_the_account_the_files_and_the_home_without_any_friend_acting() {
+        const NODE: &str = "ab";
+        let (alice, bob) = (hex(&ALICE), hex(&BOB));
+        let new_home = format!("12D3KooWNewHome:{}", NODE.repeat(32));
+        let old_home = format!("12D3KooWOldHome:{}", "cd".repeat(32));
+
+        // Trois stations : l'ancienne (Alice), celle de Bob, et la nouvelle (Alice rétablie). Chacune rapatrie depuis l'autre.
+        let old = node("old", &[(&ALICE, "alice@example.org")], &[(&BOB, "bob@example.org")], "12D3KooWOldStation", Some(old_home.clone()), None).await;
+        let host = node("host", &[(&BOB, "bob@example.org")], &[(&ALICE, "alice@example.org")], "12D3KooWBobStation", None, Some(old.blobs.clone())).await;
+        // La nouvelle station héberge Alice dès son rétablissement : sa clé (la même, dérivée de SALT/PEPPER) y est connue.
+        let new = node("new", &[(&ALICE, "alice@example.org")], &[(&BOB, "bob@example.org")], "12D3KooWNewStation", Some(new_home.clone()), Some(host.blobs.clone())).await;
+
+        // Chacune connaît le graphe social de la sienne.
+        for (n, owner, friend) in [(&old, &ALICE, &BOB), (&host, &BOB, &ALICE)] {
+            n.db.writer().execute("INSERT INTO social_graph(owner_hex, pubkey, level, updated_at) VALUES (?1, ?2, 1, 0)", vec![hex(owner).into(), hex(friend).into()]).await.unwrap();
+        }
+        give(&old.db, follows(&BOB, &[&ALICE])).await;
+        give(&host.db, follows(&ALICE, &[&BOB])).await;
+
+        // 1. Alice a un uCloud : trois fichiers chiffrés, leur trousseau, un manifeste publié.
+        let mut files = Vec::new();
+        for (i, name) in ["a.txt", "b.txt", "c.txt"].iter().enumerate() {
+            let cid = put_blob(&old.backup, format!("contenu chiffré de {name}").as_bytes()).await;
+            let (path, key) = (format!("/Docs/{name}"), format!("{:064x}", i + 1));
+            old.db.writer().execute("INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, data) VALUES (?1, ?2, '/Docs', 'file', ?3, 'text/plain', 20, 1, '{}')", vec![alice.clone().into(), path.into(), cid.clone().into()]).await.unwrap();
+            old.db.writer().execute("INSERT INTO ucloud_keyring(owner_hex, cid, key_hex, enc) VALUES (?1, ?2, ?3, 'uenc2')", vec![alice.clone().into(), cid.clone().into(), key.into()]).await.unwrap();
+            files.push(cid);
+        }
+        let published = manifest::publish(&old.db, &*old.blobs, &*old.backup.keys, &alice).await.unwrap();
+        let manifest_cid = published.pointer.manifest_cid.clone();
+
+        // 2. Bob accepte d'héberger ; la nuit, tout part chez lui : les trois fichiers ET le manifeste.
+        old.backup.set(&alice, true, Some(&bob)).await.unwrap();
+        pump(&old, &host).await;
+        host.backup.poll_once(now()).await;
+        host.backup.respond(&bob, &alice, true, 1_000_000, 1_000_000).await.unwrap();
+        pump(&host, &old).await;
+        old.backup.poll_once(now()).await;
+        assert_eq!(old.backup.run_once().await, 4, "le manifeste et les trois fichiers privés");
+        pump(&old, &host).await;
+        assert_eq!(host.backup.poll_once(now()).await.stored, 4);
+        assert_eq!(scalar(&host.db, "SELECT COUNT(*) FROM backup_items WHERE owner_hex = ?1 AND cid = ?2", vec![alice.clone(), manifest_cid.clone()]).await, 1, "le blob du manifeste est chez l'ami");
+        let manifest_event = old.backup.latest_event(&alice, kind::APP_DATA, Some(manifest::D_TAG)).await.unwrap();
+        let did = did_of(&ALICE, "alice@example.org");
+
+        // 3. La station d'Alice brûle. Une station vierge la rétablit depuis sa carte : même clé, état « restauration en cours ».
+        let old_dir = old.dir.clone();
+        drop(old);
+        let _ = std::fs::remove_dir_all(old_dir);
+        new.backup.kv_put("restore", &alice, "pending", now()).await;
+
+        // Aucun manifeste vide ne doit remplacer l'original tant que la restauration dure.
+        assert!(manifest::restoring(&new.db, &alice).await);
+        assert!(manifest::publish(&new.db, &*new.blobs, &*new.backup.keys, &alice).await.is_err());
+
+        // 4. Le crawl rapatrie les événements d'Alice (contacts, DID, manifeste) et ceux de Bob.
+        for e in [follows(&ALICE, &[&BOB]), did.clone(), manifest_event.clone(), follows(&BOB, &[&ALICE])] {
+            give(&new.db, e).await;
+        }
+        // Un premier passage : annonce de la nouvelle station d'accueil + demande à chaque proche.
+        assert_eq!(new.backup.restore_step(now()).await, 1, "une demande, pour Bob");
+        assert_eq!(scalar(&new.db, "SELECT COUNT(*) FROM kv WHERE scope = 'restore_home' AND key = ?1", vec![alice.clone()]).await, 1);
+        let announced: String = new.db.readers().read({ let a = alice.clone(); move |c| Ok(c.query_row("SELECT home_station FROM identities WHERE hex = ?1", [a], |r| r.get(0))?) }).await.unwrap();
+        assert_eq!(announced, new_home, "le DID republié porte la nouvelle station d'accueil");
+        assert_eq!(new.backup.restore_step(now()).await, 0, "la demande n'est pas renouvelée avant 6 h");
+
+        // 5. Bob n'a RIEN à faire : sa station apprend la nouvelle Home et renvoie d'elle-même ce qu'elle détient.
+        pump(&new, &host).await;
+        assert_eq!(host.backup.poll_once(now()).await.control, 1);
+        let bobs_view: String = host.db.readers().read({ let a = alice.clone(); move |c| Ok(c.query_row("SELECT COALESCE(home_station, '') FROM identities WHERE hex = ?1", [a], |r| r.get(0))?) }).await.unwrap();
+        assert_eq!(bobs_view, new_home, "les amis écrivent désormais à la nouvelle station");
+        assert_eq!(host.backup.serve_restores().await, 4, "le manifeste d'abord, puis les trois fichiers, sans doublon");
+        assert_eq!(host.backup.serve_restores().await, 0);
+        assert_eq!(scalar(&host.db, "SELECT COUNT(*) FROM kv WHERE scope = 'backup_restore_job'", vec![]).await, 0, "renvoi terminé");
+
+        // 6. Alice retrouve tout : manifeste appliqué, VFS et trousseau, blobs, accord de sauvegarde rétabli.
+        pump(&host, &new).await;
+        let stats = new.backup.poll_once(now()).await;
+        assert_eq!((stats.stored, stats.ignored, stats.deferred), (4, 0, 0));
+        assert_eq!(new.backup.kv_get("restore", &alice).await.map(|v| v.0), Some("done".to_owned()));
+        assert!(!manifest::restoring(&new.db, &alice).await);
+        assert_eq!(scalar(&new.db, "SELECT COUNT(*) FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file'", vec![alice.clone()]).await, 3);
+        assert_eq!(scalar(&new.db, "SELECT COUNT(*) FROM ucloud_keyring WHERE owner_hex = ?1", vec![alice.clone()]).await, 3);
+        for cid in &files {
+            assert!(new.blobs.open(cid).await.is_ok(), "le blob {cid} est revenu");
+        }
+        assert_eq!(scalar(&new.db, "SELECT COUNT(*) FROM backup_pacts WHERE owner_hex = ?1 AND host_hex = ?2 AND status = 'accepted' AND enabled = 1", vec![alice.clone(), bob.clone()]).await, 1);
+        assert_eq!(new.backup.run_once().await, 0, "tout est déjà chez Bob : rien à renvoyer cette nuit");
+
+        // 7. Garde-fous : un proche quelconque ne récupère pas les sauvegardes d'autrui.
+        let eve = [0xE5u8; 32];
+        host.db.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, 'multipass', 'eve@example.org', 0)", vec![hex(&eve).into()]).await.unwrap();
+        host.db.writer().execute("INSERT INTO social_graph(owner_hex, pubkey, level, updated_at) VALUES (?1, ?2, 1, 0)", vec![bob.clone().into(), hex(&eve).into()]).await.unwrap();
+        give(&host.db, follows(&eve, &[&BOB])).await;
+        let ask = Rumor { pubkey: hex(&eve), created_at: u64::try_from(now()).unwrap(), kind: kind::CHAT, tags: vec![vec!["p".into(), bob.clone()], vec!["t".into(), TAG.into()], vec!["op".into(), "restore".into()], vec!["cid".into(), files[0].clone()]], content: String::new() };
+        let wrap = gift_wrap(&eve, &bob, &ask, ask.created_at).unwrap();
+        host.db.writer().transaction(move |tx| insert_event(tx, &wrap).map(|_| ())).await.unwrap();
+        host.backup.poll_once(now()).await;
+        assert_eq!(host.backup.serve_restores().await, 0, "le CID d'un fichier d'Alice ne se redemande pas au nom d'Eve");
+        assert_eq!(scalar(&host.db, "SELECT COUNT(*) FROM kv WHERE scope = 'backup_restore_job'", vec![]).await, 0);
+
+        for n in [&new, &host] {
+            let _ = std::fs::remove_dir_all(&n.dir);
+        }
+    }
+
+    #[tokio::test]
+    async fn files_that_a_friend_received_from_the_member_come_back_by_cid_without_creating_a_backup_agreement() {
+        let (alice, bob) = (hex(&ALICE), hex(&BOB));
+        let host = node("share-host", &[(&BOB, "bob@example.org")], &[(&ALICE, "alice@example.org")], "12D3KooWBobStation", None, None).await;
+        let new = node("share-new", &[(&ALICE, "alice@example.org")], &[(&BOB, "bob@example.org")], "12D3KooWNewStation", None, Some(host.blobs.clone())).await;
+        for (n, owner, friend) in [(&new, &ALICE, &BOB), (&host, &BOB, &ALICE)] {
+            n.db.writer().execute("INSERT INTO social_graph(owner_hex, pubkey, level, updated_at) VALUES (?1, ?2, 1, 0)", vec![hex(owner).into(), hex(friend).into()]).await.unwrap();
+        }
+        for n in [&new, &host] {
+            give(&n.db, follows(&ALICE, &[&BOB])).await;
+            give(&n.db, follows(&BOB, &[&ALICE])).await;
+        }
+
+        // Bob a reçu un fichier d'Alice (rangé sous /Partages) ; Alice, rétablie, le connaît par son manifeste mais n'a plus le blob.
+        let shared = put_blob(&host.backup, b"photo partagee avec Bob").await;
+        host.db
+            .writer()
+            .execute("INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, data) VALUES (?1, '/Partages/De_alice/x.jpg', '/Partages/De_alice', 'file', ?2, 'image/jpeg', 23, 1, ?3)", vec![bob.clone().into(), shared.clone().into(), json!({ "shared_by": alice }).to_string().into()])
+            .await
+            .unwrap();
+        // Un fichier privé de Bob, que personne d'autre ne doit pouvoir se faire rendre.
+        let private = put_blob(&host.backup, b"journal prive de Bob").await;
+        host.db.writer().execute("INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, data) VALUES (?1, '/Docs/journal.txt', '/Docs', 'file', ?2, 'text/plain', 20, 1, '{}')", vec![bob.clone().into(), private.clone().into()]).await.unwrap();
+
+        for cid in [&shared, &private] {
+            new.db.writer().execute("INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, data) VALUES (?1, ?2, '/Docs', 'file', ?3, 'image/jpeg', 23, 1, '{}')", vec![alice.clone().into(), format!("/Docs/{}", &cid[cid.len() - 6..]).into(), cid.clone().into()]).await.unwrap();
+        }
+        let at = now();
+        new.backup.kv_put("restore", &alice, "done", at - 100_000).await;
+        new.backup.kv_put("restore_missing", &alice, "0", at - 100_000).await;
+
+        assert_eq!(new.backup.restore_step(at).await, 1, "une demande par CID manquant, pour Bob");
+        pump(&new, &host).await;
+        host.backup.poll_once(now()).await;
+        assert_eq!(host.backup.serve_restores().await, 1, "seul le fichier qu'Alice lui avait partagé est rendu, pas le journal de Bob");
+        pump(&host, &new).await;
+        let stats = new.backup.poll_once(now()).await;
+        assert_eq!((stats.stored, stats.ignored), (1, 0));
+        assert!(new.blobs.open(&shared).await.is_ok() && new.blobs.open(&private).await.is_err());
+        assert_eq!(scalar(&new.db, "SELECT COUNT(*) FROM backup_pacts", vec![]).await, 0, "un fichier partagé ne crée aucun accord de sauvegarde");
+        assert_eq!(new.backup.kv_get("restore_missing", &alice).await.map(|v| v.0), Some("1".to_owned()));
+        assert_eq!(new.backup.restore_step(now()).await, 0, "pas de relance avant 6 h");
+
+        // Un message `restored` qu'aucune restauration n'attendait est écarté sans bruit.
+        let stranger = node("share-stranger", &[(&CAROL, "carol@example.org")], &[(&BOB, "bob@example.org")], "12D3KooWCarolStation", None, None).await;
+        stranger.db.writer().execute("INSERT INTO social_graph(owner_hex, pubkey, level, updated_at) VALUES (?1, ?2, 1, 0)", vec![hex(&CAROL).into(), bob.clone().into()]).await.unwrap();
+        give(&stranger.db, follows(&BOB, &[&CAROL])).await;
+        give(&host.db, follows(&CAROL, &[&BOB])).await;
+        host.db.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, 'multipass', 'carol@example.org', 0)", vec![hex(&CAROL).into()]).await.unwrap();
+        host.db.writer().execute("INSERT INTO social_graph(owner_hex, pubkey, level, updated_at) VALUES (?1, ?2, 1, 0)", vec![bob.clone().into(), hex(&CAROL).into()]).await.unwrap();
+        host.backup.send_restored(&bob, &hex(&CAROL), &shared, 23, 0, "share").await.unwrap();
+        pump(&host, &stranger).await;
+        let stats = stranger.backup.poll_once(now()).await;
+        assert_eq!((stats.stored, stats.ignored), (0, 1));
+
+        for n in [&new, &host, &stranger] {
+            let _ = std::fs::remove_dir_all(&n.dir);
+        }
+    }
+
+    fn did_at(secret: &[u8; 32], email: &str, home: &str) -> Event {
+        let id = hex(secret);
+        let doc = json!({ "id": format!("did:nostr:{id}"), "type": "DIDNostr", "metadata": { "email": email, "contractStatus": "active_rental", "language": "fr", "astroportStation": home } });
+        UnsignedEvent { created_at: 100, kind: kind::DID, tags: vec![vec!["d".into(), "did".into()], vec!["t".into(), "uplanet".into()], vec!["home_station".into(), home.to_owned()]], content: doc.to_string() }.sign(secret).unwrap()
+    }
+
+    /// Un message `moved` emballé pour `to`, signé de `from` (le compte lui-même, ou un tiers qui le contrefait).
+    async fn moved_wrap(db: &Db, from: &[u8; 32], to: &[u8; 32], home: &str, at: u64) {
+        let rumor = Rumor { pubkey: hex(from), created_at: at, kind: kind::CHAT, tags: vec![vec!["p".into(), hex(to)], vec!["t".into(), TAG.into()], vec!["op".into(), "moved".into()], vec!["home".into(), home.to_owned()]], content: String::new() };
+        let wrap = gift_wrap(from, &hex(to), &rumor, at).unwrap();
+        db.writer().transaction(move |tx| insert_event(tx, &wrap).map(|_| ())).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_member_who_moves_away_on_purpose_makes_the_old_station_stop_hosting_the_account() {
+        let alice = hex(&ALICE);
+        let (old_home, new_home) = (format!("12D3KooWOldHome:{}", "cd".repeat(32)), format!("12D3KooWNewHome:{}", "ab".repeat(32)));
+        let old = node("mv-old", &[(&ALICE, "alice@example.org")], &[], "12D3KooWOldStation", Some(old_home.clone()), None).await;
+        let new = node("mv-new", &[(&ALICE, "alice@example.org")], &[], "12D3KooWNewStation", Some(new_home.clone()), None).await;
+        let folder = old.dir.join("nostr/alice@example.org");
+        std::fs::create_dir_all(&folder).unwrap();
+        let nsec = bech32::encode::<bech32::Bech32>(bech32::Hrp::parse("nsec").unwrap(), &ALICE).unwrap();
+        std::fs::write(folder.join(".secret.nostr"), format!("NSEC={nsec}; NPUB=x; HEX={alice}\n")).unwrap();
+        let files = astro_crypto::FileKeySource::new(old.dir.join("nostr"));
+        assert!(files.secret(&alice).is_some(), "avant : la station lit la clé du compte dans son dossier");
+
+        // La nouvelle station connaît l'ancienne Home par le DID rapatrié ; elle s'annonce et prévient l'ancienne.
+        give(&new.db, did_at(&ALICE, "alice@example.org", &old_home)).await;
+        new.backup.kv_put("restore", &alice, "pending", now()).await;
+        new.backup.restore_step(now()).await;
+        assert_eq!(new.backup.kv_get("restore_moved", &alice).await.map(|v| v.0), Some("sent".to_owned()));
+        assert_eq!(new.outbox.0.lock().unwrap().len(), 1, "un seul message `moved`, adressé au compte lui-même");
+        new.backup.restore_step(now() + 3 * 3600).await;
+        assert_eq!(new.outbox.0.lock().unwrap().len(), 1, "pas renvoyé une fois parti");
+
+        // L'ancienne station le reçoit : le compte n'est plus hébergé, pointe vers la nouvelle Home, son dossier est mis de côté.
+        pump(&new, &old).await;
+        assert_eq!(old.backup.poll_once(now()).await.control, 1);
+        let (hosted, home): (i64, String) = old.db.readers().read({ let a = alice.clone(); move |c| Ok(c.query_row("SELECT hosted, COALESCE(home_station, '') FROM identities WHERE hex = ?1", [a], |r| Ok((r.get(0)?, r.get(1)?)))?) }).await.unwrap();
+        assert_eq!((hosted, home.as_str()), (0, new_home.as_str()));
+        assert!(!folder.exists(), "plus de clé du compte dans le dossier lu par la station");
+        let aside: Vec<_> = std::fs::read_dir(old.dir.join("nostr/.moved")).unwrap().flatten().collect();
+        assert_eq!(aside.len(), 1);
+        assert!(aside[0].path().join(".secret.nostr").is_file(), "mis de côté, jamais effacé");
+        assert_eq!(old.backup.kv_get("moved", &alice).await.map(|v| v.0), Some(new_home.clone()));
+        assert!(files.secret(&alice).is_none(), "après : la station ne peut plus signer pour ce compte");
+
+        // Garde-fous, sur une autre ancienne station (le compte y est hébergé) : rien de tout cela ne doit le débarquer à tort.
+        let station = node("mv-guard", &[(&ALICE, "alice@example.org")], &[(&BOB, "bob@example.org")], "12D3KooWGuardStation", Some(old_home.clone()), None).await;
+        let kept = || async { scalar(&station.db, "SELECT hosted FROM identities WHERE hex = ?1", vec![hex(&ALICE)]).await };
+        let t = u64::try_from(now()).unwrap();
+        moved_wrap(&station.db, &BOB, &ALICE, &new_home, t).await; // contrefait par un tiers
+        moved_wrap(&station.db, &ALICE, &ALICE, &old_home, t).await; // la station annoncée est celle-ci
+        moved_wrap(&station.db, &ALICE, &ALICE, "pas-une-station", t).await; // adresse illisible
+        station.backup.poll_once(now()).await;
+        assert_eq!(kept().await, 1, "ni un tiers, ni la même station, ni une adresse invalide ne comptent");
+        // Le Capitaine n'est pas débarqué par un message : le Capitaine tranche.
+        station.db.writer().execute("UPDATE identities SET role = 'captain' WHERE hex = ?1", vec![hex(&ALICE).into()]).await.unwrap();
+        moved_wrap(&station.db, &ALICE, &ALICE, &new_home, t).await;
+        station.backup.poll_once(now()).await;
+        assert_eq!(kept().await, 1);
+        station.db.writer().execute("UPDATE identities SET role = 'multipass' WHERE hex = ?1", vec![hex(&ALICE).into()]).await.unwrap();
+        // Un ancien message rejoué après un rétablissement ici (postérieur au message) est ignoré ; un message plus récent compte.
+        station.backup.kv_put("restore", &hex(&ALICE), "done", now() + 1000).await;
+        moved_wrap(&station.db, &ALICE, &ALICE, &new_home, t).await;
+        station.backup.poll_once(now()).await;
+        assert_eq!(kept().await, 1, "un message antérieur au dernier rétablissement ici est un rejeu");
+        station.backup.kv_put("restore", &hex(&ALICE), "done", now() - 1000).await;
+        moved_wrap(&station.db, &ALICE, &ALICE, &new_home, t).await;
+        station.backup.poll_once(now()).await;
+        assert_eq!(kept().await, 0, "un vrai déménagement, postérieur à tout, est appliqué");
+        for n in [&old, &new, &station] {
+            let _ = std::fs::remove_dir_all(&n.dir);
+        }
     }
 }

@@ -309,6 +309,7 @@ pub(super) async fn nightly(p: &Parts<'_>, memory: &Option<Arc<Memory>>, backup:
                     integrity: Some(integrity_night),
                     publisher: node_publisher.clone(),
                     activity: Some(activity.clone()),
+                    pause: Duration::from_secs(1),
                 });
                 let next = astro_core::solar::system_now_checked().ok().and_then(|n| astro_core::solar::next_20h12(n, &coords).ok());
                 println!("20h12 solaire : orchestrateur de nuit actif (prochaine échéance : {})", next.map_or_else(|| "horloge invalide".to_owned(), |t| format!("{} {:02}:{:02} UTC", astro_core::week::date_string(t), t % 86_400 / 3_600, t % 3_600 / 60)));

@@ -56,6 +56,22 @@ pub trait BlobStore: Send + Sync + 'static {
     fn open(&self, cid: &str) -> impl Future<Output = Result<(Self::Reader, u64), BlobError>> + Send;
     /// Supprime un blob (sans erreur s'il est déjà absent).
     fn remove(&self, cid: &str) -> impl Future<Output = Result<(), BlobError>> + Send;
+    /// Espace disque physique `(libre, total)` de la partition qui porte le stockage ; `None` si le magasin n'est pas
+    /// sur le disque local (Kubo distant) ou si la mesure est impossible : aucune garde dans ce cas.
+    fn disk_space(&self) -> Option<(u64, u64)> {
+        None
+    }
+}
+
+/// Réserve sous laquelle un dépôt est refusé : le plus grand de 500 Mo et 5 % de la partition. Un disque plein
+/// corrompt le WAL SQLite et fige la station, pire qu'un téléversement refusé.
+pub fn disk_reserve(total: u64) -> u64 {
+    (500 << 20).max(total / 20)
+}
+
+/// Le dépôt de `incoming` octets laisserait-il au moins [`disk_reserve`] libres ?
+pub fn disk_has_room<B: BlobStore>(blobs: &B, incoming: u64) -> bool {
+    blobs.disk_space().is_none_or(|(free, total)| free.saturating_sub(incoming) >= disk_reserve(total))
 }
 
 const B32: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
@@ -169,6 +185,11 @@ impl BlobStore for FsBlobStore {
     type Writer = FsBlobWriter;
     type Reader = tokio::fs::File;
 
+    fn disk_space(&self) -> Option<(u64, u64)> {
+        let st = rustix::fs::statvfs(&self.root).ok()?;
+        Some((st.f_bavail.saturating_mul(st.f_frsize), st.f_blocks.saturating_mul(st.f_frsize)))
+    }
+
     async fn begin(&self) -> Result<FsBlobWriter, BlobError> {
         let mut id = [0u8; 12];
         getrandom::fill(&mut id).map_err(|e| io::Error::other(e.to_string()))?;
@@ -200,6 +221,21 @@ impl BlobStore for FsBlobStore {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn disk_reserve_is_the_larger_of_500_mib_and_5_percent() {
+        assert_eq!(super::disk_reserve(8 << 30), 500 << 20);
+        assert_eq!(super::disk_reserve(100 << 30), 5 << 30);
+    }
+
+    #[test]
+    fn a_real_filesystem_reports_its_space() {
+        let dir = std::env::temp_dir();
+        let store = super::FsBlobStore::open(dir.join(format!("astro-space-{}", std::process::id()))).unwrap();
+        let (free, total) = super::BlobStore::disk_space(&store).unwrap();
+        assert!(total > 0 && free <= total);
+        let _ = std::fs::remove_dir_all(store.root());
+    }
+
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
     use super::*;

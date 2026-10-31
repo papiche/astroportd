@@ -79,7 +79,7 @@ pub struct ServeArgs {
     /// Liaison de compte externe ACME : clé HMAC en base64url (ZeroSSL).
     #[arg(long, requires = "acme_eab_kid")]
     acme_eab_hmac: Option<String>,
-    /// Écoute HTTP (défi ACME + redirection vers HTTPS avec `--domain`, sinon service en clair).
+    /// Écoute HTTP (défi ACME + redirection vers HTTPS avec `--domain`, sinon service en clair ; défaut sans domaine : 127.0.0.1:18080).
     #[arg(long)]
     http_listen: Option<SocketAddr>,
     /// Écoute HTTPS (avec `--domain`).
@@ -381,6 +381,7 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     let share_fn: Option<astroportd::identity_links::ShareFn>;
     let contacts_cell: astroportd::identity_links::HookCell = Arc::default();
     let thumbs_fn: Option<astroportd::ui_backend::ThumbFn>;
+    let pending_fn: Option<astroportd::ui_backend::PendingShareFn>;
     // Client de relais commun (lecture, publication) : le maillage P2P d'abord, l'adresse publique en repli. Les enveloppes
     // d'envoi à un ami partent vers la station d'accueil de l'ami (MeshOutbox), puis vers les relais de `--relay`.
     let relay_client = {
@@ -433,6 +434,11 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
         thumbs_fn = Some(Arc::new(move |owner: String, ids: Vec<i64>, size: u32| {
             let face = for_thumbs.clone();
             Box::pin(async move { face.face_thumbs(&owner, &ids, size).await.map(|b| (b.thumbs, b.failed)).map_err(|e| e.to_string()) })
+        }));
+        let for_pending = face.clone();
+        pending_fn = Some(Arc::new(move |owner: String, friend: String, accept: bool| {
+            let face = for_pending.clone();
+            Box::pin(async move { face.resolve_pending(&owner, &friend, accept).await.map_err(|e| e.to_string()) })
         }));
         worker = Some(tokio::spawn(face.run_worker(Duration::from_secs(5), stop_rx)));
         println!("FaceCloud actif ({})", face_label.as_deref().unwrap_or("moteur arrêté : réglable par le Capitaine"));
@@ -549,7 +555,13 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     }
     // Sauvegarde privée chez un ami : le proche doit accepter ; le blob part chiffré, sans sa clé.
     let backup = {
-        let mut b = astroportd::private_backup::PrivateBackup::new(db.clone(), backup_keys, mesh_outbox.clone(), backup_blobs, sharing.clone(), activity.clone()).with_station(Some(publisher.clone()), services_peer.clone()).with_notify(notify.clone());
+        // Station d'accueil annoncée dans le DID d'un compte rétabli ici : `<PeerID>:<NODE_HEX>` (rien si l'un des deux manque).
+        let home = services_peer.as_ref().filter(|_| astro_nostr_proto::is_hex64(&node_hex)).map(|peer| format!("{peer}:{node_hex}"));
+        let mut b = astroportd::private_backup::PrivateBackup::new(db.clone(), backup_keys, mesh_outbox.clone(), backup_blobs, sharing.clone(), activity.clone())
+            .with_station(Some(publisher.clone()), services_peer.clone())
+            .with_home(home, Some(publish_fn(&event_publisher)))
+            .with_accounts_dir(station.nostr_dir.clone())
+            .with_notify(notify.clone());
         if let Some(handle) = &p2p_handle {
             b = b.with_prefetch(blob_prefetch(handle, &local));
         }
@@ -639,6 +651,9 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     if let Some(f) = thumbs_fn {
         ui = ui.with_face_thumbs(f);
     }
+    if let Some(f) = pending_fn {
+        ui = ui.with_pending_shares(f);
+    }
     let ui = Arc::new(ui::wire(ui, &db, &event_publisher, &uplanet_name, &sharing, &backup));
 
     // Reverse proxy : les routes gardées exigent un compte de la station (Basic ou NIP-98).
@@ -669,7 +684,7 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
 
     // Écoute : HTTPS automatique avec un domaine, sinon HTTP en clair.
     let frontend = if a.domains.is_empty() {
-        let addr = a.http_listen.unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 8080)));
+        let addr = a.http_listen.unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 18080)));
         let listener = tokio::net::TcpListener::bind(addr).await?;
         println!("astroportd à l'écoute sur http://{} (sans domaine : pas de TLS)", listener.local_addr()?);
         tokio::spawn(async move {

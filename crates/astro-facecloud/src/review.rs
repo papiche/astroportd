@@ -100,3 +100,37 @@ pub async fn forget_faces(db: &Db, owner: &str, ids: &[i64]) -> Result<usize, Fa
         })
         .await?)
 }
+
+/// Lot de photos en attente de confirmation pour un ami (zone de précaution : visage flou ou score < seuil d'envoi direct).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingBatch {
+    /// Clé Nostr de l'ami.
+    pub recipient_hex: String,
+    /// Nom de la personne (celui de ses visages), à défaut le début de sa clé.
+    pub name: String,
+    /// Nombre de photos en attente.
+    pub count: usize,
+    /// Une photo du lot, pour l'aperçu.
+    pub sample_path: String,
+}
+
+/// Lots en attente de `owner`, du plus fourni au plus petit.
+pub async fn pending_batches(db: &Db, owner: &str) -> Result<Vec<PendingBatch>, FaceError> {
+    let o = owner.to_owned();
+    Ok(db
+        .readers()
+        .read(move |c| {
+            let mut stmt = c.prepare(
+                "SELECT p.recipient_hex, COUNT(*), MAX(p.path), \
+                        (SELECT f.name FROM faces f WHERE f.owner_hex = p.owner_hex AND f.pubkey = p.recipient_hex ORDER BY f.face_id DESC LIMIT 1) \
+                 FROM face_share_pending p WHERE p.owner_hex = ?1 GROUP BY p.recipient_hex ORDER BY COUNT(*) DESC, p.recipient_hex",
+            )?;
+            let rows = stmt.query_map([&o], |r| {
+                let hex: String = r.get(0)?;
+                let name: Option<String> = r.get(3)?;
+                Ok(PendingBatch { name: name.unwrap_or_else(|| hex.chars().take(8).collect()), recipient_hex: hex, count: usize::try_from(r.get::<_, i64>(1)?).unwrap_or(0), sample_path: r.get(2)? })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await?)
+}

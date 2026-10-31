@@ -106,6 +106,7 @@ enum Command {
     UpsertVector { table: VectorTable, id: i64, owner_hex: String, blob: Vec<u8>, reply: Reply<()> },
     DeleteVector { table: VectorTable, id: i64, reply: Reply<()> },
     VacuumInto { dest: PathBuf, reply: Reply<()> },
+    Checkpoint { reply: Reply<()> },
     Job(Job),
     Shutdown { reply: oneshot::Sender<()> },
 }
@@ -190,6 +191,12 @@ impl Writer {
         self.send(|reply| Command::VacuumInto { dest, reply }).await
     }
 
+    /// Ramène le journal WAL dans la base et le tronque (`wal_checkpoint(TRUNCATE)`). À jouer aux heures creuses : avec des
+    /// lecteurs constamment actifs, le point de contrôle automatique ne finit jamais et le `-wal` enfle.
+    pub async fn checkpoint(&self) -> Result<(), DbError> {
+        self.send(|reply| Command::Checkpoint { reply }).await
+    }
+
     /// Termine proprement : applique les commandes déjà en file, ferme la connexion, puis rend la main.
     pub async fn shutdown(&self) -> Result<(), DbError> {
         let (reply, rx) = oneshot::channel();
@@ -239,6 +246,9 @@ fn apply(conn: &mut Connection, cmd: Command) {
         }
         Command::VacuumInto { dest, reply } => {
             let _ = reply.send(vacuum_atomic(conn, &dest));
+        }
+        Command::Checkpoint { reply } => {
+            let _ = reply.send(conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).map_err(DbError::from));
         }
         Command::Job(job) => job(conn),
         Command::Shutdown { .. } => {}
@@ -425,6 +435,18 @@ mod tests {
         assert!(matches!(db.writer().upsert_vector(VectorTable::Dream, 1, "a", &v).await, Err(DbError::NonFiniteVector)));
         let r = db.readers().knn(VectorTable::Face, "a", &unit(10, 0), 1).await;
         assert!(matches!(r, Err(DbError::DimensionMismatch { .. })));
+    }
+
+    #[tokio::test]
+    async fn checkpoint_truncates_the_wal() {
+        let tmp = TempDir::new("checkpoint");
+        let db = Arc::new(open_db(&tmp));
+        for i in 0..50 {
+            db.writer().execute("INSERT INTO kv(scope,key,value,updated_at) VALUES ('c', ?1, 'x', 0)", vec![text(&i.to_string())]).await.unwrap();
+        }
+        db.writer().checkpoint().await.unwrap();
+        let wal = tmp.path().join("uplanet.db-wal");
+        assert_eq!(std::fs::metadata(&wal).map_or(0, |m| m.len()), 0);
     }
 
     #[tokio::test]

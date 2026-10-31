@@ -13,6 +13,7 @@
 //! | `POST /api/v1/ucloud/share` | lien magique `#clé` + QR |
 //! | `GET /api/v1/faces` | visages reconnus et suggestions « est-ce X ? » |
 //! | `POST /api/v1/faces/{id}/accept` · `/name` | validation d'un visage |
+//! | `GET /api/v1/faces/pending-shares` · `POST …/confirm` | envois de photos en attente d'un clic |
 //! | `GET /api/v1/faces/board` · `POST …/thumbs` · `…/assign` · `…/forget` | table de tri : positions, groupes, vignettes, rangement |
 //! | `GET` · `POST /api/v1/station/coop` | configuration coopérative (Capitaine) : kind 30800, secrets en écriture seule |
 //! | `GET` · `POST /api/v1/station/admin/{section}` | réglages du Capitaine par section (`face` : moteur FaceID ; `kinds` : matrice du relai) |
@@ -292,6 +293,14 @@ pub trait Backend: Send + Sync + 'static {
     fn faces_assign(&self, _who: &Principal, _ids: Vec<i64>, _name: String, _pubkey: Option<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("FaceCloud non activé")) }
     }
+    /// Lots de photos en attente de confirmation d'envoi : `{ pending: [{ recipient_hex, name, count, sample_path }] }`.
+    fn face_shares_pending(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("FaceCloud non activé")) }
+    }
+    /// Réponse au lot d'un ami : envoie (`accept`) ou oublie ; `{ sent, dropped }`.
+    fn face_shares_confirm(&self, _who: &Principal, _recipient: String, _accept: bool) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("FaceCloud non activé")) }
+    }
     /// « Pas à reconnaître » : oublie ces visages (les photos restent).
     fn faces_forget(&self, _who: &Principal, _ids: Vec<i64>) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("FaceCloud non activé")) }
@@ -400,6 +409,10 @@ pub trait Backend: Send + Sync + 'static {
     fn register_guest(&self, _ip: Option<std::net::IpAddr>, _alias: Option<String>, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("inscription non disponible sur cette station")) }
     }
+    /// Rétablit sur cette station un MULTIPASS existant depuis sa carte secrète (public : la carte est la preuve). `ip` : limite de débit.
+    fn restore(&self, _ip: Option<std::net::IpAddr>, _card: String, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("restauration non disponible sur cette station")) }
+    }
     /// Crée une invitation à recevoir des photos (`{ paths | person, label?, email?, contact_path?, days? }`).
     fn invite_create(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("invitations non disponibles sur cette station")) }
@@ -479,12 +492,15 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/faces/thumbs", post(faces_thumbs::<B>))
         .route("/api/v1/faces/assign", post(faces_assign::<B>))
         .route("/api/v1/faces/forget", post(faces_forget::<B>))
+        .route("/api/v1/faces/pending-shares", get(face_shares_pending::<B>))
+        .route("/api/v1/faces/pending-shares/confirm", post(face_shares_confirm::<B>))
         .route("/api/v1/faces/{id}/accept", post(face_accept::<B>))
         .route("/api/v1/faces/{id}/name", post(face_name::<B>))
         .route("/api/v1/bro/say", post(bro_say::<B>))
         .route("/api/v1/consent/private-copy", get(consent::<B>).post(consent_accept::<B>))
         .route("/api/v1/me/footprint", get(footprint::<B>))
         .route("/api/v1/register", get(register_info::<B>).post(register::<B>))
+        .route("/api/v1/restore", post(restore::<B>))
         .route("/api/v1/replication", get(replication::<B>))
         .route("/api/v1/invites", get(invites::<B>).post(invite_create::<B>))
         .route("/api/v1/invites/{token}", axum::routing::delete(invite_revoke::<B>))
@@ -776,6 +792,24 @@ async fn faces_forget<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): 
     reply(st.backend.faces_forget(&p, ids).await)
 }
 
+async fn face_shares_pending<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.face_shares_pending(&p).await)
+}
+
+#[derive(serde::Deserialize)]
+struct ConfirmShareBody {
+    recipient_hex: String,
+    accept: bool,
+}
+
+async fn face_shares_confirm<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<ConfirmShareBody>) -> Response {
+    let recipient = body.recipient_hex.to_ascii_lowercase();
+    if recipient.len() != 64 || !recipient.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return reply(Err(ApiError::bad_request("clé publique de l'ami attendue (64 hexadécimaux)")));
+    }
+    reply(st.backend.face_shares_confirm(&p, recipient, body.accept).await)
+}
+
 async fn footprint<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
     reply(st.backend.footprint(&p).await)
 }
@@ -844,6 +878,13 @@ struct RegisterBody {
     guest: bool,
     #[serde(default)]
     alias: Option<String>,
+    #[serde(default)]
+    lang: String,
+}
+
+#[derive(Deserialize)]
+struct RestoreBody {
+    card: String,
     #[serde(default)]
     lang: String,
 }
@@ -1083,6 +1124,14 @@ async fn register<B: Backend>(State(st): State<Arc<UiState<B>>>, req: axum::extr
         return reply(st.backend.register_guest(ip, body.alias, body.lang).await);
     }
     reply(st.backend.register(ip, body.email, body.lang).await)
+}
+
+/// Rétablit un MULTIPASS depuis sa carte secrète. La réponse porte un nouveau PASS et un nouveau jeton, jamais redonnés : `no-store`.
+async fn restore<B: Backend>(State(st): State<Arc<UiState<B>>>, req: axum::extract::Request) -> Response {
+    let ip = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|c| c.0.ip());
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), 2048).await else { return reply(Err(ApiError::bad_request("requête trop grande"))) };
+    let Ok(body) = serde_json::from_slice::<RestoreBody>(&bytes) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"card\": \"astro-secret:v1|…\", \"lang\": \"fr\" }"))) };
+    reply(st.backend.restore(ip, body.card, body.lang).await)
 }
 
 /// Origine publique du lien : celle déclarée par la station, sinon l'en-tête `Host`.

@@ -10,9 +10,11 @@
 //!   `NPUB`, `LANG`, `NOSTRNS`, `.pass`, `.multipass.json` (0600 pour tout ce qui est secret) ;
 //! - refus d'un email déjà inscrit ou d'une clé Nostr déjà prise par un autre compte.
 //!
-//! Non repris (annoncé, pas simulé) : le découpage SSSS 2‑sur‑3 de DISCO chiffré vers le Capitaine et UPlanet, les QR
-//! codes, l'import de la clé IPNS dans kubo et l'envoi du zine par email. La récupération d'un compte repose sur le
-//! `SALT`/`PEPPER` remis **une seule fois** au titulaire.
+//! Non repris (annoncé, pas simulé) : le découpage SSSS 2‑sur‑3 de DISCO chiffré vers le Capitaine et UPlanet, l'import de la
+//! clé IPNS dans kubo et l'envoi du zine par email. À la place, la récupération d'un compte repose sur la **carte secrète**
+//! ([`SecretCard`] : `SALT`/`PEPPER`, formule et empreinte de la constellation, imprimable en QR) remise au titulaire, qui
+//! rétablit le même compte sur n'importe quelle station de la même UPlanet ([`recover`]) ; ses amis lui renvoient alors ses
+//! sauvegardes d'eux-mêmes (`crate::private_backup` côté démon).
 
 use std::path::{Path, PathBuf};
 
@@ -58,6 +60,15 @@ pub enum MultipassError {
     /// Hasard système indisponible.
     #[error("hasard système indisponible")]
     Random,
+    /// Carte secrète illisible ou incomplète.
+    #[error("carte secrète illisible : {0}")]
+    BadCard(&'static str),
+    /// La carte vient d'une autre UPlanet que celle de cette station (la clé serait différente).
+    #[error("ce MULTIPASS appartient à une autre UPlanet que celle de cette station")]
+    OtherUplanet,
+    /// Les secrets de la carte ne redonnent pas la clé annoncée : faute de frappe, mauvaise formule ou mauvaise UPlanet.
+    #[error("les secrets ne redonnent pas la clé Nostr de la carte")]
+    HexMismatch,
 }
 
 fn io(path: &Path, e: impl ToString) -> MultipassError {
@@ -86,6 +97,8 @@ pub struct Created {
     pub salt: Zeroizing<String>,
     /// `PEPPER` à conserver.
     pub pepper: Zeroizing<String>,
+    /// Formule qui a servi à dériver les clés (elle fait partie de la carte secrète).
+    pub formula: KeyFormula,
     /// Langue (`fr`, `en`…).
     pub lang: String,
     /// Dossier du compte.
@@ -200,6 +213,22 @@ pub fn create(nostr_root: &Path, email: &str, uplanet_name: &str, lang: &str) ->
 
 /// Crée un MULTIPASS avec un `SALT`/`PEPPER` imposés (récupération, tests).
 pub fn create_with(nostr_root: &Path, email: &str, uplanet_name: &str, lang: &str, salt: &str, pepper: &str) -> Result<Created, MultipassError> {
+    create_inner(nostr_root, email, uplanet_name, lang, salt, pepper, KeyFormula::Isolated, None)
+}
+
+/// Rétablit un MULTIPASS **existant** depuis sa carte secrète : mêmes `SALT`/`PEPPER`, même formule, donc la même clé
+/// (`HEX`) que sur l'ancienne station. Le PASS, tiré au hasard à la création, n'est pas récupérable : un nouveau est
+/// généré. Aucun événement n'est publié ici : les profils, contacts et manifestes existent déjà chez les amis et seront
+/// récupérés ; un événement de naissance les écraserait (kind 0 et 3 sont remplaçables).
+pub fn recover(nostr_root: &Path, card: &SecretCard, uplanet_name: &str, lang: &str) -> Result<Created, MultipassError> {
+    if card.formula == KeyFormula::Isolated && astro_core::formula::uplanet_salt(uplanet_name).map_err(|e| MultipassError::Derive(e.to_string()))? != card.uplanet {
+        return Err(MultipassError::OtherUplanet);
+    }
+    create_inner(nostr_root, &card.email, uplanet_name, lang, &card.salt, &card.pepper, card.formula, Some(&card.hex))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_inner(nostr_root: &Path, email: &str, uplanet_name: &str, lang: &str, salt: &str, pepper: &str, formula: KeyFormula, expected_hex: Option<&str>) -> Result<Created, MultipassError> {
     let email = normalize_email(email)?;
     let valid = |s: &str| !s.is_empty() && s.len() <= SECRET_MAX && s.bytes().all(|b| b.is_ascii_alphanumeric());
     if !valid(salt) || !valid(pepper) {
@@ -211,12 +240,14 @@ pub fn create_with(nostr_root: &Path, email: &str, uplanet_name: &str, lang: &st
         return Err(MultipassError::Exists(email));
     }
 
-    let formula = KeyFormula::Isolated;
     let cred = formula.credentials(&FormulaInput { salt, pepper, uplanet_name, coop_suffix: None }).map_err(|e| MultipassError::Derive(e.to_string()))?;
     let seed = cred.seed().map_err(|e| MultipassError::Derive(e.to_string()))?;
     let keys = seed.nostr_keys().map_err(|e| MultipassError::Derive(e.to_string()))?;
     let (hex, npub) = (keys.pubkey_hex(), keys.npub().map_err(|e| MultipassError::Derive(e.to_string()))?);
     let nsec = keys.nsec().map_err(|e| MultipassError::Derive(e.to_string()))?;
+    if expected_hex.is_some_and(|h| h != hex) {
+        return Err(MultipassError::HexMismatch);
+    }
     if let Some(other) = hex_owner(nostr_root, &hex) {
         return Err(MultipassError::IdentityConflict(other));
     }
@@ -253,7 +284,97 @@ pub fn create_with(nostr_root: &Path, email: &str, uplanet_name: &str, lang: &st
         let _ = std::fs::remove_dir_all(&work);
         return Err(io(&dir, e));
     }
-    Ok(Created { email, hex, npub, nsec, g1_v1, g1_ss58, nostrns, pass, salt: Zeroizing::new(salt.to_owned()), pepper: Zeroizing::new(pepper.to_owned()), lang: lang.to_owned(), dir, seed })
+    Ok(Created { email, hex, npub, nsec, g1_v1, g1_ss58, nostrns, pass, salt: Zeroizing::new(salt.to_owned()), pepper: Zeroizing::new(pepper.to_owned()), formula, lang: lang.to_owned(), dir, seed })
+}
+
+/// La **carte secrète** d'un MULTIPASS : de quoi rétablir le compte sur n'importe quelle station de la même UPlanet.
+///
+/// Texte (imprimé en QR et dans la fiche `.txt`) : `astro-secret:v1|email|SALT|PEPPER|formule|UPLANET|HEX`. `UPLANET` est
+/// l'empreinte publique de la constellation (`sha256(UPLANETNAME)[..16]`, vide hors formule isolée) et `HEX` la clé Nostr
+/// publique : la station refuse la carte d'une autre UPlanet et détecte toute faute de frappe avant de créer quoi que ce soit.
+///
+/// **Elle vaut la clé du compte** : qui la possède peut tout faire. À garder hors ligne.
+#[derive(Clone)]
+pub struct SecretCard {
+    /// Email (en minuscules).
+    pub email: String,
+    /// `SALT`.
+    pub salt: Zeroizing<String>,
+    /// `PEPPER`.
+    pub pepper: Zeroizing<String>,
+    /// Formule de dérivation (`isolated`, `legacy` ou `raw`).
+    pub formula: KeyFormula,
+    /// Empreinte de l'UPlanet (16 hexadécimaux), vide hors formule isolée.
+    pub uplanet: String,
+    /// Clé Nostr publique attendue (64 hexadécimaux).
+    pub hex: String,
+}
+
+impl SecretCard {
+    /// Début du texte de la carte.
+    pub const PREFIX: &'static str = "astro-secret:v1";
+
+    /// La carte d'un compte tout juste créé.
+    pub fn of(c: &Created, uplanet_name: &str) -> Self {
+        let uplanet = if c.formula == KeyFormula::Isolated { astro_core::formula::uplanet_salt(uplanet_name).unwrap_or_default() } else { String::new() };
+        Self { email: c.email.clone(), salt: c.salt.clone(), pepper: c.pepper.clone(), formula: c.formula, uplanet, hex: c.hex.clone() }
+    }
+
+    /// La carte d'un compte déjà présent sur la station (`<nostr>/<email>/`), pour l'imprimer de nouveau. La formule n'est pas
+    /// crue sur parole (`.keyformula`) : on retient celle qui redonne la clé du compte (`HEX`), comme `resolve_player_dunikey`.
+    pub fn from_dir(dir: &Path, uplanet_name: &str) -> Result<Self, MultipassError> {
+        let file = dir.join(".multipass.json");
+        let text = std::fs::read_to_string(&file).map_err(|e| io(&file, e))?;
+        let card: serde_json::Value = serde_json::from_str(&text).map_err(|e| io(&file, e))?;
+        let field = |k: &str| card.get(k).and_then(serde_json::Value::as_str).filter(|v| !v.is_empty());
+        let (salt, pepper) = (field("salt").ok_or(MultipassError::BadCard("SALT absent du dossier du compte"))?, field("pepper").ok_or(MultipassError::BadCard("PEPPER absent du dossier du compte"))?);
+        let email = normalize_email(field("email").map(str::to_owned).or_else(|| dir.file_name().map(|n| n.to_string_lossy().into_owned())).as_deref().unwrap_or_default())?;
+        let hex = match field("hex") {
+            Some(h) => h.to_ascii_lowercase(),
+            None => std::fs::read_to_string(dir.join("HEX")).map(|h| h.trim().to_ascii_lowercase()).map_err(|e| io(&dir.join("HEX"), e))?,
+        };
+        for formula in KeyFormula::RESOLVE_ORDER {
+            let Ok(cred) = formula.credentials(&FormulaInput { salt, pepper, uplanet_name, coop_suffix: None }) else { continue };
+            let found = cred.seed().ok().and_then(|seed| seed.nostr_keys().ok()).map(|keys| keys.pubkey_hex());
+            if found.as_deref() == Some(hex.as_str()) {
+                let uplanet = if formula == KeyFormula::Isolated { astro_core::formula::uplanet_salt(uplanet_name).map_err(|e| MultipassError::Derive(e.to_string()))? } else { String::new() };
+                return Ok(Self { email, salt: Zeroizing::new(salt.to_owned()), pepper: Zeroizing::new(pepper.to_owned()), formula, uplanet, hex });
+            }
+        }
+        Err(MultipassError::HexMismatch)
+    }
+
+    /// Texte à encoder en QR.
+    pub fn to_text(&self) -> String {
+        format!("{}|{}|{}|{}|{}|{}|{}", Self::PREFIX, self.email, &*self.salt, &*self.pepper, self.formula.as_str(), self.uplanet, self.hex)
+    }
+
+    /// Lit le texte d'une carte (espaces et fins de ligne autour tolérés), en revalidant chaque champ.
+    pub fn parse(text: &str) -> Result<Self, MultipassError> {
+        let fields: Vec<&str> = text.trim().split('|').collect();
+        let [prefix, email, salt, pepper, formula, uplanet, hex] = fields[..] else {
+            return Err(MultipassError::BadCard("nombre de champs"));
+        };
+        if prefix != Self::PREFIX {
+            return Err(MultipassError::BadCard("version inconnue"));
+        }
+        let valid = |s: &str| !s.is_empty() && s.len() <= SECRET_MAX && s.bytes().all(|b| b.is_ascii_alphanumeric());
+        if !valid(salt) || !valid(pepper) {
+            return Err(MultipassError::BadSecrets);
+        }
+        let formula: KeyFormula = formula.parse().map_err(|_| MultipassError::BadCard("formule inconnue"))?;
+        if !matches!(formula, KeyFormula::Isolated | KeyFormula::Legacy | KeyFormula::Raw) {
+            return Err(MultipassError::BadCard("formule non prévue pour un MULTIPASS"));
+        }
+        let uplanet_ok = if formula == KeyFormula::Isolated { uplanet.len() == 16 && uplanet.bytes().all(|b| b.is_ascii_hexdigit()) } else { uplanet.is_empty() };
+        if !uplanet_ok {
+            return Err(MultipassError::BadCard("empreinte de l'UPlanet"));
+        }
+        if !astro_nostr_proto::is_hex64(hex) {
+            return Err(MultipassError::BadCard("clé publique"));
+        }
+        Ok(Self { email: normalize_email(email)?, salt: Zeroizing::new(salt.to_owned()), pepper: Zeroizing::new(pepper.to_owned()), formula, uplanet: uplanet.to_ascii_lowercase(), hex: hex.to_ascii_lowercase() })
+    }
 }
 
 /// Libellé d'une constellation pour le profil : `ORIGIN` quand `UPLANETNAME` n'est que des zéros.
@@ -379,6 +500,84 @@ mod tests {
         for d in [root, zen] {
             let _ = std::fs::remove_dir_all(d);
         }
+    }
+
+    #[test]
+    fn the_secret_card_restores_the_same_account_on_a_blank_station_and_refuses_what_would_give_another_key() {
+        let (old, fresh) = (tmp("card-old"), tmp("card-new"));
+        let zeros = "0".repeat(64);
+        let a = create_with(&old.join("nostr"), "Alice@Exemple.org", &zeros, "fr", "SaltSaltSalt", "PepperPepper").unwrap();
+        let text = SecretCard::of(&a, &zeros).to_text();
+        assert!(text.starts_with("astro-secret:v1|alice@exemple.org|SaltSaltSalt|PepperPepper|isolated|"), "{text}");
+
+        // La station a brûlé : une station vierge de la même UPlanet retrouve la même clé, mais pas le même PASS.
+        let card = SecretCard::parse(&format!("  {text}\n")).unwrap();
+        let b = recover(&fresh.join("nostr"), &card, &zeros, "fr").unwrap();
+        assert_eq!((b.hex.as_str(), b.g1_ss58.as_str(), b.nostrns.as_str()), (a.hex.as_str(), a.g1_ss58.as_str(), a.nostrns.as_str()));
+        assert_eq!(&*b.nsec, &*a.nsec);
+        assert_eq!(b.email, "alice@exemple.org");
+        assert_eq!(std::fs::read_to_string(b.dir.join(".keyformula")).unwrap().trim(), "nostr=isolated g1=isolated ipns=isolated");
+
+        // Autre UPlanet : refusé avant d'écrire quoi que ce soit (la clé serait différente).
+        let other = tmp("card-other");
+        assert!(matches!(recover(&other.join("nostr"), &card, &"ab".repeat(32), "fr"), Err(MultipassError::OtherUplanet)));
+        assert!(!other.join("nostr").exists() || std::fs::read_dir(other.join("nostr")).unwrap().count() == 0);
+
+        // Une lettre fausse dans le PEPPER ne redonne pas la clé annoncée : refusé, aucun dossier abandonné.
+        let typo = SecretCard::parse(&text.replace("PepperPepper", "PepperPepperX")).unwrap();
+        assert!(matches!(recover(&other.join("nostr"), &typo, &zeros, "fr"), Err(MultipassError::HexMismatch)));
+        assert!(!other.join("nostr").exists() || std::fs::read_dir(other.join("nostr")).unwrap().count() == 0);
+        // Déjà rétabli ici : pas de second compte.
+        assert!(matches!(recover(&fresh.join("nostr"), &card, &zeros, "fr"), Err(MultipassError::Exists(_))));
+        for d in [old, fresh, other] {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
+
+    #[test]
+    fn the_card_of_an_existing_account_is_rebuilt_from_its_folder_whatever_its_formula() {
+        let root = tmp("card-dir");
+        let zeros = "0".repeat(64);
+        let a = create_with(&root, "alice@exemple.org", &zeros, "fr", "SaltSaltSalt", "PepperPepper").unwrap();
+        assert_eq!(SecretCard::from_dir(&a.dir, &zeros).unwrap().to_text(), SecretCard::of(&a, &zeros).to_text());
+        // Dans une autre constellation, ni la formule isolée ni la formule d'avant l'isolation ne redonnent cette clé : refusé.
+        assert!(matches!(SecretCard::from_dir(&a.dir, &"ab".repeat(32)), Err(MultipassError::HexMismatch)));
+        // Compte d'avant l'isolation : la formule est retrouvée par la clé, pas par le fichier.
+        let hex = astro_core::kdf::duniter_seed("OldSaltOldSalt", "OldPepperOld").unwrap().nostr_keys().unwrap().pubkey_hex();
+        let old = root.join("vieux@exemple.org");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join(".multipass.json"), json!({ "salt": "OldSaltOldSalt", "pepper": "OldPepperOld" }).to_string()).unwrap();
+        std::fs::write(old.join("HEX"), format!("{hex}\n")).unwrap();
+        let card = SecretCard::from_dir(&old, &zeros).unwrap();
+        assert_eq!((card.formula, card.uplanet.as_str(), card.email.as_str()), (KeyFormula::Legacy, "", "vieux@exemple.org"));
+        std::fs::write(old.join(".multipass.json"), "{}").unwrap();
+        assert!(matches!(SecretCard::from_dir(&old, &zeros), Err(MultipassError::BadCard(_))));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_old_account_is_restored_with_its_legacy_formula_and_the_card_rejects_malformed_text() {
+        // Compte d'avant l'isolation : `(SALT, PEPPER)` bruts. Le HEX attendu vient de la formule, pas de l'UPlanet.
+        let seed = astro_core::kdf::duniter_seed("OldSaltOldSalt", "OldPepperOld").unwrap();
+        let hex = seed.nostr_keys().unwrap().pubkey_hex();
+        let text = format!("astro-secret:v1|vieux@exemple.org|OldSaltOldSalt|OldPepperOld|legacy||{hex}");
+        let root = tmp("card-legacy");
+        let c = recover(&root, &SecretCard::parse(&text).unwrap(), &"ab".repeat(32), "fr").unwrap();
+        assert_eq!((c.hex.as_str(), c.formula), (hex.as_str(), KeyFormula::Legacy));
+        assert_eq!(SecretCard::of(&c, &"ab".repeat(32)).to_text(), text, "la carte se relit à l'identique");
+
+        for bad in [
+            "",
+            "astro-secret:v2|a@b.fr|s|p|isolated||x",
+            &text.replace("legacy", "coop_prefix"),
+            &text.replace("|legacy||", "|legacy|0123456789abcdef|"),
+            &text.replace("OldSaltOldSalt", "sel avec espace"),
+            &text.replace(&hex, "pas-hex"),
+            &format!("{text}|en-trop"),
+        ] {
+            assert!(SecretCard::parse(bad).is_err(), "{bad}");
+        }
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

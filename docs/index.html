@@ -57,7 +57,7 @@ footer{padding:28px 16px 48px;color:var(--mut);border-top:1px solid var(--line);
 <body>
 <a class="skip" href="#contenu">Aller au contenu</a>
 <header class="top">
-<p><span class="badge">Préversion 0.2.0-beta</span> <span class="badge">AGPL-3.0</span></p>
+<p><span class="badge">Préversion 0.4.0-beta</span> <span class="badge">AGPL-3.0</span></p>
 <h1>Démarrer sa station <span style="white-space:nowrap">astroportd</span>, pas à pas</h1>
 <p class="lead">Un cloud personnel chiffré, vos photos qui retrouvent les visages, le partage entre amis — sur une machine qui est la vôtre. Chaque étape se fait au <strong>terminal</strong> ou, quand c'est possible, au <strong>navigateur</strong>.</p>
 <nav class="toc" aria-labelledby="toc-t"><h2 id="toc-t">Les étapes</h2><ol start="0"><li><a href="#etape-0">Avant de commencer</a></li><li><a href="#etape-1">Installer astroportd</a></li><li><a href="#etape-2">Activer Y-Level </a></li><li><a href="#etape-3">Choisir sa constellation </a></li><li><a href="#etape-4">Démarrer la station</a></li><li><a href="#etape-5">Créer mon MULTIPASS</a></li><li><a href="#etape-6">Vérifier que tout va bien</a></li><li><a href="#etape-7">Entrer dans l&#x27;interface web</a></li><li><a href="#etape-8">FaceCloud </a></li><li><a href="#etape-9">Relier sa station aux autres Capitaines</a></li><li><a href="#etape-10">En cas de problème</a></li></ol></nav>
@@ -77,7 +77,7 @@ date       # l'année doit être 2026 ou plus</code></pre></div>
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p>Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.</p>
-<p class="box note"><span class="lbl">À savoir</span> astroportd est en <strong>préversion 0.2.0-beta</strong> : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.</p>
+<p class="box note"><span class="lbl">À savoir</span> astroportd est en <strong>préversion 0.4.0-beta</strong> : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.</p>
 <p>Vous aurez aussi besoin d'un compte <strong>MULTIPASS</strong> (votre identité Nostr) : astroportd le crée pour vous à l'étape 5.</p>
 </div>
 </div>
@@ -88,7 +88,7 @@ date       # l'année doit être 2026 ou plus</code></pre></div>
 <div class="cols">
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <div class="code"><pre><code>curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash</code></pre></div>
-<p>Options utiles : <code>--version v0.2.0-beta</code>, <code>--static</code> (binaire statique, x86_64), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>. Ensuite :</p>
+<p>Options utiles : <code>--version v0.4.0-beta</code>, <code>--static</code> (binaire statique, x86_64), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>. Ensuite :</p>
 <div class="code"><pre><code>astroportd --version</code></pre></div>
 <p>Si la commande est introuvable, ajoutez <code>~/.local/bin</code> à votre PATH : <code>export PATH="$HOME/.local/bin:$PATH"</code>.</p>
 </div>
@@ -236,7 +236,7 @@ astroportd init --mode zen --swarm-key ./swarm.key</code></pre></div>
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <p><strong>Essai local</strong> (HTTP simple, sur votre machine seulement) :</p>
 <div class="code"><pre><code>astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
-# → http://127.0.0.1:8080</code></pre></div>
+# → http://127.0.0.1:18080</code></pre></div>
 <p><strong>Station publique</strong> (HTTPS automatique, réseau P2P, 20h12 solaire) — ajoutez vos coordonnées, elles règlent l'entretien de nuit sur le soleil :</p>
 <div class="code"><pre><code>astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs \
   --domain station.exemple.org --acme-email moi@exemple.org \
@@ -251,7 +251,7 @@ loginctl enable-linger "$USER"   # démarrer au boot sans session ouverte
 journalctl --user -u astroportd -f   # suivre les journaux</code></pre></div>
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
-<p>Rien à cliquer pour démarrer : c'est le terminal qui lance le programme. Quand il tourne, ouvrez <a href="http://127.0.0.1:8080">http://127.0.0.1:8080</a> (essai local) ou <code>https://votre-domaine/</code>.</p>
+<p>Rien à cliquer pour démarrer : c'est le terminal qui lance le programme. Quand il tourne, ouvrez <a href="http://127.0.0.1:18080">http://127.0.0.1:18080</a> (essai local) ou <code>https://votre-domaine/</code>.</p>
 <p>Sur une <strong>même adresse</strong>, un navigateur reçoit l'application, et un client Nostr reçoit le relai de la station.</p>
 </div>
 </div>
@@ -335,14 +335,14 @@ astroportd multipass list</code></pre></div>
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <div class="code"><pre><code>astroportd doctor --db ~/.zen/astroportd/uplanet.db --game-dir ~/.zen/game
 astroportd ylevel --verify
-curl http://127.0.0.1:8080/health</code></pre></div>
+curl http://127.0.0.1:18080/health</code></pre></div>
 <p><code>doctor</code> contrôle l'identité, les permissions <code>0600</code> des secrets, la base, les certificats HTTPS et l'horloge (il affiche le prochain 20h12 solaire). Code de sortie <code>1</code> si une vérification échoue.</p>
 <p>Pour voir le relai Nostr de la station :</p>
-<div class="code"><pre><code>curl -H 'Accept: application/nostr+json' http://127.0.0.1:8080/</code></pre></div>
+<div class="code"><pre><code>curl -H 'Accept: application/nostr+json' http://127.0.0.1:18080/</code></pre></div>
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
-<p>Ouvrez <code>http://127.0.0.1:8080/health</code> : une page courte indique l'état de chaque partie de la station (OK ou en panne).</p>
-<p>Si l'application se charge sur <code>http://127.0.0.1:8080/</code>, c'est que le serveur web fonctionne.</p>
+<p>Ouvrez <code>http://127.0.0.1:18080/health</code> : une page courte indique l'état de chaque partie de la station (OK ou en panne).</p>
+<p>Si l'application se charge sur <code>http://127.0.0.1:18080/</code>, c'est que le serveur web fonctionne.</p>
 </div>
 </div>
 </section>

@@ -38,6 +38,7 @@ pub struct StationUi<B: BlobStore> {
     pub faces_enabled: bool,
     consent_fn: Option<ConsentFn>,
     thumbs_fn: Option<ThumbFn>,
+    pending_fn: Option<PendingShareFn>,
     friends_fn: Option<FriendsFn>,
     backup: Option<BackupFns>,
     coop: Option<(CoopGetFn, CoopSetFn)>,
@@ -51,6 +52,9 @@ pub struct StationUi<B: BlobStore> {
     registrar: Option<Arc<crate::register::Registrar>>,
     probe: Mutex<Option<(Instant, Result<(), String>)>>,
 }
+
+/// Réponse au lot de photos en attente pour un ami `(titulaire, ami, accepter)` → `(envoyées, retirées)` ; fourni par le binaire.
+pub type PendingShareFn = Arc<dyn Fn(String, String, bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(usize, usize), String>> + Send>> + Send + Sync>;
 
 /// Vignettes de visages d'un titulaire : `(vignettes par visage, visages en échec avec leur raison)` ; fourni par le binaire,
 /// qui détient le service FaceCloud (clés, blobs, décodage).
@@ -92,7 +96,7 @@ pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Fu
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None) }
+        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None) }
     }
 
     /// Active l'attestation de copie privée depuis l'interface.
@@ -151,6 +155,12 @@ impl<B: BlobStore> StationUi<B> {
     /// Active la sauvegarde privée chez un ami.
     pub fn with_backup(mut self, fns: BackupFns) -> Self {
         self.backup = Some(fns);
+        self
+    }
+
+    /// Active la confirmation des envois de photos en attente.
+    pub fn with_pending_shares(mut self, f: PendingShareFn) -> Self {
+        self.pending_fn = Some(f);
         self
     }
 
@@ -244,6 +254,17 @@ impl<B: BlobStore> Backend for StationUi<B> {
     async fn register_guest(&self, ip: Option<std::net::IpAddr>, alias: Option<String>, lang: String) -> Result<Value, ApiError> {
         let r = self.registrar.as_ref().ok_or_else(|| ApiError::unavailable("inscription non disponible sur cette station"))?;
         r.register_guest(ip, alias.as_deref(), &lang).await.map(|reg| registered_json(&reg)).map_err(register_error)
+    }
+
+    async fn restore(&self, ip: Option<std::net::IpAddr>, card: String, lang: String) -> Result<Value, ApiError> {
+        let r = self.registrar.as_ref().ok_or_else(|| ApiError::unavailable("restauration non disponible sur cette station"))?;
+        let card = astro_lifecycle::multipass::SecretCard::parse(&card).map_err(|e| ApiError::bad_request(e.to_string()))?;
+        let lang = if lang.is_empty() { "fr".to_owned() } else { lang };
+        r.recover(ip, &card, &lang).await.map(|reg| {
+            let mut out = registered_json(&reg);
+            out["restoring"] = json!(true);
+            out
+        }).map_err(register_error)
     }
 
     async fn invite_create(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
@@ -628,6 +649,25 @@ impl<B: BlobStore> Backend for StationUi<B> {
             Err(astro_facecloud::FaceError::Invalid(m)) => Err(ApiError::bad_request(m)),
             Err(e) => Err(db_err(e)),
         }
+    }
+
+    async fn face_shares_pending(&self, who: &Principal) -> Result<Value, ApiError> {
+        if !self.faces_enabled {
+            return Err(ApiError::unavailable("La reconnaissance des visages n'est pas activée sur cette station (le Capitaine l'active dans Options)."));
+        }
+        let batches = astro_facecloud::review::pending_batches(&self.services.db, &who.hex).await.map_err(db_err)?;
+        let pending: Vec<Value> = batches.into_iter().map(|b| json!({ "recipient_hex": b.recipient_hex, "name": b.name, "count": b.count, "sample_path": b.sample_path })).collect();
+        Ok(json!({ "pending": pending }))
+    }
+
+    async fn face_shares_confirm(&self, who: &Principal, recipient: String, accept: bool) -> Result<Value, ApiError> {
+        let f = self.pending_fn.as_ref().ok_or_else(|| ApiError::unavailable("La reconnaissance des visages n'est pas activée sur cette station."))?;
+        let (sent, dropped) = f(who.hex.clone(), recipient, accept).await.map_err(|e| {
+            eprintln!("interface : envois de photos en attente : {e}");
+            ApiError::internal("envoi impossible, réessayez plus tard")
+        })?;
+        self.services.activity.publish_to(astro_core::Audience::Owner(who.hex.clone()), "facecloud", "ui:faces", if accept { format!("{sent} photo(s) partagée(s) après confirmation") } else { "partage de photos refusé".to_owned() }, None);
+        Ok(json!({ "sent": sent, "dropped": dropped }))
     }
 
     async fn faces_forget(&self, who: &Principal, ids: Vec<i64>) -> Result<Value, ApiError> {
@@ -1073,6 +1113,7 @@ fn registered_json(reg: &crate::register::Registered) -> Value {
     json!({
         "email": a.email, "token": reg.token, "pass": a.pass, "salt": &*a.salt, "pepper": &*a.pepper, "nsec": &*a.nsec,
         "npub": a.npub, "hex": a.hex, "g1pub": a.g1_ss58, "nostrns": a.nostrns, "constellation": reg.constellation, "lang": a.lang, "guest": reg.guest,
+        "card": reg.card, "card_svg": astro_ui::qr::svg(&reg.card),
     })
 }
 

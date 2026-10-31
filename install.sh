@@ -254,7 +254,7 @@ fi
 
 # --- Ports déjà occupés (cause fréquente de « Address already in use ») ------------------------------------------
 if command -v ss >/dev/null 2>&1; then
-  busy=""; for p in 8080 80 443; do ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$" && busy="${busy} ${p}"; done
+  busy=""; for p in 18080 80 443; do ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$" && busy="${busy} ${p}"; done
   if [ -n "$busy" ]; then
     warn "Ports déjà utilisés sur cette machine :${busy} (IPFS, Nginx Proxy Manager…)."
     warn "  « astroportd init » en tient compte : si 80/443 sont pris, astroportd écoute en local (127.0.0.1:8090) derrière votre proxy ; sinon il gère lui-même HTTPS."

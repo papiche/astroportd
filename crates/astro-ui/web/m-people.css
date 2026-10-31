@@ -19,6 +19,10 @@
 .pe-todo button { text-align: left; }
 .pe-maybe { display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; }
 .pe-maybe:empty { display: none; }
+.pe-shares { display: grid; gap: .6rem; margin-bottom: 1rem; }
+.pe-shares:empty { display: none; }
+.pe-share { background: var(--panel); border: 1px solid var(--accent); border-radius: var(--r); padding: .6rem .9rem; }
+.pe-share p { margin: 0 0 .4rem; }
 .pe-maybe img { border-radius: 50%; border: 2px solid var(--warn); background: var(--line); }
 .pe-maybe p { margin: 0 0 .4rem; }
 .pe-tray { position: sticky; bottom: .6rem; z-index: 5; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; background: var(--panel); border: 1px solid var(--accent); border-radius: var(--r); padding: .6rem .8rem; margin-top: 1rem; box-shadow: 0 6px 24px #0004; }

@@ -46,6 +46,7 @@ INVITES = dict(invites=[dict(token='1' * 32, label='Marc', email=None, contact_p
                         dict(token='2' * 32, label='Zoé', email=None, contact_path=None, count=3, state='opened', created_at=1790000000, expires_at=1791000000, opened_at=1790000100, claimed_at=None, url='https://s.example/i/' + '2' * 32)])
 TOKEN = 'a1' * 16
 QR = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>'
+CARD = 'astro-secret:v1|alice@example.org|SaltSaltSaltSalt|PepperPepperPepper|isolated|0123456789abcdef|' + 'ab' * 32
 STATE = dict(faces=make_faces(), posts=[], deleted=[])
 
 def people():
@@ -79,6 +80,7 @@ class H(BaseHTTPRequestHandler):
         if p == '/': return self.send(200, (WEB / 'index.html').read_bytes(), 'text/html')
         if p == '/register': return self.send(200, (WEB / 'register.html').read_bytes(), 'text/html')
         if p == '/api/v1/register': return self.send(200, dict(open=True, constellation='ORIGIN', accounts=1, max_accounts=500))
+        if p == '/restore': return self.send(200, (WEB / 'restore.html').read_bytes(), 'text/html')
         if p == '/claim': return self.send(200, (WEB / 'claim.html').read_bytes(), 'text/html')
         if p.startswith('/i/'): return self.send(200, (WEB / 'invite.html').read_bytes(), 'text/html')
         if p == '/api/v1/invites': return self.send(200, INVITES)
@@ -113,7 +115,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, dict(assigned=len(body['ids']), name=body['name']))
         if p == '/api/v1/station/coop': return self.send(200, COOP)
         if p.startswith('/api/v1/station/admin/'): return self.send(200, ADMIN[p.rsplit('/', 1)[1]])
-        if p == '/api/v1/register': return self.send(200, dict(email='lea-x7k2p9@uplanet.local', token='JT', pass_='123456', salt='S', pepper='P', nsec='nsec1x', npub='npub1x', hex='cd' * 32, g1pub='G', nostrns='/ipns/k', constellation='ORIGIN', lang='fr', guest=True, **{'pass': '123456'}))
+        if p == '/api/v1/register': return self.send(200, dict(email='lea-x7k2p9@uplanet.local', token='JT', pass_='123456', salt='S', pepper='P', nsec='nsec1x', npub='npub1x', hex='cd' * 32, g1pub='G', nostrns='/ipns/k', constellation='ORIGIN', lang='fr', guest=True, card=CARD, card_svg=QR, **{'pass': '123456'}))
+        if p == '/api/v1/restore': return self.send(200, dict(email='alice@example.org', token='JT2', hex='ab' * 32, constellation='ORIGIN', restoring=True, **{'pass': '654321'}))
         if p == '/api/v1/invites': return self.send(200, dict(token=TOKEN, count=3, label=body.get('label'), expires_at=1791000000, url='https://s.example/i/' + TOKEN, qr_svg=QR))
         if p == '/api/v1/invites/remote-accept': return self.send(200, dict(**{'from': 'alice'}, origin=body['origin'], sent=4, warnings=[]))
         if p == f'/api/v1/invite/{TOKEN}/accept': return self.send(200, dict(**{'from': 'alice'}, shared=4, warnings=[]))
@@ -377,6 +380,16 @@ with sync_playwright() as pw:
     sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/register']
     check(sent and sent[-1] == dict(guest=True, alias='léa', lang='fr'), 'l\'inscription sans email envoie un alias, pas d\'adresse : ' + str(sent[-1:]))
     check('lea-x7k2p9@uplanet.local' in p5.inner_text('#card') and '123456' in p5.inner_text('#card'), 'l\'adresse générée et le PASS à 6 chiffres sont remis')
+    check(p5.is_visible('#qr svg') and CARD in p5.inner_text('#card') and p5.is_visible('#print'), 'la carte secrète est remise en texte et en QR imprimable')
+    # Rétablir son compte sur cette station depuis la carte : le champ est vidé dès la réponse, le nouveau PASS est remis.
+    p6 = br.new_context(viewport=dict(width=390, height=800), locale='fr-FR', service_workers='block').new_page()
+    p6.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None); p6.on('pageerror', lambda e: errors.append(str(e)))
+    p6.goto(f'http://127.0.0.1:{port}/restore'); p6.wait_for_selector('#f:not([hidden])')
+    check(not p6.is_visible('#scan'), 'sans lecteur de QR du navigateur, seul le collage est proposé')
+    p6.fill('#card', CARD); p6.click('#go'); p6.wait_for_selector('#done:not([hidden])')
+    sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/restore']
+    check(sent and sent[-1] == dict(card=CARD, lang='fr'), 'seule la carte part, vers cette station : ' + str(sent[-1:]))
+    check('654321' in p6.inner_text('#out') and 'alice@example.org' in p6.inner_text('#out') and p6.input_value('#card') == '', 'le nouveau PASS est remis et la carte effacée du champ')
     # Compte invité : bandeau honnête (pas de fonction promise qui n'existe pas).
     ACCOUNT['guest'] = True
     page.goto(f'http://127.0.0.1:{port}/#/account'); page.wait_for_selector('#ac-name'); page.wait_for_timeout(200)

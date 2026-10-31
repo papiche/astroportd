@@ -6,6 +6,7 @@ const FIELDS = [
   ['pass', 'Code PASS (connexion sur téléphone : email + PASS)'],
   ['salt', 'SALT (secret de récupération 1/2)'],
   ['pepper', 'PEPPER (secret de récupération 2/2)'],
+  ['card', 'Carte secrète (rétablit le compte sur une autre station) : ne la montrez à personne'],
   ['nsec', 'Clé secrète Nostr (nsec) : ne la montrez à personne'],
   ['npub', 'Clé publique Nostr (npub)'],
   ['g1pub', 'Portefeuille Ğ1'],
@@ -39,9 +40,15 @@ $('#f').onsubmit = async ev => {
       dt.textContent = label; dd.textContent = j[k];
       dl.append(dt, dd);
     }
+    // QR de la carte secrète, rendu par la station (SVG autonome) : lu comme document SVG, jamais inséré comme HTML.
+    const qr = $('#qr');
+    qr.querySelector('svg')?.remove();
+    const svg = j.card_svg && new DOMParser().parseFromString(j.card_svg, 'image/svg+xml').documentElement;
+    if (svg && svg.nodeName === 'svg') { qr.append(document.importNode(svg, true)); qr.hidden = false; }
     $('#f').hidden = true; $('#done').hidden = false; $('#done-t').focus();
   } catch { $('#err').textContent = 'Station injoignable.'; } finally { b.disabled = false; }
 };
+$('#print').onclick = () => window.print();
 $('#save').onclick = () => {
   if (!card) return;
   const text = 'MULTIPASS ' + card.constellation + '\n' + FIELDS.filter(([k]) => card[k]).map(([k, l]) => l + '\n  ' + card[k]).join('\n') + '\n\nGardez ce fichier hors ligne. Il ne sera plus jamais affiché.\n';

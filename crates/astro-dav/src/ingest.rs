@@ -79,6 +79,10 @@ pub async fn replace<B: BlobStore, R: AsyncRead + Unpin>(st: &Arc<DavState<B>>, 
 }
 
 async fn ingest_with<B: BlobStore, R: AsyncRead + Unpin>(st: &Arc<DavState<B>>, owner: &str, dir: &str, name: &str, mime_hint: Option<&str>, reader: R, replace: bool) -> Result<Ingested, IngestError> {
+    // Disque physique sous la réserve : refus avant tout fichier temporaire ni CPU dépensé.
+    if !crate::blob::disk_has_room(st.blobs.as_ref(), 0) {
+        return Err(IngestError::TooLarge("espace disque de la station presque plein (réserve de sécurité atteinte) : dépôt refusé".into()));
+    }
     let account = crate::auth::lookup_by_hex(&st.db, owner).await.ok_or(IngestError::NoAccount)?;
     let limits = st.config.limits(account.tier);
     let dir = vfs::normalize_path(dir)?;

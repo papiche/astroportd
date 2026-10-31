@@ -207,6 +207,12 @@ async fn kv_get(db: &Db, scope: &'static str, key: &str) -> Result<Option<String
         .await
 }
 
+/// Le compte vient d'être rétabli depuis sa carte secrète et attend ses sauvegardes ? Tant que c'est le cas, publier un
+/// manifeste (forcément vide) remplacerait l'événement d'origine, donc la clé du manifeste que les amis détiennent.
+pub async fn restoring(db: &Db, owner: &str) -> bool {
+    matches!(kv_get(db, "restore", owner).await, Ok(Some(state)) if state == "pending")
+}
+
 async fn kv_set(db: &Db, scope: &'static str, key: &str, value: String) -> Result<(), DbError> {
     db.writer()
         .execute(
@@ -224,6 +230,9 @@ async fn kv_set(db: &Db, scope: &'static str, key: &str, value: String) -> Resul
 /// à `created_at` égal, un remplaçable garderait l'identifiant le plus petit, pas le plus récent.
 pub async fn publish<B: BlobStore>(db: &Db, blobs: &B, keys: &dyn KeySource, owner: &str) -> Result<Published, ManifestError> {
     let secret = keys.secret(owner).ok_or(ManifestError::NoKey)?;
+    if restoring(db, owner).await {
+        return Err(ManifestError::Invalid("restauration du compte en cours : le manifeste d'origine ne doit pas être remplacé"));
+    }
     let rev = kv_get(db, "ucloud_manifest_rev", owner).await?.and_then(|v| v.parse::<u64>().ok()).unwrap_or(0) + 1;
     let previous_cid = kv_get(db, "ucloud_manifest_cid", owner).await?;
     let last_ts: Option<i64> = {
@@ -382,6 +391,9 @@ pub async fn restore_from_event<B: BlobStore>(db: &Db, blobs: &B, keys: &dyn Key
     Ok(pointer)
 }
 
+/// Plafond de report d'une publication : un téléversement continu ne la repousse pas au-delà.
+const MAX_PUBLISH_DELAY: Duration = Duration::from_secs(60);
+
 enum Msg {
     Dirty(String),
     Flush(oneshot::Sender<Vec<(String, String)>>),
@@ -398,17 +410,24 @@ impl ManifestPublisher {
     /// Lance le travailleur. `debounce` : délai de regroupement après la première modification.
     pub fn spawn<B: BlobStore>(db: Arc<Db>, blobs: Arc<B>, keys: Arc<dyn KeySource>, debounce: Duration) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<Msg>();
+        let max_delay = (debounce * 30).max(MAX_PUBLISH_DELAY);
         tokio::spawn(async move {
             let mut pending: HashSet<String> = HashSet::new();
             let mut failures: Vec<(String, String)> = Vec::new();
+            // Première modification en attente : borne le report quand les dépôts n'arrêtent pas.
+            let mut first_dirty: Option<tokio::time::Instant> = None;
             loop {
                 let msg = if pending.is_empty() {
+                    first_dirty = None;
                     rx.recv().await
                 } else {
+                    let since = *first_dirty.get_or_insert_with(tokio::time::Instant::now);
+                    let wait = debounce.min((since + max_delay).saturating_duration_since(tokio::time::Instant::now()));
                     tokio::select! {
                         m = rx.recv() => m,
-                        () = tokio::time::sleep(debounce) => {
+                        () = tokio::time::sleep(wait) => {
                             drain(&db, blobs.as_ref(), keys.as_ref(), &mut pending, &mut failures).await;
+                            first_dirty = None;
                             continue;
                         }
                     }
@@ -448,6 +467,9 @@ impl ManifestPublisher {
 
 async fn drain<B: BlobStore>(db: &Db, blobs: &B, keys: &dyn KeySource, pending: &mut HashSet<String>, failures: &mut Vec<(String, String)>) {
     for owner in pending.drain() {
+        if restoring(db, &owner).await {
+            continue; // republié par la restauration elle-même, une fois le manifeste d'origine rétabli
+        }
         if let Err(e) = publish(db, blobs, keys, &owner).await {
             failures.push((owner, e.to_string()));
         }

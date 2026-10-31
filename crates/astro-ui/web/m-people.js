@@ -223,6 +223,15 @@ function side() {
   root.querySelector('.pe-todo').replaceChildren(...todo.map(c => K.h('button', { class: 'ghost', 'aria-pressed': String(c.members.every(m => S.sel.has(m.id))), onclick: () => { select(c.members.map(m => m.id)); focus(c); } }, c.n > 1 ? `Groupe de ${c.n} visages` : `Visage ${c.members[0].id}`)),
     S.clusters.filter(c => !c.person).length > 30 && K.h('p', { class: 'muted' }, `… et ${S.clusters.filter(c => !c.person).length - 30} autre(s) sur la table.`));
 }
+/* Envois de photos en attente : un clic par ami (visage flou, de profil ou ressemblance incertaine). */
+async function shares() {
+  const box = root.querySelector('.pe-shares'), r = await K.api('/api/v1/faces/pending-shares');
+  const reply = (b, accept) => act(x => accept ? `${x.sent} photo(s) partagée(s) avec ${b.name}` : `Rien n'est envoyé à ${b.name}`, () => K.api('/api/v1/faces/pending-shares/confirm', { method: 'POST', body: { recipient_hex: b.recipient_hex, accept } }));
+  box.replaceChildren(...r.pending.map(b => K.h('div', { class: 'pe-share' },
+    K.h('p', {}, K.h('strong', {}, 'Partage de photos : '), `${b.count} photo(s) où ${b.name} apparaît semblent prêtes à lui être envoyées.`),
+    K.h('button', { onclick: () => reply(b, true) }, `Partager avec ${b.name} en 1 clic`), ' ',
+    K.h('button', { class: 'ghost', onclick: () => reply(b, false) }, 'Ignorer'))));
+}
 function maybe() {
   const box = root.querySelector('.pe-maybe'), s = S.faces.find(f => f.suggest && !f.named && !S.no.has(f.id));
   if (!s) return box.replaceChildren();
@@ -246,7 +255,7 @@ async function load() {
   S.visible = () => (S.view === 'all' ? S.faces : S.faces.filter(f => !f.named));
   root.querySelector('.pe-count').textContent = `${r.unknown} à ranger · ${r.people.length} personne(s)${r.truncated ? ' · catalogue tronqué aux plus récents' : ''}${r.groups_skipped ? ' · groupes non calculés (trop de visages)' : ''}`;
   root.querySelector('[data-v=todo]').textContent = `À ranger (${r.unknown})`; root.querySelector('[data-v=all]').textContent = `Tous (${r.faces.length})`;
-  const first = !S.nodes.length; layout(); side(); maybe(); trayDraw(); if (first) fit(); redraw();
+  const first = !S.nodes.length; layout(); side(); maybe(); shares().catch(() => {}); trayDraw(); if (first) fit(); redraw();
   root.querySelector('.pe-empty').hidden = !!r.faces.length;
   return true;
 }
@@ -264,7 +273,7 @@ export default async function people(el, kit) {
       h('span', { class: 'pe-views' }, h('button', { 'data-v': 'todo', class: 'ghost', 'aria-pressed': 'true', onclick: () => setView('todo') }, 'À ranger'), h('button', { 'data-v': 'all', class: 'ghost', 'aria-pressed': 'false', onclick: () => setView('all') }, 'Tous')),
       h('button', { class: 'ghost', 'aria-pressed': 'false', onclick: ev => { S.lasso = !S.lasso; ev.target.setAttribute('aria-pressed', String(S.lasso)); } }, 'Lasso'),
       h('button', { class: 'ghost', onclick: () => { fit(); redraw(); } }, 'Tout voir')),
-    h('div', { class: 'pe-maybe card' }),
+    h('div', { class: 'pe-maybe card' }), h('div', { class: 'pe-shares' }),
     h('div', { class: 'pe-main' }, h('div', { class: 'pe-stage' }, cv, h('p', { class: 'pe-empty muted', hidden: true }, 'Aucun visage pour le moment : déposez des photos dans votre uCloud, la station les analyse.')),
       h('aside', { class: 'pe-side card' }, h('h3', {}, 'Pochettes'),
         h('button', { class: 'pe-pochette new', 'data-drop': 'new' }, '＋ Nouvelle personne'), h('button', { class: 'pe-pochette trash', 'data-drop': 'trash' }, '✕ Pas à reconnaître'),

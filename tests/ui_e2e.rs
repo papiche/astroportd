@@ -738,6 +738,11 @@ async fn the_sorting_table_api_lists_groups_assigns_and_forgets_for_the_owner_on
     assert_eq!(b.post("/api/v1/faces/forget", &alice, json!({ "ids": [] })).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(b.post("/api/v1/faces/thumbs", &alice, json!({ "ids": [1], "size": 8 })).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(b.post("/api/v1/faces/thumbs", &alice, json!({ "ids": [1], "size": 96 })).await.0, StatusCode::NOT_IMPLEMENTED, "sans service FaceCloud câblé dans ce banc d'essai");
+    // Envois en attente : lots par ami, isolés par titulaire ; la réponse exige une clé d'ami valide.
+    let (s, pending) = b.get("/api/v1/faces/pending-shares", &alice).await;
+    assert_eq!((s, pending["pending"].as_array().map(Vec::len)), (StatusCode::OK, Some(0)), "{pending}");
+    assert_eq!(b.post("/api/v1/faces/pending-shares/confirm", &alice, json!({ "recipient_hex": "pas-hex", "accept": true })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(call(&b.app, Method::GET, "/api/v1/faces/pending-shares", None, &[], Vec::new()).await.0, StatusCode::UNAUTHORIZED);
     assert_eq!(call(&b.app, Method::GET, "/api/v1/faces/board", None, &[], Vec::new()).await.0, StatusCode::UNAUTHORIZED);
 }
 
@@ -892,6 +897,44 @@ async fn the_pass_logs_in_locks_progressively_and_the_captain_can_unlock() {
     assert_eq!(post("/api/v1/account/unlock".into(), json!({ "email": "alice@example.org", "pass": "123456" }), None).await.0, StatusCode::OK);
     // Mal formé : refusé avant tout essai.
     assert_eq!(post("/api/v1/account/unlock".into(), json!({ "email": "alice@example.org", "pass": "12" }), None).await.0, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_secret_card_given_at_registration_restores_the_account_on_another_station_through_the_web() {
+    let (old, fresh) = (bench("card-old", None).await, bench("card-new", None).await);
+    let json_post = &[("content-type", "application/json")][..];
+    let (s, _, body) = call(&old.app, Method::POST, "/api/v1/register", None, json_post, json!({ "email": "Membre@Exemple.org", "lang": "fr" }).to_string().into_bytes()).await;
+    let made: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(s, StatusCode::OK, "{made}");
+    let card = made["card"].as_str().unwrap().to_owned();
+    assert!(card.starts_with("astro-secret:v1|membre@exemple.org|") && made["card_svg"].as_str().is_some_and(|s| s.contains("<svg")), "{made}");
+
+    // La page, son script et la route sont publics ; la page n'est jamais indexée.
+    let (s, h, body) = call(&fresh.app, Method::GET, "/restore", None, &[], vec![]).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&body).contains("carte secrète") && h["x-robots-tag"].to_str().unwrap().contains("noindex"));
+    assert_eq!(call(&fresh.app, Method::GET, "/ui/restore.js", None, &[], vec![]).await.0, StatusCode::OK);
+
+    // Autre station : même compte, nouveau PASS, aucune clé ni secret redonné.
+    let ask = |card: &str| json!({ "card": card, "lang": "fr" }).to_string().into_bytes();
+    let (s, h, body) = call(&fresh.app, Method::POST, "/api/v1/restore", None, json_post, ask(&card)).await;
+    let r: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(s, StatusCode::OK, "{r}");
+    assert_eq!(h[header::CACHE_CONTROL], "no-store");
+    assert_eq!((r["hex"].as_str(), r["email"].as_str(), r["restoring"].as_bool()), (made["hex"].as_str(), Some("membre@exemple.org"), Some(true)), "{r}");
+    assert_ne!(r["pass"], made["pass"], "l'ancien PASS n'est pas récupérable");
+    let login = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("membre@exemple.org:{}", r["token"].as_str().unwrap())));
+    let (s, me) = fresh.get("/api/v1/me", &login).await;
+    assert_eq!((s, me["hex"].as_str()), (StatusCode::OK, made["hex"].as_str()), "{me}");
+
+    // Refus : déjà rétabli ici, carte altérée, corps illisible.
+    assert_eq!(call(&fresh.app, Method::POST, "/api/v1/restore", None, json_post, ask(&card)).await.0, StatusCode::CONFLICT);
+    let altered = card.replacen(made["salt"].as_str().unwrap(), &"x".repeat(24), 1);
+    let blank = bench("card-blank", None).await;
+    assert_eq!(call(&blank.app, Method::POST, "/api/v1/restore", None, json_post, ask(&altered)).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(call(&blank.app, Method::POST, "/api/v1/restore", None, json_post, ask("n'importe quoi")).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(call(&blank.app, Method::POST, "/api/v1/restore", None, json_post, b"pas du json".to_vec()).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(call(&blank.app, Method::GET, "/api/v1/me", None, &[], vec![]).await.0, StatusCode::UNAUTHORIZED, "la route n'ouvre aucune autre porte");
 }
 
 #[tokio::test]

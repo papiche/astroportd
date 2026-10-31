@@ -217,6 +217,54 @@ enum MultipassAction {
         #[arg(long)]
         json: bool,
     },
+    /// Rétablit sur cette station un MULTIPASS **existant** depuis sa carte secrète (station en panne, ou déménagement) : même clé, donc
+    /// mêmes amis et mêmes fichiers. La station retrouve ensuite ses événements, annonce sa nouvelle station d'accueil et demande à
+    /// chaque proche ce qu'il détient : ses amis n'ont rien à faire. Un nouveau PASS est généré (l'ancien n'est pas récupérable).
+    Recover {
+        /// Carte secrète (`astro-secret:v1|…`), ou `-` pour la lire sur l'entrée standard, ou `@fichier` : à éviter en argument, il se lirait dans `ps`.
+        card: String,
+        /// Langue du compte (`fr`, `en`, `es`…).
+        #[arg(long, default_value = "fr")]
+        lang: String,
+        /// Dossier `~/.zen/game` (défaut : `$ASTRO_GAME_DIR`, sinon `$HOME/.zen/game`).
+        #[arg(long)]
+        game_dir: Option<PathBuf>,
+        /// Dossier de la station (`station.conf`, `uplanet.db`) ; défaut `~/.zen/astroportd`.
+        #[arg(long)]
+        home: Option<PathBuf>,
+        /// `swarm.key` de la constellation (ẐEN) ; sinon `uplanetname` de station.conf, sinon ORIGIN (64 zéros).
+        #[arg(long)]
+        swarm_key: Option<PathBuf>,
+        /// Base `uplanet.db` (défaut : `<home>/uplanet.db`).
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Relai (`ws://` ou `wss://`) où rapatrier tout de suite les événements du compte ; répétable. Sans lui, c'est le démon qui s'en charge.
+        #[arg(long = "relay")]
+        relays: Vec<String>,
+        /// Tours de crawl au plus (amis N1 puis N2…).
+        #[arg(long, default_value_t = 6)]
+        rounds: usize,
+        /// Sortie JSON (scripts).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Affiche de nouveau la carte secrète d'un MULTIPASS hébergé ici (texte, ou QR en SVG avec `--svg`) : à imprimer et à garder hors ligne.
+    Card {
+        /// Email du compte.
+        account: String,
+        /// Dossier `~/.zen/game`.
+        #[arg(long)]
+        game_dir: Option<PathBuf>,
+        /// Dossier de la station (`station.conf`) ; défaut `~/.zen/astroportd`.
+        #[arg(long)]
+        home: Option<PathBuf>,
+        /// `swarm.key` de la constellation ; sinon `uplanetname` de station.conf, sinon ORIGIN.
+        #[arg(long)]
+        swarm_key: Option<PathBuf>,
+        /// Écrit le QR en SVG au lieu du texte.
+        #[arg(long)]
+        svg: bool,
+    },
     /// Liste les MULTIPASS hébergés (sans aucun secret).
     List {
         /// Dossier `~/.zen/game`.
@@ -519,6 +567,56 @@ fn route(service: &str, mode: astro_p2p::routing::Mode, swarm_dir: Option<PathBu
 /// `astroportd multipass …`.
 async fn multipass_cmd(action: MultipassAction) -> Result<(), Failure> {
     match action {
+        MultipassAction::Recover { card, lang, game_dir, home, swarm_key, db, relays, rounds, json } => {
+            let home = station_home(home)?;
+            let uplanet_name = station_uplanet_name(&home, swarm_key)?;
+            let card = astro_lifecycle::multipass::SecretCard::parse(&read_card_text(&card)?)?;
+            let station = identity::resolve(game_dir.as_deref(), true)?;
+            let nostr_dir = station.nostr_dir.clone().ok_or("dossier des comptes introuvable (--game-dir)")?;
+            let db_path = db.unwrap_or_else(|| home.join("uplanet.db"));
+            let db = Arc::new(Db::open(&db_path, 1)?);
+            let secret = station.secret.clone();
+            let registrar = astroportd::register::Registrar::new(db.clone(), nostr_dir, uplanet_name, Arc::new(move |hex| astro_dav::auth::derive_dav_token(&secret, hex)), astroportd::register::Limits { open: true, max_accounts: 0, per_ip_per_hour: 0 });
+            let reg = registrar.recover(None, &card, &lang).await?;
+            // Rapatriement immédiat des événements du compte (contacts, DID, manifeste) ; sinon le crawl du démon s'en charge.
+            if !relays.is_empty() {
+                let mut client = WsClient::new(Duration::from_secs(30));
+                if let Some(signer) = station.signer {
+                    client = client.with_signer(signer);
+                }
+                let crawl = Crawler::new(db.clone(), client, CrawlConfig { relays, ..CrawlConfig::default() }).run_until_stable(std::slice::from_ref(&reg.account.hex), rounds).await?;
+                eprintln!("crawl : {} clés, {} reçus, {} nouveaux, {} doublons, {} refusés", crawl.keys, crawl.fetched, crawl.inserted, crawl.duplicates, crawl.rejected);
+                for (relay, key, reason) in &crawl.errors {
+                    eprintln!("  échec {relay} / {key} : {reason}");
+                }
+            }
+            db.writer().shutdown().await?;
+            let a = &reg.account;
+            if json {
+                println!("{}", serde_json::json!({ "email": a.email, "token": reg.token, "pass": a.pass, "npub": a.npub, "hex": a.hex, "g1pub": a.g1_ss58, "nostrns": a.nostrns, "constellation": reg.constellation, "restoring": true }));
+            } else {
+                println!("MULTIPASS {} rétabli sur la constellation {} (même clé : {})\n", a.email, reg.constellation, a.hex);
+                println!("  Identifiant web : {}\n  Jeton web       : {}\n  NOUVEAU PASS    : {}", a.email, reg.token, a.pass);
+                println!("\n⚠ Notez ce nouveau PASS : l'ancien n'est pas récupérable.");
+                println!("Le démon (`astroportd serve`) va maintenant retrouver vos amis, annoncer cette station comme votre nouvelle maison et récupérer vos fichiers chez vos proches : ils n'ont rien à faire.");
+                println!("Ne modifiez rien tant que la restauration n'est pas terminée ; vous serez prévenu.");
+            }
+            Ok(())
+        }
+        MultipassAction::Card { account, game_dir, home, swarm_key, svg } => {
+            let home = station_home(home)?;
+            let uplanet_name = station_uplanet_name(&home, swarm_key)?;
+            let station = identity::resolve(game_dir.as_deref(), true)?;
+            let nostr_dir = station.nostr_dir.ok_or("dossier des comptes introuvable (--game-dir)")?;
+            let email = astro_lifecycle::multipass::normalize_email(&account)?;
+            let text = astro_lifecycle::multipass::SecretCard::from_dir(&nostr_dir.join(&email), &uplanet_name)?.to_text();
+            if svg {
+                println!("{}", astro_ui::qr::svg(&text).ok_or("carte trop longue pour un QR")?);
+            } else {
+                println!("{text}");
+            }
+            Ok(())
+        }
         MultipassAction::List { game_dir } => {
             let station = identity::resolve(game_dir.as_deref(), true)?;
             let found = station.discovered.as_ref().ok_or("identités locales introuvables (--game-dir)")?;
@@ -532,15 +630,8 @@ async fn multipass_cmd(action: MultipassAction) -> Result<(), Failure> {
             Ok(())
         }
         MultipassAction::Create { email, lang, game_dir, home, swarm_key, db, relays, captain: make_captain, json } => {
-            let home = home.map_or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".zen/astroportd")).ok_or("HOME introuvable : indiquer --home"), Ok)?;
-            let uplanet_name = match swarm_key {
-                Some(path) => std::fs::read_to_string(&path).map_err(|e| format!("{} : {e}", path.display()))?.lines().map(str::trim).rfind(|l| !l.is_empty()).map(str::to_owned).ok_or("swarm.key vide")?,
-                None => std::fs::read_to_string(home.join("station.conf"))
-                    .ok()
-                    .and_then(|t| t.lines().find_map(|l| l.strip_prefix("uplanetname").and_then(|v| v.trim_start().strip_prefix('=')).map(|v| v.trim().to_owned())))
-                    .filter(|v| !v.is_empty())
-                    .unwrap_or_else(|| astroportd::init::ORIGIN_UPLANETNAME.to_owned()),
-            };
+            let home = station_home(home)?;
+            let uplanet_name = station_uplanet_name(&home, swarm_key)?;
             let station = identity::resolve(game_dir.as_deref(), true)?;
             let nostr_dir = station.nostr_dir.clone().ok_or("dossier des comptes introuvable (--game-dir)")?;
             let db_path = db.unwrap_or_else(|| home.join("uplanet.db"));
@@ -593,17 +684,48 @@ async fn multipass_cmd(action: MultipassAction) -> Result<(), Failure> {
             db.writer().shutdown().await?;
             let a = &reg.account;
             if json {
-                println!("{}", serde_json::json!({ "email": a.email, "token": reg.token, "pass": a.pass, "salt": &*a.salt, "pepper": &*a.pepper, "nsec": &*a.nsec, "npub": a.npub, "hex": a.hex, "g1pub": a.g1_ss58, "nostrns": a.nostrns, "constellation": reg.constellation }));
+                println!("{}", serde_json::json!({ "email": a.email, "token": reg.token, "pass": a.pass, "salt": &*a.salt, "pepper": &*a.pepper, "nsec": &*a.nsec, "npub": a.npub, "hex": a.hex, "g1pub": a.g1_ss58, "nostrns": a.nostrns, "constellation": reg.constellation, "card": reg.card }));
             } else {
                 println!("MULTIPASS {} créé sur la constellation {}\n", a.email, reg.constellation);
                 println!("  Identifiant web : {}\n  Jeton web       : {}\n  Code PASS       : {}", a.email, reg.token, a.pass);
                 println!("  SALT            : {}\n  PEPPER          : {}", &*a.salt, &*a.pepper);
                 println!("  nsec            : {}\n  npub            : {}\n  Ğ1              : {}\n  IPNS            : {}", &*a.nsec, a.npub, a.g1_ss58, a.nostrns);
-                println!("\n⚠ Notez SALT et PEPPER maintenant : ils permettent de récupérer le compte et ne seront plus affichés.");
+                println!("  Carte secrète   : {}", reg.card);
+                println!("\n⚠ Notez SALT et PEPPER (ou imprimez la carte secrète en QR : `astroportd multipass card {} --svg`) : ils permettent de récupérer le compte sur une autre station et ne seront plus affichés.", a.email);
                 println!("  Dossier du compte : {}", a.dir.display());
             }
             if failures > 0 { Err(format!("{failures} publication(s) en échec (le compte est créé)").into()) } else { Ok(()) }
         }
+    }
+}
+
+/// Dossier de la station : `--home`, sinon `~/.zen/astroportd`.
+fn station_home(home: Option<PathBuf>) -> Result<PathBuf, Failure> {
+    Ok(home.map_or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".zen/astroportd")).ok_or("HOME introuvable : indiquer --home"), Ok)?)
+}
+
+/// `UPLANETNAME` de la station : `swarm.key` donné, sinon `uplanetname` de `station.conf`, sinon ORIGIN (64 zéros).
+fn station_uplanet_name(home: &std::path::Path, swarm_key: Option<PathBuf>) -> Result<String, Failure> {
+    Ok(match swarm_key {
+        Some(path) => std::fs::read_to_string(&path).map_err(|e| format!("{} : {e}", path.display()))?.lines().map(str::trim).rfind(|l| !l.is_empty()).map(str::to_owned).ok_or("swarm.key vide")?,
+        None => std::fs::read_to_string(home.join("station.conf"))
+            .ok()
+            .and_then(|t| t.lines().find_map(|l| l.strip_prefix("uplanetname").and_then(|v| v.trim_start().strip_prefix('=')).map(|v| v.trim().to_owned())))
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| astroportd::init::ORIGIN_UPLANETNAME.to_owned()),
+    })
+}
+
+/// Texte d'une carte secrète : donné tel quel, lu sur l'entrée standard (`-`) ou dans un fichier (`@chemin`).
+fn read_card_text(arg: &str) -> Result<String, Failure> {
+    if arg == "-" {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+        Ok(text)
+    } else if let Some(path) = arg.strip_prefix('@') {
+        Ok(std::fs::read_to_string(path).map_err(|e| format!("{path} : {e}"))?)
+    } else {
+        Ok(arg.to_owned())
     }
 }
 

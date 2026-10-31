@@ -113,6 +113,8 @@ pub struct Nightly<P: Publisher> {
     pub publisher: Option<Arc<P>>,
     /// Journal d'activité.
     pub activity: Option<ActivityBus>,
+    /// Respiration entre deux étapes lourdes : laisse passer le trafic HTTP/WebDAV sur un petit CPU (zéro en test).
+    pub pause: Duration,
 }
 
 fn int(n: u64) -> Value {
@@ -154,18 +156,23 @@ impl<P: Publisher> Nightly<P> {
 
         let r = self.snapshot(&date).await;
         report.step("snapshot", r);
+        let r = self.db.writer().checkpoint().await.map(|()| "journal WAL tronqué".to_owned()).map_err(|e| format!("wal_checkpoint : {e}"));
+        report.step("checkpoint", r);
         let r = self.purge(now).await;
         report.step("purge", r);
+        tokio::time::sleep(self.pause).await;
         let r = match &self.dream {
             Some(h) => h(now).await,
             None => Ok("mémoire sémantique inactive (pas d'Ollama)".into()),
         };
         report.step("rêve", r);
+        tokio::time::sleep(self.pause).await;
         let r = match &self.backup {
             Some(h) => h(now).await,
             None => Ok("sauvegarde privée inactive".into()),
         };
         report.step("sauvegarde", r);
+        tokio::time::sleep(self.pause).await;
         let r = match &self.integrity {
             Some(h) => h(now).await,
             None => Ok("contrôle d'intégrité inactif".into()),

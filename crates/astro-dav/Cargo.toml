@@ -33,6 +33,7 @@ bytes.workspace = true
 url.workspace = true
 zeroize.workspace = true
 getrandom.workspace = true
+rustix.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

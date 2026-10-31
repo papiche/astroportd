@@ -527,6 +527,9 @@ pub(crate) async fn put<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str,
     if declared.is_some_and(|n| n > limits.max_file) {
         return reply(StatusCode::PAYLOAD_TOO_LARGE, "fichier trop volumineux");
     }
+    if !crate::blob::disk_has_room(st.blobs.as_ref(), declared.unwrap_or(0)) {
+        return reply(StatusCode::INSUFFICIENT_STORAGE, "espace disque de la station presque plein : dépôt refusé");
+    }
     // Contrôles préalables, avant de lire le corps : parent, collection, quota annoncé.
     let (o, p) = (owner.clone(), path.to_owned());
     let pre = st

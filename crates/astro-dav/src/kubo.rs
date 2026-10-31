@@ -452,6 +452,10 @@ impl BlobStore for AutoBlobStore {
     type Writer = AutoWriter;
     type Reader = AutoReader;
 
+    fn disk_space(&self) -> Option<(u64, u64)> {
+        self.fs.disk_space()
+    }
+
     async fn begin(&self) -> Result<AutoWriter, BlobError> {
         if let Some(kubo) = self.kubo_up().await {
             if let Ok(w) = kubo.begin().await {

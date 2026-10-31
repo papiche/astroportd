@@ -228,6 +228,21 @@ CREATE TABLE IF NOT EXISTS face_shares (
   PRIMARY KEY (owner_hex, cid, recipient_hex)
 ) STRICT, WITHOUT ROWID;
 
+-- Partages FaceCloud en zone de précaution (visage flou/de profil ou score < 0,88) : l'envoi attend un clic de validation
+-- groupée par ami dans l'interface. État LOCAL ; une ligne par photo et destinataire.
+CREATE TABLE IF NOT EXISTS face_share_pending (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_hex     TEXT NOT NULL,
+  recipient_hex TEXT NOT NULL,
+  path          TEXT NOT NULL,
+  cid           TEXT NOT NULL,
+  det_score     REAL NOT NULL,
+  score         REAL NOT NULL,
+  created_at    INTEGER NOT NULL,
+  UNIQUE (owner_hex, recipient_hex, cid)
+) STRICT;
+CREATE INDEX IF NOT EXISTS fsp_owner ON face_share_pending(owner_hex, recipient_hex);
+
 -- Invitations à rejoindre la constellation en recevant des photos (lien `/i/<jeton>`). Le jeton (128 bits aléatoires) est la
 -- seule preuve de possession du lien. `items` : fichiers choisis à la création (chemin, CID, nom, type, taille, empreinte) ;
 -- leurs clés restent dans `ucloud_keyring` et ne quittent jamais la station avant la réclamation.

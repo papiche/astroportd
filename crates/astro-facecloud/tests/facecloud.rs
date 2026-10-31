@@ -304,3 +304,38 @@ impl Rig {
         random_vec(label)
     }
 }
+
+#[tokio::test]
+async fn an_uncertain_match_waits_for_one_click_then_goes_out_or_is_dropped() {
+    // Seuil d'envoi direct inatteignable : tout visage reconnu tombe dans la zone de précaution.
+    let r = rig("pending", |c| c.share_auto_min = 2.0).await;
+    enroll_friends(&r).await;
+    put_photo(&r, "soiree.jpg", "FACES:bob+p1,carol+p1").await;
+    let alice = hex(&ALICE);
+    let rep = r.fc.process_photo(&alice, "/soiree.jpg").await.unwrap();
+    assert!(rep.shares.is_empty(), "rien ne part sans confirmation : {rep:?}");
+    assert_eq!(rep.skipped.iter().filter(|s| s.reason == "en attente de confirmation").count(), 2);
+    assert!(r.outbox.sent.lock().unwrap().is_empty());
+    assert_eq!(count(&r, "SELECT count(*) FROM face_shares").await, 0);
+
+    // Un retraitement de la même photo ne duplique ni n'envoie.
+    r.fc.process_photo(&alice, "/soiree.jpg").await.unwrap();
+    assert_eq!(count(&r, "SELECT count(*) FROM face_share_pending").await, 2);
+    assert_eq!(count(&r, "SELECT count(*) FROM face_shares").await, 0, "une photo en attente le reste");
+
+    let batches = astro_facecloud::review::pending_batches(&r.db, &alice).await.unwrap();
+    let mut named: Vec<_> = batches.iter().map(|b| (b.name.as_str(), b.count)).collect();
+    named.sort_unstable();
+    assert_eq!(named, [("Bob", 1), ("Carol", 1)]);
+    assert!(batches.iter().all(|b| b.sample_path == "/soiree.jpg"));
+
+    // Accepter pour Bob : copie locale ; Carol reste en attente.
+    assert_eq!(r.fc.resolve_pending(&alice, &hex(&BOB), true).await.unwrap(), (1, 0));
+    assert_eq!(count(&r, "SELECT count(*) FROM face_shares WHERE via = 'local'").await, 1);
+    assert_eq!(count(&r, "SELECT count(*) FROM face_share_pending").await, 1);
+
+    // Refuser pour Carol : rien n'est envoyé, le lot disparaît.
+    assert_eq!(r.fc.resolve_pending(&alice, &hex(&CAROL), false).await.unwrap(), (0, 1));
+    assert_eq!(count(&r, "SELECT count(*) FROM face_share_pending").await, 0);
+    assert!(r.outbox.sent.lock().unwrap().is_empty());
+}

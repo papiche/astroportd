@@ -266,6 +266,10 @@ impl<B: BlobStore> BlobStore for P2pBlobStore<B> {
     type Writer = B::Writer;
     type Reader = B::Reader;
 
+    fn disk_space(&self) -> Option<(u64, u64)> {
+        self.inner.disk_space()
+    }
+
     async fn begin(&self) -> Result<B::Writer, BlobError> {
         self.inner.begin().await
     }

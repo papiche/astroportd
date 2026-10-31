@@ -10,7 +10,7 @@ h1{font-size:1.6rem;margin:.2rem 0 .6rem}
 a{color:var(--ac)}
 .skip{position:absolute;left:-999px}.skip:focus{left:8px;top:8px;background:var(--bg);padding:.4rem .7rem;z-index:2}
 label{display:block;margin:1rem 0 .25rem;font-weight:600}
-input,select{width:100%;padding:.7rem;border:1px solid var(--bd);border-radius:.5rem;background:var(--card);color:var(--fg);font:inherit}
+input,select,textarea{width:100%;padding:.7rem;border:1px solid var(--bd);border-radius:.5rem;background:var(--card);color:var(--fg);font:inherit}
 button{margin-top:1rem;padding:.7rem 1.1rem;border:1px solid var(--bd);border-radius:.5rem;background:var(--card);color:var(--fg);font:inherit;cursor:pointer}
 button.primary,#go{background:var(--ac);border-color:var(--ac);color:#fff}
 button[disabled]{opacity:.6;cursor:wait}
@@ -24,3 +24,8 @@ dd{margin:.15rem 0 0;padding:.5rem .7rem;background:var(--card);border:1px solid
 
 .check{display:flex;gap:.5rem;align-items:center;font-weight:400;margin:.9rem 0 .3rem}.check input{width:auto}
 code{background:var(--card);padding:.05rem .3rem;border-radius:.25rem}
+
+textarea{font-family:ui-monospace,monospace;font-size:.85rem;resize:vertical}
+#cam{width:100%;max-height:18rem;margin-top:.8rem;border-radius:.5rem;background:#000}
+#qr{margin:1rem 0;text-align:center}#qr svg{width:min(18rem,100%);height:auto;background:#fff;border-radius:.5rem}
+@media print{.skip,#save,#open,#print,#guest,.small{display:none}body{background:#fff;color:#000}}

@@ -79,6 +79,9 @@ pub struct Registered {
     pub constellation: &'static str,
     /// Compte invité : adresse générée par la station, pas un email réel.
     pub guest: bool,
+    /// Carte secrète (`astro-secret:v1|…`) à imprimer en QR : elle rétablit ce compte sur n'importe quelle station de la même
+    /// UPlanet. Vaut la clé du compte ; remise une seule fois, comme le reste.
+    pub card: String,
 }
 
 /// Le service d'inscription.
@@ -106,7 +109,7 @@ fn now() -> u64 {
 fn create_error(e: MultipassError) -> RegisterError {
     match e {
         MultipassError::Exists(_) | MultipassError::IdentityConflict(_) => RegisterError::Conflict(e.to_string()),
-        MultipassError::BadEmail(_) | MultipassError::BadSecrets => RegisterError::Invalid(e.to_string()),
+        MultipassError::BadEmail(_) | MultipassError::BadSecrets | MultipassError::BadCard(_) | MultipassError::OtherUplanet | MultipassError::HexMismatch => RegisterError::Invalid(e.to_string()),
         other => RegisterError::Internal(other.to_string()),
     }
 }
@@ -237,6 +240,52 @@ impl Registrar {
         self.create(ip, candidates, lang, true).await
     }
 
+    /// Rétablit sur cette station un MULTIPASS **existant** (panne de son ancienne station, ou déménagement) depuis sa carte
+    /// secrète : même clé, donc mêmes amis, mêmes fichiers et même identité.
+    ///
+    /// Aucun événement de naissance n'est publié (profil et contacts sont remplaçables : ils écraseraient les vrais). Le compte
+    /// est marqué « restauration en cours » : la station retrouve ses événements par le crawl, puis demande à chaque proche
+    /// ses sauvegardes et annonce sa nouvelle station d'accueil ([`crate::private_backup`]). Tant que le manifeste n'est
+    /// pas rétabli, aucun manifeste vide n'est publié : il remplacerait celui que les amis détiennent.
+    pub async fn recover(&self, ip: Option<IpAddr>, card: &multipass::SecretCard, lang: &str) -> Result<Registered, RegisterError> {
+        if !self.limits.open {
+            return Err(RegisterError::Closed);
+        }
+        let _one_at_a_time = self.gate.lock().await;
+        if self.limits.max_accounts > 0 && self.hosted_accounts().await? >= self.limits.max_accounts {
+            return Err(RegisterError::Full);
+        }
+        let at = now();
+        self.throttle(ip, at)?;
+        let (root, name, lang) = (self.nostr_root.clone(), self.uplanet_name.clone(), lang.to_owned());
+        let wanted = card.clone();
+        let account = tokio::task::spawn_blocking(move || multipass::recover(&root, &wanted, &name, &lang)).await.map_err(|e| RegisterError::Internal(e.to_string()))?.map_err(create_error)?;
+
+        let (hex, email, formula) = (account.hex.clone(), account.email.clone(), account.formula.as_str());
+        let stored = self
+            .db
+            .writer()
+            .transaction(move |tx| {
+                astro_db::apply_statements(tx, &[Projector::mark_hosted(&hex, "multipass")])?;
+                tx.execute("DELETE FROM kv WHERE scope = 'token_epoch' AND key = ?1", [&hex])?;
+                tx.execute("UPDATE identities SET email = ?2, key_formula = ?3 WHERE hex = ?1", rusqlite::params![hex, email, formula])?;
+                tx.execute("INSERT OR REPLACE INTO kv(scope, key, value, updated_at) VALUES ('restore', ?1, 'pending', ?2)", rusqlite::params![hex, i64::try_from(at).unwrap_or(0)])?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| e.to_string());
+        if let Err(e) = stored {
+            let _ = std::fs::remove_dir_all(&account.dir);
+            return Err(if e.contains("UNIQUE") { RegisterError::Conflict(format!("{} a déjà un MULTIPASS", account.email)) } else { RegisterError::Internal(e) });
+        }
+        if let Some(bus) = &self.activity {
+            bus.publish_to(astro_core::Audience::Captain, "system", "register", format!("MULTIPASS {} rétabli depuis sa carte secrète (restauration en cours, {})", account.email, self.constellation()), None);
+        }
+        let token = (self.token_of)(&account.hex);
+        let card = multipass::SecretCard::of(&account, &self.uplanet_name).to_text();
+        Ok(Registered { account, token, constellation: self.constellation(), guest: false, card })
+    }
+
     /// Domaine des adresses générées : la zone OVH (`OVH_ZONE`) de la configuration coopérative, sinon le domaine de la station
     /// (`--domain`), sinon `uplanet.local`.
     pub async fn mail_domain(&self) -> String {
@@ -295,7 +344,8 @@ impl Registrar {
             bus.publish_to(astro_core::Audience::Captain, "system", "register", format!("nouveau MULTIPASS {}{} ({})", account.email, if guest { " [invité]" } else { "" }, self.constellation()), None);
         }
         let token = (self.token_of)(&account.hex);
-        Ok(Registered { account, token, constellation: self.constellation(), guest })
+        let card = multipass::SecretCard::of(&account, &self.uplanet_name).to_text();
+        Ok(Registered { account, token, constellation: self.constellation(), guest, card })
     }
 
     /// Compte hébergé, événements de naissance et leur projection : une transaction.
