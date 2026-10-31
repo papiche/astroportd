@@ -416,6 +416,18 @@ fn retarget_faces(tx: &Transaction<'_>, owner: &str, from: &str, to: &str) -> Re
         tx.execute(&format!("UPDATE faces SET {column} = ?2 || substr({column}, ?3) WHERE owner_hex = ?1 AND {column} >= ?4 AND {column} < ?5"), params![owner, to, skip, low, high])?;
         tx.execute(&format!("UPDATE faces SET {column} = ?3 WHERE owner_hex = ?1 AND {column} = ?2"), params![owner, from, to])?;
     }
+    // Les analyses de visages encore en attente désignent leur photo par son chemin : sans cela, elles échoueraient (photo
+    // introuvable) et ces photos ne seraient jamais analysées.
+    tx.execute(
+        "UPDATE tasks SET payload = json_set(payload, '$.path', ?2 || substr(json_extract(payload, '$.path'), ?3)) \
+         WHERE kind = 'facecloud' AND status IN ('pending', 'running') AND json_extract(payload, '$.owner') = ?1 AND json_extract(payload, '$.path') >= ?4 AND json_extract(payload, '$.path') < ?5",
+        params![owner, to, skip, low, high],
+    )?;
+    tx.execute(
+        "UPDATE tasks SET payload = json_set(payload, '$.path', ?3) \
+         WHERE kind = 'facecloud' AND status IN ('pending', 'running') AND json_extract(payload, '$.owner') = ?1 AND json_extract(payload, '$.path') = ?2",
+        params![owner, from, to],
+    )?;
     Ok(())
 }
 

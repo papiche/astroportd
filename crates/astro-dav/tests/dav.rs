@@ -323,13 +323,54 @@ async fn moving_a_photo_or_a_folder_keeps_its_faces_attached() {
         let db = db.readers().clone();
         async move { db.read(|c| Ok(c.prepare("SELECT ucloud_path || '|' || source_path FROM faces ORDER BY embed_hash")?.query_map([], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?)).await.unwrap() }
     };
+    // Une analyse de visages en attente pour chaque photo : elle doit suivre son fichier, sinon la photo ne serait jamais analysée.
+    for path in ["/Vacances/a.jpg", "/Vacances/b.jpg"] {
+        b.db.writer().execute("INSERT INTO tasks(kind, payload, status, created_at) VALUES ('facecloud', json_object('owner', ?1, 'path', ?2), 'pending', 1)", vec![owner.clone().into(), path.to_owned().into()]).await.unwrap();
+    }
+    let pending = |db: &astro_db::Db| {
+        let db = db.readers().clone();
+        async move { db.read(|c| Ok(c.prepare("SELECT json_extract(payload, '$.path') FROM tasks WHERE kind = 'facecloud' ORDER BY id")?.query_map([], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?)).await.unwrap() }
+    };
     // Un fichier.
     let r = call(&b.app, "MOVE", "/dav/Vacances/a.jpg", Some(&alice()), &[("destination", "/dav/Images/a.jpg")], Body::empty()).await;
     assert_eq!(r.status(), 409, "le dossier parent doit exister");
     assert_eq!(call(&b.app, "MKCOL", "/dav/Images", Some(&alice()), &[], Body::empty()).await.status(), 201);
     assert_eq!(call(&b.app, "MOVE", "/dav/Vacances/a.jpg", Some(&alice()), &[("destination", "/dav/Images/a.jpg")], Body::empty()).await.status(), 201);
     assert_eq!(faces(&b.db).await, ["/Images/a.jpg|/Images/a.jpg", "/Vacances/b.jpg|/Vacances/b.jpg", "/autre.jpg|/autre.jpg"]);
+    assert_eq!(pending(&b.db).await, ["/Images/a.jpg", "/Vacances/b.jpg"], "l'analyse en attente suit le fichier déplacé");
     // Un dossier entier.
     assert_eq!(call(&b.app, "MOVE", "/dav/Vacances", Some(&alice()), &[("destination", "/dav/Images/Vacances")], Body::empty()).await.status(), 201);
     assert_eq!(faces(&b.db).await, ["/Images/a.jpg|/Images/a.jpg", "/Images/Vacances/b.jpg|/Images/Vacances/b.jpg", "/autre.jpg|/autre.jpg"]);
+    assert_eq!(pending(&b.db).await, ["/Images/a.jpg", "/Images/Vacances/b.jpg"], "et celle d'un fichier dont le dossier est déplacé");
+}
+
+/// Le Capitaine n'a pas de quota (le disque est sa seule limite) ; il peut fixer celui d'un compte hébergé, qui remplace celui de sa formule.
+#[tokio::test]
+async fn the_captain_has_no_quota_and_can_set_one_per_hosted_account() {
+    let b = bench_with("captain-quota", |c| {
+        c.max_file_multipass = 1000;
+        c.max_file_zencard = 4000;
+        c.quota_multipass = 1500;
+        c.quota_zencard = 3000;
+    })
+    .await;
+    let (alice_hex, bob_hex) = (hex(&ALICE), hex(&BOB));
+    let (a, z) = (alice(), bob());
+    // Alice (MULTIPASS) : 1500 octets de quota.
+    assert_eq!(call(&b.app, "PUT", "/dav/a.bin", Some(&a), &[], Body::from(vec![1u8; 900])).await.status(), 201);
+    assert_eq!(call(&b.app, "PUT", "/dav/b.bin", Some(&a), &[], Body::from(vec![2u8; 700])).await.status(), 507);
+    // Le Capitaine fixe 5000 octets pour Alice : le dépôt passe.
+    b.db.writer().execute("UPDATE identities SET quota_bytes = 5000 WHERE hex = ?1", vec![alice_hex.clone().into()]).await.unwrap();
+    assert_eq!(call(&b.app, "PUT", "/dav/b.bin", Some(&a), &[], Body::from(vec![2u8; 700])).await.status(), 201, "le quota propre au compte remplace celui de la formule");
+    // Il le retire : retour à la formule (1500) pour tout nouveau dépôt.
+    b.db.writer().execute("UPDATE identities SET quota_bytes = NULL WHERE hex = ?1", vec![alice_hex.clone().into()]).await.unwrap();
+    assert_eq!(call(&b.app, "PUT", "/dav/c.bin", Some(&a), &[], Body::from(vec![3u8; 900])).await.status(), 507);
+    // Bob devient Capitaine : bien au-delà du quota d'une ZenCard (3000), seul le plafond par fichier demeure.
+    b.db.writer().execute("UPDATE identities SET role = 'captain' WHERE hex = ?1", vec![bob_hex.clone()  .into()]).await.unwrap();
+    for n in 0..3 {
+        assert_eq!(call(&b.app, "PUT", &format!("/dav/gros{n}.bin"), Some(&z), &[], Body::from(vec![n as u8; 3500])).await.status(), 201, "{n}");
+    }
+    assert_eq!(call(&b.app, "PUT", "/dav/trop.bin", Some(&z), &[], Body::from(vec![0u8; 4500])).await.status(), 413, "le plafond par fichier reste");
+    let acc = astro_dav::auth::lookup_by_hex(&b.db, &bob_hex).await.unwrap();
+    assert_eq!(acc.tier, astro_dav::auth::Tier::Captain);
 }

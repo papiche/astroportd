@@ -38,6 +38,8 @@ export default async function account(root, K) {
     h('label', { for: 'ac-lang' }, 'Langue de l\'interface'), f.lang, h('p', {}, save));
 
   // ── Accès WebDAV : jeton ──
+  // L'API donne un chemin (`/dav`) : on affiche et on copie l'adresse complète, celle qu'on saisit dans un client WebDAV.
+  const davUrl = a.dav.url.startsWith('/') ? location.origin + a.dav.url : a.dav.url;
   const shown = h('div', {});
   const rotate = h('button', { class: 'ghost', onclick: async ev => {
     if (!confirm(t('Changer le jeton ? L\'ancien cesse de fonctionner tout de suite : téléphone, DAVx⁵ et autres clients WebDAV devront être reconfigurés.'))) return;
@@ -49,11 +51,13 @@ export default async function account(root, K) {
       K.toast(t('Jeton changé'), 1);
     } catch (e) { K.toast(e.message); }
     ev.target.disabled = false;
-  } }, 'Changer le jeton');
+  } }, 'Remplacer le jeton principal');
   const dav = h('section', { class: 'card' }, h('h2', {}, 'Accès WebDAV'),
     h('p', { class: 'muted' }, 'Pour monter vos fichiers (uCloud) sur un ordinateur ou un téléphone.'),
-    h('dl', {}, h('dt', {}, 'Adresse'), h('dd', {}, code(a.dav.url), ' ', copy(a.dav.url, 'adresse')), h('dt', {}, 'Identifiant'), h('dd', {}, code(a.dav.login)), h('dt', {}, 'Génération du jeton'), h('dd', {}, String(a.token_generation))),
-    h('p', {}, rotate), shown);
+    h('dl', {}, h('dt', {}, 'Adresse'), h('dd', {}, code(davUrl), ' ', copy(davUrl, 'adresse')), h('dt', {}, 'Identifiant'), h('dd', {}, code(a.dav.login)), h('dt', {}, 'Jeton principal'), h('dd', {}, a.token_generation ? t('remplacé {0} fois', a.token_generation) : t('celui de la station, jamais remplacé'))),
+    h('details', { class: 'fold' }, h('summary', {}, 'Remplacer le jeton principal'),
+      h('p', { class: 'muted' }, 'À faire seulement si vous pensez qu\'il a fuité : l\'ancien cesse de fonctionner tout de suite, et les clients WebDAV branchés avec lui (ordinateur, DAVx⁵…) devront être reconfigurés. Pour brancher un téléphone, créez plutôt un jeton d\'appareil (carte « Appareils »).'),
+      h('p', {}, rotate)), shown);
 
   // ── Export des clés ──
   const out = h('div', {});
@@ -63,7 +67,7 @@ export default async function account(root, K) {
       const k = await api('/keys', { confirm: true });
       out.replaceChildren(h('p', { class: 'degraded', role: 'alert' }, 'Ces clés donnent le contrôle total du compte : ne les copiez que dans un gestionnaire de mots de passe.'),
         h('label', {}, 'Clé secrète Nostr (nsec)'), h('textarea', { rows: 2, readonly: true, 'aria-label': 'nsec' }, k.nsec),
-        k.dunikey ? [h('label', {}, 'Clé Ğ1 (.dunikey)'), h('textarea', { rows: 4, readonly: true, 'aria-label': 'dunikey' }, k.dunikey)] : h('p', { class: 'err', role: 'alert' }, `Clé Ğ1 non exportée : ${k.dunikey_error}`),
+        ...(k.dunikey ? [h('label', {}, 'Clé Ğ1 (.dunikey)'), h('textarea', { rows: 4, readonly: true, 'aria-label': 'dunikey' }, k.dunikey)] : [h('p', { class: 'err', role: 'alert' }, `Clé Ğ1 non exportée : ${k.dunikey_error}`)]),
         h('p', {}, h('button', { class: 'ghost', onclick: () => out.replaceChildren() }, 'Masquer')));
     } catch (e) { K.toast(e.message); }
     ok.checked = false;
@@ -88,7 +92,7 @@ export default async function account(root, K) {
         const inp = h('input', { value: r.token, readOnly: true, 'aria-label': 'Jeton', onfocus: () => inp.select() });
         shownToken.replaceChildren(h('div', { class: 'card wide' }, h('h3', {}, t('Appareil « {0} » ajouté', r.label)),
           h('p', { class: 'warn', role: 'note' }, r.note),
-          h('dl', {}, h('dt', {}, 'Serveur'), h('dd', {}, code(a.dav.url), ' ', copy(a.dav.url, 'adresse')), h('dt', {}, 'Identifiant'), h('dd', {}, code(a.dav.login)), h('dt', {}, 'Mot de passe (jeton)'), h('dd', {}, inp, ' ', copy(r.token, 'jeton')), h('dt', {}, 'Dossier du uCloud'), h('dd', {}, code(r.root), ' · ', t(MODES[r.mode])))));
+          h('dl', {}, h('dt', {}, 'Serveur'), h('dd', {}, code(davUrl), ' ', copy(davUrl, 'adresse')), h('dt', {}, 'Identifiant'), h('dd', {}, code(a.dav.login)), h('dt', {}, 'Mot de passe (jeton)'), h('dd', {}, inp, ' ', copy(r.token, 'jeton')), h('dt', {}, 'Dossier du uCloud'), h('dd', {}, code(r.root), ' · ', t(MODES[r.mode])))));
         K.toast(t('Appareil ajouté'), 1); label.value = ''; root.value = '';
         refresh();
       } catch (e) { K.toast(e.message); } finally { ev.target.disabled = false; }

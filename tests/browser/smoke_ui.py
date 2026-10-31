@@ -39,7 +39,7 @@ ADMIN = dict(face=dict(mode='off', label=None, locked=None, onnx_compiled=True, 
                         choices=dict(read=['public', 'addressed', 'friends', 'circle', 'deny'], write=['circle', 'open', 'deny']), fixed={'1059': 'x', '22242': 'y'}))
 ADMIN.update(tunnels=None, tasks=None, assist=dict(services=['ssh'], friends=[], incoming=[], outgoing=[]))  # réglages facultatifs de m-options.js : absents, l'écran s'en passe sans erreur
 ACCOUNT = dict(hex='aa' * 32, npub='npub1test', email='alice@example.org', role='multipass', g1pub='G1TEST', home_station='Qm:ab', lang='fr', langs=['fr', 'en', 'es'], profile=dict(name='Alice', about='Bonjour', picture=None),
-               dav=dict(url='https://s.example/dav', login='alice@example.org'), token_generation=0, keys_exportable=True, has_g1_key=True, relays=[dict(url='wss://s.example', read=True, write=True)])
+               dav=dict(url='/dav', login='alice@example.org'), token_generation=0, keys_exportable=True, has_g1_key=True, relays=[dict(url='wss://s.example', read=True, write=True)])
 CONTACTS = dict(contacts=[dict(path='/Contacts/Lea.vcf', name='Léa Martin', emails=['lea@example.org'], pubkey='ab' * 32, via='vcard', g1pub=None, warning=None, hosted_here=None, friends=True, faces=12, faces_linked=12),
                           dict(path='/Contacts/Paul.vcf', name='Paul', emails=[], pubkey=None, via=None, g1pub=None, warning=None, hosted_here=None, friends=False, faces=3, faces_linked=0)],
                 people_without_contact=[dict(name='Nina', faces=4)], carddav=dict(url='https://s.example/dav/addressbooks/alice%40example.org/contacts/', server='https://s.example/dav/', login='alice@example.org'))
@@ -93,7 +93,7 @@ class H(BaseHTTPRequestHandler):
             f = WEB / p[4:]
             return self.send(200, f.read_bytes(), MIME.get(f.suffix, 'application/octet-stream')) if f.is_file() else self.send(404, b'x', 'text/plain')
         if p == '/api/v1/me':
-            if not (self.headers.get('Authorization') or '').startswith('Basic '): return self.send(401, dict(error='authentification requise'))
+            if not (self.headers.get('Authorization') or '').startswith(('Basic ', 'Nostr ')): return self.send(401, dict(error='authentification requise'))
             return self.send(200, dict(hex='aa' * 32, email='alice@example.org', captain=True))
         if p == '/api/v1/station/coop': return self.send(200, COOP)
         if p == '/api/v1/account': return self.send(200, ACCOUNT)
@@ -248,11 +248,17 @@ with sync_playwright() as pw:
     page.goto(f'http://127.0.0.1:{port}/#/account'); page.wait_for_selector('#ac-name'); page.wait_for_timeout(200)
     check('npub1test' in page.inner_text('main') and 'wss://s.example' in page.inner_text('main'), 'Mon compte montre l\'identité et les relais annoncés')
     check(page.locator('button:text-is("Exporter mes clés")').is_disabled(), 'l\'export des clés exige une case de confirmation')
-    page.click('button:text-is("Changer le jeton")')  # la confirmation est acceptée par le gestionnaire de dialogue déjà posé; page.wait_for_selector('text=NOUVEAU-JETON'); page.wait_for_timeout(100)
+    # L'API donne `/dav` : l'écran montre (et copie) l'adresse complète, et le bouton de remplacement n'effraie pas sans raison.
+    main_text = page.inner_text('main')
+    check(f'http://127.0.0.1:{port}/dav' in main_text and 'celui de la station, jamais remplacé' in main_text, "l'adresse WebDAV est complète et le jeton principal est présenté sans bouton menaçant")
+    check(not page.locator('button:text-is("Remplacer le jeton principal")').is_visible(), 'le remplacement du jeton principal est replié')
+    page.click('summary:text-is("Remplacer le jeton principal")'); page.click('button:text-is("Remplacer le jeton principal")')  # la confirmation est acceptée par le gestionnaire de dialogue déjà posé
+    page.wait_for_selector('text=NOUVEAU-JETON'); page.wait_for_timeout(100)
     import base64 as b64
     page.wait_for_function("localStorage.getItem('basic') !== btoa('alice@example.org:jeton')", timeout=3000); got = b64.b64decode(page.evaluate("localStorage.getItem('basic')")).decode(); check(got == 'alice@example.org:NOUVEAU-JETON', 'la session suit le nouveau jeton : ' + got)
     page.check('#ac-ok'); page.click('button:text-is("Exporter mes clés")'); page.wait_for_selector('textarea[aria-label=nsec]')
     check(page.input_value('textarea[aria-label=nsec]') == 'nsec1secret', 'les clés exportées s\'affichent après confirmation')
+    check('[object' not in page.inner_text('main') and page.input_value('textarea[aria-label=dunikey]') == 'sec: x', 'la clé Ğ1 exportée est un champ, pas du texte « [object HTMLLabelElement] »')
     page.fill('#ac-name', 'Alice B'); page.click('button:text-is("Enregistrer")'); page.wait_for_timeout(400)
     sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/account/profile']
     check(sent and sent[-1] == dict(name='Alice B'), 'seul le champ modifié du profil est envoyé : ' + str(sent[-1:]))
@@ -447,6 +453,14 @@ with sync_playwright() as pw:
     check(len(sent) == 1 and sent[0]['by_date'] == 'month' and 'archives' not in sent[0]['kinds'] and len(sent[0]['kinds']) == 4 and sent[0]['scope'] == '/', 'le rangement part avec le dossier, les types et les sous-dossiers par date choisis')
     page.click('button:text-is("Annuler ce rangement")'); page.wait_for_timeout(400)
     check(any(p_ == '/api/v1/organize/undo' and b_ == {'run': 'r1'} for p_, b_ in STATE['posts']), "« Annuler ce rangement » demande l'annulation du bon passage")
+    # Extension Nostr (NIP-07) : deux requêtes identiques dans la même seconde ne doivent pas produire le même événement
+    # (la station refuse un événement déjà vu : 401 et fenêtre de connexion en pleine table de tri).
+    ext = br.new_context(viewport=dict(width=1100, height=800), service_workers='block')
+    ext.add_init_script("localStorage.setItem('nip07', '1'); window.nostr = { getPublicKey: async () => 'aa'.repeat(32), signEvent: async ev => { (window.__signed ||= []).push(ev); return { ...ev, id: 'bb'.repeat(32), pubkey: 'aa'.repeat(32), sig: 'cc'.repeat(64) }; } };")
+    pe = ext.new_page(); pe.goto(f'http://127.0.0.1:{port}/#/account'); pe.wait_for_selector('#ac-name'); pe.wait_for_timeout(300)
+    signed = pe.evaluate('window.__signed || []'); nonces = [t[1] for ev in signed for t in ev['tags'] if t[0] == 'nonce']
+    check(len(signed) >= 2 and len(nonces) == len(signed) and len(set(nonces)) == len(nonces) and all(len(n) >= 16 for n in nonces), f"chaque événement signé par l'extension porte un nonce unique ({len(signed)} événements)")
+    ext.close()
     # Style (Aurore par défaut, Sobre, Kraft) et mode clair/sombre : choisis dans l'en-tête, retenus par l'appareil.
     page.emulate_media(color_scheme='light'); page.goto(f'http://127.0.0.1:{port}/#/account'); page.wait_for_selector('#style')
     check(page.evaluate("document.documentElement.dataset.style") == 'aurore', 'le style par défaut est Aurore')

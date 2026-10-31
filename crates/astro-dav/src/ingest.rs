@@ -84,7 +84,7 @@ async fn ingest_with<B: BlobStore, R: AsyncRead + Unpin>(st: &Arc<DavState<B>>, 
         return Err(IngestError::TooLarge("espace disque de la station presque plein (réserve de sécurité atteinte) : dépôt refusé".into()));
     }
     let account = crate::auth::lookup_by_hex(&st.db, owner).await.ok_or(IngestError::NoAccount)?;
-    let limits = st.config.limits(account.tier);
+    let limits = st.config.limits_for(&account);
     let dir = vfs::normalize_path(dir)?;
     let name = sanitize_name(name).ok_or(IngestError::BadName)?;
 

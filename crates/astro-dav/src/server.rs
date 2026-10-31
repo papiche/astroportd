@@ -74,10 +74,23 @@ impl DavConfig {
     }
 
     /// Limites (taille de fichier, quota total) de la formule d'un compte.
+    /// Plafonds d'un compte : ceux de sa formule, sauf quota fixé par le Capitaine pour ce compte.
+    #[must_use]
+    pub fn limits_for(&self, account: &Account) -> Limits {
+        let mut l = self.limits(account.tier);
+        if let Some(q) = account.quota_override {
+            l.quota_total = q;
+        }
+        l
+    }
+
+    /// Plafonds d'une formule.
     pub fn limits(&self, tier: Tier) -> Limits {
         match tier {
             Tier::Multipass => Limits { max_file: self.max_file_multipass, quota_total: self.quota_multipass },
             Tier::ZenCard => Limits { max_file: self.max_file_zencard, quota_total: self.quota_zencard },
+            // Le Capitaine n'a pas de quota : la réserve de sécurité du disque physique (`disk_has_room`) est sa seule limite.
+            Tier::Captain => Limits { max_file: self.max_file_zencard, quota_total: u64::MAX },
         }
     }
 }
@@ -104,13 +117,14 @@ pub type UploadHook = Arc<dyn Fn(&str, &str, &str) + Send + Sync>;
 impl<B: BlobStore> DavState<B> {
     /// Le compte hébergé ici qui s'authentifie (Basic ou NIP-98), s'il y en a un.
     pub async fn account_of(&self, headers: &HeaderMap, method: &str, uri: &axum::http::Uri) -> Option<crate::auth::Account> {
-        authenticate(self, headers, method, uri).await.ok().map(|a| a.account)
+        // Un jeton d'appareil n'ouvre que le WebDAV de son dossier : jamais l'API de l'interface.
+        authenticate(self, headers, method, uri).await.ok().filter(|a| a.scope.is_none()).map(|a| a.account)
     }
 
     /// La requête porte-t-elle une authentification valide (Basic ou NIP-98) d'un compte hébergé ici ?
     /// Sert de garde aux routes du reverse proxy.
     pub async fn is_authorized(&self, headers: &HeaderMap, method: &str, uri: &axum::http::Uri) -> bool {
-        authenticate(self, headers, method, uri).await.is_ok()
+        authenticate(self, headers, method, uri).await.is_ok_and(|a| a.scope.is_none())
     }
 }
 
@@ -557,7 +571,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for Measure<R> {
 }
 
 pub(crate) async fn put<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, req: Request) -> Response {
-    let limits = st.config.limits(auth.account.tier);
+    let limits = st.config.limits_for(&auth.account);
     let owner = auth.account.owner.clone();
     if path == "/" {
         return reply(StatusCode::METHOD_NOT_ALLOWED, "la racine est une collection");
@@ -689,7 +703,7 @@ async fn move_<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, to: &str
 async fn copy<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, to: &str, headers: &HeaderMap) -> Response {
     let overwrite = headers.get("overwrite").and_then(|v| v.to_str().ok()).is_none_or(|v| !v.trim().eq_ignore_ascii_case("f"));
     let recursive = headers.get("depth").and_then(|v| v.to_str().ok()).is_none_or(|v| v.trim() != "0");
-    let quota = st.config.limits(auth.account.tier).quota_total;
+    let quota = st.config.limits_for(&auth.account).quota_total;
     let (o, from, dst) = (auth.account.owner.clone(), path.to_owned(), to.to_owned());
     let existed = {
         let (o, d) = (o.clone(), dst.clone());
@@ -713,7 +727,7 @@ async fn create_empty<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str) -
     uenc::encrypt_stream(&key, Cipher::detect(), &mut empty, &mut blob).await.map_err(|_| reply(StatusCode::INTERNAL_SERVER_ERROR, "chiffrement impossible"))?;
     let meta = blob.commit().await.map_err(|_| reply(StatusCode::INTERNAL_SERVER_ERROR, "stockage indisponible"))?;
     let file = NewFile { cid: meta.cid.clone(), size_cid: meta.size, size_plain: 0, sha_plain: hex::encode(Sha256::digest([])), mime: vfs::guess_mime(path).to_owned(), key_hex: key.to_hex(), now: now_secs() };
-    let (o, p, limits) = (auth.account.owner.clone(), path.to_owned(), st.config.limits(auth.account.tier));
+    let (o, p, limits) = (auth.account.owner.clone(), path.to_owned(), st.config.limits_for(&auth.account));
     vfs_tx(&st.db, move |tx| vfs::commit_file_tx(tx, &o, &p, &file, limits)).await.map(|_| ()).map_err(|e| vfs_error(&e))
 }
 

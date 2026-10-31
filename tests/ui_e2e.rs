@@ -1154,3 +1154,21 @@ async fn an_agent_asks_over_mcp_and_the_member_decides_through_the_api() {
     assert_eq!(b.post("/api/v1/agents/revoke", &alice, json!({ "id": aid })).await.0, StatusCode::OK);
     assert_eq!(rpc(bearer, ping).await.0, StatusCode::UNAUTHORIZED);
 }
+
+/// Un jeton d'appareil n'ouvre que le WebDAV de son dossier : jamais l'API de l'interface, ni les routes gardées du proxy.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_device_token_opens_webdav_only_never_the_api() {
+    let b = bench("device-api", None).await;
+    let (_, token) = astro_dav::devices::create(&b.db, &hex(&ALICE), "Téléphone", "/Photos/Téléphone", astro_dav::devices::Mode::ReadWrite).await.unwrap();
+    let device = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("alice@example.org:{token}")));
+    // Le jeton principal ouvre l'API ; celui de l'appareil, jamais.
+    assert_eq!(b.get("/api/v1/me", &basic("alice@example.org", &ALICE)).await.0, StatusCode::OK);
+    for uri in ["/api/v1/me", "/api/v1/dashboard", "/api/v1/account", "/api/v1/ucloud/list?path=%2F"] {
+        assert_eq!(b.get(uri, &device).await.0, StatusCode::UNAUTHORIZED, "{uri}");
+    }
+    assert_eq!(b.post("/api/v1/account/token", &device, json!({})).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(b.post("/api/v1/devices", &device, json!({ "label": "pirate", "root": "/Photos/x", "mode": "readwrite" })).await.0, StatusCode::UNAUTHORIZED, "un appareil ne s'en crée pas d'autres");
+    // Le WebDAV de son dossier, lui, répond.
+    let (s, _, _) = call(&b.app, Method::from_bytes(b"PROPFIND").unwrap(), "/dav/", Some(&device), &[("depth", "0")], vec![]).await;
+    assert_eq!(s.as_u16(), 207);
+}

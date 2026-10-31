@@ -13,6 +13,8 @@ pub enum Tier {
     Multipass,
     /// ZenCard (sociétaire).
     ZenCard,
+    /// Capitaine de la station : quota illimité, le disque de la station est la seule limite (réserve de sécurité comprise).
+    Captain,
 }
 
 /// Compte authentifié.
@@ -22,6 +24,8 @@ pub struct Account {
     pub owner: String,
     /// Formule.
     pub tier: Tier,
+    /// Quota fixé par le Capitaine pour ce compte (`identities.quota_bytes`) : il remplace celui de la formule.
+    pub quota_override: Option<u64>,
 }
 
 /// Jeton Basic d'un compte : `base64url(HMAC-SHA256(secret_station, "ucloud-dav:" ‖ hex))[..32]`.
@@ -87,9 +91,16 @@ pub fn parse_basic(header: &str) -> Option<(String, String)> {
     Some((user.to_owned(), pass.to_owned()))
 }
 
-fn account_from_row(owner: String, role: &str, contract: Option<&str>) -> Account {
+fn account_from_row(owner: String, role: &str, contract: Option<&str>, quota: Option<i64>) -> Account {
     let zen = role == "zencard" || contract == Some("cooperative_member");
-    Account { owner, tier: if zen { Tier::ZenCard } else { Tier::Multipass } }
+    let tier = if role == "captain" {
+        Tier::Captain
+    } else if zen {
+        Tier::ZenCard
+    } else {
+        Tier::Multipass
+    };
+    Account { owner, tier, quota_override: quota.and_then(|q| u64::try_from(q).ok()) }
 }
 
 /// Compte hébergé ici pour une clé publique.
@@ -97,10 +108,10 @@ pub async fn lookup_by_hex(db: &Db, hex: &str) -> Option<Account> {
     let hex = hex.to_owned();
     db.readers()
         .read(move |c| {
-            let row: Option<(String, Option<String>)> = rusqlite::OptionalExtension::optional(
-                c.query_row("SELECT role, contract FROM identities WHERE hex = ?1 AND hosted = 1", [&hex], |r| Ok((r.get(0)?, r.get(1)?))),
+            let row: Option<(String, Option<String>, Option<i64>)> = rusqlite::OptionalExtension::optional(
+                c.query_row("SELECT role, contract, quota_bytes FROM identities WHERE hex = ?1 AND hosted = 1", [&hex], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))),
             )?;
-            Ok(row.map(|(role, contract)| account_from_row(hex, &role, contract.as_deref())))
+            Ok(row.map(|(role, contract, quota)| account_from_row(hex, &role, contract.as_deref(), quota)))
         })
         .await
         .ok()
@@ -112,12 +123,12 @@ pub async fn lookup_by_login(db: &Db, login: &str) -> Option<Account> {
     let login = login.to_owned();
     db.readers()
         .read(move |c| {
-            let row: Option<(String, String, Option<String>)> = rusqlite::OptionalExtension::optional(c.query_row(
-                "SELECT hex, role, contract FROM identities WHERE hosted = 1 AND (hex = ?1 OR email = ?1) ORDER BY hex LIMIT 1",
+            let row: Option<(String, String, Option<String>, Option<i64>)> = rusqlite::OptionalExtension::optional(c.query_row(
+                "SELECT hex, role, contract, quota_bytes FROM identities WHERE hosted = 1 AND (hex = ?1 OR email = ?1) ORDER BY hex LIMIT 1",
                 [&login],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             ))?;
-            Ok(row.map(|(hex, role, contract)| account_from_row(hex, &role, contract.as_deref())))
+            Ok(row.map(|(hex, role, contract, quota)| account_from_row(hex, &role, contract.as_deref(), quota)))
         })
         .await
         .ok()
@@ -183,7 +194,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        assert_eq!(lookup_by_hex(&db, "aa").await, Some(Account { owner: "aa".into(), tier: Tier::Multipass }));
+        assert_eq!(lookup_by_hex(&db, "aa").await, Some(Account { owner: "aa".into(), tier: Tier::Multipass, quota_override: None }));
         assert_eq!(lookup_by_hex(&db, "bb").await.unwrap().tier, Tier::ZenCard);
         assert_eq!(lookup_by_login(&db, "c@x.org").await.unwrap().tier, Tier::ZenCard);
         assert_eq!(lookup_by_login(&db, "a@x.org").await.unwrap().owner, "aa");

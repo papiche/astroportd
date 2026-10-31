@@ -176,8 +176,8 @@ pub struct Plan {
     pub capped: bool,
 }
 
-/// Un fichier candidat : chemin, type MIME, taille, date (prise de vue ou modification).
-type Candidate = (String, String, i64, i64);
+/// Un fichier candidat : chemin, type MIME, taille, date de prise de vue (si connue), date de modification.
+type Candidate = (String, String, i64, Option<i64>, i64);
 
 fn bounds(scope: &str) -> (String, String) {
     if scope == "/" { ("/".into(), "0".into()) } else { (format!("{scope}/"), format!("{scope}0")) }
@@ -219,8 +219,8 @@ pub async fn plan(db: &astro_db::Db, owner: &str, opts: &Options) -> Result<Plan
         .readers()
         .read(move |c| {
             let files = c
-                .prepare("SELECT path, coalesce(mime, ''), coalesce(size, 0), coalesce(taken_at, mtime, 0) FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file' AND path >= ?2 AND path < ?3 ORDER BY path")?
-                .query_map(params![o, low, high], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                .prepare("SELECT path, coalesce(mime, ''), coalesce(size, 0), taken_at, coalesce(mtime, 0) FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file' AND path >= ?2 AND path < ?3 ORDER BY path")?
+                .query_map(params![o, low, high], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
                 .collect::<Result<Vec<_>, _>>()?;
             // Chemins déjà occupés dans les dossiers de type : un nom pris reçoit un numéro.
             let mut taken = HashSet::new();
@@ -237,7 +237,7 @@ pub async fn plan(db: &astro_db::Db, owner: &str, opts: &Options) -> Result<Plan
     let mut taken = taken;
     let mut out = Plan::default();
     let type_roots: Vec<String> = Kind::ALL.iter().map(|k| format!("/{}/", k.folder())).collect();
-    for (path, mime, size, when) in files {
+    for (path, mime, size, shot, mtime) in files {
         if is_protected(&path) {
             out.protected += 1;
             continue;
@@ -255,13 +255,12 @@ pub async fn plan(db: &astro_db::Db, owner: &str, opts: &Options) -> Result<Plan
             out.capped = true;
             break;
         }
+        let (year, month) = best_date(&path, shot, mtime);
         let date = match opts.by_date {
             ByDate::None => String::new(),
-            ByDate::Year => format!("/{}", year_month(when).0),
-            ByDate::Month => {
-                let (y, m) = year_month(when);
-                format!("/{y}/{m}")
-            }
+            ByDate::Year => format!("/{year}"),
+            ByDate::Month if year == "Sans date" => format!("/{year}"),
+            ByDate::Month => format!("/{year}/{}", month.as_deref().unwrap_or("Sans mois")),
         };
         let dir = format!("/{}{date}", kind.folder());
         let mut target = format!("{dir}/{name}");
@@ -277,6 +276,34 @@ pub async fn plan(db: &astro_db::Db, owner: &str, opts: &Options) -> Result<Plan
         out.moves.push((path, target));
     }
     Ok(out)
+}
+
+/// Date de rangement d'un fichier : sa prise de vue si elle est connue ; sinon celle que dit son dossier d'origine
+/// (`…/1980/01/photo.jpg`, l'arborescence que la reprise d'un autre serveur a gardée) ; sinon sa date de modification.
+fn best_date(path: &str, taken: Option<i64>, mtime: i64) -> (String, Option<String>) {
+    if let Some(t) = taken.filter(|t| *t > 0) {
+        let (y, m) = year_month(t);
+        return (y, Some(m));
+    }
+    if let Some(found) = path_date(path) {
+        return found;
+    }
+    let (y, m) = year_month(mtime);
+    if mtime > 0 { (y, Some(m)) } else { (y, None) }
+}
+
+/// `…/2003/06/…` ou `…/2003/…` dans les dossiers d'un chemin (année entre 1900 et 2100, mois de 01 à 12).
+fn path_date(path: &str) -> Option<(String, Option<String>)> {
+    let segs: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    let dirs = segs.get(..segs.len().saturating_sub(1))?;
+    let year = |s: &str| s.len() == 4 && s.bytes().all(|b| b.is_ascii_digit()) && (1900..=2100).contains(&s.parse::<u32>().unwrap_or(0));
+    let month = |s: &str| s.len() == 2 && s.bytes().all(|b| b.is_ascii_digit()) && (1..=12).contains(&s.parse::<u32>().unwrap_or(0));
+    for (i, s) in dirs.iter().enumerate() {
+        if year(s) {
+            return Some(((*s).to_owned(), dirs.get(i + 1).filter(|m| month(m)).map(|m| (*m).to_owned())));
+        }
+    }
+    None
 }
 
 /// Année et mois (`2003`, `06`) d'un horodatage Unix (UTC ; `taken_at` est déjà l'heure murale de la prise de vue).

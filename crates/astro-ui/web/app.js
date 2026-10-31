@@ -43,7 +43,7 @@ async function authHeader(method, url) {
 const basic = store.get('basic');
 if (basic) return 'Basic ' + basic;
 if (store.get('nip07') && ext()) {
-const ev = await window.nostr.signEvent({ kind: 27235, created_at: Math.floor(Date.now() / 1000), tags: [['u', url], ['method', method]], content: '' });
+const ev = await window.nostr.signEvent({ kind: 27235, created_at: Math.floor(Date.now() / 1000), tags: [['u', url], ['method', method], ['nonce', [...crypto.getRandomValues(new Uint8Array(8))].map(b => b.toString(16).padStart(2, '0')).join('')]], content: '' });
 return 'Nostr ' + b64(JSON.stringify(ev));
 }
 return null;
@@ -166,7 +166,7 @@ e.weeks == null ? h('p', { class: 'muted' }, 'Solde indisponible.') : [h('meter'
 h('p', { class: 'big' }, e.weeks.toFixed(1), h('small', { class: 'muted' }, ' semaine(s) de loyer')), h('p', { class: 'muted' }, `Loyer : ${zen(e.weekly_rent_cents)} Ẑen / semaine`)]),
 h('section', { class: 'card' }, h('h2', {}, 'Empreinte sur les communs'),
 h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: Math.min(pct, 1), 'aria-label': 'Disque utilisé' }),
-h('p', { class: 'big' }, bytes(k.used_bytes), h('small', { class: 'muted' }, ` / ${bytes(k.quota_bytes)}`)),
+h('p', { class: 'big' }, bytes(k.used_bytes), h('small', { class: 'muted' }, k.unlimited ? ` ${t('sans quota')} · ${t('disque de la station')} ${bytes(k.quota_bytes)}` : ` / ${bytes(k.quota_bytes)}`)),
 h('p', { class: 'muted' }, `${k.files} fichier(s) · formule ${k.tier}`)),
 h('section', { class: 'card' }, h('h2', {}, 'Souveraineté ', h('small', {}, 'vos données, chiffrées')),
 h('p', { class: 'big' }, String(w.encrypted_files), h('small', { class: 'muted' }, ` fichiers chiffrés · ${bytes(w.encrypted_bytes)}`)),
@@ -214,8 +214,8 @@ love.recent.length ? h('ul', { class: 'muted' }, love.recent.map(x => h('li', {}
 h('section', { class: 'card wide' }, h('h2', {}, 'Comptes hébergés ', h('small', {}, `${ac.accounts.length}`)),
 ac.accounts.length ? table('MULTIPASS et ZenCards de la station', ['Compte', 'Cycle de vie', 'Disque', 'Fichiers', 'Secours'],
 ac.accounts.map(a => [a.email || a.hex.slice(0, 12), [pill(tone(a.status)), ' ', LIFE[a.status] || a.status || 'inconnu', a.grace_ends_at ? ` (jusqu'au ${day(a.grace_ends_at)})` : ''],
-[h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: a.quota_bytes ? Math.min(a.used_bytes / a.quota_bytes, 1) : 0, 'aria-label': 'Disque' }), ` ${bytes(a.used_bytes)} / ${bytes(a.quota_bytes)}`], String(a.files),
-[h('button', { class: 'ghost', onclick: () => token(a) }, 'Jeton de secours'), a.pass_locked_until ? [' ', h('button', { onclick: async () => { await api(`/api/v1/station/accounts/${a.hex}/unlock-pass`, { method: 'POST' }); toast('PASS déverrouillé', 1); draw(); } }, 'Déverrouiller le PASS')] : null]]))
+[h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: a.quota_bytes ? Math.min(a.used_bytes / a.quota_bytes, 1) : 0, 'aria-label': 'Disque' }), ` ${bytes(a.used_bytes)} / ${a.unlimited ? t('illimité') : bytes(a.quota_bytes)}`], String(a.files),
+[h('button', { class: 'ghost', onclick: () => token(a) }, 'Jeton de secours'), a.unlimited ? null : [' ', h('button', { class: 'ghost', onclick: () => quota(a) }, 'Quota')], a.pass_locked_until ? [' ', h('button', { onclick: async () => { await api(`/api/v1/station/accounts/${a.hex}/unlock-pass`, { method: 'POST' }); toast('PASS déverrouillé', 1); draw(); } }, 'Déverrouiller le PASS')] : null]]))
 : h('p', { class: 'muted' }, 'Aucun compte hébergé.')),
 h('section', { class: 'card wide' }, h('h2', {}, 'Configuration coopérative'), h('p', { class: 'muted' }, 'Paramètres partagés par toute la constellation (OpenCollective, Mailjet, règle 3×1/3…). Les secrets sont chiffrés et ne s\'affichent jamais.'), h('button', { onclick: () => { location.hash = '#/coop'; } }, 'Modifier la configuration')),
 h('section', { class: 'card wide' }, h('h2', {}, 'Options de la station'), h('p', { class: 'muted' }, 'Moteur de reconnaissance des visages (local, Brain GPU ou arrêt) et règles du relai par kind, sans redémarrer.'), h('button', { onclick: () => { location.hash = '#/options'; } }, 'Ouvrir les options'))));
@@ -234,6 +234,14 @@ const inp = h('input', { value: r.token, readOnly: true, 'aria-label': 'Jeton', 
 toast('Jeton de secours généré', 1);
 box.replaceChildren(h('p', { class: 'muted' }, `Compte ${r.login}. À transmettre de vive voix ou par un canal chiffré : l'opération est tracée dans le journal d'audit.`), inp);
 } catch (e) { box.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }
+}
+async function quota(a) {
+const cur = a.quota_bytes ? Math.round(a.quota_bytes / 2 ** 30) : '';
+const v = prompt(t('Quota de {0}, en Go (vide : celui de sa formule)', a.email || a.hex.slice(0, 12)), cur);
+if (v === null) return;
+const gb = v.trim() === '' ? null : Number(v.replace(',', '.'));
+if (gb !== null && !(gb >= 0 && Number.isFinite(gb))) return toast('Nombre de Go attendu');
+try { await api(`/api/v1/station/accounts/${a.hex}/quota`, { method: 'POST', body: { quota_bytes: gb === null ? null : Math.round(gb * 2 ** 30) } }); toast('Quota enregistré', 1); location.reload(); } catch (e) { toast(e.message); }
 }
 async function viewCloud(root, q) {
 const path = q.get('p') || '/', mode = q.get('m'), album = mode === 'album', sources = mode === 'sources', organize = mode === 'organize';

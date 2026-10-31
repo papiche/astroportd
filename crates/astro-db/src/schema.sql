@@ -601,3 +601,9 @@ CREATE TABLE IF NOT EXISTS dav_tokens (
   PRIMARY KEY (owner_hex, id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS dav_tokens_hash ON dav_tokens(owner_hex, token_sha256);
+
+-- Déplacer un fichier (WebDAV, rangement) met à jour les visages et les analyses en attente qui le désignent par son chemin :
+-- ces index évitent de parcourir toute la table à chaque déplacement (30 000 photos rangées d'un coup).
+CREATE INDEX IF NOT EXISTS faces_ucloud_path ON faces(owner_hex, ucloud_path);
+CREATE INDEX IF NOT EXISTS faces_source_path ON faces(owner_hex, source_path);
+CREATE INDEX IF NOT EXISTS tasks_facecloud_path ON tasks(json_extract(payload, '$.path')) WHERE kind = 'facecloud';

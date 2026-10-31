@@ -271,6 +271,10 @@ pub trait Backend: Send + Sync + 'static {
     fn accounts(&self, who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send;
     /// Jeton de secours d'un compte hébergé (Capitaine).
     fn account_token(&self, who: &Principal, hex: String) -> impl Future<Output = Result<Value, ApiError>> + Send;
+    /// Fixe (ou retire, avec `None`) le quota d'un compte hébergé (Capitaine) : il remplace celui de la formule du compte.
+    fn account_quota(&self, _who: &Principal, _hex: String, _quota_bytes: Option<u64>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("quota non réglable sur cette station")) }
+    }
     /// Dialogue avec BRO.
     fn bro_say(&self, who: &Principal, text: String) -> impl Future<Output = Result<Value, ApiError>> + Send;
     /// Attestation de copie privée du compte : `{ accepted, version, accepted_at, text }`.
@@ -625,6 +629,7 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/station/economy", get(economy::<B>))
         .route("/api/v1/station/accounts", get(accounts::<B>))
         .route("/api/v1/station/accounts/{hex}/token", post(account_token::<B>))
+        .route("/api/v1/station/accounts/{hex}/quota", post(account_quota::<B>))
         .with_state(state)
 }
 
@@ -929,6 +934,23 @@ async fn account_token<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: H
     match who(&st, &headers, &method, &uri).await {
         Ok(p) => match captain_only(&p) {
             Ok(()) if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) => reply(st.backend.account_token(&p, hex.to_ascii_lowercase()).await),
+            Ok(()) => reply(Err(ApiError::bad_request("clé de compte invalide (64 hexadécimaux)"))),
+            Err(r) => r,
+        },
+        Err(r) => r,
+    }
+}
+
+#[derive(Deserialize)]
+struct QuotaBody {
+    /// Octets ; absent ou `null` : retire le quota propre au compte (retour à celui de sa formule).
+    quota_bytes: Option<u64>,
+}
+
+async fn account_quota<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(hex): Path<String>, Json(body): Json<QuotaBody>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => match captain_only(&p) {
+            Ok(()) if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) => reply(st.backend.account_quota(&p, hex.to_ascii_lowercase(), body.quota_bytes).await),
             Ok(()) => reply(Err(ApiError::bad_request("clé de compte invalide (64 hexadécimaux)"))),
             Err(r) => r,
         },

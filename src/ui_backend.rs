@@ -743,7 +743,10 @@ impl<B: BlobStore> Backend for StationUi<B> {
     async fn footprint(&self, who: &Principal) -> Result<Value, ApiError> {
         let svc = &self.services;
         let account = astro_dav::auth::lookup_by_hex(&svc.db, &who.hex).await.ok_or_else(|| ApiError::not_found("compte non hébergé ici"))?;
-        let limits = self.dav.config.limits(account.tier);
+        let limits = self.dav.config.limits_for(&account);
+        let unlimited = limits.quota_total == u64::MAX;
+        // Sans quota (Capitaine), la mesure utile est le disque de la station.
+        let quota = if unlimited { self.dav.blobs.disk_space().map_or(0, |(_, total)| total) } else { limits.quota_total };
         let owner = who.hex.clone();
         let (opex, capex) = self.opex_capex(&who.hex, &account).await?;
         let (used, files) = svc
@@ -755,7 +758,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
             .await
             .map_err(db_err)?;
         Ok(json!({
-            "disk": { "used_bytes": used, "files": files, "quota_bytes": limits.quota_total, "tier": format!("{:?}", account.tier) },
+            "disk": { "used_bytes": used, "files": files, "quota_bytes": quota, "unlimited": unlimited, "tier": format!("{:?}", account.tier) },
             "opex": opex, "capex": capex,
         }))
     }
@@ -961,7 +964,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
         let b = self.backup.as_ref().ok_or_else(|| ApiError::unavailable("sauvegarde privée non activée"))?;
         // Volume maximal : ce qui reste du quota de l'hébergeur, sauvegarde déjà hébergée comprise dans son occupation.
         let account = astro_dav::auth::lookup_by_hex(&self.services.db, &who.hex).await.ok_or_else(|| ApiError::not_found("compte non hébergé ici"))?;
-        let quota = self.dav.config.limits(account.tier).quota_total;
+        let quota = self.dav.config.limits_for(&account).quota_total;
         let hex = who.hex.clone();
         let used = self.services.db.readers().read(move |c| astro_dav::vfs::used_bytes(c, &hex).map_err(|_| astro_db::DbError::Aborted)).await.map_err(db_err)?;
         (b.respond)(who.hex.clone(), owner, accept, quota_bytes, quota.saturating_sub(used)).await.map_err(ApiError::bad_request)
@@ -1108,9 +1111,12 @@ impl<B: BlobStore> Backend for StationUi<B> {
             .map_err(db_err)?;
         let mut out = Vec::new();
         for (hex, role, email, contract, state, used, files) in rows {
-            let quota = match astro_dav::auth::lookup_by_hex(&self.services.db, &hex).await {
-                Some(a) => self.dav.config.limits(a.tier).quota_total,
-                None => 0,
+            let (quota, unlimited) = match astro_dav::auth::lookup_by_hex(&self.services.db, &hex).await {
+                Some(a) => {
+                    let q = self.dav.config.limits_for(&a).quota_total;
+                    (if q == u64::MAX { 0 } else { q }, q == u64::MAX)
+                }
+                None => (0, false),
             };
             let life: Value = state.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
             let status = life["status"].as_str().map(str::to_owned).or_else(|| contract.clone());
@@ -1123,10 +1129,22 @@ impl<B: BlobStore> Backend for StationUi<B> {
                 "pass_locked_until": pass_locked_until,
                 "hex": hex, "role": role, "email": email, "contract": contract, "status": status, "tracked": !life.is_null(),
                 "last_ok_at": life["last_ok_at"], "status_since": life["status_since"], "grace_ends_at": grace_ends,
-                "used_bytes": used, "files": files, "quota_bytes": quota,
+                "used_bytes": used, "files": files, "quota_bytes": quota, "unlimited": unlimited,
             }));
         }
         Ok(json!({ "accounts": out }))
+    }
+
+    async fn account_quota(&self, who: &Principal, hex: String, quota_bytes: Option<u64>) -> Result<Value, ApiError> {
+        let account = astro_dav::auth::lookup_by_hex(&self.services.db, &hex).await.ok_or_else(|| ApiError::not_found("compte non hébergé ici"))?;
+        if account.tier == astro_dav::auth::Tier::Captain && quota_bytes.is_some() {
+            return Err(ApiError::bad_request("le Capitaine n'a pas de quota : seul le disque de la station le borne"));
+        }
+        let value: rusqlite::types::Value = quota_bytes.map_or(rusqlite::types::Value::Null, |q| rusqlite::types::Value::Integer(i64::try_from(q).unwrap_or(i64::MAX)));
+        self.services.db.writer().execute("UPDATE identities SET quota_bytes = ?2 WHERE hex = ?1 AND hosted = 1", vec![hex.clone().into(), value]).await.map_err(db_err)?;
+        self.services.activity.publish_to(astro_core::Audience::Captain, "quota", "quota", format!("Quota de {} : {}", hex.get(..8).unwrap_or(&hex), quota_bytes.map_or_else(|| "celui de sa formule".to_owned(), |q| format!("{} Go", q >> 30))), None);
+        let _ = who;
+        Ok(json!({ "hex": hex, "quota_bytes": quota_bytes }))
     }
 
     async fn account_token(&self, who: &Principal, hex: String) -> Result<Value, ApiError> {

@@ -138,7 +138,14 @@ async fn names_never_collide_and_dates_make_subfolders() {
     let to: std::collections::BTreeMap<_, _> = month.moves.iter().cloned().collect();
     assert_eq!(to["/Vrac/a/IMG_1.jpg"], "/Images/2003/06/IMG_1.jpg");
     assert_eq!(to["/Vrac/b/IMG_1.jpg"], "/Images/2018/11/IMG_1.jpg");
-    assert_eq!(to["/Vrac/c/IMG_1.jpg"], "/Images/Sans date/00/IMG_1.jpg", "sans date connue");
+    assert_eq!(to["/Vrac/c/IMG_1.jpg"], "/Images/Sans date/IMG_1.jpg", "sans date connue");
+    // Sans date de prise de vue, le dossier d'origine fait foi (…/1980/01/…), avant la date de modification (celle de l'import).
+    b.dav.db.writer().execute("INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, taken_at, data) VALUES (?1, '/Import/1980/01/PHOTO_1.jpg', '/Import/1980/01', 'file', 'c1', 'image/jpeg', 1, ?2, NULL, '{}'), (?1, '/Import/1999/vrac/PHOTO_2.jpg', '/Import/1999/vrac', 'file', 'c2', 'image/jpeg', 1, ?2, NULL, '{}'), (?1, '/Import/sans/date/PHOTO_3.jpg', '/Import/sans/date', 'file', 'c3', 'image/jpeg', 1, ?2, NULL, '{}')", vec![V::Text(hex(&ALICE)), V::Integer(NOV_2018)]).await.unwrap();
+    let from_path = organize::plan(&b.dav.db, &hex(&ALICE), &Options { by_date: ByDate::Month, ..Options::default() }).await.unwrap();
+    let to: std::collections::BTreeMap<_, _> = from_path.moves.iter().cloned().collect();
+    assert_eq!(to["/Import/1980/01/PHOTO_1.jpg"], "/Images/1980/01/PHOTO_1.jpg", "année et mois du dossier");
+    assert_eq!(to["/Import/1999/vrac/PHOTO_2.jpg"], "/Images/1999/Sans mois/PHOTO_2.jpg", "année seule");
+    assert_eq!(to["/Import/sans/date/PHOTO_3.jpg"], "/Images/2018/11/PHOTO_3.jpg", "à défaut, la date de modification");
     let year = organize::plan(&b.dav.db, &hex(&ALICE), &Options { by_date: ByDate::Year, ..Options::default() }).await.unwrap();
     assert!(year.moves.iter().any(|m| m.1 == "/Images/2003/IMG_1.jpg"));
 }
