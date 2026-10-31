@@ -1,6 +1,6 @@
 # Guide pas à pas : démarrer sa station astroportd
 
-> Version texte du [guide illustré](index.html). Préversion **0.4.0-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
+> Version texte du [guide illustré](index.html). Préversion **0.5.0-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
 
 **Sommaire** : [0. Avant de commencer](#etape-0) · [1. Installer astroportd](#etape-1) · [2. Activer Y-Level ](#etape-2) · [3. Choisir sa constellation ](#etape-3) · [4. Démarrer la station](#etape-4) · [5. Créer mon MULTIPASS](#etape-5) · [6. Vérifier que tout va bien](#etape-6) · [7. Entrer dans l'interface web](#etape-7) · [8. FaceCloud ](#etape-8) · [9. Relier sa station aux autres Capitaines](#etape-9) · [10. En cas de problème](#etape-10)
 
@@ -33,7 +33,7 @@ date       # l'année doit être 2026 ou plus
 
 Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.
 
-> **À savoir.** astroportd est en **préversion 0.4.0-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
+> **À savoir.** astroportd est en **préversion 0.5.0-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
 
 Vous aurez aussi besoin d'un compte **MULTIPASS** (votre identité Nostr) : astroportd le crée pour vous à l'étape 5.
 
@@ -49,7 +49,7 @@ Le plus simple : l'installeur. Il choisit le bon fichier pour votre machine et *
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 ```
 
-Options utiles : `--version v0.4.0-beta`, `--static` (binaire statique, x86_64), `--prefix DIR`, `--no-init`, `--yes`. Ensuite :
+Options utiles : `--version v0.5.0-beta`, `--static` (binaire statique, x86_64), `--prefix DIR`, `--no-init`, `--yes`. Ensuite :
 
 ```bash
 astroportd --version

@@ -15,7 +15,7 @@ guide `docs/index.html` (à remplacer par l'adresse publique du guide, une fois 
 ### Version française (≈ 555 caractères)
 
 ```
-astroportd 0.4.0-beta (préversion) : le cœur d'Astroport.ONE réécrit en Rust, en un seul binaire.
+astroportd 0.5.0-beta (préversion) : le cœur d'Astroport.ONE réécrit en Rust, en un seul binaire.
 
 Relai Nostr, cloud personnel chiffré, reconnaissance de visages et partage entre amis (N¹) ou par lien secret, maillage P2P. On crée son MULTIPASS directement sur sa station. Tourne sur un Raspberry Pi.
 
@@ -30,7 +30,7 @@ https://github.com/papiche/astroportd
 ### English version (≈ 530 characters)
 
 ```
-astroportd 0.4.0-beta (preview): the core of Astroport.ONE rewritten in Rust, as a single binary.
+astroportd 0.5.0-beta (preview): the core of Astroport.ONE rewritten in Rust, as a single binary.
 
 Nostr relay, encrypted personal cloud, face recognition with sharing to friends (N¹) or via secret link, P2P mesh. You create your MULTIPASS right on your own station. Runs on a Raspberry Pi.
 
@@ -86,7 +86,7 @@ astroportd init
 astroportd multipass create vous@exemple.org --captain
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
 
-On crée son MULTIPASS directement sur sa station (les membres via la page /register). Préversion 0.4.0-beta : une station = une constellation pour l'instant. Retours bienvenus : https://github.com/papiche/astroportd/issues
+On crée son MULTIPASS directement sur sa station (les membres via la page /register). Préversion 0.5.0-beta : une station = une constellation pour l'instant. Retours bienvenus : https://github.com/papiche/astroportd/issues
 ```
 
 ---
@@ -101,7 +101,7 @@ Tags suggérés : `d` = `astroportd-presentation`, `title` = « astroportd : une
 
 **astroportd** est la réécriture en Rust du cœur d'[Astroport.ONE](https://github.com/papiche/Astroport.ONE) et
 d'UPlanet. Il remplace une pile de scripts et de services (relai Nostr, API, cloud, visages…) par **un exécutable**,
-qui tient sur un Raspberry Pi. C'est une **préversion 0.4.0-beta**, testée de bout en bout mais jeune.
+qui tient sur un Raspberry Pi. C'est une **préversion 0.5.0-beta**, testée de bout en bout mais jeune.
 
 ## Le principe
 
@@ -167,7 +167,7 @@ https://github.com/papiche/astroportd — retours et contributions bienvenus.
 
 ## 5. Avant de publier
 
-- [ ] Le dépôt est public, la release `v0.4.0-beta` existe, `install.sh` fonctionne sur une machine neuve.
+- [ ] Le dépôt est public, la release `v0.5.0-beta` existe, `install.sh` fonctionne sur une machine neuve.
 - [ ] Les liens des notes répondent (dépôt, releases, guide).
 - [ ] Les affirmations restent exactes (seuils 0,82 / 0,55, tailles de lien, limites de la préversion).
 - [ ] Signé avec la clé de Fred ; aucune clé de station utilisée.
