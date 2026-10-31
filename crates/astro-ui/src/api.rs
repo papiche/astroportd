@@ -37,7 +37,8 @@ use std::time::{Duration, Instant};
 use astro_core::ActivityBus;
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, State};
+use axum::extract::{FromRequestParts, Path, Query, State};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -530,6 +531,27 @@ async fn who<B: Backend>(st: &UiState<B>, headers: &HeaderMap, method: &Method, 
     st.backend.authenticate(headers, method.as_str(), uri).await.ok_or_else(unauthorized)
 }
 
+/// Le compte qui appelle : l'authentification (Basic ou NIP-98) est faite avant que la route ne lise sa requête ou son corps.
+struct Authed(Principal);
+
+impl<B: Backend> FromRequestParts<Arc<UiState<B>>> for Authed {
+    type Rejection = Response;
+    async fn from_request_parts(parts: &mut Parts, st: &Arc<UiState<B>>) -> Result<Self, Response> {
+        st.backend.authenticate(&parts.headers, parts.method.as_str(), &parts.uri).await.map(Self).ok_or_else(unauthorized)
+    }
+}
+
+/// Le Capitaine de la station : 403 pour tout autre compte, même authentifié.
+struct Captain(Principal);
+
+impl<B: Backend> FromRequestParts<Arc<UiState<B>>> for Captain {
+    type Rejection = Response;
+    async fn from_request_parts(parts: &mut Parts, st: &Arc<UiState<B>>) -> Result<Self, Response> {
+        let Authed(p) = Authed::from_request_parts(parts, st).await?;
+        captain_only(&p).map(|()| Self(p))
+    }
+}
+
 fn private(mut r: Response) -> Response {
     r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     r.headers_mut().insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
@@ -558,18 +580,12 @@ async fn health<B: Backend>(State(st): State<Arc<UiState<B>>>) -> Response {
     private((code, Json(body)).into_response())
 }
 
-async fn me<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => private(Json(json!({ "hex": p.hex, "email": p.email, "captain": p.captain })).into_response()),
-        Err(r) => r,
-    }
+async fn me<B: Backend>(_: State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    private(Json(json!({ "hex": p.hex, "email": p.email, "captain": p.captain })).into_response())
 }
 
-async fn dashboard<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.dashboard(&p).await),
-        Err(r) => r,
-    }
+async fn dashboard<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.dashboard(&p).await)
 }
 
 #[derive(Deserialize)]
@@ -577,11 +593,8 @@ struct ListQuery {
     path: Option<String>,
 }
 
-async fn ucloud_list<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Query(q): Query<ListQuery>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.ucloud_list(&p, q.path.unwrap_or_else(|| "/".into())).await),
-        Err(r) => r,
-    }
+async fn ucloud_list<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<ListQuery>) -> Response {
+    reply(st.backend.ucloud_list(&p, q.path.unwrap_or_else(|| "/".into())).await)
 }
 
 #[derive(Deserialize)]
@@ -589,14 +602,11 @@ struct HaveBody {
     shas: Vec<String>,
 }
 
-async fn library_have<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<HaveBody>) -> Response {
+async fn library_have<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<HaveBody>) -> Response {
     if body.shas.len() > 500 {
         return reply(Err(ApiError::bad_request("500 empreintes au plus par appel")));
     }
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.library(&p, LibraryQuery::Have(body.shas)).await),
-        Err(r) => r,
-    }
+    reply(st.backend.library(&p, LibraryQuery::Have(body.shas)).await)
 }
 
 #[derive(Deserialize)]
@@ -605,11 +615,8 @@ struct MemoriesQuery {
     y: Option<i64>,
 }
 
-async fn library_memories<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Query(q): Query<MemoriesQuery>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.library(&p, LibraryQuery::Memories(q.md.zip(q.y))).await),
-        Err(r) => r,
-    }
+async fn library_memories<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<MemoriesQuery>) -> Response {
+    reply(st.backend.library(&p, LibraryQuery::Memories(q.md.zip(q.y))).await)
 }
 
 #[derive(Deserialize)]
@@ -617,28 +624,19 @@ struct TimelineQuery {
     ym: Option<String>,
 }
 
-async fn library_timeline<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Query(q): Query<TimelineQuery>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.library(&p, LibraryQuery::Timeline(q.ym)).await),
-        Err(r) => r,
-    }
+async fn library_timeline<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<TimelineQuery>) -> Response {
+    reply(st.backend.library(&p, LibraryQuery::Timeline(q.ym)).await)
 }
 
-async fn library_search<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Query(q): Query<LibrarySearch>) -> Response {
+async fn library_search<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<LibrarySearch>) -> Response {
     if q.q.as_deref().is_some_and(|s| s.len() > 256) || q.person.as_deref().is_some_and(|s| s.len() > 128) {
         return reply(Err(ApiError::bad_request("recherche trop longue")));
     }
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.library(&p, LibraryQuery::Search(q)).await),
-        Err(r) => r,
-    }
+    reply(st.backend.library(&p, LibraryQuery::Search(q)).await)
 }
 
-async fn library_duplicates<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.library(&p, LibraryQuery::Duplicates).await),
-        Err(r) => r,
-    }
+async fn library_duplicates<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.library(&p, LibraryQuery::Duplicates).await)
 }
 
 #[derive(Deserialize)]
@@ -647,11 +645,8 @@ struct PhotosQuery {
     limit: Option<usize>,
 }
 
-async fn ucloud_photos<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Query(q): Query<PhotosQuery>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.ucloud_photos(&p, q.before, q.limit.unwrap_or(60).clamp(1, 200)).await),
-        Err(r) => r,
-    }
+async fn ucloud_photos<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<PhotosQuery>) -> Response {
+    reply(st.backend.ucloud_photos(&p, q.before, q.limit.unwrap_or(60).clamp(1, 200)).await)
 }
 
 #[derive(Deserialize)]
@@ -688,18 +683,12 @@ async fn ucloud_share<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: He
     reply(Ok(out))
 }
 
-async fn faces<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.faces(&p).await),
-        Err(r) => r,
-    }
+async fn faces<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.faces(&p).await)
 }
 
-async fn face_accept<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(id): Path<i64>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.face_accept(&p, id).await),
-        Err(r) => r,
-    }
+async fn face_accept<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Path(id): Path<i64>) -> Response {
+    reply(st.backend.face_accept(&p, id).await)
 }
 
 #[derive(Deserialize)]
@@ -707,15 +696,12 @@ struct NameBody {
     name: String,
 }
 
-async fn face_name<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(id): Path<i64>, Json(body): Json<NameBody>) -> Response {
+async fn face_name<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Path(id): Path<i64>, Json(body): Json<NameBody>) -> Response {
     let name = body.name.trim().to_owned();
     if name.is_empty() || name.chars().count() > 80 {
         return reply(Err(ApiError::bad_request("nom de 1 à 80 caractères attendu")));
     }
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.face_name(&p, id, name).await),
-        Err(r) => r,
-    }
+    reply(st.backend.face_name(&p, id, name).await)
 }
 
 /// Identifiants de visages : 1 à `max`, strictement positifs, sans doublon.
@@ -728,11 +714,8 @@ fn face_ids(ids: Vec<i64>, max: usize) -> Result<Vec<i64>, Response> {
     Ok(ids.into_iter().filter(|i| seen.insert(*i)).collect())
 }
 
-async fn faces_board<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.faces_board(&p).await),
-        Err(r) => r,
-    }
+async fn faces_board<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.faces_board(&p).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -746,7 +729,7 @@ fn default_thumb() -> u32 {
     96
 }
 
-async fn faces_thumbs<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<ThumbsBody>) -> Response {
+async fn faces_thumbs<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<ThumbsBody>) -> Response {
     let ids = match face_ids(body.ids, 80) {
         Ok(i) => i,
         Err(r) => return r,
@@ -754,10 +737,7 @@ async fn faces_thumbs<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: He
     if !(32..=320).contains(&body.size) {
         return reply(Err(ApiError::bad_request("taille de vignette de 32 à 320 pixels attendue")));
     }
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.faces_thumbs(&p, ids, body.size).await),
-        Err(r) => r,
-    }
+    reply(st.backend.faces_thumbs(&p, ids, body.size).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -768,7 +748,7 @@ struct AssignBody {
     pubkey: Option<String>,
 }
 
-async fn faces_assign<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<AssignBody>) -> Response {
+async fn faces_assign<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<AssignBody>) -> Response {
     let ids = match face_ids(body.ids, 2000) {
         Ok(i) => i,
         Err(r) => return r,
@@ -780,10 +760,7 @@ async fn faces_assign<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: He
     if body.pubkey.as_deref().is_some_and(|k| k.len() != 64 || !k.bytes().all(|b| b.is_ascii_hexdigit())) {
         return reply(Err(ApiError::bad_request("clé Nostr de 64 caractères hexadécimaux attendue")));
     }
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.faces_assign(&p, ids, name, body.pubkey.map(|k| k.to_ascii_lowercase())).await),
-        Err(r) => r,
-    }
+    reply(st.backend.faces_assign(&p, ids, name, body.pubkey.map(|k| k.to_ascii_lowercase())).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -791,22 +768,16 @@ struct ForgetBody {
     ids: Vec<i64>,
 }
 
-async fn faces_forget<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<ForgetBody>) -> Response {
+async fn faces_forget<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<ForgetBody>) -> Response {
     let ids = match face_ids(body.ids, 2000) {
         Ok(i) => i,
         Err(r) => return r,
     };
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.faces_forget(&p, ids).await),
-        Err(r) => r,
-    }
+    reply(st.backend.faces_forget(&p, ids).await)
 }
 
-async fn footprint<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.footprint(&p).await),
-        Err(r) => r,
-    }
+async fn footprint<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.footprint(&p).await)
 }
 
 /// Les écrans d'administration sont réservés au Capitaine : 403 pour tout autre compte, même authentifié.
@@ -815,34 +786,16 @@ fn captain_only(p: &Principal) -> Result<(), Response> {
     if p.captain { Ok(()) } else { Err(reply(Err(ApiError::forbidden("réservé au Capitaine de la station")))) }
 }
 
-async fn constellation<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => match captain_only(&p) {
-            Ok(()) => reply(st.backend.constellation(&p).await),
-            Err(r) => r,
-        },
-        Err(r) => r,
-    }
+async fn constellation<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
+    reply(st.backend.constellation(&p).await)
 }
 
-async fn economy<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => match captain_only(&p) {
-            Ok(()) => reply(st.backend.economy(&p).await),
-            Err(r) => r,
-        },
-        Err(r) => r,
-    }
+async fn economy<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
+    reply(st.backend.economy(&p).await)
 }
 
-async fn accounts<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => match captain_only(&p) {
-            Ok(()) => reply(st.backend.accounts(&p).await),
-            Err(r) => r,
-        },
-        Err(r) => r,
-    }
+async fn accounts<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
+    reply(st.backend.accounts(&p).await)
 }
 
 async fn account_token<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(hex): Path<String>) -> Response {
@@ -861,11 +814,8 @@ struct SayBody {
     text: String,
 }
 
-async fn consent<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.consent(&p).await),
-        Err(r) => r,
-    }
+async fn consent<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.consent(&p).await)
 }
 
 #[derive(Deserialize)]
@@ -873,22 +823,16 @@ struct ConsentBody {
     version: u32,
 }
 
-async fn consent_accept<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<ConsentBody>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.consent_accept(&p, body.version).await),
-        Err(r) => r,
-    }
+async fn consent_accept<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<ConsentBody>) -> Response {
+    reply(st.backend.consent_accept(&p, body.version).await)
 }
 
-async fn bro_say<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<SayBody>) -> Response {
+async fn bro_say<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<SayBody>) -> Response {
     let text = body.text.trim().to_owned();
     if text.is_empty() || text.chars().count() > 2000 {
         return reply(Err(ApiError::bad_request("message de 1 à 2000 caractères attendu")));
     }
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.bro_say(&p, text).await),
-        Err(r) => r,
-    }
+    reply(st.backend.bro_say(&p, text).await)
 }
 
 #[derive(Deserialize)]
@@ -904,28 +848,16 @@ struct RegisterBody {
     lang: String,
 }
 
-async fn coop_get<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => match captain_only(&p) {
-            Ok(()) => reply(st.backend.coop_config(&p).await),
-            Err(r) => r,
-        },
-        Err(r) => r,
-    }
+async fn coop_get<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
+    reply(st.backend.coop_config(&p).await)
 }
 
-async fn contacts<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.contacts(&p).await),
-        Err(r) => r,
-    }
+async fn contacts<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.contacts(&p).await)
 }
 
-async fn contacts_sync<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.contacts_sync(&p).await),
-        Err(r) => r,
-    }
+async fn contacts_sync<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.contacts_sync(&p).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -935,11 +867,8 @@ struct PersonBody {
     email: Option<String>,
 }
 
-async fn contacts_create<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<PersonBody>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.contacts_create(&p, body.name, body.email).await),
-        Err(r) => r,
-    }
+async fn contacts_create<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<PersonBody>) -> Response {
+    reply(st.backend.contacts_create(&p, body.name, body.email).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -949,32 +878,20 @@ struct LinkBody {
     target: Option<String>,
 }
 
-async fn contacts_link<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<LinkBody>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.contacts_link(&p, body.path, body.target).await),
-        Err(r) => r,
-    }
+async fn contacts_link<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<LinkBody>) -> Response {
+    reply(st.backend.contacts_link(&p, body.path, body.target).await)
 }
 
-async fn account<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.account(&p).await),
-        Err(r) => r,
-    }
+async fn account<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.account(&p).await)
 }
 
-async fn account_profile<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<Value>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.account_profile(&p, body).await),
-        Err(r) => r,
-    }
+async fn account_profile<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    reply(st.backend.account_profile(&p, body).await)
 }
 
-async fn account_token_rotate<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.account_token_rotate(&p).await),
-        Err(r) => r,
-    }
+async fn account_token_rotate<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.account_token_rotate(&p).await)
 }
 
 #[derive(Deserialize)]
@@ -991,11 +908,8 @@ async fn account_unlock<B: Backend>(State(st): State<Arc<UiState<B>>>, req: axum
     reply(st.backend.account_unlock(ip, body.email, body.pass).await)
 }
 
-async fn account_sign<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<Value>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.account_sign(&p, body).await),
-        Err(r) => r,
-    }
+async fn account_sign<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    reply(st.backend.account_sign(&p, body).await)
 }
 
 async fn pass_unlock<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(hex): Path<String>) -> Response {
@@ -1015,11 +929,8 @@ struct KeysBody {
     confirm: bool,
 }
 
-async fn account_keys<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<KeysBody>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.account_export_keys(&p, body.confirm).await),
-        Err(r) => r,
-    }
+async fn account_keys<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<KeysBody>) -> Response {
+    reply(st.backend.account_export_keys(&p, body.confirm).await)
 }
 
 fn valid_section(s: &str) -> bool {
@@ -1073,30 +984,18 @@ async fn bridge_console(mut sock: WebSocket, link: ConsoleLink) {
     }
 }
 
-async fn admin_get<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(section): Path<String>) -> Response {
+async fn admin_get<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Path(section): Path<String>) -> Response {
     if !valid_section(&section) {
         return reply(Err(ApiError::not_found("section d'administration inconnue")));
     }
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => match captain_only(&p) {
-            Ok(()) => reply(st.backend.admin_get(&p, &section).await),
-            Err(r) => r,
-        },
-        Err(r) => r,
-    }
+    reply(st.backend.admin_get(&p, &section).await)
 }
 
-async fn admin_set<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(section): Path<String>, Json(body): Json<Value>) -> Response {
+async fn admin_set<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Path(section): Path<String>, Json(body): Json<Value>) -> Response {
     if !valid_section(&section) {
         return reply(Err(ApiError::not_found("section d'administration inconnue")));
     }
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => match captain_only(&p) {
-            Ok(()) => reply(st.backend.admin_set(&p, &section, body).await),
-            Err(r) => r,
-        },
-        Err(r) => r,
-    }
+    reply(st.backend.admin_set(&p, &section, body).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -1104,24 +1003,15 @@ struct CoopBody {
     values: std::collections::BTreeMap<String, Option<String>>,
 }
 
-async fn coop_set<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<CoopBody>) -> Response {
+async fn coop_set<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Json(body): Json<CoopBody>) -> Response {
     if body.values.is_empty() || body.values.len() > 64 || body.values.keys().any(|k| k.len() > 64 || !k.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')) {
         return reply(Err(ApiError::bad_request("1 à 64 clés en majuscules attendues")));
     }
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => match captain_only(&p) {
-            Ok(()) => reply(st.backend.coop_config_set(&p, body.values).await),
-            Err(r) => r,
-        },
-        Err(r) => r,
-    }
+    reply(st.backend.coop_config_set(&p, body.values).await)
 }
 
-async fn friends<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.friends(&p).await),
-        Err(r) => r,
-    }
+async fn friends<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.friends(&p).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -1130,7 +1020,7 @@ struct SendBody {
     friends: Vec<String>,
 }
 
-async fn ucloud_send<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<SendBody>) -> Response {
+async fn ucloud_send<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<SendBody>) -> Response {
     if body.paths.is_empty() || body.paths.len() > 200 || body.paths.iter().any(|p| !p.starts_with('/') || p.len() > 1024 || p.split('/').any(|s| s == "..")) {
         return reply(Err(ApiError::bad_request("1 à 200 chemins absolus attendus (sans « .. »)")));
     }
@@ -1138,17 +1028,11 @@ async fn ucloud_send<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: Hea
         return reply(Err(ApiError::bad_request("1 à 50 proches (clés Nostr de 64 caractères hexadécimaux) attendus")));
     }
     let friends = body.friends.into_iter().map(|f| f.to_ascii_lowercase()).collect();
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.ucloud_send(&p, body.paths, friends).await),
-        Err(r) => r,
-    }
+    reply(st.backend.ucloud_send(&p, body.paths, friends).await)
 }
 
-async fn backup_status<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.backup_status(&p).await),
-        Err(r) => r,
-    }
+async fn backup_status<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.backup_status(&p).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -1157,14 +1041,11 @@ struct BackupSetBody {
     host: Option<String>,
 }
 
-async fn backup_set<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<BackupSetBody>) -> Response {
+async fn backup_set<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<BackupSetBody>) -> Response {
     if body.host.as_ref().is_some_and(|h| h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit())) {
         return reply(Err(ApiError::bad_request("clé de l'ami : 64 caractères hexadécimaux attendus")));
     }
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.backup_set(&p, body.enabled, body.host.map(|h| h.to_ascii_lowercase())).await),
-        Err(r) => r,
-    }
+    reply(st.backend.backup_set(&p, body.enabled, body.host.map(|h| h.to_ascii_lowercase())).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -1176,22 +1057,16 @@ struct BackupRespondBody {
     quota_bytes: u64,
 }
 
-async fn backup_respond<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<BackupRespondBody>) -> Response {
+async fn backup_respond<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<BackupRespondBody>) -> Response {
     if body.owner.len() != 64 || !body.owner.bytes().all(|b| b.is_ascii_hexdigit()) {
         return reply(Err(ApiError::bad_request("clé de l'ami : 64 caractères hexadécimaux attendus")));
     }
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.backup_respond(&p, body.owner.to_ascii_lowercase(), body.accept, body.quota_bytes).await),
-        Err(r) => r,
-    }
+    reply(st.backend.backup_respond(&p, body.owner.to_ascii_lowercase(), body.accept, body.quota_bytes).await)
 }
 
 /// Réplication des données du compte connecté.
-async fn replication<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.replication(&p).await),
-        Err(r) => r,
-    }
+async fn replication<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.replication(&p).await)
 }
 
 /// Inscription ouverte ? (aucun compte requis : c'est la porte d'entrée.)
@@ -1256,11 +1131,8 @@ async fn invites<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderM
     }
 }
 
-async fn invite_revoke<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(token): Path<String>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.invite_revoke(&p, token).await),
-        Err(r) => r,
-    }
+async fn invite_revoke<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Path(token): Path<String>) -> Response {
+    reply(st.backend.invite_revoke(&p, token).await)
 }
 
 /// Public : le jeton du lien est la seule preuve. Jamais mis en cache ni indexé.
@@ -1315,11 +1187,8 @@ struct RemoteAcceptBody {
 }
 
 /// Accepte l'invitation d'une autre station avec le compte connecté ici.
-async fn invite_accept_elsewhere<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(b): Json<RemoteAcceptBody>) -> Response {
-    match who(&st, &headers, &method, &uri).await {
-        Ok(p) => reply(st.backend.invite_accept_elsewhere(&p, b.origin, b.token).await),
-        Err(r) => r,
-    }
+async fn invite_accept_elsewhere<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<RemoteAcceptBody>) -> Response {
+    reply(st.backend.invite_accept_elsewhere(&p, b.origin, b.token).await)
 }
 
 #[derive(Deserialize)]

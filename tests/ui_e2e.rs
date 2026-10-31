@@ -48,6 +48,23 @@ struct Bench {
     dir: std::path::PathBuf,
 }
 
+impl Bench {
+    /// `GET` d'une route de l'API avec un compte.
+    async fn get(&self, uri: &str, auth: &str) -> (StatusCode, Value) {
+        api(&self.app, Method::GET, uri, auth, None).await
+    }
+
+    /// `POST` JSON.
+    async fn post(&self, uri: &str, auth: &str, body: Value) -> (StatusCode, Value) {
+        api(&self.app, Method::POST, uri, auth, Some(body)).await
+    }
+
+    /// `POST` sans corps.
+    async fn post_empty(&self, uri: &str, auth: &str) -> (StatusCode, Value) {
+        api(&self.app, Method::POST, uri, auth, None).await
+    }
+}
+
 impl Drop for Bench {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
@@ -166,23 +183,23 @@ async fn root_serves_the_app_to_browsers_and_nip11_to_nostr_clients() {
 async fn the_api_requires_a_hosted_account_and_isolates_owners() {
     let b = bench("auth", None).await;
     let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/me", "Basic bm9wZTpub3Bl", None).await.0, StatusCode::UNAUTHORIZED);
-    let (s, me) = api(&b.app, Method::GET, "/api/v1/me", &alice, None).await;
+    assert_eq!(b.get("/api/v1/me", "Basic bm9wZTpub3Bl").await.0, StatusCode::UNAUTHORIZED);
+    let (s, me) = b.get("/api/v1/me", &alice).await;
     assert_eq!((s, me["email"].as_str(), me["captain"].as_bool()), (StatusCode::OK, Some("alice@example.org"), Some(false)));
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/me", &bob, None).await.1["captain"], true);
+    assert_eq!(b.get("/api/v1/me", &bob).await.1["captain"], true);
 
     put(&b.app, &alice, "/Photos/vacances.jpg", b"\xff\xd8\xff pas vraiment un jpeg").await;
     put(&b.app, &alice, "/Documents/contrat.pdf", b"%PDF-1.4 secret").await;
-    let (s, list) = api(&b.app, Method::GET, "/api/v1/ucloud/list?path=/", &alice, None).await;
+    let (s, list) = b.get("/api/v1/ucloud/list?path=/", &alice).await;
     assert_eq!(s, StatusCode::OK);
     let names: Vec<&str> = list["entries"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["Documents", "Photos"], "dossiers triés");
     assert_eq!(list["dav"], "/dav");
-    let (_, photos) = api(&b.app, Method::GET, "/api/v1/ucloud/list?path=/Photos", &alice, None).await;
+    let (_, photos) = b.get("/api/v1/ucloud/list?path=/Photos", &alice).await;
     assert_eq!((photos["entries"][0]["name"].as_str(), photos["entries"][0]["mime"].as_str()), (Some("vacances.jpg"), Some("image/jpeg")));
     // Bob ne voit rien d'Alice ; chemin piégé et dossier absent refusés proprement.
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/ucloud/list?path=/Photos", &bob, None).await.0, StatusCode::NOT_FOUND);
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/ucloud/list?path=/../etc", &alice, None).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.get("/api/v1/ucloud/list?path=/Photos", &bob).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(b.get("/api/v1/ucloud/list?path=/../etc", &alice).await.0, StatusCode::BAD_REQUEST);
     // Le fichier est déchiffré par la station au téléchargement.
     let (s, _, bytes) = call(&b.app, Method::GET, "/dav/Photos/vacances.jpg", Some(&alice), &[], vec![]).await;
     assert_eq!((s, bytes.as_slice()), (StatusCode::OK, &b"\xff\xd8\xff pas vraiment un jpeg"[..]));
@@ -194,7 +211,7 @@ async fn the_dashboard_reports_the_station_the_relay_and_the_sovereignty_widget(
     let alice = basic("alice@example.org", &ALICE);
     put(&b.app, &alice, "/a.txt", b"bonjour").await;
     put(&b.app, &alice, "/b.txt", b"le monde").await;
-    let (s, d) = api(&b.app, Method::GET, "/api/v1/dashboard", &alice, None).await;
+    let (s, d) = b.get("/api/v1/dashboard", &alice).await;
     assert_eq!(s, StatusCode::OK, "{d}");
     assert_eq!((d["station"]["domain"].as_str(), d["station"]["peer_id"].as_str()), (Some("station.test"), Some("12D3KooWTest")));
     assert_eq!(d["p2p"]["enabled"], false);
@@ -222,7 +239,7 @@ async fn the_album_paginates_without_losing_photos_that_share_a_timestamp() {
     let mut before: Option<i64> = None;
     for _ in 0..10 {
         let q = before.map_or("limit=2".to_owned(), |t| format!("limit=2&before={t}"));
-        let (s, page) = api(&b.app, Method::GET, &format!("/api/v1/ucloud/photos?{q}"), &alice, None).await;
+        let (s, page) = b.get(&format!("/api/v1/ucloud/photos?{q}"), &alice).await;
         assert_eq!(s, StatusCode::OK);
         seen.extend(page["items"].as_array().unwrap().iter().map(|i| i["path"].as_str().unwrap().to_owned()));
         match page["next"].as_i64() {
@@ -231,7 +248,7 @@ async fn the_album_paginates_without_losing_photos_that_share_a_timestamp() {
         }
     }
     assert_eq!(seen, ["/Album/t1", "/Album/t2", "/Album/t3", "/Album/t4", "/Album/o1", "/Album/o2", "/Album/o3"], "ordre antéchronologique, ex æquo complets, rien en double");
-    assert!(api(&b.app, Method::GET, "/api/v1/ucloud/photos", &bob, None).await.1["items"].as_array().unwrap().is_empty());
+    assert!(b.get("/api/v1/ucloud/photos", &bob).await.1["items"].as_array().unwrap().is_empty());
 }
 
 async fn db_insert(db: &Db, owner: &str, path: &str, mime: &str, t: i64, cid: Option<&str>) {
@@ -250,7 +267,7 @@ async fn a_magic_link_is_created_with_its_key_in_the_fragment_and_a_qr_code() {
     let b = bench("share", None).await;
     let alice = basic("alice@example.org", &ALICE);
     put(&b.app, &alice, "/Fêtes/anniversaire-de-lea.txt", b"gateau au chocolat").await;
-    let (s, v) = api(&b.app, Method::POST, "/api/v1/ucloud/share", &alice, Some(json!({ "paths": ["/Fêtes"], "ttl_hours": 24 }))).await;
+    let (s, v) = b.post("/api/v1/ucloud/share", &alice, json!({ "paths": ["/Fêtes"], "ttl_hours": 24 })).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let url = v["url"].as_str().unwrap();
     let (base, key) = url.split_once('#').unwrap();
@@ -265,7 +282,7 @@ async fn a_magic_link_is_created_with_its_key_in_the_fragment_and_a_qr_code() {
     let text = String::from_utf8_lossy(&manifest);
     assert!(!text.contains("anniversaire") && !text.contains("chocolat"), "le manifeste du lien est chiffré");
     // Un dossier inexistant n'ouvre aucun lien.
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/ucloud/share", &alice, Some(json!({ "paths": ["/Absent"] }))).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(b.post("/api/v1/ucloud/share", &alice, json!({ "paths": ["/Absent"] })).await.0, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -294,7 +311,7 @@ async fn faces_group_by_person_and_the_grey_zone_is_validated_in_one_click() {
     face(5, "Inconnu_bbbb2222", "c5", 0.9, None).await;
     face(6, "Inconnu_cccc3333", "c6", 0.9, Some(("Paul", 0.71))).await;
 
-    let (s, f) = api(&b.app, Method::GET, "/api/v1/faces", &alice, None).await;
+    let (s, f) = b.get("/api/v1/faces", &alice).await;
     assert_eq!(s, StatusCode::OK, "{f}");
     assert_eq!((f["people"].as_array().unwrap().len(), f["people"][0]["name"].as_str(), f["people"][0]["count"].as_i64()), (1, Some("Léa"), Some(3)));
     assert_eq!(f["people"][0]["sample"]["face_id"], 2, "la détection la plus sûre représente la personne");
@@ -303,13 +320,13 @@ async fn faces_group_by_person_and_the_grey_zone_is_validated_in_one_click() {
     assert_eq!((f["suggestions"][0]["suggest_name"].as_str(), f["suggestions"][0]["face_id"].as_i64()), (Some("Paul"), Some(6)));
 
     // Un autre compte ne peut ni valider ni nommer.
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/faces/6/accept", &bob, None).await.0, StatusCode::NOT_FOUND);
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/faces/4/name", &bob, Some(json!({ "name": "Intrus" }))).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(b.post_empty("/api/v1/faces/6/accept", &bob).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(b.post("/api/v1/faces/4/name", &bob, json!({ "name": "Intrus" })).await.0, StatusCode::NOT_FOUND);
     // Un clic : « Oui, c'est Paul ».
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/faces/6/accept", &alice, None).await.1["accepted"], true);
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/faces/6/accept", &alice, None).await.0, StatusCode::NOT_FOUND, "déjà validée");
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/faces/4/name", &alice, Some(json!({ "name": "Maman" }))).await.0, StatusCode::OK);
-    let (_, f) = api(&b.app, Method::GET, "/api/v1/faces", &alice, None).await;
+    assert_eq!(b.post_empty("/api/v1/faces/6/accept", &alice).await.1["accepted"], true);
+    assert_eq!(b.post_empty("/api/v1/faces/6/accept", &alice).await.0, StatusCode::NOT_FOUND, "déjà validée");
+    assert_eq!(b.post("/api/v1/faces/4/name", &alice, json!({ "name": "Maman" })).await.0, StatusCode::OK);
+    let (_, f) = b.get("/api/v1/faces", &alice).await;
     let names: Vec<&str> = f["people"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["Léa", "Maman", "Paul"]);
     assert!(f["suggestions"].as_array().unwrap().is_empty() && f["unknown"] == 1);
@@ -326,7 +343,7 @@ async fn the_activity_stream_carries_station_events_live() {
     let first = String::from_utf8(body.frame().await.unwrap().unwrap().into_data().unwrap().to_vec()).unwrap();
     assert!(first.contains("avant la connexion"), "{first}");
     // Une action de l'utilisateur (commande dans la console) apparaît en direct.
-    let (_, r) = api(&b.app, Method::POST, "/api/v1/bro/say", &alice, Some(json!({ "text": "#statut" }))).await;
+    let (_, r) = b.post("/api/v1/bro/say", &alice, json!({ "text": "#statut" })).await;
     assert!(r["reply"].as_str().unwrap().contains("Power-Score 160.0 (Brain)"), "{r}");
     b.bus.publish("economy", "test", "virement constaté", Some(json!({ "cents": 100 })));
     let live = String::from_utf8(body.frame().await.unwrap().unwrap().into_data().unwrap().to_vec()).unwrap();
@@ -372,7 +389,7 @@ async fn the_bro_console_remembers_recalls_and_refuses_secrets_through_ollama() 
     let url = fake_ollama().await;
     let b = bench("bro", Some(&url)).await;
     let alice = basic("alice@example.org", &ALICE);
-    let say = |t: &str| api(&b.app, Method::POST, "/api/v1/bro/say", &alice, Some(json!({ "text": t })));
+    let say = |t: &str| b.post("/api/v1/bro/say", &alice, json!({ "text": t }));
     let (s, r) = say("J'aime le pain au levain du dimanche").await;
     assert_eq!(s, StatusCode::OK, "{r}");
     assert_eq!(r["reply"], "📝 Noté dans votre journal.");
@@ -385,7 +402,7 @@ async fn the_bro_console_remembers_recalls_and_refuses_secrets_through_ollama() 
     assert_eq!(r["reply"].as_str().unwrap().lines().next(), Some("📝 Je le savais déjà."));
     // La mémoire est celle d'Alice seulement.
     let bob = basic("bob@example.org", &BOB);
-    let (_, r) = api(&b.app, Method::POST, "/api/v1/bro/say", &bob, Some(json!({ "text": "Parle-moi de pain au levain" }))).await;
+    let (_, r) = b.post("/api/v1/bro/say", &bob, json!({ "text": "Parle-moi de pain au levain" })).await;
     assert!(!r["reply"].as_str().unwrap().contains("dimanche"), "{r}");
     // Ollama répond : BRO est en bonne santé.
     let (_, _, body) = call(&b.app, Method::GET, "/health", None, &[], vec![]).await;
@@ -396,16 +413,16 @@ async fn the_bro_console_remembers_recalls_and_refuses_secrets_through_ollama() 
 async fn without_ollama_free_text_is_refused_but_commands_still_work() {
     let b = bench("bro-off", None).await;
     let alice = basic("alice@example.org", &ALICE);
-    let (s, r) = api(&b.app, Method::POST, "/api/v1/bro/say", &alice, Some(json!({ "text": "bonjour BRO" }))).await;
+    let (s, r) = b.post("/api/v1/bro/say", &alice, json!({ "text": "bonjour BRO" })).await;
     assert_eq!(s, StatusCode::NOT_IMPLEMENTED);
     assert!(r["error"].as_str().unwrap().contains("Ollama"));
-    let (_, r) = api(&b.app, Method::POST, "/api/v1/bro/say", &alice, Some(json!({ "text": "#solde" }))).await;
+    let (_, r) = b.post("/api/v1/bro/say", &alice, json!({ "text": "#solde" })).await;
     assert!(r["reply"].as_str().unwrap().starts_with("⚠️ solde indisponible"), "{r}");
-    let (_, r) = api(&b.app, Method::POST, "/api/v1/bro/say", &alice, Some(json!({ "text": "#upload bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku contrat.pdf" }))).await;
+    let (_, r) = b.post("/api/v1/bro/say", &alice, json!({ "text": "#upload bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku contrat.pdf" })).await;
     assert!(r["reply"].as_str().unwrap().starts_with("Document « contrat.pdf » mis en file"), "{r}");
-    let (_, r) = api(&b.app, Method::POST, "/api/v1/bro/say", &alice, Some(json!({ "text": "#upload bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku contrat.pdf" }))).await;
+    let (_, r) = b.post("/api/v1/bro/say", &alice, json!({ "text": "#upload bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku contrat.pdf" })).await;
     assert!(r["reply"].as_str().unwrap().starts_with("Déjà en file"), "{r}");
-    let (_, r) = api(&b.app, Method::POST, "/api/v1/bro/say", &alice, Some(json!({ "text": "#upload pas-un-cid" }))).await;
+    let (_, r) = b.post("/api/v1/bro/say", &alice, json!({ "text": "#upload pas-un-cid" })).await;
     assert!(r["reply"].as_str().unwrap().starts_with("⚠️ source invalide"), "{r}");
 }
 
@@ -428,7 +445,7 @@ async fn photos_and_faces_carry_their_thumbnail_so_the_grid_never_downloads_orig
     put(&b.app, &alice, "/Photos/vide.txt", b"pas une image").await;
     let mut item = Value::Null;
     for _ in 0..100 {
-        let (_, photos) = api(&b.app, Method::GET, "/api/v1/ucloud/photos", &alice, None).await;
+        let (_, photos) = b.get("/api/v1/ucloud/photos", &alice).await;
         item = photos["items"][0].clone();
         if !item["thumb"].is_null() {
             break;
@@ -452,7 +469,7 @@ async fn photos_and_faces_carry_their_thumbnail_so_the_grid_never_downloads_orig
         )
         .await
         .unwrap();
-    let (_, f) = api(&b.app, Method::GET, "/api/v1/faces", &alice, None).await;
+    let (_, f) = b.get("/api/v1/faces", &alice).await;
     assert_eq!(f["people"][0]["sample"]["thumb"]["ow"], 1600);
 }
 
@@ -461,7 +478,7 @@ async fn the_footprint_shows_disk_quota_and_the_opex_capex_accounts() {
     let b = bench_with("footprint", None, |c| c.quota_multipass = 5_000, None).await;
     let alice = basic("alice@example.org", &ALICE);
     put(&b.app, &alice, "/a.txt", &[b'x'; 3000]).await;
-    let (s, f) = api(&b.app, Method::GET, "/api/v1/me/footprint", &alice, None).await;
+    let (s, f) = b.get("/api/v1/me/footprint", &alice).await;
     assert_eq!(s, StatusCode::OK, "{f}");
     assert_eq!((f["disk"]["used_bytes"].as_i64(), f["disk"]["quota_bytes"].as_i64()), (Some(3000), Some(5000)));
 
@@ -489,22 +506,22 @@ async fn the_footprint_shows_disk_quota_and_the_opex_capex_accounts() {
             .await
             .unwrap();
     }
-    let (_, f) = api(&b.app, Method::GET, "/api/v1/me/footprint", &alice, None).await;
+    let (_, f) = b.get("/api/v1/me/footprint", &alice).await;
     let (ox, cx) = (&f["opex"], &f["capex"]);
     assert_eq!((ox["weekly_rent_cents"].as_i64(), ox["rent_28d_cents"].as_i64(), ox["total_28d_cents"].as_i64()), (Some(100), Some(100), Some(100)), "{ox}");
     assert_eq!((cx["zencard"].as_bool(), cx["value_cents"].as_i64(), cx["amortized_cents"].as_i64(), cx["net_cents"].as_i64()), (Some(false), Some(12_050), Some(2_025), Some(10_025)), "{cx}");
     assert_eq!(cx["assets"][0]["label"], "Serveur (part)");
 
     // Copie privée : sans le dépôt de médias branché, l'API le dit au lieu de mentir.
-    let (s, c) = api(&b.app, Method::GET, "/api/v1/consent/private-copy", &alice, None).await;
+    let (s, c) = b.get("/api/v1/consent/private-copy", &alice).await;
     assert_eq!((s, c["accepted"].as_bool(), c["available"].as_bool(), c["article"].as_str()), (StatusCode::OK, Some(false), Some(false), Some("CPI L. 122-5")), "{c}");
     assert!(c["text"].as_str().unwrap().contains("usage strictement privé"));
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/consent/private-copy", &alice, Some(json!({ "version": 1 }))).await.0, StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(b.post("/api/v1/consent/private-copy", &alice, json!({ "version": 1 })).await.0, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(call(&b.app, Method::GET, "/api/v1/consent/private-copy", None, &[], vec![]).await.0, StatusCode::UNAUTHORIZED);
 
     // Le Capex d'Alice n'est pas visible de Bob.
     let bob = basic("bob@example.org", &BOB);
-    assert!(api(&b.app, Method::GET, "/api/v1/me/footprint", &bob, None).await.1["capex"]["assets"].as_array().unwrap().is_empty());
+    assert!(b.get("/api/v1/me/footprint", &bob).await.1["capex"]["assets"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -516,26 +533,26 @@ async fn the_library_answers_have_search_timeline_and_duplicates_for_the_account
         b.db.writer().execute("INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, taken_at, sha_plain, phash, data) VALUES (?1, ?2, '/Vacances', 'file', ?3, 'image/jpeg', 100, 1, ?4, ?5, ?6, '{}')", vec![V::Text(owner), V::Text(path.into()), V::Text(format!("cid{path}")), V::Integer(taken), V::Text(sha.clone()), phash.map_or(V::Null, V::Integer)]).await.unwrap();
     }
     for uri in ["/api/v1/ucloud/search", "/api/v1/ucloud/timeline", "/api/v1/ucloud/memories", "/api/v1/ucloud/duplicates"] {
-        assert_eq!(api(&b.app, Method::GET, uri, "", None).await.0, StatusCode::UNAUTHORIZED, "{uri} sans compte");
+        assert_eq!(b.get(uri, "").await.0, StatusCode::UNAUTHORIZED, "{uri} sans compte");
     }
-    let (s, r) = api(&b.app, Method::GET, "/api/v1/ucloud/search?q=vacances&kind=image", &alice, None).await;
+    let (s, r) = b.get("/api/v1/ucloud/search?q=vacances&kind=image", &alice).await;
     assert_eq!((s, r["items"].as_array().map(Vec::len)), (StatusCode::OK, Some(2)), "{r}");
-    let (_, r) = api(&b.app, Method::GET, "/api/v1/ucloud/search?q=vacances&limit=1", &alice, None).await;
+    let (_, r) = b.get("/api/v1/ucloud/search?q=vacances&limit=1", &alice).await;
     assert!(r["next"]["path"].is_string(), "{r}");
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/ucloud/search?bbox=1,2,3", &alice, None).await.0, StatusCode::BAD_REQUEST);
-    let (_, r) = api(&b.app, Method::GET, "/api/v1/ucloud/timeline", &alice, None).await;
+    assert_eq!(b.get("/api/v1/ucloud/search?bbox=1,2,3", &alice).await.0, StatusCode::BAD_REQUEST);
+    let (_, r) = b.get("/api/v1/ucloud/timeline", &alice).await;
     assert_eq!(r["months"][0], json!({ "ym": "2024-05", "count": 2 }));
-    let (_, r) = api(&b.app, Method::GET, "/api/v1/ucloud/timeline?ym=2024-05", &alice, None).await;
+    let (_, r) = b.get("/api/v1/ucloud/timeline?ym=2024-05", &alice).await;
     assert_eq!(r["items"].as_array().map(Vec::len), Some(2));
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/ucloud/timeline?ym=abc", &alice, None).await.0, StatusCode::BAD_REQUEST);
-    let (_, r) = api(&b.app, Method::GET, "/api/v1/ucloud/memories?md=05-17&y=2026", &alice, None).await;
+    assert_eq!(b.get("/api/v1/ucloud/timeline?ym=abc", &alice).await.0, StatusCode::BAD_REQUEST);
+    let (_, r) = b.get("/api/v1/ucloud/memories?md=05-17&y=2026", &alice).await;
     assert_eq!(r["memories"][0]["year"], 2024, "souvenirs du jour donné par le navigateur : {r}");
-    let (_, r) = api(&b.app, Method::POST, "/api/v1/ucloud/have", &alice, Some(json!({ "shas": [sha, "cd".repeat(32)] }))).await;
+    let (_, r) = b.post("/api/v1/ucloud/have", &alice, json!({ "shas": [sha, "cd".repeat(32)] })).await;
     assert_eq!(r["have"].as_array().map(Vec::len), Some(1));
-    let (_, r) = api(&b.app, Method::POST, "/api/v1/ucloud/have", &bob, Some(json!({ "shas": [sha] }))).await;
+    let (_, r) = b.post("/api/v1/ucloud/have", &bob, json!({ "shas": [sha] })).await;
     assert_eq!(r["have"][0]["path"], "/Vacances/bob.jpg", "chaque compte ne voit que le sien");
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/ucloud/have", &alice, Some(json!({ "shas": vec!["a"; 501] }))).await.0, StatusCode::BAD_REQUEST);
-    let (_, r) = api(&b.app, Method::GET, "/api/v1/ucloud/duplicates", &alice, None).await;
+    assert_eq!(b.post("/api/v1/ucloud/have", &alice, json!({ "shas": vec!["a"; 501] })).await.0, StatusCode::BAD_REQUEST);
+    let (_, r) = b.get("/api/v1/ucloud/duplicates", &alice).await;
     assert_eq!(r["exact"].as_array().map(Vec::len), Some(1), "{r}");
 }
 
@@ -553,13 +570,13 @@ async fn the_captain_screens_show_the_constellation_the_regie_and_the_hosted_acc
     let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB)); // bob = Capitaine
     // Un MULTIPASS n'entre pas.
     for uri in ["/api/v1/station/constellation", "/api/v1/station/economy", "/api/v1/station/accounts"] {
-        assert_eq!(api(&b.app, Method::GET, uri, &alice, None).await.0, StatusCode::FORBIDDEN, "{uri}");
+        assert_eq!(b.get(uri, &alice).await.0, StatusCode::FORBIDDEN, "{uri}");
     }
-    assert_eq!(api(&b.app, Method::POST, &format!("/api/v1/station/accounts/{}/token", hex(&ALICE)), &alice, None).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(b.post_empty(&format!("/api/v1/station/accounts/{}/token", hex(&ALICE)), &alice).await.0, StatusCode::FORBIDDEN);
 
     // Constellation : triée par puissance, distance de Haversine depuis (45.76, 4.83).
     b.db.writer().execute("INSERT INTO identities(hex, role, peer_id, hosted) VALUES (?1, 'node', '12D3KooWnexus', 0)", vec![V::Text(hex(&[1; 32]))]).await.unwrap();
-    let (s, c) = api(&b.app, Method::GET, "/api/v1/station/constellation", &bob, None).await;
+    let (s, c) = b.get("/api/v1/station/constellation", &bob).await;
     assert_eq!(s, StatusCode::OK, "{c}");
     let ids: Vec<&str> = c["nodes"].as_array().unwrap().iter().map(|n| n["node_id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["12D3KooWTest", "12D3KooWnexus", "12D3KooWrasp"], "ce nœud d'abord, puis par Power-Score décroissant");
@@ -575,17 +592,17 @@ async fn the_captain_screens_show_the_constellation_the_regie_and_the_hosted_acc
     for (key, station, sha) in [("aa", "12D3KooWnexus", "ab".repeat(32)), ("bb", "12D3KooWrasp", "cd".repeat(32))] {
         b.db.writer().execute("INSERT INTO kv(scope, key, value, updated_at) VALUES ('station_build', ?1, ?2, 1)", vec![V::Text(key.into()), V::Text(attest(station, &sha))]).await.unwrap();
     }
-    let (_, c) = api(&b.app, Method::GET, "/api/v1/station/constellation", &bob, None).await;
+    let (_, c) = b.get("/api/v1/station/constellation", &bob).await;
     let verdicts: Vec<&str> = c["nodes"].as_array().unwrap().iter().map(|n| n["build"]["verdict"].as_str().unwrap()).collect();
     assert_eq!(verdicts, ["self", "identical", "diverges"], "{c}");
 
     // Régie : rien tant qu'aucune clôture ; puis une ventilation 3×1/3 et le Love Ledger.
-    let (_, e) = api(&b.app, Method::GET, "/api/v1/station/economy", &bob, None).await;
+    let (_, e) = b.get("/api/v1/station/economy", &bob).await;
     assert_eq!((e["kind"].as_str(), e["love"]["total_cents"].as_i64()), (Some("none"), Some(0)));
     let alloc = astro_economy::Allocation { week: "2026-W43".into(), surplus: astro_core::Amount(30_000), is_provision: astro_core::Amount(4_500), net: astro_core::Amount(25_500), captain_bonus: astro_core::Amount(255), cash: astro_core::Amount(8_415), rnd: astro_core::Amount(8_415), assets: astro_core::Amount(8_415) };
     b.db.writer().execute("INSERT INTO journal(stream, at, data) VALUES ('economy.3x13', 1790000000, ?1)", vec![V::Text(alloc.to_json().to_string())]).await.unwrap();
     b.db.writer().execute("INSERT INTO love_ledger(at, kind, amount_cents, detail) VALUES (1790000100, 'captain_contribution', 1500, '{\"week\":\"2026-W42\"}')", vec![]).await.unwrap();
-    let (_, e) = api(&b.app, Method::GET, "/api/v1/station/economy", &bob, None).await;
+    let (_, e) = b.get("/api/v1/station/economy", &bob).await;
     assert_eq!((e["kind"].as_str(), e["week"].as_str()), (Some("split"), Some("2026-W43")));
     let shares: Vec<(&str, i64)> = e["shares"].as_array().unwrap().iter().map(|s| (s["name"].as_str().unwrap(), s["cents"].as_i64().unwrap())).collect();
     assert_eq!(shares, [("Trésorerie", 8415), ("R&D", 8415), ("Actifs", 8415)]);
@@ -596,12 +613,12 @@ async fn the_captain_screens_show_the_constellation_the_regie_and_the_hosted_acc
     // Comptes : cycle de vie (kv lifecycle), disque, quota ; jeton de secours tracé.
     put(&b.app, &alice, "/doc.txt", b"bonjour").await;
     b.db.writer().execute("INSERT INTO kv(scope, key, value, updated_at) VALUES ('lifecycle', ?1, ?2, 0)", vec![V::Text(hex(&ALICE)), V::Text(json!({ "status": "grace_period", "last_ok_at": 1, "status_since": 1_790_000_000 }).to_string())]).await.unwrap();
-    let (_, a) = api(&b.app, Method::GET, "/api/v1/station/accounts", &bob, None).await;
+    let (_, a) = b.get("/api/v1/station/accounts", &bob).await;
     let alice_row = a["accounts"].as_array().unwrap().iter().find(|x| x["email"] == "alice@example.org").unwrap();
     assert_eq!((alice_row["status"].as_str(), alice_row["used_bytes"].as_i64(), alice_row["files"].as_i64()), (Some("grace_period"), Some(7), Some(1)));
     assert_eq!(alice_row["grace_ends_at"], 1_790_000_000 + 7 * 86_400);
     assert_eq!(alice_row["quota_bytes"], 10i64 << 30);
-    let (s, t) = api(&b.app, Method::POST, &format!("/api/v1/station/accounts/{}/token", hex(&ALICE)), &bob, None).await;
+    let (s, t) = b.post_empty(&format!("/api/v1/station/accounts/{}/token", hex(&ALICE)), &bob).await;
     assert_eq!(s, StatusCode::OK, "{t}");
     assert_eq!((t["login"].as_str(), t["token"].as_str()), (Some("alice@example.org"), Some(derive_dav_token(SECRET, &hex(&ALICE)).as_str())));
     // Le jeton remis fonctionne vraiment, et l'opération est tracée.
@@ -609,7 +626,7 @@ async fn the_captain_screens_show_the_constellation_the_regie_and_the_hosted_acc
     assert_eq!(s, StatusCode::OK);
     let audits: i64 = b.db.readers().read(|c| Ok(c.query_row("SELECT COUNT(*) FROM journal WHERE stream = 'audit.token'", [], |r| r.get(0))?)).await.unwrap();
     assert_eq!(audits, 1);
-    assert_eq!(api(&b.app, Method::POST, &format!("/api/v1/station/accounts/{}/token", hex(&[9; 32])), &bob, None).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(b.post_empty(&format!("/api/v1/station/accounts/{}/token", hex(&[9; 32])), &bob).await.0, StatusCode::NOT_FOUND);
     let _ = std::fs::remove_dir_all(swarm);
 }
 
@@ -641,7 +658,7 @@ async fn anyone_can_create_a_multipass_from_the_web_and_log_in_with_the_returned
 
     // Le jeton rendu ouvre l'interface : le compte est connu de la base dès la réponse.
     let login = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("nouveau@exemple.org:{}", v["token"].as_str().unwrap())));
-    let (s, me) = api(&b.app, Method::GET, "/api/v1/me", &login, None).await;
+    let (s, me) = b.get("/api/v1/me", &login).await;
     assert_eq!((s, me["email"].as_str(), me["hex"].as_str()), (StatusCode::OK, Some("nouveau@exemple.org"), v["hex"].as_str()), "{me}");
     assert!(b.dir.join("nostr/nouveau@exemple.org/.secret.nostr").is_file());
 
@@ -663,12 +680,12 @@ async fn replication_shows_where_and_by_whom_and_only_for_the_account_itself() {
     b.db.writer().execute("INSERT INTO kv(scope, key, value, updated_at) VALUES ('replication', ?1, ?2, 0)", vec![V::Text(hex(&ALICE)), V::Text(doc.to_string())]).await.unwrap();
     b.db.writer().execute("INSERT INTO kv(scope, key, value, updated_at) VALUES ('crawl_status', 'last', '{\"at\":2,\"inserted\":5}', 0), ('crawl_status', 'routes', '[{\"target\":\"p2p://12D3Ami\",\"via\":\"p2p\"}]', 0)", vec![]).await.unwrap();
 
-    let (status, mine) = api(&b.app, Method::GET, "/api/v1/replication", &alice, None).await;
+    let (status, mine) = b.get("/api/v1/replication", &alice).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!((mine["mine"]["replicated"].as_u64(), mine["mine"]["peers"][0]["name"].as_str()), (Some(28), Some("poppy")), "{mine}");
     assert_eq!((mine["crawl"]["inserted"].as_u64(), mine["routes"][0]["via"].as_str()), (Some(5), Some("p2p")), "{mine}");
     // Bob n'a pas de bilan : il ne voit jamais celui d'Alice.
-    let (_, theirs) = api(&b.app, Method::GET, "/api/v1/replication", &bob, None).await;
+    let (_, theirs) = b.get("/api/v1/replication", &bob).await;
     assert!(theirs["mine"].is_null(), "{theirs}");
     assert_eq!(call(&b.app, Method::GET, "/api/v1/replication", None, &[], Vec::new()).await.0, StatusCode::UNAUTHORIZED);
 }
@@ -696,7 +713,7 @@ async fn the_sorting_table_api_lists_groups_assigns_and_forgets_for_the_owner_on
             .unwrap();
         b.db.writer().upsert_vector(astro_db::VectorTable::Face, id, &owner, &vec_of(axis, tilt)).await.unwrap();
     }
-    let (s, board) = api(&b.app, Method::GET, "/api/v1/faces/board", &alice, None).await;
+    let (s, board) = b.get("/api/v1/faces/board", &alice).await;
     assert_eq!(s, StatusCode::OK, "{board}");
     assert_eq!((board["faces"].as_array().unwrap().len(), board["unknown"].as_i64(), board["people"][0]["name"].as_str()), (5, Some(4), Some("Léa")), "{board}");
     let face = |id: i64| board["faces"].as_array().unwrap().iter().find(|f| f["id"] == id).unwrap().clone();
@@ -704,23 +721,23 @@ async fn the_sorting_table_api_lists_groups_assigns_and_forgets_for_the_owner_on
     assert!(face(4)["group_id"].is_null() && face(5)["group_id"].is_null());
     assert!(face(1)["x"].as_f64().unwrap().abs() <= 1.0 && face(1)["bbox"] == json!([10.0, 20.0, 110.0, 140.0]));
     // Bob ne voit rien d'Alice et ne peut ni ranger ni oublier ses visages.
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/faces/board", &bob, None).await.1["faces"].as_array().unwrap().len(), 0);
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/faces/assign", &bob, Some(json!({ "ids": [1, 2, 3], "name": "Intrus" }))).await.1["assigned"], 0);
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/faces/forget", &bob, Some(json!({ "ids": [1] }))).await.1["forgotten"], 0);
+    assert_eq!(b.get("/api/v1/faces/board", &bob).await.1["faces"].as_array().unwrap().len(), 0);
+    assert_eq!(b.post("/api/v1/faces/assign", &bob, json!({ "ids": [1, 2, 3], "name": "Intrus" })).await.1["assigned"], 0);
+    assert_eq!(b.post("/api/v1/faces/forget", &bob, json!({ "ids": [1] })).await.1["forgotten"], 0);
     // Ranger le groupe d'un seul geste.
-    let (s, r) = api(&b.app, Method::POST, "/api/v1/faces/assign", &alice, Some(json!({ "ids": [1, 2, 3], "name": " Maman " }))).await;
+    let (s, r) = b.post("/api/v1/faces/assign", &alice, json!({ "ids": [1, 2, 3], "name": " Maman " })).await;
     assert_eq!((s, r["assigned"].as_i64()), (StatusCode::OK, Some(3)), "{r}");
-    let (_, after) = api(&b.app, Method::GET, "/api/v1/faces/board", &alice, None).await;
+    let (_, after) = b.get("/api/v1/faces/board", &alice).await;
     assert_eq!(after["unknown"], 1);
     assert!(after["people"].as_array().unwrap().iter().any(|p| p["name"] == "Maman" && p["faces"] == 3), "{after}");
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/faces/forget", &alice, Some(json!({ "ids": [4] }))).await.1["forgotten"], 1);
+    assert_eq!(b.post("/api/v1/faces/forget", &alice, json!({ "ids": [4] })).await.1["forgotten"], 1);
     // Entrées invalides : refusées avant d'atteindre la base.
     for body in [json!({ "ids": [], "name": "x" }), json!({ "ids": [0], "name": "x" }), json!({ "ids": [-3], "name": "x" }), json!({ "ids": [1], "name": "  " }), json!({ "ids": [1], "name": "x", "pubkey": "pas-hex" })] {
-        assert_eq!(api(&b.app, Method::POST, "/api/v1/faces/assign", &alice, Some(body.clone())).await.0, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(b.post("/api/v1/faces/assign", &alice, body.clone()).await.0, StatusCode::BAD_REQUEST, "{body}");
     }
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/faces/forget", &alice, Some(json!({ "ids": [] }))).await.0, StatusCode::BAD_REQUEST);
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/faces/thumbs", &alice, Some(json!({ "ids": [1], "size": 8 }))).await.0, StatusCode::BAD_REQUEST);
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/faces/thumbs", &alice, Some(json!({ "ids": [1], "size": 96 }))).await.0, StatusCode::NOT_IMPLEMENTED, "sans service FaceCloud câblé dans ce banc d'essai");
+    assert_eq!(b.post("/api/v1/faces/forget", &alice, json!({ "ids": [] })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.post("/api/v1/faces/thumbs", &alice, json!({ "ids": [1], "size": 8 })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.post("/api/v1/faces/thumbs", &alice, json!({ "ids": [1], "size": 96 })).await.0, StatusCode::NOT_IMPLEMENTED, "sans service FaceCloud câblé dans ce banc d'essai");
     assert_eq!(call(&b.app, Method::GET, "/api/v1/faces/board", None, &[], Vec::new()).await.0, StatusCode::UNAUTHORIZED);
 }
 
@@ -728,13 +745,13 @@ async fn the_sorting_table_api_lists_groups_assigns_and_forgets_for_the_owner_on
 async fn the_cooperative_config_is_for_the_captain_only() {
     let b = bench("coop", None).await;
     let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/station/coop", &alice, None).await.0, StatusCode::FORBIDDEN);
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/station/coop", &alice, Some(json!({ "values": { "PAF": "50" } }))).await.0, StatusCode::FORBIDDEN);
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/station/coop", &bob, None).await.0, StatusCode::OK);
-    let (s, v) = api(&b.app, Method::POST, "/api/v1/station/coop", &bob, Some(json!({ "values": { "PAF": "50", "OCAPIKEY": null } }))).await;
+    assert_eq!(b.get("/api/v1/station/coop", &alice).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(b.post("/api/v1/station/coop", &alice, json!({ "values": { "PAF": "50" } })).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(b.get("/api/v1/station/coop", &bob).await.0, StatusCode::OK);
+    let (s, v) = b.post("/api/v1/station/coop", &bob, json!({ "values": { "PAF": "50", "OCAPIKEY": null } })).await;
     assert_eq!((s, v["saved"].as_array().map(Vec::len)), (StatusCode::OK, Some(2)));
     for bad in [json!({ "values": {} }), json!({ "values": { "paf": "1" } }), json!({ "values": { "A B": "1" } })] {
-        assert_eq!(api(&b.app, Method::POST, "/api/v1/station/coop", &bob, Some(bad)).await.0, StatusCode::BAD_REQUEST);
+        assert_eq!(b.post("/api/v1/station/coop", &bob, bad).await.0, StatusCode::BAD_REQUEST);
     }
 }
 
@@ -742,13 +759,13 @@ async fn the_cooperative_config_is_for_the_captain_only() {
 async fn admin_sections_are_for_the_captain_and_report_errors_properly() {
     let b = bench("admin", None).await;
     let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/station/admin/face", &alice, None).await.0, StatusCode::FORBIDDEN);
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/station/admin/face", &alice, Some(json!({ "mode": "off" }))).await.0, StatusCode::FORBIDDEN);
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/station/admin/face", &bob, None).await, (StatusCode::OK, json!({ "mode": "off" })));
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/station/admin/face", &bob, Some(json!({ "mode": "local" }))).await, (StatusCode::OK, json!({ "mode": "local" })));
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/station/admin/face", &bob, Some(json!({ "mode": "gpu" }))).await.0, StatusCode::BAD_REQUEST, "une erreur de validation est un 400");
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/station/admin/inconnue", &bob, None).await.0, StatusCode::NOT_FOUND);
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/station/admin/Bad-Name", &bob, None).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(b.get("/api/v1/station/admin/face", &alice).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(b.post("/api/v1/station/admin/face", &alice, json!({ "mode": "off" })).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(b.get("/api/v1/station/admin/face", &bob).await, (StatusCode::OK, json!({ "mode": "off" })));
+    assert_eq!(b.post("/api/v1/station/admin/face", &bob, json!({ "mode": "local" })).await, (StatusCode::OK, json!({ "mode": "local" })));
+    assert_eq!(b.post("/api/v1/station/admin/face", &bob, json!({ "mode": "gpu" })).await.0, StatusCode::BAD_REQUEST, "une erreur de validation est un 400");
+    assert_eq!(b.get("/api/v1/station/admin/inconnue", &bob).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(b.get("/api/v1/station/admin/Bad-Name", &bob).await.0, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -759,23 +776,23 @@ async fn the_address_book_is_synced_listed_per_owner_and_linkable() {
     // Dépôt par CardDAV (comme le ferait DAVx⁵), puis relecture du carnet.
     let (s, ..) = call(&b.app, Method::PUT, "/dav/addressbooks/alice%40example.org/contacts/bob.vcf", Some(&alice), &[("content-type", "text/vcard"), ("if-none-match", "*")], card.as_bytes().to_vec()).await;
     assert_eq!(s, StatusCode::CREATED);
-    let (s, r) = api(&b.app, Method::POST, "/api/v1/contacts/sync", &alice, Some(json!({}))).await;
+    let (s, r) = b.post("/api/v1/contacts/sync", &alice, json!({})).await;
     assert_eq!((s, r["indexed"].as_u64()), (StatusCode::OK, Some(1)));
-    let (s, v) = api(&b.app, Method::GET, "/api/v1/contacts", &alice, None).await;
+    let (s, v) = b.get("/api/v1/contacts", &alice).await;
     assert_eq!(s, StatusCode::OK);
     // L'email de Bob est celui d'un compte hébergé ici : la fiche est reliée sans clé explicite.
     assert_eq!((v["contacts"][0]["name"].as_str(), v["contacts"][0]["via"].as_str(), v["contacts"][0]["pubkey"].as_str()), (Some("Bob Ami"), Some("email"), Some(hex(&BOB).as_str())));
     assert_eq!(v["carddav"]["login"], "alice@example.org");
     // Chacun son carnet.
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/contacts", &bob, None).await.1["contacts"].as_array().unwrap().len(), 0);
+    assert_eq!(b.get("/api/v1/contacts", &bob).await.1["contacts"].as_array().unwrap().len(), 0);
     // Création depuis une personne, liaison manuelle, erreurs typées.
-    let (s, c) = api(&b.app, Method::POST, "/api/v1/contacts/from-person", &alice, Some(json!({ "name": "Nina" }))).await;
+    let (s, c) = b.post("/api/v1/contacts/from-person", &alice, json!({ "name": "Nina" })).await;
     assert_eq!((s, c["path"].as_str()), (StatusCode::OK, Some("/Contacts/Nina.vcf")));
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/contacts/from-person", &alice, Some(json!({ "name": "nina" }))).await.0, StatusCode::CONFLICT);
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/contacts/link", &alice, Some(json!({ "path": "/Contacts/Nina.vcf", "target": "bob@example.org" }))).await.0, StatusCode::OK);
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/contacts/link", &alice, Some(json!({ "path": "/Contacts/Nina.vcf", "target": "inconnu@example.org" }))).await.0, StatusCode::NOT_FOUND);
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/contacts/link", &alice, Some(json!({ "path": "/Photos/x.jpg" }))).await.0, StatusCode::BAD_REQUEST);
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/contacts", "Basic bm9wZTpub3Bl", None).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(b.post("/api/v1/contacts/from-person", &alice, json!({ "name": "nina" })).await.0, StatusCode::CONFLICT);
+    assert_eq!(b.post("/api/v1/contacts/link", &alice, json!({ "path": "/Contacts/Nina.vcf", "target": "bob@example.org" })).await.0, StatusCode::OK);
+    assert_eq!(b.post("/api/v1/contacts/link", &alice, json!({ "path": "/Contacts/Nina.vcf", "target": "inconnu@example.org" })).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(b.post("/api/v1/contacts/link", &alice, json!({ "path": "/Photos/x.jpg" })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.get("/api/v1/contacts", "Basic bm9wZTpub3Bl").await.0, StatusCode::UNAUTHORIZED);
 }
 
 fn png_bytes() -> Vec<u8> {
@@ -792,8 +809,8 @@ async fn an_invitation_link_is_public_blurred_single_use_and_creates_the_account
     put(&b.app, &alice, "/Photos/a.png", &png_bytes()).await;
 
     // Créer : authentification requise ; le lien est celui de la station, avec son QR.
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/invites", "Basic nope", Some(json!({ "paths": ["/Photos"] }))).await.0, StatusCode::UNAUTHORIZED);
-    let (s, made) = api(&b.app, Method::POST, "/api/v1/invites", &alice, Some(json!({ "paths": ["/Photos"], "label": "Léa" }))).await;
+    assert_eq!(b.post("/api/v1/invites", "Basic nope", json!({ "paths": ["/Photos"] })).await.0, StatusCode::UNAUTHORIZED);
+    let (s, made) = b.post("/api/v1/invites", &alice, json!({ "paths": ["/Photos"], "label": "Léa" })).await;
     assert_eq!(s, StatusCode::OK, "{made}");
     let (token, url) = (made["token"].as_str().unwrap().to_owned(), made["url"].as_str().unwrap().to_owned());
     assert_eq!(url, format!("https://station.test/i/{token}"));
@@ -829,11 +846,11 @@ async fn an_invitation_link_is_public_blurred_single_use_and_creates_the_account
     let (s, ..) = call(&b.app, Method::POST, &format!("/api/v1/invite/{token}/claim"), None, &[("content-type", "application/json")], json!({ "email": "autre@example.org" }).to_string().into_bytes()).await;
     assert_eq!(s, StatusCode::GONE);
     assert_eq!(call(&b.app, Method::GET, &format!("/api/v1/invite/{token}"), None, &[], vec![]).await.0, StatusCode::GONE);
-    let (_, list) = api(&b.app, Method::GET, "/api/v1/invites", &alice, None).await;
+    let (_, list) = b.get("/api/v1/invites", &alice).await;
     assert_eq!((list["invites"][0]["state"].as_str(), list["invites"][0]["url"].as_str()), (Some("claimed"), Some(url.as_str())));
     // Elle se connecte avec ses identifiants et voit les photos reçues.
     let lea = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("lea@example.org:{}", card["token"].as_str().unwrap())));
-    let (s, v) = api(&b.app, Method::GET, "/api/v1/ucloud/list?path=/Partages/De_alice", &lea, None).await;
+    let (s, v) = b.get("/api/v1/ucloud/list?path=/Partages/De_alice", &lea).await;
     assert_eq!((s, v["entries"].as_array().map(Vec::len)), (StatusCode::OK, Some(1)), "{v}");
     let _ = &b.bus;
 }
@@ -853,7 +870,7 @@ async fn the_pass_logs_in_locks_progressively_and_the_captain_can_unlock() {
     let (s, ok) = post("/api/v1/account/unlock".into(), json!({ "email": "Alice@Example.org", "pass": "123456" }), None).await;
     assert_eq!((s, ok["hex"].as_str()), (StatusCode::OK, Some(hex(&ALICE).as_str())), "{ok}");
     let session = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("alice@example.org:{}", ok["token"].as_str().unwrap())));
-    assert_eq!(api(&b.app, Method::GET, "/api/v1/me", &session, None).await.0, StatusCode::OK);
+    assert_eq!(b.get("/api/v1/me", &session).await.0, StatusCode::OK);
     let (s, ev) = post("/api/v1/account/sign".into(), json!({ "kind": 1, "content": "bonjour", "tags": [] }), Some(session.clone())).await;
     assert_eq!((s, ev["pubkey"].as_str(), ev["content"].as_str()), (StatusCode::OK, Some(hex(&ALICE).as_str()), Some("bonjour")), "{ev}");
     assert_eq!(post("/api/v1/account/sign".into(), json!({ "kind": 1 }), None).await.0, StatusCode::UNAUTHORIZED);
@@ -866,7 +883,7 @@ async fn the_pass_logs_in_locks_progressively_and_the_captain_can_unlock() {
     assert_eq!(post("/api/v1/account/unlock".into(), json!({ "email": "alice@example.org", "pass": "000000" }), None).await.0, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(post("/api/v1/account/unlock".into(), json!({ "email": "alice@example.org", "pass": "123456" }), None).await.0, StatusCode::TOO_MANY_REQUESTS);
     // Le Capitaine voit le verrou et le lève ; un simple membre ne le peut pas.
-    let (_, list) = api(&b.app, Method::GET, "/api/v1/station/accounts", &bob, None).await;
+    let (_, list) = b.get("/api/v1/station/accounts", &bob).await;
     let row = list["accounts"].as_array().unwrap().iter().find(|a| a["email"] == "alice@example.org").unwrap().clone();
     assert!(row["pass_locked_until"].as_u64().is_some(), "{row}");
     let url = format!("/api/v1/station/accounts/{}/unlock-pass", hex(&ALICE));
@@ -898,7 +915,7 @@ async fn a_guest_registers_and_claims_an_invitation_without_an_email() {
     // Une invitation se réclame aussi sans email.
     let alice = basic("alice@example.org", &ALICE);
     put(&b.app, &alice, "/Photos/a.png", &png_bytes()).await;
-    let (_, made) = api(&b.app, Method::POST, "/api/v1/invites", &alice, Some(json!({ "paths": ["/Photos"] }))).await;
+    let (_, made) = b.post("/api/v1/invites", &alice, json!({ "paths": ["/Photos"] })).await;
     let token = made["token"].as_str().unwrap();
     let (s, claimed) = post(format!("/api/v1/invite/{token}/claim"), json!({ "guest": true, "alias": "Max" })).await;
     assert_eq!((s, claimed["guest"].as_bool(), claimed["shared"].as_u64()), (StatusCode::OK, Some(true), Some(1)), "{claimed}");
@@ -910,19 +927,19 @@ async fn a_logged_in_member_accepts_an_invitation_and_errors_carry_stable_codes(
     let b = bench("accept", None).await;
     let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
     put(&b.app, &alice, "/Photos/a.png", &png_bytes()).await;
-    let (_, made) = api(&b.app, Method::POST, "/api/v1/invites", &alice, Some(json!({ "paths": ["/Photos"] }))).await;
+    let (_, made) = b.post("/api/v1/invites", &alice, json!({ "paths": ["/Photos"] })).await;
     let token = made["token"].as_str().unwrap().to_owned();
     let uri = format!("/api/v1/invite/{token}/accept");
     // Il faut une session ; l'expéditeur ne peut pas accepter son propre lien.
-    assert_eq!(api(&b.app, Method::POST, &uri, "Basic nope", None).await.0, StatusCode::UNAUTHORIZED);
-    assert_eq!(api(&b.app, Method::POST, &uri, &alice, None).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.post_empty(&uri, "Basic nope").await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(b.post_empty(&uri, &alice).await.0, StatusCode::BAD_REQUEST);
     // Bob accepte : aucune création de compte, la photo arrive chez lui.
-    let (s, ok) = api(&b.app, Method::POST, &uri, &bob, None).await;
+    let (s, ok) = b.post_empty(&uri, &bob).await;
     assert_eq!((s, ok["from"].as_str(), ok["shared"].as_u64()), (StatusCode::OK, Some("alice"), Some(1)), "{ok}");
-    let (_, v) = api(&b.app, Method::GET, "/api/v1/ucloud/list?path=/Partages/De_alice", &bob, None).await;
+    let (_, v) = b.get("/api/v1/ucloud/list?path=/Partages/De_alice", &bob).await;
     assert_eq!(v["entries"].as_array().map(Vec::len), Some(1), "{v}");
     // Lien consommé : 410 avec un code stable, que la page traduit ; un lien inconnu : 404.
-    let (s, again) = api(&b.app, Method::POST, &uri, &bob, None).await;
+    let (s, again) = b.post_empty(&uri, &bob).await;
     assert_eq!((s, again["code"].as_str()), (StatusCode::GONE, Some("invite_used")), "{again}");
     let (s, gone) = {
         let (s, _, raw) = call(&b.app, Method::GET, &format!("/api/v1/invite/{token}"), None, &[], vec![]).await;
@@ -930,7 +947,7 @@ async fn a_logged_in_member_accepts_an_invitation_and_errors_carry_stable_codes(
     };
     assert_eq!((s, gone["code"].as_str()), (StatusCode::GONE, Some("invite_used")));
     // Une adresse déjà inscrite ici : 409 « email_taken » sur une invitation neuve.
-    let (_, made) = api(&b.app, Method::POST, "/api/v1/invites", &alice, Some(json!({ "paths": ["/Photos"] }))).await;
+    let (_, made) = b.post("/api/v1/invites", &alice, json!({ "paths": ["/Photos"] })).await;
     let t2 = made["token"].as_str().unwrap();
     let (s, _, raw) = call(&b.app, Method::POST, &format!("/api/v1/invite/{t2}/claim"), None, &[("content-type", "application/json")], json!({ "email": "alice@example.org" }).to_string().into_bytes()).await;
     let taken: Value = serde_json::from_slice(&raw).unwrap();
@@ -954,7 +971,7 @@ async fn an_invitation_from_another_station_is_accepted_with_a_signature_made_by
     b.db.writer().execute("UPDATE identities SET hosted = 0 WHERE hex = ?1", vec![V::Text(hex(&ALICE))]).await.unwrap();
     let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
     put(&a.app, &alice, "/Photos/a.png", &png_bytes()).await;
-    let (_, made) = api(&a.app, Method::POST, "/api/v1/invites", &alice, Some(json!({ "paths": ["/Photos"], "label": "Bob" }))).await;
+    let (_, made) = a.post("/api/v1/invites", &alice, json!({ "paths": ["/Photos"], "label": "Bob" })).await;
     let token = made["token"].as_str().unwrap().to_owned();
     let origin = serve_local(a.app.clone()).await;
 
@@ -964,7 +981,7 @@ async fn an_invitation_from_another_station_is_accepted_with_a_signature_made_by
 
     // Sans session sur sa propre station, rien ne part ; une adresse en clair ou un jeton inconnu sont refusés.
     let go = |body: Value| { let (app, bob) = (b.app.clone(), bob.clone()); async move { api(&app, Method::POST, "/api/v1/invites/remote-accept", &bob, Some(body)).await } };
-    assert_eq!(api(&b.app, Method::POST, "/api/v1/invites/remote-accept", "Basic nope", Some(json!({ "origin": origin, "token": token }))).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(b.post("/api/v1/invites/remote-accept", "Basic nope", json!({ "origin": origin, "token": token })).await.0, StatusCode::UNAUTHORIZED);
     assert_eq!(go(json!({ "origin": "ftp://x", "token": token })).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(go(json!({ "origin": origin, "token": "f".repeat(32) })).await.0, StatusCode::GONE, "lien inconnu de la station d'origine");
 
