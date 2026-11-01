@@ -45,24 +45,43 @@ export default async function library(root, K) {
   const search = h('section', { class: 'card wide' }, h('h2', {}, t('Recherche')),
     h('form', { class: 'bar', onsubmit: ev => { ev.preventDefault(); run(true); } }, q, kind, person, from, to, h('button', {}, t('Chercher'))), out, h('p', {}, more));
 
-  // ── Chronologie ──
-  const tl = h('section', { class: 'card wide' }, h('h2', {}, t('Chronologie')), h('p', { class: 'muted' }, t('Chargement…')));
+  // ── Temps : un fil continu, jour par jour, du plus récent au plus ancien ──
+  const tl = h('section', { class: 'card wide' }, h('h2', {}, t('Temps')), h('p', { class: 'muted' }, t('Chargement…')));
   K.api(A + 'timeline').then(r => {
     if (!r.months.length) { tl.lastChild.textContent = t('Aucune photo datée pour le moment.'); return; }
-    const box = h('div', {});
-    tl.lastChild.replaceWith(h('div', { class: 'bar' }, r.months.map(m => h('button', { class: 'ghost', onclick: async ev => {
-      const btn = ev.currentTarget; btn.disabled = true;
-      try { const d = await K.api(A + 'timeline?ym=' + m.ym); box.replaceChildren(h('h3', {}, month(m.ym)), grid(d.items)); box.scrollIntoView({ block: 'nearest' }); } catch (e) { K.toast(e.message); }
-      btn.disabled = false;
-    } }, `${month(m.ym)} · ${m.count}`))), box);
+    const months = r.months, box = h('div', { class: 'stream' }), more2 = h('button', { class: 'ghost' }, t('Mois précédents'));
+    const dayLabel = s => new Date(s * 1000).toLocaleDateString(K.lang, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+    const jump = h('select', { 'aria-label': t('Aller au mois') }, months.map((m, i) => h('option', { value: i }, `${month(m.ym)} · ${m.count}`)));
+    let next = 0, busy = false;
+    const block = (m, items) => {
+      const byDay = new Map();
+      for (const it of items) { const d = Math.floor((it.t || 0) / day) * day; (byDay.get(d) || byDay.set(d, []).get(d)).push(it); }
+      return h('section', { class: 'month' }, h('h3', { class: 'sticky' }, `${month(m.ym)} · ${m.count}`),
+        [...byDay].flatMap(([d, its]) => [h('h4', {}, `${dayLabel(d)} · ${its.length}`), grid(its)]));
+    };
+    const loadNext = async () => {
+      if (busy || next >= months.length) return;
+      busy = true;
+      try { const m = months[next++], d = await K.api(A + 'timeline?ym=' + m.ym); box.append(block(m, d.items)); } catch (e) { K.toast(e.message); next--; }
+      busy = false; more2.hidden = next >= months.length;
+    };
+    more2.onclick = loadNext;
+    jump.onchange = () => { box.replaceChildren(); next = +jump.value; loadNext(); };
+    new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) loadNext(); }, { rootMargin: '600px' }).observe(more2);
+    tl.lastChild.replaceWith(h('div', {}, h('p', {}, h('label', {}, t('Aller au mois'), ' '), jump), box, h('p', {}, more2)));
+    loadNext();
   }, e => { tl.lastChild.textContent = e.message; });
 
+  // ── Carte ──
+  const mapSection = h('section', { class: 'card wide' }, h('h2', {}, t('Carte')), h('p', { class: 'muted' }, t('Vos photos géolocalisées, regroupées par la station : aucun service de carte extérieur n\'est appelé.')));
+  import('/ui/m-map.js').then(m => mapSection.append(m.default(K, grid)), e => mapSection.append(h('p', { class: 'err' }, e.message)));
+
   // ── Doublons ──
-  const dupBox = h('div', {});
+  const dupBox = h('div', {}), allFiles = h('input', { type: 'checkbox', id: 'dup-all' });
   const dupBtn = h('button', { class: 'ghost', onclick: async ev => {
     const self = ev.currentTarget; self.disabled = true;
     try {
-      const r = await K.api(A + 'duplicates'), name = p => p.split('/').pop();
+      const r = await K.api(A + 'duplicates' + (allFiles.checked ? '?all=1' : '')), name = p => p.split('/').pop();
       const group = (g, label) => {
         const keep = g.items[g.keep], others = g.items.filter((_, i) => i !== g.keep);
         return h('div', { class: 'card' }, h('h3', {}, label), grid(g.items),
@@ -81,7 +100,15 @@ export default async function library(root, K) {
     } catch (e) { K.toast(e.message); }
     self.disabled = false;
   } }, t('Chercher les doublons'));
-  const dups = h('section', { class: 'card wide' }, h('h2', {}, t('Doublons')), h('p', { class: 'muted' }, t('Mêmes fichiers et images presque identiques (recadrage, recompression). Rien n\'est supprimé sans votre confirmation.')), h('p', {}, dupBtn), dupBox);
+  const dups = h('section', { class: 'card wide' }, h('h2', {}, t('Doublons')), h('p', { class: 'muted' }, t('Mêmes fichiers et images presque identiques (recadrage, recompression). Rien n\'est supprimé sans votre confirmation.')), h('p', {}, dupBtn, ' ', allFiles, h('label', { for: 'dup-all' }, ' ' + t('Inclure aussi les documents et autres fichiers'))), dupBox);
 
-  root.replaceChildren(h('h2', {}, t('Bibliothèque')), mem, h('div', { class: 'grid' }, search, tl, dups));
+  // ── Onglets : une vue à la fois (le fil du temps est long, la carte a besoin de place) ──
+  const views = [['time', 'Temps', tl], ['map', 'Carte', mapSection], ['search', 'Recherche', search], ['dups', 'Doublons', dups]];
+  const tabs = h('div', { class: 'bar', role: 'tablist' }, views.map(([id, label]) => h('button', { role: 'tab', id: 'lib-tab-' + id, 'aria-selected': 'false', onclick: () => pick(id) }, t(label))));
+  const pick = id => {
+    views.forEach(([k, , el]) => { el.hidden = k !== id; tabs.querySelector('#lib-tab-' + k).setAttribute('aria-selected', String(k === id)); tabs.querySelector('#lib-tab-' + k).className = k === id ? '' : 'ghost'; });
+    if (id === 'map') window.dispatchEvent(new Event('resize'));
+  };
+  root.replaceChildren(h('h2', {}, t('Bibliothèque')), tabs, mem, h('div', { class: 'grid' }, ...views.map(v => v[2])));
+  pick('time');
 }

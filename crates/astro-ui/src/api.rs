@@ -72,8 +72,25 @@ pub enum LibraryQuery {
     Timeline(Option<String>),
     /// Recherche à filtres combinés.
     Search(LibrarySearch),
-    /// Doublons exacts et visuels.
-    Duplicates,
+    /// Carte : regroupements géolocalisés d'une période et d'une zone, ou éléments d'une zone.
+    Map(MapQuery),
+    /// Doublons exacts et visuels ; `true` : exacts de tous les types de fichiers (sinon photos et vidéos).
+    Duplicates(bool),
+}
+
+/// Demande de carte telle que l'URL la porte.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MapQuery {
+    /// Début de période (secondes Unix).
+    pub from: Option<i64>,
+    /// Fin de période (exclue).
+    pub to: Option<i64>,
+    /// `sud,ouest,nord,est` en degrés.
+    pub bbox: Option<String>,
+    /// Côté d'une case de regroupement, en degrés.
+    pub cell: Option<f64>,
+    /// `1` : les éléments de la zone au lieu des regroupements.
+    pub items: Option<u8>,
 }
 
 /// Filtres de recherche tels que l'URL les porte.
@@ -376,7 +393,7 @@ pub trait Backend: Send + Sync + 'static {
         async { Err(ApiError::unavailable("agents non disponibles sur cette station")) }
     }
     /// La table de tri des visages : positions PCA, groupes, suggestions, personnes.
-    fn faces_board(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+    fn faces_board(&self, _who: &Principal, _dir: Option<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("table de tri non disponible sur cette station")) }
     }
     /// Vignettes carrées de visages (`size` pixels) : `{ thumbs: { id: data URL }, failed: [[id, raison]] }`.
@@ -394,6 +411,14 @@ pub trait Backend: Send + Sync + 'static {
     /// Réponse au lot d'un ami : envoie (`accept`) ou oublie ; `{ sent, dropped }`.
     fn face_shares_confirm(&self, _who: &Principal, _recipient: String, _accept: bool) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("FaceCloud non activé")) }
+    }
+    /// Dossiers du uCloud qui contiennent des visages : `[{ dir, faces, todo }]`, du plus récent au plus ancien par chemin.
+    fn faces_folders(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("FaceCloud non activé")) }
+    }
+    /// Supprime **les photos** où apparaissent les visages `ids` (fichiers du uCloud, avec leurs visages) : irréversible.
+    fn faces_delete_photos(&self, _who: &Principal, _ids: Vec<i64>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("suppression non disponible sur cette station")) }
     }
     /// « Pas à reconnaître » : oublie ces visages (les photos restent).
     fn faces_forget(&self, _who: &Principal, _ids: Vec<i64>) -> impl Future<Output = Result<Value, ApiError>> + Send {
@@ -580,12 +605,15 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/ucloud/timeline", get(library_timeline::<B>))
         .route("/api/v1/ucloud/search", get(library_search::<B>))
         .route("/api/v1/ucloud/duplicates", get(library_duplicates::<B>))
+        .route("/api/v1/ucloud/map", get(library_map::<B>))
         .route("/api/v1/ucloud/share", post(ucloud_share::<B>))
         .route("/api/v1/faces", get(faces::<B>))
         .route("/api/v1/faces/board", get(faces_board::<B>))
+        .route("/api/v1/faces/folders", get(faces_folders::<B>))
         .route("/api/v1/faces/thumbs", post(faces_thumbs::<B>))
         .route("/api/v1/faces/assign", post(faces_assign::<B>))
         .route("/api/v1/faces/forget", post(faces_forget::<B>))
+        .route("/api/v1/faces/delete-photos", post(faces_delete_photos::<B>))
         .route("/api/v1/faces/pending-shares", get(face_shares_pending::<B>))
         .route("/api/v1/faces/pending-shares/confirm", post(face_shares_confirm::<B>))
         .route("/api/v1/faces/{id}/accept", post(face_accept::<B>))
@@ -764,8 +792,23 @@ async fn library_search<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p)
     reply(st.backend.library(&p, LibraryQuery::Search(q)).await)
 }
 
-async fn library_duplicates<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
-    reply(st.backend.library(&p, LibraryQuery::Duplicates).await)
+async fn library_map<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<MapQuery>) -> Response {
+    if let Some(b) = &q.bbox {
+        let ok = b.split(',').count() == 4 && b.split(',').all(|v| v.parse::<f64>().is_ok_and(f64::is_finite));
+        if !ok {
+            return reply(Err(ApiError::bad_request("zone invalide : sud,ouest,nord,est en degrés")));
+        }
+    }
+    reply(st.backend.library(&p, LibraryQuery::Map(q)).await)
+}
+
+#[derive(Deserialize)]
+struct DuplicatesQuery {
+    all: Option<u8>,
+}
+
+async fn library_duplicates<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<DuplicatesQuery>) -> Response {
+    reply(st.backend.library(&p, LibraryQuery::Duplicates(q.all == Some(1))).await)
 }
 
 #[derive(Deserialize)]
@@ -843,8 +886,18 @@ fn face_ids(ids: Vec<i64>, max: usize) -> Result<Vec<i64>, Response> {
     Ok(ids.into_iter().filter(|i| seen.insert(*i)).collect())
 }
 
-async fn faces_board<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
-    reply(st.backend.faces_board(&p).await)
+async fn faces_folders<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.faces_folders(&p).await)
+}
+
+#[derive(serde::Deserialize)]
+struct BoardQuery {
+    /// Dossier du uCloud à regarder (`/Images/2024`) ; absent : tous les visages (les plus récents).
+    dir: Option<String>,
+}
+
+async fn faces_board<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<BoardQuery>) -> Response {
+    reply(st.backend.faces_board(&p, q.dir.filter(|d| d.len() <= 1024)).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -903,6 +956,14 @@ async fn faces_forget<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): 
         Err(r) => return r,
     };
     reply(st.backend.faces_forget(&p, ids).await)
+}
+
+async fn faces_delete_photos<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<ForgetBody>) -> Response {
+    let ids = match face_ids(body.ids, 20_000) {
+        Ok(i) => i,
+        Err(r) => return r,
+    };
+    reply(st.backend.faces_delete_photos(&p, ids).await)
 }
 
 async fn face_shares_pending<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {

@@ -333,7 +333,7 @@ mod tests {
         let (mraw, mgz) = module_bytes();
         eprintln!("écrans à la demande : {mraw} o bruts, {mgz} o en gzip");
         // Le cumul des écrans (qu'un visiteur ne télécharge qu'à la demande) est borné, et chaque écran garde sa propre limite.
-        assert!(mraw > 0 && mraw < 160 * 1024 && mgz < 56 * 1024, "écrans à la demande : {mraw} o bruts (budget 160 Ko), {mgz} o en gzip (budget 56 Ko ; 128 Ko et 48 Ko avant les écrans Sources et Ranger)");
+        assert!(mraw > 0 && mraw < 160 * 1024 && mgz < 64 * 1024, "écrans à la demande : {mraw} o bruts (budget 160 Ko), {mgz} o en gzip (budget 64 Ko ; 56 Ko avant la carte et le fil du temps ; 128 Ko et 48 Ko avant les écrans Sources et Ranger)");
         for (name, f) in module_files().filter(|(p, _)| !p.starts_with("m-lang-")) {
             let gz = compressed(&name, Encoding::Gzip, &f.data).len();
             assert!(gz < 12 * 1024, "{name} : {gz} o en gzip, au-delà des 12 Ko par écran");

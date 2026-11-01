@@ -395,11 +395,31 @@ pub fn delete_tree_tx(tx: &Transaction<'_>, owner: &str, path: &str) -> Result<V
         let rows = stmt.query_map(params![owner, path, low, high], |r| r.get(0))?;
         rows.collect::<Result<_, _>>()?
     };
+    drop_faces(tx, owner, path, &low, &high)?;
     tx.execute("DELETE FROM ucloud_entries WHERE owner_hex = ?1 AND (path = ?2 OR (path >= ?3 AND path < ?4))", params![owner, path, low, high])?;
     for cid in &cids {
         drop_unreferenced_key(tx, owner, cid)?;
     }
     Ok(cids)
+}
+
+/// Une photo supprimée emporte ses visages (et leurs vecteurs) et son analyse en attente : sans cela, la table de tri
+/// afficherait des visages dont la photo n'existe plus. Les visages de référence (contacts, partages) ne sont pas touchés.
+fn drop_faces(tx: &Transaction<'_>, owner: &str, path: &str, low: &str, high: &str) -> Result<(), VfsError> {
+    let ids: Vec<i64> = {
+        let mut stmt = tx.prepare("SELECT face_id FROM faces WHERE owner_hex = ?1 AND ref IS NULL AND (ucloud_path = ?2 OR (ucloud_path >= ?3 AND ucloud_path < ?4))")?;
+        let rows = stmt.query_map(params![owner, path, low, high], |r| r.get(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    for id in &ids {
+        tx.execute("DELETE FROM face_vectors WHERE face_id = ?1", [id])?;
+        tx.execute("DELETE FROM faces WHERE face_id = ?1", [id])?;
+    }
+    tx.execute(
+        "DELETE FROM tasks WHERE kind = 'facecloud' AND status = 'pending' AND json_extract(payload, '$.owner') = ?1 AND (json_extract(payload, '$.path') = ?2 OR (json_extract(payload, '$.path') >= ?3 AND json_extract(payload, '$.path') < ?4))",
+        params![owner, path, low, high],
+    )?;
+    Ok(())
 }
 
 /// Renomme `from` en `to` (avec sa descendance). Retourne les CID écrasés si `overwrite`.

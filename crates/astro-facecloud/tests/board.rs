@@ -57,7 +57,7 @@ async fn the_board_groups_unknown_faces_places_everyone_and_hides_references() {
     add_face(&r, 30, "Contact", None, Some("contact"), "ref").await;
 
     let cache = BoardCache::new();
-    let b = cache.board(&r.db, &alice).await.unwrap();
+    let b = cache.board(&r.db, &alice, None).await.unwrap();
     assert_eq!(b.faces.len(), 8, "la référence de contact n'est jamais affichée");
     assert_eq!((b.unknown, b.groups_skipped, b.truncated), (5, false, false));
     assert_eq!(b.people.len(), 1);
@@ -72,12 +72,12 @@ async fn the_board_groups_unknown_faces_places_everyone_and_hides_references() {
     assert!(b.faces.iter().all(|f| f.x.abs() <= 1.0 + 1e-5 && f.y.abs() <= 1.0 + 1e-5));
     assert!(by(10).x != by(20).x || by(10).y != by(20).y, "positions distinctes");
     // Mémoïsé : même résultat, même groupe.
-    assert_eq!(cache.board(&r.db, &alice).await.unwrap().faces.iter().find(|f| f.face_id == 10).unwrap().group.as_ref().unwrap().0, g.0);
+    assert_eq!(cache.board(&r.db, &alice, None).await.unwrap().faces.iter().find(|f| f.face_id == 10).unwrap().group.as_ref().unwrap().0, g.0);
 
     // Ranger le groupe dans « Léa » (nouvelle personne) puis un visage dans « Marie » (reprend la clé de Marie).
     assert_eq!(name_faces(&r.db, &alice, &[10, 11, 12, 13], None, "  Léa ").await.unwrap(), 4);
     assert_eq!(name_faces(&r.db, &alice, &[20], None, "Marie").await.unwrap(), 1);
-    let b2 = cache.board(&r.db, &alice).await.unwrap();
+    let b2 = cache.board(&r.db, &alice, None).await.unwrap();
     assert_eq!(b2.unknown, 0);
     assert!(b2.faces.iter().all(|f| f.group.is_none()), "plus d'inconnus, plus de groupes : la révision a changé");
     let marie = b2.people.iter().find(|p| p.name == "Marie").unwrap();
@@ -137,9 +137,37 @@ async fn blurry_faces_do_not_form_groups_but_stay_on_the_board() {
         add_face(&r, 40 + i as i64, &format!("Inconnu_t{i:07}"), None, None, spec).await;
     }
     r.db.writer().execute("UPDATE faces SET det_score = 0.65 WHERE face_id >= 40", vec![]).await.unwrap();
-    let b = BoardCache::new().board(&r.db, &alice).await.unwrap();
+    let b = BoardCache::new().board(&r.db, &alice, None).await.unwrap();
     assert_eq!(b.faces.len(), 5);
     let by = |id: i64| b.faces.iter().find(|f| f.face_id == id).unwrap();
     assert!(by(10).group.is_some(), "les visages nets forment un groupe");
     assert!(by(40).group.is_none() && by(41).group.is_none(), "les visages flous ne s'agrègent pas");
+}
+
+#[tokio::test]
+async fn the_board_can_be_scoped_to_a_folder_while_people_stay_those_of_the_whole_account() {
+    let r = rig("board-scope", |_| {}).await;
+    let alice = hex(&ALICE);
+    for (i, spec) in ["marie", "marie+a"].iter().enumerate() {
+        add_face(&r, 1 + i as i64, "Marie", Some(&hex(&BOB)), None, spec).await;
+    }
+    for (i, spec) in ["lea", "lea+a", "lea+b"].iter().enumerate() {
+        add_face(&r, 10 + i as i64, &format!("Inconnu_{i:08}"), None, None, spec).await;
+    }
+    // Les visages 10 et 11 sont dans /Images/2024/05, le 12 dans /Images/2025, Marie reste dans /photo.png.
+    for (id, path) in [(10, "/Images/2024/05/a.png"), (11, "/Images/2024/05/b.png"), (12, "/Images/2025/c.png")] {
+        r.db.writer().execute("UPDATE faces SET ucloud_path = ?2 WHERE face_id = ?1", vec![id.into(), path.to_owned().into()]).await.unwrap();
+    }
+    let cache = BoardCache::new();
+    let all = cache.board(&r.db, &alice, None).await.unwrap();
+    assert_eq!((all.faces.len(), all.unknown), (5, 3));
+    let may = cache.board(&r.db, &alice, Some("/Images/2024/05")).await.unwrap();
+    assert_eq!(may.faces.iter().map(|f| f.face_id).collect::<Vec<_>>(), [10, 11], "seuls les visages des photos de ce dossier");
+    assert_eq!(may.unknown, 2);
+    assert_eq!((may.people.len(), may.people[0].name.as_str(), may.people[0].faces), (1, "Marie", 2), "les personnes sont celles de tout le compte, même hors du dossier");
+    assert!(may.faces.iter().all(|f| f.group.is_some()), "le groupe se calcule sur le dossier");
+    // Un préfixe de nom n'est pas un dossier : `/Images/2024/0` ne prend pas `/Images/2024/05`.
+    assert!(cache.board(&r.db, &alice, Some("/Images/2024/0")).await.unwrap().faces.is_empty());
+    // Revenir à tout : le calcul du dossier ne pollue pas la vue complète.
+    assert_eq!(cache.board(&r.db, &alice, None).await.unwrap().faces.len(), 5);
 }

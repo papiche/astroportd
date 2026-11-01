@@ -67,6 +67,13 @@ Cette version fait de la **clé de secours** un secret qu'on peut perdre sans da
 - **`bridge-copy`** : adoption **sans copie** de fichiers d'un plan dans l'autre (même blob, même clé), sur accord explicite `--same-person`, rejouable, sans écrasement, quota de destination appliqué. L'ancien format (Kubo) et les blobs absents du bassin sont signalés, jamais copiés en silence.
 - **`pool-status`** : poids du bassin, part de chaque plan, place économisée, orphelins (`--sweep`).
 
+### Table de tri et Bibliothèque
+- **Supprimer les photos des visages choisis** (barre de sélection, ou pochette « 🗑 Supprimer les photos ») : la confirmation donne le nombre exact de photos, l'action est irréversible. Une photo supprimée — ici comme par WebDAV ou le rangement — emporte désormais **ses visages et son analyse en attente** (avant, la table gardait des visages sans photo) ; les visages de référence des contacts ne sont jamais touchés.
+- **Trier par dossier** : un sélecteur (`/Images/2024/05 · 120 visages, 80 à ranger`) restreint la table à un dossier ; les groupes se calculent alors sur ce sous-ensemble, même avec des dizaines de milliers de visages au total (plafond de 8 000 non identifiés). Les personnes restent celles de tout le compte.
+- **Doublons** : seulement photos et vidéos par défaut (les documents identiques ne polluent plus la liste) ; une case ajoute les autres fichiers.
+- **Bibliothèque en onglets** : *Temps* (fil continu, jour par jour, du plus récent au plus ancien, avec saut au mois), *Carte*, *Recherche*, *Doublons*.
+- **Carte du monde hors ligne** : contour embarqué (Natural Earth, domaine public, 6 Ko), aucun serveur de tuiles appelé. Les photos géolocalisées sont regroupées par la station (jamais 30 000 points dans le navigateur), zoom à la molette ou aux boutons, glisser pour se déplacer, clic sur un groupe pour voir ses photos, période par dates, préréglages et histogramme par mois.
+
 ### Base de données : schéma allégé (mesuré)
 - **`nostr_events`** passe à une table à `rowid` (clé interne `seq`) ; `nostr_tags` et l'index plein texte s'y rattachent par cet entier au lieu de l'identifiant de 64 caractères. Sur 200 000 événements : base **28 % plus petite**, insertion **2× plus rapide**, jointure par tag **≈ 9× plus rapide**.
 - **`ucloud_entries`** passe aussi à une table à `rowid` (unicité de `(owner_hex, path)` conservée) : base **26 % plus petite**, insertion **1,6× plus rapide**, liste d'un dossier **≈ 100× plus rapide** (150 000 entrées).

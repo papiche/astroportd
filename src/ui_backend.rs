@@ -543,7 +543,15 @@ impl<B: BlobStore> Backend for StationUi<B> {
                         let query = crate::library::Search { q: s.q, person: s.person, from: s.from, to: s.to, bbox, kind: s.kind, after, limit: s.limit.unwrap_or(60) };
                         Ok(crate::library::search(c, &owner, &query)?)
                     }
-                    Q::Duplicates => Ok(crate::library::duplicates(c, &owner)?),
+                    Q::Map(m) => {
+                        let bbox = m.bbox.as_deref().and_then(|b| {
+                            let v: Vec<f64> = b.split(',').filter_map(|x| x.parse().ok()).collect();
+                            (v.len() == 4).then(|| (v[0], v[1], v[2], v[3]))
+                        });
+                        let area = crate::library::MapArea { from: m.from, to: m.to, bbox, cell: m.cell.unwrap_or(5.0), items: m.items == Some(1) };
+                        Ok(crate::library::map(c, &owner, &area)?)
+                    }
+                    Q::Duplicates(all) => Ok(crate::library::duplicates(c, &owner, all)?),
                 })
             })
             .await
@@ -768,11 +776,11 @@ impl<B: BlobStore> Backend for StationUi<B> {
         }))
     }
 
-    async fn faces_board(&self, who: &Principal) -> Result<Value, ApiError> {
+    async fn faces_board(&self, who: &Principal, dir: Option<String>) -> Result<Value, ApiError> {
         if !self.faces_enabled {
             return Ok(json!({ "enabled": false, "faces": [], "people": [], "unknown": 0 }));
         }
-        let b = self.board.board(&self.services.db, &who.hex).await.map_err(db_err)?;
+        let b = self.board.board(&self.services.db, &who.hex, dir.as_deref()).await.map_err(db_err)?;
         let faces: Vec<Value> = b
             .faces
             .iter()
@@ -853,6 +861,84 @@ impl<B: BlobStore> Backend for StationUi<B> {
             Err(astro_facecloud::FaceError::Invalid(m)) => Err(ApiError::bad_request(m)),
             Err(e) => Err(db_err(e)),
         }
+    }
+
+    async fn faces_folders(&self, who: &Principal) -> Result<Value, ApiError> {
+        if !self.faces_enabled {
+            return Ok(json!({ "folders": [] }));
+        }
+        let owner = who.hex.clone();
+        let rows: Vec<(String, i64, i64)> = self
+            .services
+            .db
+            .readers()
+            .read(move |c| {
+                let mut stmt = c.prepare(
+                    "SELECT e.parent, COUNT(*), COALESCE(SUM(f.name LIKE 'Inconnu%' AND f.pubkey IS NULL), 0) FROM faces f \
+                     JOIN ucloud_entries e ON e.owner_hex = f.owner_hex AND e.path = f.ucloud_path \
+                     WHERE f.owner_hex = ?1 AND f.ref IS NULL AND f.bbox_x1 IS NOT NULL GROUP BY e.parent ORDER BY e.parent DESC LIMIT 2000",
+                )?;
+                Ok(stmt.query_map([&owner], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .map_err(db_err)?;
+        Ok(json!({ "folders": rows.into_iter().map(|(dir, faces, todo)| json!({ "dir": dir, "faces": faces, "todo": todo })).collect::<Vec<_>>() }))
+    }
+
+    async fn faces_delete_photos(&self, who: &Principal, ids: Vec<i64>) -> Result<Value, ApiError> {
+        if !self.faces_enabled {
+            return Err(ApiError::unavailable("La reconnaissance des visages n'est pas activée sur cette station (le Capitaine l'active dans Options)."));
+        }
+        // Les photos où apparaissent ces visages (les visages de référence des contacts n'ont pas de photo à nous).
+        let (owner, wanted) = (who.hex.clone(), ids);
+        let paths: Vec<String> = self
+            .services
+            .db
+            .readers()
+            .read(move |c| {
+                let mut out = std::collections::BTreeSet::new();
+                let mut stmt = c.prepare("SELECT ucloud_path FROM faces WHERE owner_hex = ?1 AND face_id = ?2 AND ref IS NULL AND ucloud_path IS NOT NULL")?;
+                for id in wanted {
+                    if let Ok(p) = stmt.query_row(rusqlite::params![owner, id], |r| r.get::<_, String>(0)) {
+                        out.insert(p);
+                    }
+                }
+                Ok(out.into_iter().collect())
+            })
+            .await
+            .map_err(db_err)?;
+        let (mut deleted, mut missing, mut bytes) = (0u64, 0u64, 0u64);
+        for chunk in paths.chunks(200) {
+            let (owner, chunk) = (who.hex.clone(), chunk.to_vec());
+            let done = astro_dav::vfs::vfs_tx(&self.dav.db, move |tx| {
+                let mut out = Vec::new();
+                for p in chunk {
+                    let size: i64 = tx.query_row("SELECT COALESCE(size, 0) FROM ucloud_entries WHERE owner_hex = ?1 AND path = ?2 AND type = 'file'", rusqlite::params![owner, p], |r| r.get(0)).unwrap_or(0);
+                    match astro_dav::vfs::delete_tree_tx(tx, &owner, &p) {
+                        Ok(cids) => out.push((cids, u64::try_from(size).unwrap_or(0), true)),
+                        Err(astro_dav::vfs::VfsError::NotFound) => out.push((Vec::new(), 0, false)),
+                        Err(e) => return Err(e),
+                    }
+                }
+                Ok(out)
+            })
+            .await
+            .map_err(|e| ApiError::internal(format!("suppression impossible : {e}")))?;
+            for (cids, size, found) in done {
+                if found {
+                    deleted += 1;
+                    bytes += size;
+                } else {
+                    missing += 1;
+                }
+                astro_dav::server::release_blobs(&self.dav, cids).await;
+            }
+        }
+        if let Some(p) = &self.dav.publisher {
+            p.notify(&who.hex);
+        }
+        self.services.activity.publish_to(astro_core::Audience::Owner(who.hex.clone()), "facecloud", "ui:faces", format!("{deleted} photo(s) supprimée(s) ({} Mo)", bytes >> 20), None);
+        Ok(json!({ "deleted": deleted, "missing": missing, "bytes": bytes }))
     }
 
     async fn contacts(&self, who: &Principal) -> Result<Value, ApiError> {

@@ -203,6 +203,52 @@ pub fn search(c: &Connection, owner: &str, s: &Search) -> rusqlite::Result<Value
     Ok(json!({ "items": items, "next": next }))
 }
 
+/// Zone et période d'une demande de carte.
+#[derive(Debug, Clone, Default)]
+pub struct MapArea {
+    /// Début de période (secondes Unix, inclus).
+    pub from: Option<i64>,
+    /// Fin de période (exclue).
+    pub to: Option<i64>,
+    /// Sud, ouest, nord, est (degrés) ; tout le globe si absent.
+    pub bbox: Option<(f64, f64, f64, f64)>,
+    /// Côté d'une case de regroupement, en degrés.
+    pub cell: f64,
+    /// Rend les éléments de la zone au lieu des regroupements.
+    pub items: bool,
+}
+
+/// Photos et vidéos géolocalisées. Sans `items` : des **regroupements** par case (`{ lat, lon, n, t0, t1 }`, au plus 1500), un
+/// histogramme par mois de **toutes** les photos géolocalisées (pour choisir la période) et le total. Avec `items` : les éléments
+/// de la zone, du plus récent au plus ancien (au plus 120). Tout est calculé ici : la carte ne reçoit jamais 30 000 points.
+pub fn map(c: &Connection, owner: &str, a: &MapArea) -> rusqlite::Result<Value> {
+    let media = "(e.mime LIKE 'image/%' OR e.mime LIKE 'video/%')";
+    let (south, west, north, east) = a.bbox.unwrap_or((-90.0, -180.0, 90.0, 180.0));
+    let (from, to) = (a.from.unwrap_or(i64::MIN), a.to.unwrap_or(i64::MAX));
+    let zone = format!("{FILES} AND {media} AND e.lat IS NOT NULL AND e.lon IS NOT NULL AND e.lat BETWEEN ?2 AND ?3 AND e.lon BETWEEN ?4 AND ?5 AND COALESCE(e.taken_at, e.mtime, 0) >= ?6 AND COALESCE(e.taken_at, e.mtime, 0) < ?7");
+    if a.items {
+        let sql = format!("SELECT {COLS} FROM ucloud_entries e WHERE {zone} ORDER BY t DESC, e.path LIMIT 120");
+        let mut stmt = c.prepare_cached(&sql)?;
+        let items = stmt.query_map(params![owner, south, north, west, east, from, to], item)?.collect::<Result<Vec<_>, _>>()?;
+        return Ok(json!({ "items": items }));
+    }
+    let cell = if a.cell.is_finite() { a.cell.clamp(0.01, 90.0) } else { 5.0 };
+    let sql = format!(
+        "SELECT AVG(e.lat), AVG(e.lon), count(*), MIN(COALESCE(e.taken_at, e.mtime)), MAX(COALESCE(e.taken_at, e.mtime)) FROM ucloud_entries e WHERE {zone} \
+         GROUP BY (CAST(e.lat / {cell} AS INTEGER) - (e.lat / {cell} < CAST(e.lat / {cell} AS INTEGER))), (CAST(e.lon / {cell} AS INTEGER) - (e.lon / {cell} < CAST(e.lon / {cell} AS INTEGER))) ORDER BY count(*) DESC LIMIT 1500"
+    );
+    let mut stmt = c.prepare_cached(&sql)?;
+    let points = stmt
+        .query_map(params![owner, south, north, west, east, from, to], |r| Ok(json!({ "lat": r.get::<_, f64>(0)?, "lon": r.get::<_, f64>(1)?, "n": r.get::<_, i64>(2)?, "t0": r.get::<_, Option<i64>>(3)?, "t1": r.get::<_, Option<i64>>(4)? })))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let sql = format!("SELECT strftime('%Y-%m', COALESCE(e.taken_at, e.mtime), 'unixepoch') AS ym, count(*) FROM ucloud_entries e WHERE {FILES} AND {media} AND e.lat IS NOT NULL AND e.lon IS NOT NULL AND COALESCE(e.taken_at, e.mtime) IS NOT NULL GROUP BY ym ORDER BY ym");
+    let mut stmt = c.prepare_cached(&sql)?;
+    let months = stmt.query_map([owner], |r| Ok(json!({ "ym": r.get::<_, String>(0)?, "n": r.get::<_, i64>(1)? })))?.collect::<Result<Vec<_>, _>>()?;
+    let total: i64 = months.iter().map(|m| m["n"].as_i64().unwrap_or(0)).sum();
+    let all: i64 = c.query_row(&format!("SELECT count(*) FROM ucloud_entries e WHERE {FILES} AND {media}"), [owner], |r| r.get(0))?;
+    Ok(json!({ "points": points, "months": months, "geotagged": total, "photos": all }))
+}
+
 /// Un doublon candidat.
 struct Dup {
     path: String,
@@ -223,10 +269,12 @@ fn find(parent: &mut [usize], mut i: usize) -> usize {
 /// Doublons du compte : `exact` (même contenu, même SHA-256 du clair) et `similar` (images presque identiques, distance de Hamming
 /// des empreintes perceptuelles ≤ 6, contenus différents). Chaque groupe propose un `keep` : le plus gros fichier, puis celui qui a le plus
 /// de métadonnées (date, position). **Rien n'est supprimé ici** : l'interface demande confirmation.
-pub fn duplicates(c: &Connection, owner: &str) -> rusqlite::Result<Value> {
-    // Exacts.
+pub fn duplicates(c: &Connection, owner: &str, all: bool) -> rusqlite::Result<Value> {
+    // Exacts : par défaut seulement les photos et vidéos (la bibliothèque est celle des médias) ; `all` y ajoute tous les fichiers.
+    let media = if all { "" } else { " AND (mime LIKE 'image/%' OR mime LIKE 'video/%')" };
+    let media_e = if all { "" } else { " AND (e.mime LIKE 'image/%' OR e.mime LIKE 'video/%')" };
     let sql = format!(
-        "SELECT {COLS} FROM ucloud_entries e WHERE {FILES} AND e.sha_plain IN (SELECT sha_plain FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file' AND cid IS NOT NULL AND sha_plain IS NOT NULL GROUP BY sha_plain HAVING count(*) > 1) \
+        "SELECT {COLS} FROM ucloud_entries e WHERE {FILES}{media_e} AND e.sha_plain IN (SELECT sha_plain FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file' AND cid IS NOT NULL AND sha_plain IS NOT NULL{media} GROUP BY sha_plain HAVING count(*) > 1) \
          ORDER BY e.sha_plain, e.size DESC, e.path LIMIT 5000"
     );
     let mut stmt = c.prepare(&sql)?;
@@ -392,7 +440,7 @@ mod tests {
         put(&c, ME, "/autre.jpg", "image/jpeg", 100, None, &"dd".repeat(32), Some(!h), None);
         // Un autre compte avec le même contenu : jamais mélangé.
         put(&c, "bb", "/x.jpg", "image/jpeg", 500, None, SHA_A, Some(h), None);
-        let d = duplicates(&c, ME).unwrap();
+        let d = duplicates(&c, ME, false).unwrap();
         assert_eq!(d["exact"].as_array().unwrap().len(), 1);
         assert_eq!(d["exact"][0]["items"].as_array().unwrap().len(), 2);
         let sim = d["similar"].as_array().unwrap();
@@ -402,5 +450,43 @@ mod tests {
         assert_eq!(items[sim[0]["keep"].as_u64().unwrap() as usize]["path"], "/a-grande.jpg", "on garde le plus gros");
         let n: i64 = c.query_row("SELECT count(*) FROM ucloud_entries", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 5, "rien n'est supprimé");
+    }
+
+    #[test]
+    fn the_map_groups_by_cell_by_period_and_by_zone_for_one_account_only() {
+        let c = db();
+        let geo = |c: &Connection, owner: &str, path: &str, t: i64, lat: f64, lon: f64| {
+            c.execute("INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, mime, size, mtime, taken_at, lat, lon, data) VALUES (?1, ?2, '/', 'file', ?2, 'image/jpeg', 1, ?3, ?3, ?4, ?5, '{}')", params![owner, path, t, lat, lon]).unwrap();
+        };
+        geo(&c, ME, "/toulouse1.jpg", T2024, 43.60, 1.44);
+        geo(&c, ME, "/toulouse2.jpg", T2024 + 100, 43.61, 1.45);
+        geo(&c, ME, "/paris.jpg", T2024 + 200, 48.85, 2.35);
+        geo(&c, ME, "/tokyo.jpg", T2024 + 10_000_000, 35.68, 139.69);
+        geo(&c, "bb", "/autre.jpg", T2024, 43.6, 1.44);
+        let world = MapArea { cell: 1.0, ..MapArea::default() };
+        let r = map(&c, ME, &world).unwrap();
+        assert_eq!((r["points"].as_array().unwrap().len(), r["geotagged"].as_i64()), (3, Some(4)), "Toulouse regroupe ses deux photos ; l'autre compte n'existe pas");
+        assert_eq!(r["points"][0]["n"], 2);
+        let europe = MapArea { bbox: Some((35.0, -10.0, 60.0, 30.0)), cell: 1.0, ..MapArea::default() };
+        assert_eq!(map(&c, ME, &europe).unwrap()["points"].as_array().unwrap().len(), 2);
+        let early = MapArea { to: Some(T2024 + 1_000), cell: 1.0, ..MapArea::default() };
+        assert_eq!(map(&c, ME, &early).unwrap()["points"].as_array().unwrap().len(), 2, "Tokyo est plus tard");
+        let zone = MapArea { bbox: Some((43.0, 1.0, 44.0, 2.0)), items: true, ..MapArea::default() };
+        let items = map(&c, ME, &zone).unwrap();
+        assert_eq!(items["items"].as_array().unwrap().len(), 2);
+        assert_eq!(items["items"][0]["path"], "/toulouse2.jpg", "du plus récent au plus ancien");
+        assert_eq!(map(&c, ME, &world).unwrap()["months"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn exact_duplicates_are_photos_and_videos_unless_every_file_is_asked_for() {
+        let c = db();
+        put(&c, ME, "/a.jpg", "image/jpeg", 500, None, SHA_A, None, None);
+        put(&c, ME, "/b.jpg", "image/jpeg", 500, None, SHA_A, None, None);
+        let sha_t = "ee".repeat(32);
+        put(&c, ME, "/notes.txt", "text/plain", 50, None, &sha_t, None, None);
+        put(&c, ME, "/copie.txt", "text/plain", 50, None, &sha_t, None, None);
+        assert_eq!(duplicates(&c, ME, false).unwrap()["exact"].as_array().unwrap().len(), 1, "les documents ne sont pas des doublons de photos");
+        assert_eq!(duplicates(&c, ME, true).unwrap()["exact"].as_array().unwrap().len(), 2, "tous les fichiers sur demande");
     }
 }

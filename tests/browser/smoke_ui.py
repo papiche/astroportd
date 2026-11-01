@@ -99,8 +99,21 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/v1/account': return self.send(200, ACCOUNT)
         if p == '/api/v1/contacts': return self.send(200, CONTACTS)
         if p.startswith('/api/v1/station/admin/'): k = p.rsplit('/', 1)[1]; return self.send(200, ADMIN[k]) if k in ADMIN else self.send(404, dict(error='non simulé'))
+        if p == '/api/v1/faces/folders': return self.send(200, dict(folders=[dict(dir='/Images/2026/10', faces=12, todo=9), dict(dir='/Images/2026/09', faces=4, todo=0)]))
         if p == '/api/v1/faces/board':
+            import time; time.sleep(STATE.get('delay', 0))
             return self.send(200, dict(enabled=True, dav='/dav', faces=STATE['faces'], people=people(), unknown=sum(1 for f in STATE['faces'] if not f['named']), groups_skipped=False, truncated=False))
+        if p.startswith('/dav/'): return self.send(200, base64.b64decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), 'image/gif')
+        if p == '/api/v1/ucloud/memories': return self.send(200, dict(memories=[]))
+        if p == '/api/v1/ucloud/timeline':
+            q = self.path.split('ym=')[1] if 'ym=' in self.path else None
+            if q is None: return self.send(200, dict(months=[dict(ym='2026-10', count=3), dict(ym='2026-09', count=2)]))
+            base = 1790000000 if q == '2026-10' else 1787000000
+            return self.send(200, dict(items=[dict(path=f'/Photos/{q}-{i}.jpg', mime='image/jpeg', size=10, mtime=base, taken_at=base - i * 90000, t=base - i * 90000, thumb=None, lat=None, lon=None) for i in range(3 if q == '2026-10' else 2)]))
+        if p == '/api/v1/ucloud/map':
+            if 'items=1' in self.path: return self.send(200, dict(items=[dict(path='/Photos/toulouse.jpg', mime='image/jpeg', size=10, mtime=1790000000, taken_at=1790000000, t=1790000000, thumb=None, lat=43.6, lon=1.44)]))
+            return self.send(200, dict(points=[dict(lat=43.6, lon=1.44, n=12, t0=1, t1=2), dict(lat=35.68, lon=139.69, n=3, t0=1, t1=2), dict(lat=-33.9, lon=151.2, n=1, t0=1, t1=2)], months=[dict(ym='2026-09', n=6), dict(ym='2026-10', n=10)], geotagged=16, photos=40))
+        if p == '/api/v1/ucloud/duplicates': return self.send(200, dict(exact=[], similar=[]))
         if p == '/api/v1/replication': return self.send(200, REPL)
         if p == '/api/v1/devices': return self.send(200, dict(devices=[dict(id='d1', label='Téléphone de Léa', root='/Photos/Léa', mode='write', created_at=1790000000, last_used=None)], max=16))
         if p == '/api/v1/organize': return self.send(200, dict(folders=[], job=None, runs=[dict(run_id='r1', at=1790000000, moved=7, undone=False, options={})]))
@@ -116,6 +129,7 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get('Content-Length', 0)); body = json.loads(self.rfile.read(n) or b'{}'); p = self.path
         STATE['posts'].append((p, body))
         if p == '/api/v1/faces/thumbs': return self.send(200, dict(thumbs={str(i): thumb(i) for i in body['ids']}, failed=[]))
+        if p == '/api/v1/faces/delete-photos': return self.send(200, dict(deleted=len({f['path'] for f in STATE['faces'] if f['id'] in body['ids']}), missing=0, bytes=0))
         if p == '/api/v1/faces/assign':
             for f in STATE['faces']:
                 if f['id'] in body['ids']: f.update(name=body['name'], pubkey=body.get('pubkey'), named=True, group_id=None, group_size=None, suggest=None)
@@ -453,6 +467,33 @@ with sync_playwright() as pw:
     check(len(sent) == 1 and sent[0]['by_date'] == 'month' and 'archives' not in sent[0]['kinds'] and len(sent[0]['kinds']) == 4 and sent[0]['scope'] == '/', 'le rangement part avec le dossier, les types et les sous-dossiers par date choisis')
     page.click('button:text-is("Annuler ce rangement")'); page.wait_for_timeout(400)
     check(any(p_ == '/api/v1/organize/undo' and b_ == {'run': 'r1'} for p_, b_ in STATE['posts']), "« Annuler ce rangement » demande l'annulation du bon passage")
+    # Bibliothèque : fil du temps jour par jour, carte du monde hors ligne avec ses groupes, doublons sans options superflues.
+    page.goto(f'http://127.0.0.1:{port}/#/library'); page.wait_for_selector('#lib-tab-time'); page.wait_for_timeout(700)
+    check(page.locator('.stream h3.sticky').count() >= 1 and page.locator('.stream h4').count() >= 2, "l'affichage sur le temps groupe les photos par jour : " + str(page.locator('.stream h4').all_inner_texts()[:2]))
+    page.click('#lib-tab-map'); page.wait_for_selector('canvas.map'); page.wait_for_timeout(600)
+    lit = page.evaluate("(() => { const c = document.querySelector('canvas.map'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; const seen = new Set(); for (let i = 0; i < d.length; i += 4 * 97) seen.add(d[i] + ',' + d[i+1] + ',' + d[i+2]); return seen.size; })()")
+    check(lit >= 3, f'la carte du monde est dessinée (fond, continents, groupes : {lit} couleurs)')
+    check('16 photo(s) géolocalisée(s) sur 40' in page.inner_text('main'), 'le compte de photos géolocalisées est affiché')
+    check(page.locator('.histo .bar-m').count() == 2, "l'histogramme propose un bâton par mois")
+    box = page.locator('canvas.map').bounding_box()
+    page.mouse.click(box['x'] + box['width'] * (1.44 + 180) / 360 - 0, box['y'] + box['height'] / 2)
+    page.screenshot(path=str(OUT / 'library-map.png'))
+    page.click('.histo .bar-m >> nth=1'); page.wait_for_timeout(500)
+    check(page.input_value('input[type=date] >> nth=-2') != '' or page.locator('.histo .bar-m.on').count() == 1, 'un clic sur un mois choisit la période')
+    # Sablier pendant le chargement de la table de tri : visible tant que la station calcule (réponse retardée), caché ensuite.
+    STATE['delay'] = 1.5
+    page.goto(f'http://127.0.0.1:{port}/#/people'); page.wait_for_selector('.pe-busy'); page.wait_for_timeout(300)
+    check(page.locator('.pe-busy').is_visible() and page.get_attribute('.pe-stage', 'aria-busy') == 'true', 'le sablier est affiché pendant le chargement de la table de tri')
+    page.wait_for_timeout(2200)
+    check(not page.locator('.pe-busy').is_visible(), 'le sablier disparaît quand la table est prête')
+    STATE['delay'] = 0
+    # Table de tri : supprimer les photos des visages sélectionnés (confirmation avec le compte exact).
+    page.goto(f'http://127.0.0.1:{port}/#/people'); page.wait_for_selector('canvas.pe-board'); page.wait_for_timeout(700)
+    page.locator('.pe-todo button').first.click(); page.wait_for_timeout(300)
+    page.once('dialog', lambda d: (STATE.setdefault('dialogs', []).append(d.message), d.accept()))
+    page.click('.pe-tray button:has-text("Supprimer les photos")'); page.wait_for_timeout(600)
+    wiped = [b for p_, b in STATE['posts'] if p_.endswith('/faces/delete-photos')]
+    check(len(wiped) == 1 and len(wiped[0]['ids']) >= 1 and 'irréversible' in STATE['dialogs'][0], 'supprimer les photos : confirmation puis appel avec les visages choisis')
     # Extension Nostr (NIP-07) : deux requêtes identiques dans la même seconde ne doivent pas produire le même événement
     # (la station refuse un événement déjà vu : 401 et fenêtre de connexion en pleine table de tri).
     ext = br.new_context(viewport=dict(width=1100, height=800), service_workers='block')

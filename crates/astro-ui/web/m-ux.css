@@ -11,3 +11,9 @@
 }
 
 .bar input:not([type=checkbox]), .bar select { width: auto; flex: 1 1 11rem; min-width: 0; }
+.map{display:block;max-width:100%;border:1px solid var(--line);border-radius:12px;touch-action:none;cursor:grab}
+.histo{display:flex;align-items:flex-end;gap:2px;height:56px;margin:.5rem 0;overflow-x:auto}
+.histo .bar-m{flex:0 0 7px;min-height:6px;padding:0;border:0;border-radius:2px;background:var(--line);cursor:pointer}
+.histo .bar-m.on{background:var(--accent)}
+.stream h3.sticky{position:sticky;top:0;z-index:1;margin:0;padding:.4rem 0;background:var(--bg)}
+.stream h4{margin:.8rem 0 .3rem;font-weight:600;text-transform:capitalize}

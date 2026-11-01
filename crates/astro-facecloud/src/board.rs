@@ -307,29 +307,45 @@ impl BoardCache {
         self.inner.lock().unwrap_or_else(|e| e.into_inner()).remove(owner);
     }
 
-    /// La table de `owner`.
-    pub async fn board(&self, db: &Db, owner: &str) -> Result<Board, FaceError> {
+    /// La table de `owner`. `scope` : un dossier du uCloud (`/Images/2024`) pour ne travailler que sur les visages de ses photos ;
+    /// les groupes et la projection ne sont alors calculés que sur cet ensemble (donc possibles même avec des dizaines de milliers
+    /// de visages au total). Les personnes, elles, sont toujours celles de tout le compte.
+    pub async fn board(&self, db: &Db, owner: &str, scope: Option<&str>) -> Result<Board, FaceError> {
         let o = owner.to_owned();
+        let scope = scope.map(|p| p.trim().trim_end_matches('/')).filter(|p| p.starts_with('/') && p.len() > 1).map(str::to_owned);
+        let (sp, slow, shigh) = (scope.clone(), scope.as_ref().map(|p| format!("{p}/")), scope.as_ref().map(|p| format!("{p}0")));
+        let tag = scope.clone().unwrap_or_default();
         type Row = (i64, String, Option<String>, String, [f64; 4], Option<String>, Option<f64>);
-        let (rows, total, revision): (Vec<Row>, i64, String) = db
+        /// Une personne du compte : nom, clé, visages, photos.
+        type PersonRow = (String, Option<String>, i64, i64);
+        let (rows, total, revision, people_rows): (Vec<Row>, i64, String, Vec<PersonRow>) = db
             .readers()
             .read(move |c| {
+                let in_scope = "AND (?2 IS NULL OR ucloud_path = ?2 OR (ucloud_path >= ?3 AND ucloud_path < ?4))";
                 let (count, max_id, unnamed, named_sum): (i64, i64, i64, i64) = c.query_row(
-                    "SELECT COUNT(*), COALESCE(MAX(face_id), 0), COALESCE(SUM(name LIKE 'Inconnu%' AND pubkey IS NULL), 0), COALESCE(SUM(face_id * (name NOT LIKE 'Inconnu%' OR pubkey IS NOT NULL)), 0) \
-                     FROM faces WHERE owner_hex = ?1 AND ref IS NULL AND ucloud_path IS NOT NULL AND bbox_x1 IS NOT NULL",
-                    [&o],
+                    &format!(
+                        "SELECT COUNT(*), COALESCE(MAX(face_id), 0), COALESCE(SUM(name LIKE 'Inconnu%' AND pubkey IS NULL), 0), COALESCE(SUM(face_id * (name NOT LIKE 'Inconnu%' OR pubkey IS NOT NULL)), 0) \
+                         FROM faces WHERE owner_hex = ?1 AND ref IS NULL AND ucloud_path IS NOT NULL AND bbox_x1 IS NOT NULL {in_scope}"
+                    ),
+                    params![o, sp, slow, shigh],
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                 )?;
-                let mut stmt = c.prepare(
+                let mut stmt = c.prepare(&format!(
                     "SELECT face_id, name, pubkey, ucloud_path, bbox_x1, bbox_y1, bbox_x2, bbox_y2, suggest_name, suggest_score FROM faces \
-                     WHERE owner_hex = ?1 AND ref IS NULL AND ucloud_path IS NOT NULL AND bbox_x1 IS NOT NULL ORDER BY face_id DESC LIMIT ?2",
-                )?;
+                     WHERE owner_hex = ?1 AND ref IS NULL AND ucloud_path IS NOT NULL AND bbox_x1 IS NOT NULL {in_scope} ORDER BY face_id DESC LIMIT ?5"
+                ))?;
                 let rows = stmt
-                    .query_map(params![o, i64::try_from(BOARD_MAX).unwrap_or(i64::MAX)], |r| {
+                    .query_map(params![o, sp, slow, shigh, i64::try_from(BOARD_MAX).unwrap_or(i64::MAX)], |r| {
                         Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, [r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?], r.get(8)?, r.get(9)?))
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok((rows, count, format!("{count}:{max_id}:{unnamed}:{named_sum}")))
+                // Les personnes sont celles de tout le compte, pas seulement celles du dossier regardé : on peut toujours y ranger un visage.
+                let mut stmt = c.prepare(
+                    "SELECT MAX(name), pubkey, COUNT(*), COUNT(DISTINCT ucloud_path) FROM faces WHERE owner_hex = ?1 AND ref IS NULL AND ucloud_path IS NOT NULL \
+                     AND (name NOT LIKE 'Inconnu%' OR pubkey IS NOT NULL) GROUP BY COALESCE(NULLIF(pubkey, ''), 'nom:' || name)",
+                )?;
+                let people_rows = stmt.query_map([&o], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<Result<Vec<_>, _>>()?;
+                Ok((rows, count, format!("{count}:{max_id}:{unnamed}:{named_sum}:{}", tag), people_rows))
             })
             .await?;
         let truncated = usize::try_from(total).unwrap_or(0) > BOARD_MAX;
@@ -389,17 +405,7 @@ impl BoardCache {
             })
             .collect();
         faces.sort_by_key(|f| f.face_id);
-        let mut by_person: HashMap<String, (Person, std::collections::HashSet<String>)> = HashMap::new();
-        for f in faces.iter().filter(|f| f.named) {
-            let key = f.pubkey.clone().filter(|p| !p.is_empty()).unwrap_or_else(|| format!("nom:{}", f.name));
-            let e = by_person.entry(key).or_insert_with(|| (Person { name: f.name.clone(), pubkey: f.pubkey.clone(), faces: 0, photos: 0 }, Default::default()));
-            e.0.faces += 1;
-            e.1.insert(f.path.clone());
-        }
-        let mut people: Vec<Person> = by_person.into_values().map(|(mut p, photos)| {
-            p.photos = photos.len();
-            p
-        }).collect();
+        let mut people: Vec<Person> = people_rows.into_iter().map(|(name, pubkey, faces, photos)| Person { name, pubkey, faces: usize::try_from(faces).unwrap_or(0), photos: usize::try_from(photos).unwrap_or(0) }).collect();
         people.sort_by(|a, b| b.photos.cmp(&a.photos).then_with(|| a.name.cmp(&b.name)));
         let unknown = faces.iter().filter(|f| !f.named).count();
         Ok(Board { faces, people, unknown, groups_skipped: layout.skipped, truncated })

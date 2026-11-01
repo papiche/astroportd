@@ -433,3 +433,30 @@ async fn the_captains_default_tier_applies_to_multipass_without_their_own_quota(
     b.db.writer().execute("UPDATE identities SET quota_bytes = 1000 WHERE hex = ?1", vec![alice_hex.into()]).await.unwrap();
     assert_eq!(call(&b.app, "PUT", "/dav/c.bin", Some(&a), &[], Body::from(vec![3u8; 500])).await.status(), 507);
 }
+
+/// Supprimer une photo (ou un dossier) emporte ses visages et son analyse en attente : la table de tri ne montre jamais un visage
+/// dont la photo n'existe plus. Les visages de référence (contacts) ne sont pas touchés.
+#[tokio::test]
+async fn deleting_a_photo_or_a_folder_takes_its_faces_and_pending_analysis_with_it() {
+    let b = bench("delete-faces").await;
+    assert_eq!(call(&b.app, "MKCOL", "/dav/Vacances", Some(&alice()), &[], Body::empty()).await.status(), 201);
+    for name in ["Vacances/a.jpg", "Vacances/b.jpg", "autre.jpg"] {
+        assert_eq!(call(&b.app, "PUT", &format!("/dav/{name}"), Some(&alice()), &[], Body::from(format!("contenu {name}"))).await.status(), 201);
+    }
+    let owner = hex(&ALICE);
+    for (n, path) in ["/Vacances/a.jpg", "/Vacances/b.jpg", "/autre.jpg"].into_iter().enumerate() {
+        b.db.writer().execute("INSERT INTO faces(owner_hex, name, embed_hash, ts, ucloud_path, source_path) VALUES (?1, 'Marie', ?2, 1, ?3, ?3)", vec![owner.clone().into(), format!("h{n}").into(), path.to_owned().into()]).await.unwrap();
+        b.db.writer().execute("INSERT INTO tasks(kind, payload, status, created_at) VALUES ('facecloud', json_object('owner', ?1, 'path', ?2), 'pending', 1)", vec![owner.clone().into(), path.to_owned().into()]).await.unwrap();
+    }
+    b.db.writer().execute("INSERT INTO faces(owner_hex, name, embed_hash, ts, ref, ucloud_path) VALUES (?1, 'Contact', 'ref', 1, 'contact', '/autre.jpg')", vec![owner.clone().into()]).await.unwrap();
+    let left = |db: &astro_db::Db| {
+        let db = db.readers().clone();
+        async move { db.read(|c| Ok((c.prepare("SELECT embed_hash FROM faces ORDER BY embed_hash")?.query_map([], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?, c.query_row("SELECT count(*) FROM tasks WHERE kind = 'facecloud'", [], |r| r.get::<_, i64>(0))?))).await.unwrap() }
+    };
+    assert_eq!(call(&b.app, "DELETE", "/dav/Vacances/a.jpg", Some(&alice()), &[], Body::empty()).await.status(), 204);
+    assert_eq!(left(&b.db).await, (vec!["h1".to_owned(), "h2".to_owned(), "ref".to_owned()], 2), "le visage et l'analyse de la photo supprimée disparaissent");
+    assert_eq!(call(&b.app, "DELETE", "/dav/Vacances", Some(&alice()), &[], Body::empty()).await.status(), 204);
+    assert_eq!(left(&b.db).await, (vec!["h2".to_owned(), "ref".to_owned()], 1), "un dossier entier aussi");
+    assert_eq!(call(&b.app, "DELETE", "/dav/autre.jpg", Some(&alice()), &[], Body::empty()).await.status(), 204);
+    assert_eq!(left(&b.db).await, (vec!["ref".to_owned()], 0), "le visage de référence d'un contact n'est jamais emporté");
+}

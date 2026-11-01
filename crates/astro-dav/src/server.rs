@@ -653,7 +653,7 @@ pub(crate) async fn put<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str,
 }
 
 /// Supprime les blobs qu'aucune entrée ne référence plus.
-pub(crate) async fn release_blobs<B: BlobStore>(st: &DavState<B>, cids: Vec<String>) {
+pub async fn release_blobs<B: BlobStore>(st: &DavState<B>, cids: Vec<String>) {
     for cid in cids {
         let c = cid.clone();
         let in_use = st.db.readers().read(move |conn| vfs::cid_in_use(conn, &c).map_err(|_| astro_db::DbError::Aborted)).await.unwrap_or(true);
