@@ -134,6 +134,19 @@ impl<B: BlobStore> IdentityLinks<B> {
             // Fiche invalide : indexée avec son avertissement, jamais rapprochée d'un visage (clé de nom vide).
             Err(why) => (stem, String::new(), Vec::new(), None, None, None, None, Some(why.clone())),
         };
+        // Carnet d'adresses : les champs lus de la fiche (téléphones, société, groupes…) pour la recherche.
+        if let Some(Ok(text)) = bytes.as_deref().map(std::str::from_utf8) {
+            let fields = vcard::read_fields(text);
+            let (o, p) = (owner.to_owned(), entry.path.clone());
+            self.db
+                .writer()
+                .execute(
+                    "INSERT INTO contact_cards(owner_hex, path, fields, search, me) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(owner_hex, path) DO UPDATE SET fields = excluded.fields, search = excluded.search, me = excluded.me",
+                    vec![o.into(), p.into(), serde_json::to_string(&fields).unwrap_or_default().into(), vcard::search_text(&fields).into(), i64::from(vcard::is_me(text)).into()],
+                )
+                .await
+                .map_err(internal)?;
+        }
         let (o, p) = (owner.to_owned(), entry.path.clone());
         self.db
             .writer()
@@ -155,7 +168,8 @@ impl<B: BlobStore> IdentityLinks<B> {
             .db
             .readers()
             .read(move |c| {
-                let mut stmt = c.prepare("SELECT path, cid FROM identity_links WHERE owner_hex = ?1")?;
+                // Une fiche déjà indexée avant l'arrivée du carnet (pas de ligne `contact_cards`) est relue une fois.
+                let mut stmt = c.prepare("SELECT l.path, CASE WHEN k.path IS NULL THEN '' ELSE l.cid END FROM identity_links l LEFT JOIN contact_cards k ON k.owner_hex = l.owner_hex AND k.path = l.path WHERE l.owner_hex = ?1")?;
                 let rows = stmt.query_map([o], |r| Ok((r.get(0)?, r.get(1)?)))?;
                 Ok(rows.collect::<Result<_, _>>()?)
             })
@@ -171,7 +185,8 @@ impl<B: BlobStore> IdentityLinks<B> {
         let alive: BTreeSet<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         for gone in known.keys().filter(|p| !alive.contains(p.as_str())) {
             let (o, p) = (owner.to_owned(), gone.clone());
-            self.db.writer().execute("DELETE FROM identity_links WHERE owner_hex = ?1 AND path = ?2", vec![o.into(), p.into()]).await.map_err(internal)?;
+            self.db.writer().execute("DELETE FROM identity_links WHERE owner_hex = ?1 AND path = ?2", vec![o.clone().into(), p.clone().into()]).await.map_err(internal)?;
+            self.db.writer().execute("DELETE FROM contact_cards WHERE owner_hex = ?1 AND path = ?2", vec![o.into(), p.into()]).await.map_err(internal)?;
             report.removed += 1;
         }
         report.linked = self.reconcile(owner).await?;

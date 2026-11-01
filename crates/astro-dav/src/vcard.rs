@@ -237,6 +237,291 @@ pub fn new_card(uid: &str, name: &str, email: Option<&str>, nostr_hex: Option<&s
     out
 }
 
+/// Une valeur typée d'une fiche (`TEL;TYPE=CELL:…`, `EMAIL;TYPE=WORK:…`) : `kind` vaut `mobile`, `work`, `home` ou `other`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct Typed {
+    /// Nature (`mobile`, `work`, `home`, `other`).
+    pub kind: String,
+    /// Valeur.
+    pub value: String,
+}
+
+/// Une adresse postale (`ADR`).
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct Address {
+    /// Nature (`work`, `home`, `other`).
+    pub kind: String,
+    /// Rue.
+    pub street: String,
+    /// Ville.
+    pub city: String,
+    /// Région.
+    pub region: String,
+    /// Code postal.
+    pub code: String,
+    /// Pays.
+    pub country: String,
+}
+
+/// Tout ce que l'annuaire sait lire et écrire d'une fiche. Les propriétés inconnues (photo, `X-…`) ne sont jamais touchées.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct Fields {
+    /// Nom affiché (`FN`).
+    pub name: String,
+    /// Prénom (`N`).
+    #[serde(default)]
+    pub given: String,
+    /// Nom de famille (`N`).
+    #[serde(default)]
+    pub family: String,
+    /// Société.
+    #[serde(default)]
+    pub org: String,
+    /// Fonction.
+    #[serde(default)]
+    pub title: String,
+    /// Téléphones.
+    #[serde(default)]
+    pub phones: Vec<Typed>,
+    /// Adresses email.
+    #[serde(default)]
+    pub emails: Vec<Typed>,
+    /// Adresses postales.
+    #[serde(default)]
+    pub addresses: Vec<Address>,
+    /// Anniversaire `AAAA-MM-JJ` (ou `--MM-JJ` sans année).
+    #[serde(default)]
+    pub birthday: String,
+    /// Notes.
+    #[serde(default)]
+    pub note: String,
+    /// Sites web.
+    #[serde(default)]
+    pub urls: Vec<String>,
+    /// Groupes (`CATEGORIES`).
+    #[serde(default)]
+    pub groups: Vec<String>,
+    /// Présentation publique de la personne (`X-NOSTR-ABOUT`, miroir du champ `about` de son profil Nostr).
+    #[serde(default)]
+    pub about: String,
+    /// Image (`PHOTO;VALUE=uri`, miroir de `picture`) ; une photo **incorporée** à la fiche n'est jamais touchée.
+    #[serde(default)]
+    pub picture: String,
+    /// Identifiant NIP-05 (`X-NOSTR-NIP05`).
+    #[serde(default)]
+    pub nip05: String,
+    /// Adresse Lightning (`X-NOSTR-LUD16`).
+    #[serde(default)]
+    pub lud16: String,
+}
+
+/// Cette fiche est-elle **celle du titulaire** (`X-ASTRO-ME`) ?
+pub fn is_me(text: &str) -> bool {
+    properties(text).iter().any(|(n, _, v)| n == "X-ASTRO-ME" && v.trim() == "1")
+}
+
+/// Texte de recherche d'une fiche : noms, société, emails, notes, groupes, adresses (sans accents ni casse) et chiffres des téléphones.
+pub fn search_text(f: &Fields) -> String {
+    let mut parts = vec![f.name.clone(), f.given.clone(), f.family.clone(), f.org.clone(), f.title.clone(), f.note.clone(), f.about.clone(), f.nip05.clone()];
+    parts.extend(f.emails.iter().map(|e| e.value.clone()));
+    parts.extend(f.groups.iter().cloned());
+    parts.extend(f.addresses.iter().flat_map(|a| [a.street.clone(), a.city.clone(), a.code.clone(), a.country.clone()]));
+    let mut out = name_key(&parts.join(" "));
+    for p in &f.phones {
+        let digits: String = p.value.chars().filter(char::is_ascii_digit).collect();
+        if !digits.is_empty() {
+            out.push(' ');
+            out.push_str(&digits);
+        }
+    }
+    out
+}
+
+/// Plafonds : une fiche reste une fiche.
+const MAX_ITEMS: usize = 20;
+const MAX_TEXT: usize = 2000;
+
+fn kind_of(params: &str) -> String {
+    let p = params.to_ascii_lowercase();
+    let has = |w: &str| p.split([';', ',', '=']).any(|t| t.trim() == w);
+    if has("cell") || has("mobile") {
+        "mobile"
+    } else if has("work") {
+        "work"
+    } else if has("home") {
+        "home"
+    } else {
+        "other"
+    }
+    .to_owned()
+}
+
+/// Tous les `(NOM, paramètres, valeur)` d'une fiche.
+fn properties(text: &str) -> Vec<(String, String, String)> {
+    unfold(text.trim_start_matches('\u{feff}'))
+        .into_iter()
+        .filter_map(|line| {
+            let (head, value) = line.split_once(':')?;
+            let mut parts = head.split(';');
+            let name = parts.next()?.rsplit('.').next()?.trim().to_ascii_uppercase();
+            (!name.is_empty()).then(|| (name, parts.collect::<Vec<_>>().join(";"), value.to_owned()))
+        })
+        .collect()
+}
+
+/// Découpe une valeur composée sur `sep` en respectant les `\` d'échappement.
+fn split_escaped(v: &str, sep: char) -> Vec<String> {
+    let (mut out, mut cur, mut esc) = (Vec::new(), String::new(), false);
+    for c in v.chars() {
+        match (esc, c) {
+            (true, c) => {
+                cur.push('\\');
+                cur.push(c);
+                esc = false;
+            }
+            (false, '\\') => esc = true,
+            (false, c) if c == sep => out.push(std::mem::take(&mut cur)),
+            (false, c) => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out.into_iter().map(|p| unescape(&p)).collect()
+}
+
+/// Lit les champs modifiables d'une fiche.
+pub fn read_fields(text: &str) -> Fields {
+    let mut f = Fields::default();
+    let mut structured: Option<String> = None;
+    for (name, params, value) in properties(text) {
+        match name.as_str() {
+            "FN" if f.name.is_empty() => f.name = unescape(&value).trim().to_owned(),
+            "N" => structured = Some(value),
+            "ORG" => f.org = split_escaped(&value, ';').into_iter().next().unwrap_or_default().trim().to_owned(),
+            "TITLE" => f.title = unescape(&value).trim().to_owned(),
+            "NOTE" => f.note = unescape(&value).trim().to_owned(),
+            "BDAY" => f.birthday = value.trim().to_owned(),
+            "X-NOSTR-ABOUT" => f.about = unescape(&value).trim().to_owned(),
+            "X-NOSTR-NIP05" => f.nip05 = value.trim().to_owned(),
+            "X-NOSTR-LUD16" => f.lud16 = value.trim().to_owned(),
+            "PHOTO" if value.trim_start().starts_with("http") && f.picture.is_empty() => f.picture = value.trim().to_owned(),
+            "TEL" if !value.trim().is_empty() => f.phones.push(Typed { kind: kind_of(&params), value: value.trim().trim_start_matches("tel:").to_owned() }),
+            "EMAIL" if value.contains('@') => {
+                let v = value.trim().to_ascii_lowercase();
+                if !f.emails.iter().any(|e| e.value == v) {
+                    f.emails.push(Typed { kind: kind_of(&params), value: v });
+                }
+            }
+            "URL" if !value.trim().is_empty() => f.urls.push(value.trim().to_owned()),
+            "CATEGORIES" => f.groups.extend(split_escaped(&value, ',').into_iter().map(|g| g.trim().to_owned()).filter(|g| !g.is_empty())),
+            "ADR" => {
+                let p = split_escaped(&value, ';');
+                let at = |i: usize| p.get(i).map(|x| x.trim().to_owned()).unwrap_or_default();
+                let a = Address { kind: kind_of(&params), street: at(2), city: at(3), region: at(4), code: at(5), country: at(6) };
+                if a != (Address { kind: a.kind.clone(), ..Address::default() }) {
+                    f.addresses.push(a);
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(n) = structured {
+        let p = split_escaped(&n, ';');
+        f.family = p.first().map(|x| x.trim().to_owned()).unwrap_or_default();
+        f.given = p.get(1).map(|x| x.trim().to_owned()).unwrap_or_default();
+        if f.name.is_empty() {
+            f.name = [f.given.as_str(), f.family.as_str()].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" ");
+        }
+    }
+    f.groups.dedup();
+    f
+}
+
+fn type_param(kind: &str) -> &'static str {
+    match kind {
+        "mobile" => ";TYPE=CELL",
+        "work" => ";TYPE=WORK",
+        "home" => ";TYPE=HOME",
+        _ => "",
+    }
+}
+
+fn clean(v: &str) -> String {
+    v.chars().filter(|c| !c.is_control() || *c == '\n').collect::<String>().trim().chars().take(MAX_TEXT).collect()
+}
+
+/// Écrit `f` dans la fiche `card` : les propriétés gérées (`FN`, `N`, `ORG`, `TITLE`, `TEL`, `EMAIL`, `ADR`, `BDAY`, `NOTE`, `URL`, `CATEGORIES`)
+/// sont remplacées, **toutes les autres sont conservées** (photo, `X-NOSTR-PUBKEY`, `UID`…). `REV` est mis à jour. Rend `None` si le nom est vide.
+pub fn apply_fields(card: &str, f: &Fields, now: i64) -> Option<String> {
+    let name = clean(&f.name);
+    if name.is_empty() {
+        return None;
+    }
+    const MANAGED: [&str; 14] = ["FN", "N", "ORG", "TITLE", "TEL", "EMAIL", "ADR", "BDAY", "NOTE", "URL", "CATEGORIES", "X-NOSTR-ABOUT", "X-NOSTR-NIP05", "X-NOSTR-LUD16"];
+    let mut lines: Vec<String> = unfold(card);
+    let end = lines.iter().rposition(|l| l.trim().eq_ignore_ascii_case("END:VCARD")).unwrap_or(lines.len());
+    lines.truncate(end);
+    // Une photo `VALUE=uri` (adresse https) est gérée ici ; une photo incorporée (base64) reste telle quelle.
+    lines.retain(|l| !split_property(l).is_some_and(|(n, v)| MANAGED.contains(&n.as_str()) || n == "REV" || (n == "PHOTO" && v.trim_start().starts_with("http"))));
+    lines.push(format!("FN:{}", escape(&name)));
+    // `N` se déduit du nom affiché quand on ne donne ni prénom ni nom de famille (« Léa Martin » → famille Martin, prénom Léa).
+    let (mut given, mut family) = (clean(&f.given), clean(&f.family));
+    if given.is_empty() && family.is_empty() {
+        let mut parts: Vec<&str> = name.split_whitespace().collect();
+        if parts.len() > 1 {
+            family = parts.pop().unwrap_or_default().to_owned();
+        }
+        given = parts.join(" ");
+    }
+    lines.push(format!("N:{};{};;;", escape(&family), escape(&given)));
+    let single = |lines: &mut Vec<String>, key: &str, v: &str| {
+        let v = clean(v);
+        if !v.is_empty() {
+            lines.push(format!("{key}:{}", escape(&v)));
+        }
+    };
+    single(&mut lines, "ORG", &f.org);
+    single(&mut lines, "TITLE", &f.title);
+    single(&mut lines, "NOTE", &f.note);
+    single(&mut lines, "X-NOSTR-ABOUT", &f.about);
+    for (key, v) in [("X-NOSTR-NIP05", &f.nip05), ("X-NOSTR-LUD16", &f.lud16)] {
+        let v = clean(v);
+        if !v.is_empty() && !v.contains(['\n', ' ']) {
+            lines.push(format!("{key}:{v}"));
+        }
+    }
+    let pic = clean(&f.picture);
+    if pic.starts_with("https://") && !pic.contains(['\n', ' ']) {
+        lines.push(format!("PHOTO;VALUE=uri:{pic}"));
+    }
+    let bday = f.birthday.trim();
+    if !bday.is_empty() && bday.len() <= 12 && bday.chars().all(|c| c.is_ascii_digit() || c == '-') {
+        lines.push(format!("BDAY:{bday}"));
+    }
+    for t in f.phones.iter().filter(|t| !t.value.trim().is_empty()).take(MAX_ITEMS) {
+        lines.push(format!("TEL{}:{}", type_param(&t.kind), clean(&t.value).replace([';', ','], "")));
+    }
+    for t in f.emails.iter().filter(|t| t.value.contains('@')).take(MAX_ITEMS) {
+        lines.push(format!("EMAIL;TYPE=INTERNET{}:{}", type_param(&t.kind), clean(&t.value).to_ascii_lowercase()));
+    }
+    for a in f.addresses.iter().take(MAX_ITEMS) {
+        if [&a.street, &a.city, &a.region, &a.code, &a.country].iter().any(|x| !x.trim().is_empty()) {
+            lines.push(format!("ADR{}:;;{};{};{};{};{}", type_param(&a.kind), escape(&clean(&a.street)), escape(&clean(&a.city)), escape(&clean(&a.region)), escape(&clean(&a.code)), escape(&clean(&a.country))));
+        }
+    }
+    for u in f.urls.iter().filter(|u| !u.trim().is_empty()).take(MAX_ITEMS) {
+        lines.push(format!("URL:{}", clean(u)));
+    }
+    let groups: Vec<String> = f.groups.iter().map(|g| clean(g)).filter(|g| !g.is_empty()).take(MAX_ITEMS).collect();
+    if !groups.is_empty() {
+        lines.push(format!("CATEGORIES:{}", groups.iter().map(|g| escape(g)).collect::<Vec<_>>().join(",")));
+    }
+    lines.push(format!("REV:{}", rev_now(now)));
+    lines.push("END:VCARD".to_owned());
+    let mut out = lines.iter().map(|l| fold(l)).collect::<Vec<_>>().join("\r\n");
+    out.push_str("\r\n");
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +531,48 @@ mod tests {
     fn npub(hex: &str) -> String {
         let bytes: Vec<u8> = (0..64).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
         bech32::encode::<bech32::Bech32>(bech32::Hrp::parse("npub").unwrap(), &bytes).unwrap()
+    }
+
+    const FULL: &str = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:u1\r\nFN:Léa Martin\r\nN:Martin;Léa;;;\r\nORG:Atelier\\, Sud;Pôle\r\nTITLE:Cheffe\r\nTEL;TYPE=CELL:+33 6 12 34 56 78\r\nTEL;TYPE=WORK,VOICE:+33 5 61 00 00 00\r\nEMAIL;TYPE=HOME:Lea@Example.org\r\nADR;TYPE=HOME:;;1 rue des Fleurs;Toulouse;Occitanie;31000;France\r\nBDAY:1988-04-12\r\nNOTE:Rencontrée au marché\\nà revoir\r\nURL:https://lea.example\r\nCATEGORIES:Famille,Voisins\r\nX-NOSTR-ABOUT:Boulangère\\, voisine\r\nX-NOSTR-NIP05:lea@example.org\r\nPHOTO;VALUE=uri:https://img.example/lea.jpg\r\nPHOTO;ENCODING=b;TYPE=JPEG:AAAA\r\nX-ASTRO-ME:1\r\nX-NOSTR-PUBKEY:7d1a5f6c0b3e9a24c8f1d5b7e2a40c93186fb5d2e7a9034c1d8f6b2a5e70913c\r\nEND:VCARD\r\n";
+
+    #[test]
+    fn every_editable_field_is_read_with_its_kind() {
+        let f = read_fields(FULL);
+        assert_eq!((f.name.as_str(), f.given.as_str(), f.family.as_str(), f.org.as_str(), f.title.as_str()), ("Léa Martin", "Léa", "Martin", "Atelier, Sud", "Cheffe"));
+        assert_eq!(f.phones, [Typed { kind: "mobile".into(), value: "+33 6 12 34 56 78".into() }, Typed { kind: "work".into(), value: "+33 5 61 00 00 00".into() }]);
+        assert_eq!(f.emails, [Typed { kind: "home".into(), value: "lea@example.org".into() }]);
+        assert_eq!((f.addresses[0].street.as_str(), f.addresses[0].city.as_str(), f.addresses[0].code.as_str(), f.addresses[0].country.as_str()), ("1 rue des Fleurs", "Toulouse", "31000", "France"));
+        assert_eq!((f.about.as_str(), f.nip05.as_str(), f.picture.as_str(), is_me(FULL)), ("Boulangère, voisine", "lea@example.org", "https://img.example/lea.jpg", true));
+        assert_eq!((f.birthday.as_str(), f.note.as_str(), f.urls.as_slice(), f.groups.as_slice()), ("1988-04-12", "Rencontrée au marché\nà revoir", ["https://lea.example".to_owned()].as_slice(), ["Famille".to_owned(), "Voisins".to_owned()].as_slice()));
+    }
+
+    #[test]
+    fn writing_fields_changes_only_what_it_manages_and_reads_back_identically() {
+        let mut f = read_fields(FULL);
+        f.title = "Directrice".into();
+        f.phones.push(Typed { kind: "home".into(), value: "+33 5 61 11 11 11".into() });
+        f.groups = vec!["Équipe".into()];
+        let out = apply_fields(FULL, &f, 1_800_000_000).unwrap();
+        assert!(out.contains("PHOTO;ENCODING=b;TYPE=JPEG:AAAA") && out.contains("X-NOSTR-PUBKEY:7d1a5f6c") && out.contains("UID:u1") && out.contains("X-ASTRO-ME:1"), "photo incorporée, clé Nostr, UID et marque « moi » sont conservés");
+        assert_eq!(out.matches("PHOTO").count(), 2, "une photo uri remplacée, jamais dupliquée");
+        assert_eq!(out.matches("BEGIN:VCARD").count(), 1);
+        assert!(out.ends_with("END:VCARD\r\n") && out.lines().all(|l| l.len() <= 76), "fiche valide, lignes repliées");
+        let back = read_fields(&out);
+        assert_eq!(back, f, "ce qu'on écrit se relit à l'identique");
+        assert!(parse(out.as_bytes()).is_ok(), "la fiche reste lisible par l'annuaire");
+        // Nom vide : refusé. Valeurs vides : propriétés retirées.
+        assert!(apply_fields(FULL, &Fields::default(), 1).is_none());
+        let bare = apply_fields(FULL, &Fields { name: "Léa".into(), ..Fields::default() }, 1).unwrap();
+        assert!(!bare.contains("TEL") && !bare.contains("ORG") && !bare.contains("CATEGORIES") && bare.contains("X-NOSTR-PUBKEY"));
+    }
+
+    #[test]
+    fn hostile_values_cannot_inject_properties() {
+        let f = Fields { name: "Eve\r\nEMAIL:evil@x.org".into(), note: "a\r\nTEL:+1".into(), phones: vec![Typed { kind: "x".into(), value: "1;2,3\r\nNOTE:z".into() }], ..Fields::default() };
+        let out = apply_fields("BEGIN:VCARD\r\nVERSION:3.0\r\nEND:VCARD\r\n", &f, 1).unwrap();
+        let back = read_fields(&out);
+        assert!(back.emails.is_empty(), "un saut de ligne dans un nom n'ajoute aucune propriété : {out}");
+        assert_eq!(back.phones.len(), 1);
     }
 
     #[test]

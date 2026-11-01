@@ -219,6 +219,17 @@ CREATE TABLE IF NOT EXISTS identity_links (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS identity_links_name ON identity_links(owner_hex, name_key);
 
+-- Carnet d'adresses : les champs lus des fiches de `/Contacts` (téléphones, société, adresses, groupes…) pour la recherche et l'affichage.
+-- PROJECTION reconstructible : le fichier chiffré reste la source de vérité, un balayage de `/Contacts` la refait.
+CREATE TABLE IF NOT EXISTS contact_cards (
+  owner_hex TEXT NOT NULL,
+  path      TEXT NOT NULL,
+  fields    TEXT NOT NULL,             -- JSON de `astro_dav::vcard::Fields`
+  search    TEXT NOT NULL,             -- texte comparable : noms, société, emails, chiffres des téléphones, notes, groupes
+  me        INTEGER NOT NULL DEFAULT 0 CHECK (me IN (0,1)),  -- 1 : la fiche du titulaire lui-même (X-ASTRO-ME), liée à son profil Nostr
+  PRIMARY KEY (owner_hex, path)
+) STRICT, WITHOUT ROWID;
+
 -- Partages FaceCloud déjà effectués (un par photo et destinataire) : état LOCAL, évite les doublons au retraitement.
 CREATE TABLE IF NOT EXISTS face_shares (
   owner_hex     TEXT NOT NULL,

@@ -675,7 +675,9 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
     let consoles_ui = consoles.clone();
     let assist_admin = admin::assist_admin(&assist, &forwards, &consoles);
     let account_origin = a.domains.first().map(|d| format!("https://{d}"));
-    let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone())))
+    let account_svc = Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone()));
+    let address_book = Arc::new(astroportd::address_book::AddressBook::new(db.clone(), dav.clone(), links.clone(), Some(account_svc.clone())));
+    let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
         .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), assist: Some(assist_admin), tasks: Some(db.clone()) }).handler());
     if let Some(f) = thumbs_fn {
         ui = ui.with_face_thumbs(f);

@@ -78,6 +78,33 @@ pub enum LibraryQuery {
     Duplicates(bool),
 }
 
+/// Opération du carnet d'adresses.
+#[derive(Debug, Clone)]
+pub enum BookOp {
+    /// Fiches filtrées par texte et par groupe.
+    List(String, Option<String>),
+    /// Une fiche en détail.
+    Get(String),
+    /// Crée (`None`) ou modifie une fiche : champs en JSON.
+    Save(Option<String>, Value),
+    /// Supprime une fiche.
+    Delete(String),
+    /// Prend des valeurs du profil Nostr dans la fiche.
+    Take(String, Vec<String>),
+    /// Renomme ou retire un groupe.
+    Group(String, Option<String>),
+    /// Importe un fichier vCard.
+    Import(String),
+    /// Doublons probables.
+    Duplicates,
+    /// Fusionne des fiches dans une fiche gardée.
+    Merge(String, Vec<String>),
+    /// « Ma fiche » : lecture.
+    Me,
+    /// « Ma fiche » : enregistrement (publie le profil Nostr et écrit la fiche).
+    SaveMe(Value),
+}
+
 /// Demande de carte telle que l'URL la porte.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct MapQuery {
@@ -316,6 +343,10 @@ pub trait Backend: Send + Sync + 'static {
     /// Change les paramètres IA (champ absent : inchangé ; `null` ou vide : effacé).
     fn set_ai_params(&self, _who: &Principal, _patch: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("paramètres IA non disponibles sur cette station")) }
+    }
+    /// Carnet d'adresses : une opération ([`BookOp`]) sur les fiches du titulaire.
+    fn book(&self, _who: &Principal, _op: BookOp) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("le carnet d'adresses n'est pas disponible sur cette station")) }
     }
     /// Plans (ORIGIN, UPlanet privées) configurés sur cette station et ceux que ce processus sert (Capitaine).
     fn planes(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
@@ -621,6 +652,15 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/health", get(health::<B>))
         .route("/api/v1/me", get(me::<B>))
         .route("/api/v1/me/ai", get(ai_params::<B>).post(set_ai_params::<B>))
+        .route("/api/v1/book", get(book_list::<B>))
+        .route("/api/v1/book/card", get(book_get::<B>).post(book_save::<B>))
+        .route("/api/v1/book/delete", post(book_delete::<B>))
+        .route("/api/v1/book/take", post(book_take::<B>))
+        .route("/api/v1/book/group", post(book_group::<B>))
+        .route("/api/v1/book/import", post(book_import::<B>))
+        .route("/api/v1/book/duplicates", get(book_duplicates::<B>))
+        .route("/api/v1/book/merge", post(book_merge::<B>))
+        .route("/api/v1/book/me", get(book_me::<B>).post(book_save_me::<B>))
         .route("/api/v1/dashboard", get(dashboard::<B>))
         .route("/api/v1/activity", get(activity_stream::<B>))
         .route("/api/v1/ucloud/list", get(ucloud_list::<B>))
@@ -766,6 +806,95 @@ async fn health<B: Backend>(State(st): State<Arc<UiState<B>>>) -> Response {
 
 async fn me<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
     private(Json(json!({ "hex": p.hex, "email": p.email, "captain": p.captain, "ai": st.backend.ai_declared(&p).await })).into_response())
+}
+
+#[derive(Deserialize)]
+struct BookListQuery {
+    q: Option<String>,
+    group: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BookPathQuery {
+    path: String,
+}
+
+#[derive(Deserialize)]
+struct BookSaveBody {
+    path: Option<String>,
+    fields: Value,
+}
+
+#[derive(Deserialize)]
+struct BookPathBody {
+    path: String,
+}
+
+#[derive(Deserialize)]
+struct BookTakeBody {
+    path: String,
+    keys: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct BookGroupBody {
+    from: String,
+    to: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BookImportBody {
+    vcf: String,
+}
+
+#[derive(Deserialize)]
+struct BookMergeBody {
+    keep: String,
+    drop: Vec<String>,
+}
+
+async fn book_list<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<BookListQuery>) -> Response {
+    reply(st.backend.book(&p, BookOp::List(q.q.unwrap_or_default().chars().take(200).collect(), q.group.filter(|g| g.len() <= 80))).await)
+}
+
+async fn book_get<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<BookPathQuery>) -> Response {
+    reply(st.backend.book(&p, BookOp::Get(q.path)).await)
+}
+
+async fn book_save<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookSaveBody>) -> Response {
+    reply(st.backend.book(&p, BookOp::Save(b.path, b.fields)).await)
+}
+
+async fn book_delete<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookPathBody>) -> Response {
+    reply(st.backend.book(&p, BookOp::Delete(b.path)).await)
+}
+
+async fn book_take<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookTakeBody>) -> Response {
+    reply(st.backend.book(&p, BookOp::Take(b.path, b.keys.into_iter().take(10).collect())).await)
+}
+
+async fn book_group<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookGroupBody>) -> Response {
+    reply(st.backend.book(&p, BookOp::Group(b.from, b.to)).await)
+}
+
+async fn book_import<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookImportBody>) -> Response {
+    reply(st.backend.book(&p, BookOp::Import(b.vcf)).await)
+}
+
+async fn book_duplicates<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.book(&p, BookOp::Duplicates).await)
+}
+
+async fn book_merge<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookMergeBody>) -> Response {
+    reply(st.backend.book(&p, BookOp::Merge(b.keep, b.drop)).await)
+}
+
+async fn book_me<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.book(&p, BookOp::Me).await)
+}
+
+async fn book_save_me<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(fields): Json<Value>) -> Response {
+    reply(st.backend.book(&p, BookOp::SaveMe(fields)).await)
 }
 
 async fn ai_params<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {

@@ -329,6 +329,16 @@ impl AccountService {
         let name = clean("nom", &patch["name"], 64)?;
         let about = clean("présentation", &patch["about"], 500)?;
         let picture = clean("image", &patch["picture"], 256)?;
+        let website = clean("site web", &patch["website"], 256)?;
+        let (nip05, lud16) = (clean("NIP-05", &patch["nip05"], 100)?, clean("adresse Lightning", &patch["lud16"], 100)?);
+        if website.as_deref().is_some_and(|w| !w.is_empty() && !w.starts_with("https://")) {
+            return Err(AccountError::Invalid("site web : adresse https:// attendue".into()));
+        }
+        for (label, v) in [("NIP-05", &nip05), ("adresse Lightning", &lud16)] {
+            if v.as_deref().is_some_and(|x| !x.is_empty() && (!x.contains('@') || x.contains(char::is_whitespace))) {
+                return Err(AccountError::Invalid(format!("{label} : forme nom@domaine attendue")));
+            }
+        }
         if name.as_deref() == Some("") {
             return Err(AccountError::Invalid("nom : ne peut pas être vide".into()));
         }
@@ -340,16 +350,16 @@ impl AccountService {
             Value::String(l) if LANGS.contains(&l.as_str()) => Some(l.clone()),
             _ => return Err(AccountError::Invalid(format!("langue : {} attendue", LANGS.join(", ")))),
         };
-        if name.is_none() && about.is_none() && picture.is_none() && lang.is_none() {
+        if name.is_none() && about.is_none() && picture.is_none() && website.is_none() && nip05.is_none() && lud16.is_none() && lang.is_none() {
             return Err(AccountError::Invalid("rien à modifier".into()));
         }
-        if name.is_some() || about.is_some() || picture.is_some() {
+        if name.is_some() || about.is_some() || picture.is_some() || website.is_some() || nip05.is_some() || lud16.is_some() {
             let secret = self.keys.secret(hex).ok_or_else(|| internal("clé du compte introuvable sur cette station"))?;
             let (mut content, tags, previous) = match self.last_event(hex, kind::METADATA).await {
                 Some((c, t, at)) => (serde_json::from_str::<Value>(&c).unwrap_or_else(|_| json!({})), serde_json::from_str::<Vec<Vec<String>>>(&t).unwrap_or_default(), at),
                 None => (json!({}), Vec::new(), 0),
             };
-            for (key, value) in [("name", name), ("about", about), ("picture", picture)] {
+            for (key, value) in [("name", name), ("about", about), ("picture", picture), ("website", website), ("nip05", nip05), ("lud16", lud16)] {
                 match value {
                     Some(v) if v.is_empty() => {
                         content.as_object_mut().map(|o| o.remove(key));

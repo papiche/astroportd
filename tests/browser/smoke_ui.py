@@ -106,6 +106,17 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, dict(enabled=True, dav='/dav', faces=STATE['faces'], people=people(), unknown=sum(1 for f in STATE['faces'] if not f['named']), groups_skipped=False, truncated=False))
         if p.startswith('/dav/'): return self.send(200, base64.b64decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), 'image/gif')
         if p == '/api/v1/station/planes': return self.send(200, dict(configured=True, multi_process=True, front=True, planes=[dict(name='origin', origin=True, http='127.0.0.1:18080', db='/x/uplanet.db', db_exists=True, running=True), dict(name='zen1', origin=False, http='127.0.0.1:18081', db='/x/zen1/uplanet.db', db_exists=False, running=False)], restart_needed=True, pending=['zen1'], path='/x/planes.json'))
+        if p.startswith('/api/v1/book'):
+            STATE.setdefault('gets', []).append(self.path)
+            lea = dict(name='Léa Martin', given='Léa', family='Martin', org='Atelier', title='', phones=[dict(kind='mobile', value='+33 6 12 34 56 78')], emails=[dict(kind='home', value='lea@example.org')], addresses=[], birthday='', note='', urls=[], groups=['Famille'], about='', picture='', nip05='', lud16='')
+            if p == '/api/v1/book': return self.send(200, dict(total=3, letters=['L', 'P'], groups=[dict(name='Famille', count=1)], contacts=[
+                dict(path='/Contacts/Moi.vcf', name='Alice', org='', title='', emails=['alice@example.org'], phones=[], groups=[], letter='A', me=True, pubkey='aa' * 32, via=None, warning=None, faces=0, picture=''),
+                dict(path='/Contacts/Lea.vcf', name='Léa Martin', org='Atelier', title='', emails=['lea@example.org'], phones=lea['phones'], groups=['Famille'], letter='L', me=False, pubkey='ab' * 32, via='vcard', warning=None, faces=12, picture=''),
+                dict(path='/Contacts/Paul.vcf', name='Paul Durand', org='', title='', emails=[], phones=[], groups=[], letter='P', me=False, pubkey=None, via=None, warning=None, faces=0, picture='')]))
+            if p == '/api/v1/book/me': return self.send(200, dict(path='/Contacts/Moi.vcf', me=True, pubkey='aa' * 32, fields=dict(lea, name='Alice', given='Alice', family='', org='', phones=[], emails=[dict(kind='home', value='alice@example.org')], groups=[], about='Capitaine'), faces=0, hosted_here='alice@example.org', profile=None, diff=None, drift=False))
+            if p == '/api/v1/book/card': return self.send(200, dict(path='/Contacts/Lea.vcf', me=False, pubkey='ab' * 32, via='vcard', fields=lea, faces=12, hosted_here=None, profile=dict(name='Léa M.'), drift=True, diff=[
+                dict(key='name', label='Nom', mine='Léa Martin', theirs='Léa M.', same=False, can_take=True), dict(key='about', label='Présentation', mine='', theirs='Boulangère', same=False, can_take=True), dict(key='nip05', label='NIP-05', mine='', theirs='', same=True, can_take=False)]))
+            if p == '/api/v1/book/duplicates': return self.send(200, dict(groups=[dict(reasons=['même téléphone'], cards=[dict(path='/Contacts/Lea.vcf', name='Léa Martin', emails=[], phones=['+33 6 12']), dict(path='/Contacts/Lea2.vcf', name='L. Martin', emails=[], phones=['06 12'])])]))
         if p == '/api/v1/ucloud/memories': return self.send(200, dict(memories=[]))
         if p == '/api/v1/ucloud/timeline':
             q = self.path.split('ym=')[1] if 'ym=' in self.path else None
@@ -134,6 +145,7 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/v1/station/planes': return self.send(200, dict(name=body['name'], http='127.0.0.1:18082', p2p='/ip4/0.0.0.0/tcp/4102', swarm_key_path='/x/zen2/swarm.key', created_key='/key/swarm/psk/1.0.0/\\n/base16/\\n' + 'ab' * 32))
         if p == '/api/v1/me/ai':
             STATE['ai'] = bool(body.get('ollama_url') or body.get('provider')); return self.send(200, dict(ollama_url=body.get('ollama_url'), provider=body.get('provider'), has_key=False, model=None, declared=STATE['ai']))
+        if p.startswith('/api/v1/book'): return self.send(200, dict(path='/Contacts/Lea.vcf', taken=body.get('keys'), imported=2, duplicates=1, rejected=[], merged=True, removed=1, changed=1, fields=body.get('fields') or body))
         if p == '/api/v1/faces/delete-photos': return self.send(200, dict(deleted=len({f['path'] for f in STATE['faces'] if f['id'] in body['ids']}), missing=0, bytes=0))
         if p == '/api/v1/faces/assign':
             for f in STATE['faces']:
@@ -290,8 +302,33 @@ with sync_playwright() as pw:
     check('Display name' in p2.inner_text('main') and 'Export my keys' in p2.inner_text('main'), 'l\'écran Mon compte est traduit')
     check(p2.get_attribute('html', 'lang') == 'en', 'l\'attribut lang du document suit')
     ctx2.close()
-    # Contacts : l'annuaire, la liaison manuelle et la création d'une fiche depuis une personne.
-    page.goto(f'http://127.0.0.1:{port}/#/contacts'); page.wait_for_selector('table'); page.wait_for_timeout(200)
+    # Carnet d'adresses : recherche, index, fiche unifiée, comparaison avec le profil Nostr, « Ma fiche », nouvelle fiche, doublons.
+    page.goto(f'http://127.0.0.1:{port}/#/contacts'); page.wait_for_selector('.ab-list li button'); page.wait_for_timeout(300)
+    names = page.locator('.ab-item strong').all_inner_texts()
+    check(names[0] == 'Alice' and 'Moi' in page.locator('.ab-list li').first.inner_text() and names[1:] == ['Léa Martin', 'Paul Durand'], 'le carnet montre « Moi » en tête puis les fiches par ordre alphabétique : ' + str(names))
+    check(page.locator('.ab-index a').all_inner_texts() == ['L', 'P'] and page.locator('.chip:has-text("Famille")').count() == 1, "l'index alphabétique et les groupes sont affichés")
+    page.fill('.ab-search input', 'lea'); page.wait_for_timeout(500)
+    check(any('q=lea' in g for g in STATE.get('gets', [])), 'la recherche part au fil de la frappe : ' + str([g for g in STATE.get('gets', []) if 'q=' in g][-1:]))
+    page.click('.ab-item:has-text("Léa Martin")'); page.wait_for_selector('.ab-card'); page.wait_for_timeout(300)
+    check(page.input_value('#f-name') == 'Léa Martin' and page.locator('.ab-diff table tbody tr').count() == 2, 'la fiche affiche ses champs et la comparaison avec le profil Nostr')
+    page.locator('.ab-diff tr:has-text("Nom") button:has-text("Prendre")').click(); page.wait_for_timeout(400)
+    taken = [b for p_, b in STATE['posts'] if p_ == '/api/v1/book/take']
+    check(taken and taken[-1] == dict(path='/Contacts/Lea.vcf', keys=['name']), 'on prend UNE valeur du profil, pas tout : ' + str(taken[-1:]))
+    page.click('.ab-item:has-text("Alice")'); page.wait_for_selector('.ab-card'); page.wait_for_timeout(300)
+    check('Votre profil Nostr et votre fiche sont réunis' in page.inner_text('.ab-head') and page.locator('.ab-diff').count() == 0 and page.locator('button:has-text("Publier et enregistrer")').count() == 1, '« Ma fiche » réunit profil Nostr et fiche, sans comparaison à faire')
+    page.fill('#f-about', 'Capitaine du Sud'); page.click('button:has-text("Publier et enregistrer")'); page.wait_for_timeout(400)
+    posted = [b for p_, b in STATE['posts'] if p_ == '/api/v1/book/me']
+    check(posted and posted[-1]['about'] == 'Capitaine du Sud' and posted[-1]['name'] == 'Alice', 'un seul enregistrement envoie champs publics et privés : ' + str(posted[-1:])[:120])
+    page.click('button:has-text("Nouvelle fiche")'); page.wait_for_selector('#f-name'); page.fill('#f-name', 'Nouvelle Amie'); page.click('.ab-actions button:has-text("Enregistrer")'); page.wait_for_timeout(400)
+    created = [b for p_, b in STATE['posts'] if p_ == '/api/v1/book/card']
+    check(created and created[-1]['path'] is None and created[-1]['fields']['name'] == 'Nouvelle Amie', 'une nouvelle fiche se crée avec son nom : ' + str(created[-1:])[:120])
+    page.click('button:has-text("Doublons")'); page.wait_for_selector('button:has-text("Garder celle-ci")'); page.wait_for_timeout(200)
+    check('même téléphone' in page.inner_text('.ab-detail'), 'les doublons probables sont proposés avec leur raison')
+    page.screenshot(path=str(OUT / 'contacts-book.png'))
+    # Contacts : l'annuaire de synchronisation (onglet « Synchroniser et inviter »), la liaison manuelle et la création d'une fiche depuis une personne.
+    def open_sync():
+        page.goto(f'http://127.0.0.1:{port}/#/account'); page.wait_for_timeout(100); page.goto(f'http://127.0.0.1:{port}/#/contacts'); page.wait_for_selector('button:has-text("Synchroniser et inviter")'); page.click('button:has-text("Synchroniser et inviter")'); page.wait_for_selector('table')
+    open_sync(); page.wait_for_timeout(200)
     txt = page.inner_text('main')
     check('Léa Martin' in txt and 'Proches réciproques' in txt and 'sans lien' in txt and 'https://s.example/dav/' in txt, 'l\'annuaire montre les fiches, leur lien MULTIPASS et l\'adresse CardDAV')
     page.locator('table tbody tr').nth(1).locator('input').fill('bea@example.org'); page.locator('table tbody tr').nth(1).locator('button:text-is("Relier")').click(); page.wait_for_timeout(400)
@@ -301,7 +338,7 @@ with sync_playwright() as pw:
     sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/contacts/from-person']
     check(sent and sent[-1] == dict(name='Nina'), 'la fiche se crée depuis une personne reconnue')
     # Invitations : le lien se crée depuis une fiche (avec son QR), la liste montre les états, le lien se retire.
-    page.goto(f'http://127.0.0.1:{port}/#/contacts'); page.wait_for_selector('table'); page.wait_for_timeout(200)
+    open_sync(); page.wait_for_timeout(200)
     check(page.locator('table tbody tr:has-text("Léa Martin") button:text-is("Inviter")').count() == 0, 'une fiche déjà reliée à un MULTIPASS n\'a pas de bouton Inviter')
     page.locator('table tbody tr:has-text("Paul") button:text-is("Inviter")').click(); page.wait_for_selector('img[alt^="QR code du lien"]'); page.wait_for_timeout(200)
     sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/invites']
@@ -312,7 +349,7 @@ with sync_playwright() as pw:
     check('a rejoint' in txt and 'ouverte' in txt, 'la liste des invitations montre leur état : a rejoint / ouverte')
     page.locator('table tbody tr:has-text("Zoé") button:text-is("Retirer")').click(); page.wait_for_timeout(300)
     check(STATE['deleted'] == ['/api/v1/invites/' + '2' * 32], 'retirer supprime le lien : ' + str(STATE['deleted']))
-    page.goto(f'http://127.0.0.1:{port}/#/contacts'); page.wait_for_selector('table')
+    open_sync()
     page.locator('main').get_by_text('Nina').locator('xpath=..').locator('button:text-is("Inviter")').click(); page.wait_for_timeout(400)
     sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/contacts/from-person']
     check(sent and sent[-1] == dict(name='Nina'), 'inviter une personne sans fiche crée d\'abord sa fiche')
@@ -437,9 +474,9 @@ with sync_playwright() as pw:
     # Quitter un écran lent avant la fin de son chargement ne doit pas faire apparaître son erreur dans l'écran suivant.
     page.route('**/api/v1/faces/board', lambda route: (page.wait_for_timeout(2500), route.continue_()))
     page.goto(f'http://127.0.0.1:{port}/#/people'); page.wait_for_timeout(300)
-    page.goto(f'http://127.0.0.1:{port}/#/contacts'); page.wait_for_selector('main >> text=Synchroniser avec mon téléphone'); page.wait_for_timeout(4500)
+    page.goto(f'http://127.0.0.1:{port}/#/contacts'); page.wait_for_selector('main >> .ab-search'); page.wait_for_timeout(4500)
     txt = page.inner_text('main')
-    check('Synchroniser avec mon téléphone' in txt and 'Cannot' not in txt and 'null' not in txt and 'Table de tri' not in txt, "l'écran quitté en cours de chargement n'écrit rien dans le suivant")
+    check('Nouvelle fiche' in txt and 'Cannot' not in txt and 'null' not in txt and 'Table de tri' not in txt, "l'écran quitté en cours de chargement n'écrit rien dans le suivant")
     page.unroute('**/api/v1/faces/board')
     # Appareils : un jeton WebDAV par téléphone, confiné à un dossier.
     page.goto(f'http://127.0.0.1:{port}/#/account'); page.wait_for_selector('#dv-label'); page.wait_for_timeout(300)
@@ -512,7 +549,7 @@ with sync_playwright() as pw:
     # Table de tri : supprimer les photos des visages sélectionnés (confirmation avec le compte exact).
     page.goto(f'http://127.0.0.1:{port}/#/people'); page.wait_for_selector('canvas.pe-board'); page.wait_for_timeout(700)
     page.locator('.pe-todo button').first.click(); page.wait_for_timeout(300)
-    page.once('dialog', lambda d: (STATE.setdefault('dialogs', []).append(d.message), d.accept()))
+    page.once('dialog', lambda d: STATE.setdefault('dialogs', []).append(d.message))  # la confirmation est acceptée par le gestionnaire général
     page.click('.pe-tray button:has-text("Supprimer les photos")'); page.wait_for_timeout(600)
     wiped = [b for p_, b in STATE['posts'] if p_.endswith('/faces/delete-photos')]
     check(len(wiped) == 1 and len(wiped[0]['ids']) >= 1 and 'irréversible' in STATE['dialogs'][0], 'supprimer les photos : confirmation puis appel avec les visages choisis')

@@ -8,7 +8,7 @@ use astro_bro::{MemoryStore, Meta, OllamaClient, Slot};
 use astro_core::Amount;
 use astro_dav::{BlobStore, DavState};
 use astro_p2p::routing::{Candidate, haversine_km};
-use astro_ui::api::Applicant;
+use astro_ui::api::{Applicant, BookOp};
 use astro_ui::{ApiError, Backend, Principal, Status, Subsystem};
 use axum::http::{HeaderMap, Uri};
 use rusqlite::{Connection, params};
@@ -56,6 +56,7 @@ pub struct StationUi<B: BlobStore> {
     probe: Mutex<Option<(Instant, Result<(), String>)>>,
     planes_home: Option<std::path::PathBuf>,
     ai: Option<Arc<crate::member_ai::MemberAi>>,
+    book: Option<Arc<crate::address_book::AddressBook<B>>>,
 }
 
 /// Réponse au lot de photos en attente pour un ami `(titulaire, ami, accepter)` → `(envoyées, retirées)` ; fourni par le binaire.
@@ -101,7 +102,13 @@ pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Fu
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None), planes_home: None, ai: None }
+        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None }
+    }
+
+    /// Carnet d'adresses (fiches, groupes, doublons, « Ma fiche »).
+    pub fn with_book(mut self, book: Arc<crate::address_book::AddressBook<B>>) -> Self {
+        self.book = Some(book);
+        self
     }
 
     /// Paramètres IA des MULTIPASS (Ollama ou clé d'API) : sans eux, BRO n'apparaît pas.
@@ -841,7 +848,12 @@ impl<B: BlobStore> Backend for StationUi<B> {
                         }
                     });
                 }
-                Ok(json!({ "assigned": changed, "name": name }))
+                // Une personne nommée a toujours sa fiche : créée sur le champ si aucune ne porte ce nom.
+                let contact = match &self.book {
+                    Some(book) if !name.trim().is_empty() => book.ensure_person(&who.hex, &name).await.ok(),
+                    _ => None,
+                };
+                Ok(json!({ "assigned": changed, "name": name, "contact": contact }))
             }
             Err(astro_facecloud::FaceError::Invalid(m)) => Err(ApiError::bad_request(m)),
             Err(e) => Err(db_err(e)),
@@ -879,6 +891,26 @@ impl<B: BlobStore> Backend for StationUi<B> {
             Err(astro_facecloud::FaceError::Invalid(m)) => Err(ApiError::bad_request(m)),
             Err(e) => Err(db_err(e)),
         }
+    }
+
+    async fn book(&self, who: &Principal, op: BookOp) -> Result<Value, ApiError> {
+        let book = self.book.as_ref().ok_or_else(|| ApiError::unavailable("le carnet d'adresses n'est pas disponible sur cette station"))?;
+        let o = who.hex.as_str();
+        let fields = |v: Value| serde_json::from_value::<astro_dav::vcard::Fields>(v).map_err(|e| ApiError::bad_request(format!("champs de la fiche invalides : {e}")));
+        let out = match op {
+            BookOp::List(q, group) => book.list(o, &q, group.as_deref()).await,
+            BookOp::Get(path) => book.get(o, &path).await,
+            BookOp::Save(path, f) => book.save(o, path.as_deref(), &fields(f)?).await,
+            BookOp::Delete(path) => book.delete(o, &path).await,
+            BookOp::Take(path, keys) => book.take(o, &path, &keys).await,
+            BookOp::Group(from, to) => book.set_group(o, &from, to.as_deref()).await,
+            BookOp::Import(vcf) => book.import(o, &vcf).await,
+            BookOp::Duplicates => book.duplicates(o).await,
+            BookOp::Merge(keep, drop) => book.merge(o, &keep, &drop).await,
+            BookOp::Me => book.me(o).await,
+            BookOp::SaveMe(f) => book.save_me(o, &fields(f)?).await,
+        };
+        out.map_err(book_error)
     }
 
     async fn ai_declared(&self, who: &Principal) -> bool {
@@ -1611,6 +1643,19 @@ fn ai_error(e: crate::member_ai::AiError) -> ApiError {
         crate::member_ai::AiError::Internal(m) => {
             eprintln!("interface : paramètres IA : {m}");
             ApiError::internal("paramètres IA indisponibles")
+        }
+    }
+}
+
+fn book_error(e: crate::address_book::BookError) -> ApiError {
+    use crate::address_book::BookError as E;
+    match e {
+        E::Invalid(m) => ApiError::bad_request(m),
+        E::NotFound(m) => ApiError::not_found(m),
+        E::Conflict(m) => ApiError::conflict(m),
+        E::Internal(m) => {
+            eprintln!("interface : carnet d'adresses : {m}");
+            ApiError::internal("opération impossible : voir les journaux de la station")
         }
     }
 }

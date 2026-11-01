@@ -144,7 +144,7 @@ function toggle(id) { S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); trayDraw
 async function act(label, call) {
   try { const r = await call(); K.toast(label(r), 1); S.sel.clear(); await load(); } catch (e) { K.toast(e.message); }
 }
-const assign = (ids, name, pubkey) => act(r => `${r.assigned} visage(s) rangé(s) dans « ${name} »`, () => K.api('/api/v1/faces/assign', { method: 'POST', body: { ids, name, ...(pubkey && { pubkey }) } }));
+const assign = (ids, name, pubkey) => act(r => `${r.assigned} visage(s) rangé(s) dans « ${name} »${r.contact ? (r.contact.created ? ' · fiche créée dans Contacts' : ' · reliés à sa fiche de Contacts') : ''}`, () => K.api('/api/v1/faces/assign', { method: 'POST', body: { ids, name, ...(pubkey && { pubkey }) } }));
 const forget = ids => confirm(`Ne plus reconnaître ${ids.length} visage(s) ? Les photos restent dans votre uCloud.`) && act(r => `${r.forgotten} visage(s) oublié(s)`, () => K.api('/api/v1/faces/forget', { method: 'POST', body: { ids } }));
 // Supprime les PHOTOS (pas seulement la reconnaissance) où apparaissent les visages choisis : irréversible, donc confirmée avec le compte exact.
 const wipe = ids => {
@@ -155,8 +155,9 @@ const wipe = ids => {
 };
 function ask(ids) {
   const d = root.querySelector('.pe-name'), inp = d.querySelector('input'), list = d.querySelector('datalist');
-  list.replaceChildren(...S.people.map(p => K.h('option', { value: p.name })));
-  d.querySelector('p').textContent = `${ids.length} visage(s) à ranger. Un nom déjà utilisé les ajoute à cette personne.`;
+  const names = new Set([...S.people.map(p => p.name), ...S.contactNames]);
+  list.replaceChildren(...[...names].map(n => K.h('option', { value: n })));
+  d.querySelector('p').textContent = `${ids.length} visage(s) à ranger. Un nom déjà connu (une personne reconnue ou une fiche de Contacts) les relie à elle ; un nouveau nom crée aussi sa fiche dans Contacts.`;
   d.onsubmit = ev => { if (ev.submitter?.value === 'ok' && inp.value.trim()) assign(ids, inp.value.trim(), S.people.find(p => p.name === inp.value.trim())?.pubkey); };
   inp.value = ''; d.showModal(); inp.focus();
 }
@@ -292,7 +293,7 @@ async function loadBoard() {
 
 export default async function people(el, kit) {
   K = kit; root = el;
-  S = { faces: [], people: [], nodes: [], clusters: [], pos: new Map(), byId: new Map(), hash: new Map(), sel: new Set(), view: 'todo', s: 1, tx: 0, ty: 0, img: [new Map(), new Map()], pend: [new Set(), new Set()], bad: new Set(), no: new Set(), lasso: false, lassoPts: [], visible: () => [] };
+  S = { contactNames: [], faces: [], people: [], nodes: [], clusters: [], pos: new Map(), byId: new Map(), hash: new Map(), sel: new Set(), view: 'todo', s: 1, tx: 0, ty: 0, img: [new Map(), new Map()], pend: [new Set(), new Set()], bad: new Set(), no: new Set(), lasso: false, lassoPts: [], visible: () => [] };
   const h = K.h, link = h('link', { rel: 'stylesheet', href: '/ui/m-people.css' });
   document.head.append(link); K.cleanup(() => link.remove());
   cv = h('canvas', { class: 'pe-board', tabindex: 0, role: 'application', 'aria-label': 'Table de tri des visages. Flèches : déplacer, plus et moins : zoom, zéro : tout voir. Utilisez la liste « À ranger » pour un tri au clavier.' });
@@ -318,6 +319,7 @@ export default async function people(el, kit) {
   K.cleanup(() => { clearTimeout(timer); timer = 0; queue.clear(); tip.remove(); document.querySelectorAll('.pe-ghost').forEach(g => g.remove()); });
   const mq = matchMedia('(prefers-color-scheme: dark)'); mq.onchange = loadColors; K.cleanup(() => { mq.onchange = null; });
   loadColors(); pointer(); size();
+  K.api('/api/v1/book').then(r => { S.contactNames = r.contacts.filter(c => !c.me).map(c => c.name); }, () => {});
   K.api('/api/v1/faces/folders').then(r => { const sel = root.querySelector('.pe-dir'); sel.append(...r.folders.map(f => K.h('option', { value: f.dir, selected: f.dir === dir }, `${f.dir} · ${f.faces} visage(s)${f.todo ? `, ${f.todo} à ranger` : ''}`))); }, () => {});
   try { await load(); } catch (e) { root.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }
   K.every(60000, () => { if (!S.sel.size) load().catch(() => {}); });

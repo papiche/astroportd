@@ -1,16 +1,16 @@
 'use strict';
-// Contacts : le carnet d'adresses (CardDAV) et son lien avec vos photos et vos MULTIPASS. Une fiche reliée à un MULTIPASS
+// Synchronisation du carnet avec un téléphone (CardDAV), invitations et lien avec vos photos et vos MULTIPASS. Une fiche reliée à un MULTIPASS
 // (clé Nostr dans la fiche, ou email d'un compte de cette station) donne sa clé aux visages du même nom : leurs photos
 // se partagent alors toutes seules si vous êtes Proches l'un de l'autre.
 
 let fresh = null; // dernière invitation créée : son lien et son QR restent affichés jusqu'au prochain rechargement
 
-export default async function contacts(root, K) {
+export default async function sync(root, K) {
   const { h, t } = K, api = (p, body) => K.api('/api/v1/contacts' + p, body ? { method: 'POST', body } : undefined);
   root.replaceChildren(h('p', { class: 'muted' }, 'Chargement…'));
   const v = await api('');
   const invites = await K.api('/api/v1/invites').then(r => r.invites, () => null); // null : invitations non disponibles sur cette station
-  const redraw = () => contacts(root, K);
+  const redraw = () => sync(root, K);
   const act = (fn, done) => async ev => { ev.target.disabled = true; try { const r = await fn(); K.toast(t(done, r.linked ?? ''), 1); redraw(); } catch (e) { K.toast(e.message); ev.target.disabled = false; } };
 
 
@@ -67,5 +67,5 @@ export default async function contacts(root, K) {
         h('td', {}, open ? [copy(i.url, t('Lien')), ' ', h('button', { class: 'ghost', onclick: act(() => K.api('/api/v1/invites/' + i.token, { method: 'DELETE' }), 'Lien retiré') }, 'Retirer')] : null));
     })))) : null;
   fresh = null;
-  root.replaceChildren(h('h2', {}, 'Contacts'), h('div', { class: 'grid' }, link, phone, book, people, sent));
+  root.replaceChildren(h('h2', {}, t('Synchronisation et invitations')), h('div', { class: 'grid' }, link, phone, book, people, sent));
 }

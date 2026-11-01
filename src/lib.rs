@@ -4,6 +4,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 pub mod account;
+pub mod address_book;
 pub mod agents;
 pub mod assist;
 pub mod build_attest;

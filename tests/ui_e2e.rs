@@ -112,7 +112,7 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
     circle.refresh(&db).await.unwrap();
     let relay = Relay::new(db.clone(), circle, RelayConfig::default());
     // Le registre des agents passe par le vrai relai (stockage + projection), comme sur une station.
-    let (agents, member_ai) = {
+    let (agents, member_ai, relay_publish) = {
         let relay = relay.clone();
         let publish: astroportd::register::PublishFn = Arc::new(move |e| {
             let relay = relay.clone();
@@ -122,9 +122,11 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
             })
         });
         let keys = || Arc::new(StaticKeySource::new().with(ALICE).with(BOB));
-        (Arc::new(astroportd::agents::Agents::new(db.clone(), keys(), publish.clone()).with_activity(bus.clone())), Arc::new(astroportd::member_ai::MemberAi::new(db.clone(), keys(), publish)))
+        (Arc::new(astroportd::agents::Agents::new(db.clone(), keys(), publish.clone()).with_activity(bus.clone())), Arc::new(astroportd::member_ai::MemberAi::new(db.clone(), keys(), publish.clone())), publish)
     };
-    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_planes_home(dir.join("home")).with_agents(agents).with_ai(member_ai).with_registrar(registrar).with_invites(invites).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), Arc::new(|_| Box::pin(async { Ok(()) })), None).with_activity(bus.clone()))).with_contacts(links).with_coop(
+    let account_svc = Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), relay_publish, None).with_activity(bus.clone()));
+    let address_book = Arc::new(astroportd::address_book::AddressBook::new(db.clone(), dav.clone(), links.clone(), Some(account_svc.clone())));
+    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_planes_home(dir.join("home")).with_agents(agents).with_ai(member_ai).with_registrar(registrar).with_invites(invites).with_account(account_svc).with_book(address_book).with_contacts(links).with_coop(
         Arc::new(|| Box::pin(async { Ok(json!({ "exists": false, "sections": [] })) })),
         Arc::new(|values| Box::pin(async move { Ok(json!({ "saved": values.keys().collect::<Vec<_>>() })) })),
     ).with_admin(Arc::new(|section, body| Box::pin(async move {
@@ -1246,4 +1248,57 @@ async fn bro_shows_only_when_the_member_declared_an_ai_and_the_api_key_never_com
     let (_, cleared) = b.post("/api/v1/me/ai", &alice, json!({ "provider": null, "ollama_url": null })).await;
     assert_eq!((cleared["declared"].as_bool(), cleared["has_key"].as_bool()), (Some(false), Some(false)), "retirer le fournisseur retire aussi la clé");
     assert_eq!(b.get("/api/v1/me", &alice).await.1["ai"], false);
+}
+
+/// Carnet d'adresses par l'API : recherche, fiche, comparaison avec le profil, « Ma fiche » qui publie le profil Nostr ET écrit la fiche chiffrée.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_address_book_api_searches_edits_and_keeps_my_own_card_and_nostr_profile_in_step() {
+    let b = bench("book", None).await;
+    let alice = basic("alice@example.org", &ALICE);
+    let (s, v) = b.post("/api/v1/book/card", &alice, json!({ "fields": { "name": "Léa Martin", "phones": [{ "kind": "mobile", "value": "+33 6 12 34 56 78" }], "groups": ["Famille"] } })).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let path = v["path"].as_str().unwrap().to_owned();
+    let (_, found) = b.get("/api/v1/book?q=12%2034%2056", &alice).await;
+    assert_eq!(found["contacts"][0]["name"], "Léa Martin", "recherche par fragment de téléphone : {found}");
+    assert_eq!(b.get("/api/v1/book?q=zzz", &alice).await.1["total"], 0);
+    assert_eq!(b.get(&format!("/api/v1/book/card?path={}", path.bytes().map(|c| if c.is_ascii_alphanumeric() || c == b'.' { (c as char).to_string() } else { format!("%{c:02X}") }).collect::<String>()), &alice).await.1["fields"]["phones"][0]["value"], "+33 6 12 34 56 78");
+    assert_eq!(b.post("/api/v1/book/card", &alice, json!({ "fields": { "phones": "pas une liste" } })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.get("/api/v1/book/card?path=%2Fetc%2Fpasswd", &alice).await.0, StatusCode::BAD_REQUEST);
+    // Un autre compte ne voit pas ce carnet.
+    let bob = basic("bob@example.org", &BOB);
+    assert_eq!(b.get("/api/v1/book", &bob).await.1["contacts"].as_array().map_or(0, Vec::len), 0);
+
+    // « Ma fiche » : une saisie, deux endroits d'accord.
+    let (_, me) = b.get("/api/v1/book/me", &alice).await;
+    assert_eq!(me["me"], true);
+    let (s, saved) = b.post("/api/v1/book/me", &alice, json!({ "name": "Alice Dupont", "about": "Capitaine", "nip05": "alice@alice.example", "urls": ["https://alice.example"], "phones": [{ "kind": "mobile", "value": "+33 6 00 00 00 01" }], "note": "privé" })).await;
+    assert_eq!(s, StatusCode::OK, "{saved}");
+    assert_eq!((saved["fields"]["name"].as_str(), saved["fields"]["about"].as_str()), (Some("Alice Dupont"), Some("Capitaine")), "{saved}");
+    let kind0: serde_json::Value = serde_json::from_str(&b.db.readers().read(|c| Ok(c.query_row("SELECT content FROM nostr_events WHERE pubkey = ?1 AND kind = 0 ORDER BY created_at DESC LIMIT 1", [hex(&ALICE)], |r| r.get::<_, String>(0))?)).await.unwrap()).unwrap();
+    assert_eq!((kind0["name"].as_str(), kind0["about"].as_str(), kind0["nip05"].as_str(), kind0["website"].as_str()), (Some("Alice Dupont"), Some("Capitaine"), Some("alice@alice.example"), Some("https://alice.example")), "les champs publics partent sur Nostr");
+    assert!(!kind0.to_string().contains("+33 6 00 00 00 01") && !kind0.to_string().contains("privé"), "téléphone et notes ne quittent jamais la fiche chiffrée : {kind0}");
+    let again = b.get("/api/v1/book/me", &alice).await.1;
+    assert_eq!((again["fields"]["phones"][0]["value"].as_str(), again["fields"]["note"].as_str(), again["drift"].as_bool()), (Some("+33 6 00 00 00 01"), Some("privé"), Some(false)), "les champs privés sont relus de la fiche : {again}");
+    assert_eq!(b.post("/api/v1/book/me", &alice, json!({ "name": "A", "nip05": "pas-un-nip05" })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.post("/api/v1/book/delete", &alice, json!({ "path": again["path"] })).await.0, StatusCode::BAD_REQUEST, "ma fiche ne se supprime pas");
+    // La personne reconnue sur les photos reçoit sa fiche d'office.
+    let (_, listed) = b.get("/api/v1/book", &alice).await;
+    assert_eq!(listed["contacts"][0]["me"], true, "ma fiche en tête");
+}
+
+/// Nommer des visages inconnus relie la personne à sa fiche de Contacts, créée sur le champ si aucune ne porte ce nom.
+#[tokio::test(flavor = "multi_thread")]
+async fn naming_unknown_faces_creates_or_reuses_the_contact_card() {
+    let b = bench("face-contact", None).await;
+    let alice = basic("alice@example.org", &ALICE);
+    for n in 1..=3 {
+        b.db.writer().execute("INSERT INTO faces(face_id, owner_hex, name, embed_hash, ts, ucloud_path) VALUES (?1, ?2, 'Inconnu_deadbeef', ?3, 1, '/p.jpg')", vec![n.into(), hex(&ALICE).into(), format!("h{n}").into()]).await.unwrap();
+    }
+    let (s, v) = b.post("/api/v1/faces/assign", &alice, json!({ "ids": [1, 2], "name": "Marie Curie" })).await;
+    assert_eq!((s, v["assigned"].as_i64(), v["contact"]["created"].as_bool()), (StatusCode::OK, Some(2), Some(true)), "{v}");
+    let (_, book) = b.get("/api/v1/book?q=curie", &alice).await;
+    assert_eq!(book["contacts"][0]["name"], "Marie Curie", "la fiche existe dans le carnet : {book}");
+    let (_, again) = b.post("/api/v1/faces/assign", &alice, json!({ "ids": [3], "name": "marie  CURIE" })).await;
+    assert_eq!((again["contact"]["created"].as_bool(), &again["contact"]["path"]), (Some(false), &v["contact"]["path"]), "même personne : la fiche existante, pas une seconde");
+    assert_eq!(b.get("/api/v1/book", &alice).await.1["total"], 1);
 }
