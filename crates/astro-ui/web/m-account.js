@@ -37,6 +37,20 @@ export default async function account(root, K) {
     h('label', { for: 'ac-name' }, 'Nom affiché'), f.name, h('label', { for: 'ac-about' }, 'Présentation'), f.about, h('label', { for: 'ac-pic' }, 'Image (https)'), f.picture,
     h('label', { for: 'ac-lang' }, 'Langue de l\'interface'), f.lang, h('p', {}, save));
 
+  // ── Intelligence artificielle : un Ollama ou une clé d'API déclarés ici font apparaître BRO ──
+  const ai = h('section', { class: 'card' }, h('h2', {}, t('Intelligence artificielle')),
+    h('p', { class: 'muted' }, t('BRO n\'apparaît dans le menu que si vous déclarez ici un Ollama ou une clé d\'API. La clé est chiffrée pour vous seul : elle n\'est jamais réaffichée.')));
+  K.api('/api/v1/me/ai').then(p => {
+    const url = h('input', { id: 'ai-url', value: p.ollama_url || '', placeholder: 'http://127.0.0.1:11434', 'aria-label': t('Adresse d\'Ollama'), maxlength: 256, autocomplete: 'off' });
+    const prov = h('select', { id: 'ai-prov', 'aria-label': t('Fournisseur d\'API') }, [['', t('Aucun')], ['anthropic', 'Anthropic (Claude)'], ['gemini', 'Google Gemini']].map(([v, l]) => h('option', { value: v, selected: (p.provider || '') === v }, l)));
+    const key = h('input', { id: 'ai-key', type: 'password', placeholder: p.has_key ? t('Clé enregistrée : laisser vide pour la garder') : t('Clé d\'API'), autocomplete: 'off', 'aria-label': t('Clé d\'API'), maxlength: 256 });
+    const model = h('input', { id: 'ai-model', value: p.model || '', placeholder: t('Modèle (facultatif)'), 'aria-label': t('Modèle'), maxlength: 64, autocomplete: 'off' });
+    const send = async body => { try { await K.api('/api/v1/me/ai', { method: 'POST', body }); K.toast(t('Paramètres IA enregistrés'), 1); location.reload(); } catch (e) { K.toast(e.message); } };
+    ai.append(h('label', { for: 'ai-url' }, t('Ollama (adresse)')), url, h('label', { for: 'ai-prov' }, t('Ou un fournisseur d\'API')), prov, h('label', { for: 'ai-key' }, t('Clé d\'API')), key, h('label', { for: 'ai-model' }, t('Modèle')), model,
+      h('p', {}, h('button', { onclick: () => send({ ollama_url: url.value.trim() || null, provider: prov.value || null, model: model.value.trim() || null, ...(key.value && { api_key: key.value }) }) }, t('Enregistrer')),
+        p.has_key ? [' ', h('button', { class: 'ghost', onclick: () => { if (confirm(t('Retirer la clé d\'API enregistrée ?'))) send({ api_key: null }); } }, t('Retirer la clé'))] : null));
+  }, e => ai.append(h('p', { class: 'err', role: 'alert' }, e.message)));
+
   // ── Accès WebDAV : jeton ──
   // L'API donne un chemin (`/dav`) : on affiche et on copie l'adresse complète, celle qu'on saisit dans un client WebDAV.
   const davUrl = a.dav.url.startsWith('/') ? location.origin + a.dav.url : a.dav.url;
@@ -150,5 +164,5 @@ export default async function account(root, K) {
   const title = a.profile.name || a.email || 'Mon compte';
   const hero = h('div', { class: 'hero' }, h('div', { class: 'avatar', 'aria-hidden': 'true' }, [...title][0].toUpperCase()),
     h('div', { class: 'who' }, h('h2', {}, title), a.email && a.email !== title ? h('div', { class: 'sub' }, a.email) : null, h('span', { class: 'pill' }, ROLE[a.role] || a.role), a.guest ? h('span', { class: 'pill' }, 'Invité') : null));
-  root.replaceChildren(...[hero, guest, h('div', { class: 'grid' }, idCard, profile, dav, devices, backup, keys)].filter(Boolean));
+  root.replaceChildren(...[hero, guest, h('div', { class: 'grid' }, idCard, profile, ai, dav, devices, backup, keys)].filter(Boolean));
 }

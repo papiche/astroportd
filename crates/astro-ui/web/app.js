@@ -389,6 +389,8 @@ const [p, qs] = (location.hash.slice(1) || '/').split('?'), main = h('main', { i
 $('#main').replaceWith(main);
 try {
 if (!me) { me = await api('/api/v1/me'); import('/ui/m-nostr.js').then(m => m.default(me, api), () => {}); import('/ui/m-ux.js').then(m => m.default(me, api, t), () => {}); }
+document.querySelector('nav a[data-r=bro]').hidden = !me.ai; // BRO n'existe que pour un MULTIPASS qui a déclaré une IA (Mon compte)
+if (!me.ai && location.hash.startsWith('#/bro')) { toast(t('Déclarez une IA (Ollama ou clé d\'API) dans Mon compte pour utiliser BRO')); location.hash = '#/account'; return; }
 if (me.captain) planeSwitch();
 document.querySelector('nav a[data-r=station]').hidden = !me.captain; // l'écran Capitaine n'existe pas pour un MULTIPASS
 const name = ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/planes') && me.captain ? 'planes' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/station') && me.captain ? 'station' : 'home');

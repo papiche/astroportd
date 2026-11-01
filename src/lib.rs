@@ -20,6 +20,7 @@ pub mod integrity;
 pub mod invites;
 pub mod legacy_ucloud;
 pub mod library;
+pub mod member_ai;
 pub mod media;
 pub mod mesh_outbox;
 pub mod organize;

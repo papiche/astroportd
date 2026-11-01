@@ -79,6 +79,11 @@ Cette version fait de la **clé de secours** un secret qu'on peut perdre sans da
 - **Assistant en ligne de commande** (`plane-setup list | add | remove`, avec questions si on n'a rien précisé) **et sur le web** (Station › Plans) : fonder une UPlanet (clé créée et montrée pour être copiée) ou rejoindre avec une `swarm.key` reçue ; ports libres, clé en `0600` jamais écrasée, ORIGIN intact, rien de supprimé en retirant un plan.
 - Reste de la phase 6 : routage par nom d'hôte sur un port commun, `--plane` sur les autres commandes, sélecteur de plan dans l'en-tête, test automatisé « plusieurs plans, un processus ».
 
+### Paramètres du MULTIPASS : IA déclarée, BRO conditionnel
+- **Mon compte › Intelligence artificielle** : chaque MULTIPASS déclare **un Ollama** (adresse) **ou une clé d'API** (Anthropic, Gemini). Stocké dans un événement 31903 `d = ai` **chiffré pour lui seul** (NIP-44) : la clé n'est jamais en clair dans la base, sur le relai ni dans une réponse de l'API (l'interface ne reçoit que « une clé est enregistrée »). Rejouable (`replay`). Retirer le fournisseur retire aussi sa clé.
+- **L'onglet BRO n'apparaît que si le MULTIPASS a déclaré une IA** ; ouvrir `#/bro` sans IA renvoie vers Mon compte.
+- Le Capitaine fixe toujours les défauts de la station (quota et prix par défaut, par compte) ; chaque MULTIPASS ajoute ensuite ses propres paramètres applicatifs. Le bouton « Hébergement » de l'écran Station, qui ne s'affichait pas (cellule de tableau mal aplatie), fonctionne de nouveau.
+
 ### Base de données : schéma allégé (mesuré)
 - **`nostr_events`** passe à une table à `rowid` (clé interne `seq`) ; `nostr_tags` et l'index plein texte s'y rattachent par cet entier au lieu de l'identifiant de 64 caractères. Sur 200 000 événements : base **28 % plus petite**, insertion **2× plus rapide**, jointure par tag **≈ 9× plus rapide**.
 - **`ucloud_entries`** passe aussi à une table à `rowid` (unicité de `(owner_hex, path)` conservée) : base **26 % plus petite**, insertion **1,6× plus rapide**, liste d'un dossier **≈ 100× plus rapide** (150 000 entrées).

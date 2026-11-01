@@ -112,7 +112,7 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
     circle.refresh(&db).await.unwrap();
     let relay = Relay::new(db.clone(), circle, RelayConfig::default());
     // Le registre des agents passe par le vrai relai (stockage + projection), comme sur une station.
-    let agents = {
+    let (agents, member_ai) = {
         let relay = relay.clone();
         let publish: astroportd::register::PublishFn = Arc::new(move |e| {
             let relay = relay.clone();
@@ -121,9 +121,10 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
                 if ok { Ok(()) } else { Err(why) }
             })
         });
-        Arc::new(astroportd::agents::Agents::new(db.clone(), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), publish).with_activity(bus.clone()))
+        let keys = || Arc::new(StaticKeySource::new().with(ALICE).with(BOB));
+        (Arc::new(astroportd::agents::Agents::new(db.clone(), keys(), publish.clone()).with_activity(bus.clone())), Arc::new(astroportd::member_ai::MemberAi::new(db.clone(), keys(), publish)))
     };
-    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_planes_home(dir.join("home")).with_agents(agents).with_registrar(registrar).with_invites(invites).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), Arc::new(|_| Box::pin(async { Ok(()) })), None).with_activity(bus.clone()))).with_contacts(links).with_coop(
+    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_planes_home(dir.join("home")).with_agents(agents).with_ai(member_ai).with_registrar(registrar).with_invites(invites).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), Arc::new(|_| Box::pin(async { Ok(()) })), None).with_activity(bus.clone()))).with_contacts(links).with_coop(
         Arc::new(|| Box::pin(async { Ok(json!({ "exists": false, "sections": [] })) })),
         Arc::new(|values| Box::pin(async move { Ok(json!({ "saved": values.keys().collect::<Vec<_>>() })) })),
     ).with_admin(Arc::new(|section, body| Box::pin(async move {
@@ -1226,4 +1227,23 @@ async fn the_captain_sets_up_planes_from_the_web_and_nobody_else_can() {
     assert_eq!(b.post("/api/v1/station/planes/remove", &bob, json!({ "name": "origin" })).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(b.post("/api/v1/station/planes/remove", &bob, json!({ "name": "zen1" })).await.0, StatusCode::OK);
     assert_eq!(b.get("/api/v1/station/planes", &bob).await.1["planes"].as_array().unwrap().len(), 1);
+}
+
+/// BRO n'apparaît que si le MULTIPASS a déclaré une IA ; la clé d'API ne ressort jamais, et chacun ne voit que la sienne.
+#[tokio::test(flavor = "multi_thread")]
+async fn bro_shows_only_when_the_member_declared_an_ai_and_the_api_key_never_comes_back() {
+    let b = bench("member-ai", None).await;
+    let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
+    assert_eq!(b.get("/api/v1/me", &alice).await.1["ai"], false, "sans IA déclarée : BRO masqué");
+    let (s, v) = b.post("/api/v1/me/ai", &alice, json!({ "provider": "anthropic", "api_key": "sk-ant-TRESSECRET99" })).await;
+    assert_eq!((s, v["has_key"].as_bool(), v["declared"].as_bool()), (StatusCode::OK, Some(true), Some(true)), "{v}");
+    assert!(!v.to_string().contains("TRESSECRET"));
+    assert_eq!(b.get("/api/v1/me", &alice).await.1["ai"], true, "IA déclarée : BRO apparaît");
+    let (_, again) = b.get("/api/v1/me/ai", &alice).await;
+    assert!(!again.to_string().contains("TRESSECRET") && again["provider"] == "anthropic");
+    assert_eq!(b.get("/api/v1/me", &bob).await.1["ai"], false, "l'IA d'Alice n'est pas celle de Bob");
+    assert_eq!(b.post("/api/v1/me/ai", &alice, json!({ "ollama_url": "http://h/x" })).await.0, StatusCode::BAD_REQUEST);
+    let (_, cleared) = b.post("/api/v1/me/ai", &alice, json!({ "provider": null, "ollama_url": null })).await;
+    assert_eq!((cleared["declared"].as_bool(), cleared["has_key"].as_bool()), (Some(false), Some(false)), "retirer le fournisseur retire aussi la clé");
+    assert_eq!(b.get("/api/v1/me", &alice).await.1["ai"], false);
 }

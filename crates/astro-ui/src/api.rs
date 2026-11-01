@@ -305,6 +305,18 @@ pub trait Backend: Send + Sync + 'static {
     fn set_hosting_defaults(&self, _who: &Principal, _quota_bytes: Option<u64>, _weekly_zen: Option<u64>) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("hébergement non réglable sur cette station")) }
     }
+    /// Le MULTIPASS a-t-il déclaré une IA (Ollama ou clé d'API) ? Sans cela, l'onglet BRO n'apparaît pas.
+    fn ai_declared(&self, _who: &Principal) -> impl Future<Output = bool> + Send {
+        async { false }
+    }
+    /// Paramètres IA du MULTIPASS, sans la clé d'API : `{ ollama_url, provider, has_key, model, declared }`.
+    fn ai_params(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("paramètres IA non disponibles sur cette station")) }
+    }
+    /// Change les paramètres IA (champ absent : inchangé ; `null` ou vide : effacé).
+    fn set_ai_params(&self, _who: &Principal, _patch: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("paramètres IA non disponibles sur cette station")) }
+    }
     /// Plans (ORIGIN, UPlanet privées) configurés sur cette station et ceux que ce processus sert (Capitaine).
     fn planes(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("configuration des plans non disponible sur cette station")) }
@@ -608,6 +620,7 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
     Router::new()
         .route("/health", get(health::<B>))
         .route("/api/v1/me", get(me::<B>))
+        .route("/api/v1/me/ai", get(ai_params::<B>).post(set_ai_params::<B>))
         .route("/api/v1/dashboard", get(dashboard::<B>))
         .route("/api/v1/activity", get(activity_stream::<B>))
         .route("/api/v1/ucloud/list", get(ucloud_list::<B>))
@@ -751,8 +764,19 @@ async fn health<B: Backend>(State(st): State<Arc<UiState<B>>>) -> Response {
     private((code, Json(body)).into_response())
 }
 
-async fn me<B: Backend>(_: State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
-    private(Json(json!({ "hex": p.hex, "email": p.email, "captain": p.captain })).into_response())
+async fn me<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    private(Json(json!({ "hex": p.hex, "email": p.email, "captain": p.captain, "ai": st.backend.ai_declared(&p).await })).into_response())
+}
+
+async fn ai_params<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.ai_params(&p).await)
+}
+
+async fn set_ai_params<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(patch): Json<Value>) -> Response {
+    if !patch.is_object() {
+        return reply(Err(ApiError::bad_request("objet JSON attendu")));
+    }
+    reply(st.backend.set_ai_params(&p, patch).await)
 }
 
 async fn dashboard<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {

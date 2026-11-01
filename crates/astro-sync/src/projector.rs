@@ -80,6 +80,7 @@ impl Projector {
             "DELETE FROM kv WHERE scope = 'economic_health'",
             "DELETE FROM kv WHERE scope = 'station_build'",
             "DELETE FROM kv WHERE scope = 'agents'",
+            "DELETE FROM kv WHERE scope = 'member_ai'",
         ]
         .into_iter()
         .map(|sql| Statement::new(sql, vec![]))
@@ -382,12 +383,17 @@ fn tag_map(e: &Event) -> Json {
 /// `astro_dav::media::parse_consent`). La plus récente remplace l'ancienne, quel que soit l'ordre d'arrivée.
 fn app_params(e: &Event) -> Vec<Statement> {
     // Registre des agents du membre : contenu chiffré pour lui seul, gardé tel quel (le plus récent l'emporte).
-    if e.tag_value("d") == Some("agents") {
+    // Même principe pour les paramètres IA du membre (`d = ai`) : chiffrés pour lui seul, gardés tels quels.
+    if let Some(scope) = e.tag_value("d").and_then(|d| match d {
+        "agents" => Some("agents"),
+        "ai" => Some("member_ai"),
+        _ => None,
+    }) {
         return vec![Statement::new(
-            "INSERT INTO kv(scope, key, value, updated_at) VALUES ('agents', ?1, ?2, ?3) \
+            "INSERT INTO kv(scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?4) \
              ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at \
              WHERE excluded.updated_at >= kv.updated_at",
-            vec![text(&e.pubkey), text(&e.content), int(e.created_at)],
+            vec![text(scope), text(&e.pubkey), text(&e.content), int(e.created_at)],
         )];
     }
     let Some(version) = astro_dav::media::parse_consent(&e.tags, &e.content) else { return Vec::new() };

@@ -94,7 +94,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, f.read_bytes(), MIME.get(f.suffix, 'application/octet-stream')) if f.is_file() else self.send(404, b'x', 'text/plain')
         if p == '/api/v1/me':
             if not (self.headers.get('Authorization') or '').startswith(('Basic ', 'Nostr ')): return self.send(401, dict(error='authentification requise'))
-            return self.send(200, dict(hex='aa' * 32, email='alice@example.org', captain=True))
+            return self.send(200, dict(hex='aa' * 32, email='alice@example.org', captain=True, ai=STATE.get('ai', True)))
+        if p == '/api/v1/me/ai': return self.send(200, dict(ollama_url=None, provider=None, has_key=False, model=None, declared=STATE.get('ai', True)))
         if p == '/api/v1/station/coop': return self.send(200, COOP)
         if p == '/api/v1/account': return self.send(200, ACCOUNT)
         if p == '/api/v1/contacts': return self.send(200, CONTACTS)
@@ -131,6 +132,8 @@ class H(BaseHTTPRequestHandler):
         STATE['posts'].append((p, body))
         if p == '/api/v1/faces/thumbs': return self.send(200, dict(thumbs={str(i): thumb(i) for i in body['ids']}, failed=[]))
         if p == '/api/v1/station/planes': return self.send(200, dict(name=body['name'], http='127.0.0.1:18082', p2p='/ip4/0.0.0.0/tcp/4102', swarm_key_path='/x/zen2/swarm.key', created_key='/key/swarm/psk/1.0.0/\\n/base16/\\n' + 'ab' * 32))
+        if p == '/api/v1/me/ai':
+            STATE['ai'] = bool(body.get('ollama_url') or body.get('provider')); return self.send(200, dict(ollama_url=body.get('ollama_url'), provider=body.get('provider'), has_key=False, model=None, declared=STATE['ai']))
         if p == '/api/v1/faces/delete-photos': return self.send(200, dict(deleted=len({f['path'] for f in STATE['faces'] if f['id'] in body['ids']}), missing=0, bytes=0))
         if p == '/api/v1/faces/assign':
             for f in STATE['faces']:
@@ -476,6 +479,16 @@ with sync_playwright() as pw:
     check('Redémarrez' in page.inner_text('main'), 'le redémarrage nécessaire est dit')
     page.fill('input[aria-label="Nom du plan"]', 'zen2'); page.click('form button:has-text("Ajouter")'); page.wait_for_selector('textarea[readonly]'); page.wait_for_timeout(300)
     check('/key/swarm/psk/1.0.0/' in page.input_value('textarea[readonly]') and 'zen2' in [b['name'] for p_, b in STATE['posts'] if p_ == '/api/v1/station/planes'], 'fonder une UPlanet montre la swarm.key créée, à copier')
+    # BRO : masqué tant que le MULTIPASS n'a déclaré ni Ollama ni clé d'API ; la déclaration (Mon compte) le fait apparaître.
+    STATE['ai'] = False
+    page.goto(f'http://127.0.0.1:{port}/#/account'); page.reload(); page.wait_for_selector('#ai-url'); page.wait_for_timeout(300)
+    check(page.locator('nav a[data-r=bro]').is_hidden(), "sans IA déclarée, l'onglet BRO n'apparaît pas")
+    page.goto(f'http://127.0.0.1:{port}/#/bro'); page.wait_for_selector('#ai-url'); page.wait_for_timeout(300)
+    check(page.evaluate('location.hash') == '#/account', "ouvrir #/bro sans IA renvoie vers Mon compte")
+    page.fill('#ai-url', 'http://127.0.0.1:11434'); page.click('section:has(#ai-url) button:has-text("Enregistrer")'); page.wait_for_selector('#ai-url'); page.wait_for_timeout(500)
+    saved = [b for p_, b in STATE['posts'] if p_ == '/api/v1/me/ai']
+    check(saved and saved[-1]['ollama_url'] == 'http://127.0.0.1:11434' and 'api_key' not in saved[-1], "l'adresse d'Ollama est enregistrée, sans clé inventée")
+    check(page.locator('nav a[data-r=bro]').is_visible(), "une fois l'IA déclarée, l'onglet BRO apparaît")
     # Bibliothèque : fil du temps jour par jour, carte du monde hors ligne avec ses groupes, doublons sans options superflues.
     page.goto(f'http://127.0.0.1:{port}/#/library'); page.wait_for_selector('#lib-tab-time'); page.wait_for_timeout(700)
     check(page.locator('.stream h3.sticky').count() >= 1 and page.locator('.stream h4').count() >= 2, "l'affichage sur le temps groupe les photos par jour : " + str(page.locator('.stream h4').all_inner_texts()[:2]))

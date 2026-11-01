@@ -55,6 +55,7 @@ pub struct StationUi<B: BlobStore> {
     registrar: Option<Arc<crate::register::Registrar>>,
     probe: Mutex<Option<(Instant, Result<(), String>)>>,
     planes_home: Option<std::path::PathBuf>,
+    ai: Option<Arc<crate::member_ai::MemberAi>>,
 }
 
 /// Réponse au lot de photos en attente pour un ami `(titulaire, ami, accepter)` → `(envoyées, retirées)` ; fourni par le binaire.
@@ -100,7 +101,13 @@ pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Fu
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None), planes_home: None }
+        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None), planes_home: None, ai: None }
+    }
+
+    /// Paramètres IA des MULTIPASS (Ollama ou clé d'API) : sans eux, BRO n'apparaît pas.
+    pub fn with_ai(mut self, ai: Arc<crate::member_ai::MemberAi>) -> Self {
+        self.ai = Some(ai);
+        self
     }
 
     /// Dossier personnel où vit `planes.json` : active l'écran des plans du Capitaine.
@@ -874,6 +881,23 @@ impl<B: BlobStore> Backend for StationUi<B> {
         }
     }
 
+    async fn ai_declared(&self, who: &Principal) -> bool {
+        match &self.ai {
+            Some(ai) => ai.declared(&who.hex).await,
+            None => false,
+        }
+    }
+
+    async fn ai_params(&self, who: &Principal) -> Result<Value, ApiError> {
+        let ai = self.ai.as_ref().ok_or_else(|| ApiError::unavailable("paramètres IA non disponibles sur cette station"))?;
+        ai.get(&who.hex).await.map(|p| p.view()).map_err(ai_error)
+    }
+
+    async fn set_ai_params(&self, who: &Principal, patch: Value) -> Result<Value, ApiError> {
+        let ai = self.ai.as_ref().ok_or_else(|| ApiError::unavailable("paramètres IA non disponibles sur cette station"))?;
+        ai.set(&who.hex, &patch).await.map(|p| p.view()).map_err(ai_error)
+    }
+
     async fn planes(&self, _who: &Principal) -> Result<Value, ApiError> {
         use crate::plane;
         let home = self.planes_home()?;
@@ -1579,4 +1603,14 @@ fn account_error(e: crate::account::AccountError) -> ApiError {
 
 fn admin_error(message: String) -> ApiError {
     if message.starts_with("section inconnue") { ApiError::not_found(message) } else { ApiError::bad_request(message) }
+}
+
+fn ai_error(e: crate::member_ai::AiError) -> ApiError {
+    match e {
+        crate::member_ai::AiError::Invalid(m) => ApiError::bad_request(m),
+        crate::member_ai::AiError::Internal(m) => {
+            eprintln!("interface : paramètres IA : {m}");
+            ApiError::internal("paramètres IA indisponibles")
+        }
+    }
 }
