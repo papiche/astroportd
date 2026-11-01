@@ -55,6 +55,10 @@ pub struct ServeArgs {
     /// Dossier des blobs chiffrés (repli local d'IPFS).
     #[arg(long)]
     blobs: PathBuf,
+    /// Bases `uplanet.db` des **autres** astroportd (plans ORIGIN / ZEN*) qui partagent ce même dossier `--blobs` : un blob
+    /// qu'elles référencent n'est jamais supprimé d'ici. Répétable, ou séparées par `:`.
+    #[arg(long = "pool-peer", value_delimiter = ':')]
+    pool_peers: Vec<PathBuf>,
     /// Dossier des comptes (`<email>/.secret.nostr`) ; défaut : `<game-dir>/nostr`.
     #[arg(long)]
     secrets: Option<PathBuf>,
@@ -214,6 +218,10 @@ pub struct ServeArgs {
     /// Charges hebdomadaires de la station (PAF), en centimes de Ẑen, déduites des recettes à la clôture de semaine.
     #[arg(long, default_value_t = 0)]
     weekly_costs: u64,
+    /// Marque par transaction primale (1 Ğ1 du portefeuille maître `UPLANETNAME_G1`) les portefeuilles coopératifs vides, le compte
+    /// technique d'hébergement et le NODE : équivalent de `UPLANET.init.sh`. Désactivé par défaut : cela dépense de vrais Ğ1.
+    #[arg(long)]
+    primal_init: bool,
     /// Période de lecture des messages privés adressés à la station (bus de commandes de BRO), en secondes.
     #[arg(long, default_value_t = 5)]
     bus_poll_secs: u64,
@@ -342,7 +350,10 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
     let ssh_dir = ssh_managed.then(|| a.ssh_dir.clone().or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ssh")))).flatten();
     let tunnel_policy = TunnelPolicy::load(db.clone(), a.swarm_key.is_none(), ssh_dir, activity.clone()).await;
     let mut exposed_names: Vec<String> = a.p2p_expose.iter().filter_map(|s| s.split_once('=').map(|(n, _)| n.to_owned())).collect();
-    let local = Arc::new(AutoBlobStore::new(a.kubo.as_deref().map(KuboBlobStore::new), FsBlobStore::open(&a.blobs)?));
+    let local = Arc::new(AutoBlobStore::new(a.kubo.as_deref().map(KuboBlobStore::new), FsBlobStore::open(&a.blobs)?).with_pool_peers(a.pool_peers.clone()));
+    if !a.pool_peers.is_empty() {
+        println!("bassin de blobs partagé : {} (pairs : {})", a.blobs.display(), a.pool_peers.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "));
+    }
 
     let node_hex = match (&station.discovered, &station.node_secret) {
         (Some(d), _) => d.node.nostr_hex.clone(),

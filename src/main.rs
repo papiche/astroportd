@@ -61,6 +61,12 @@ enum Command {
     /// Remplit le uCloud d'un compte depuis un dossier d'un autre serveur WebDAV (Nextcloud, ownCloud, une autre station) :
     /// mode « pull ». Rejouable : ce qui est déjà là n'est jamais écrasé ni dupliqué. Voir `pull-webdav <compte> add`.
     PullWebdav(Box<PullArgs>),
+    /// Adopte **sans copie** des fichiers d'un plan dans un autre (ORIGIN / ZEN*) quand les deux astroportd partagent le même
+    /// bassin de blobs (`--blobs` identique, `--pool-peer` croisés) : même blob, même clé, aucun octet de plus sur le disque.
+    BridgeCopy(Box<BridgeCopyArgs>),
+    /// État du bassin de blobs partagé entre plusieurs plans : poids, part de chaque plan, place économisée par le partage,
+    /// blobs que plus personne ne référence (`--sweep` supprime ceux de plus de 24 h).
+    PoolStatus(Box<PoolStatusArgs>),
     /// Diagnostic : permissions 0600, base WAL, certificats ACME, horloge solaire. Code 1 si une vérification échoue.
     Doctor(doctor::DoctorArgs),
     /// Affiche le jeton de connexion d'un compte hébergé (interface web et clients WebDAV).
@@ -367,6 +373,52 @@ enum PullAction {
     },
 }
 
+/// Options de `pool-status`.
+#[derive(clap::Args)]
+struct PoolStatusArgs {
+    /// Dossier de blobs commun.
+    #[arg(long)]
+    blobs: PathBuf,
+    /// Base `uplanet.db` d'un plan (répétable : une par plan qui partage le bassin).
+    #[arg(long = "db", required = true)]
+    dbs: Vec<PathBuf>,
+    /// Supprime les blobs orphelins de plus de 24 h (un blob tout récent peut attendre d'être enregistré).
+    #[arg(long)]
+    sweep: bool,
+}
+
+/// Options de `bridge-copy`.
+#[derive(clap::Args)]
+struct BridgeCopyArgs {
+    /// Base `uplanet.db` du plan source (lue en lecture seule).
+    #[arg(long)]
+    from_db: PathBuf,
+    /// Email ou clé Nostr (64 hex) du compte source.
+    #[arg(long)]
+    from: String,
+    /// Base `uplanet.db` du plan de destination.
+    #[arg(long)]
+    to_db: PathBuf,
+    /// Email ou clé Nostr (64 hex) du compte de destination.
+    #[arg(long)]
+    to: String,
+    /// Bassin de blobs commun aux deux plans.
+    #[arg(long)]
+    blobs: PathBuf,
+    /// Dossier (ou fichier) à adopter ; `/` pour tout le uCloud.
+    #[arg(long, default_value = "/")]
+    path: String,
+    /// Dossier de destination, où le chemin source est reproduit.
+    #[arg(long, default_value = "/Imports")]
+    dest: String,
+    /// Atteste que les deux comptes sont **la même personne** : ils partageront les blobs et leurs clés de fichier.
+    #[arg(long)]
+    same_person: bool,
+    /// Compte et vérifie, sans rien écrire.
+    #[arg(long)]
+    dry_run: bool,
+}
+
 /// Options de `import-ucloud`.
 #[derive(clap::Args)]
 struct ImportUcloudArgs {
@@ -529,6 +581,8 @@ async fn run(cli: Cli) -> Result<(), Failure> {
         Command::Media(args) => media_cmd(*args).await,
         Command::ImportUcloud(args) => import_ucloud_cmd(*args).await,
         Command::PullWebdav(args) => pull_webdav_cmd(*args).await,
+        Command::BridgeCopy(args) => bridge_copy_cmd(*args).await,
+        Command::PoolStatus(args) => pool_status_cmd(*args),
         Command::Multipass { action } => multipass_cmd(action).await,
         Command::Route { service, mode, swarm_dir, lat, lon } => route(&service, mode, swarm_dir, lat.zip(lon)),
         Command::SwarmKey => {
@@ -869,6 +923,51 @@ async fn stored_birth_events(db: &Db, hex: &str) -> Result<Vec<astro_nostr_proto
 }
 
 /// `astroportd media …` : copie privée et dépôt d'un film ou d'un épisode.
+fn pool_status_cmd(args: PoolStatusArgs) -> Result<(), Failure> {
+    let PoolStatusArgs { blobs, dbs, sweep } = args;
+    let st = astro_dav::pool::status(&blobs, &dbs)?;
+    let mo = |n: u64| format!("{} Mo", n >> 20);
+    println!("bassin {} : {} blob(s), {}", blobs.display(), st.blobs, mo(st.bytes));
+    for (db, n, bytes) in &st.per_plane {
+        println!("  {} : {n} blob(s) référencé(s), {}", db.display(), mo(*bytes));
+    }
+    println!("partagés entre plusieurs plans : {} blob(s), {} (place économisée : ces octets ne sont écrits qu'une fois)", st.shared_blobs, mo(st.shared_bytes));
+    let orphan_bytes: u64 = st.orphans.iter().map(|o| o.1).sum();
+    println!("orphelins (à aucun plan) : {} blob(s), {}", st.orphans.len(), mo(orphan_bytes));
+    if sweep {
+        let mut freed = 0u64;
+        let mut kept = 0u64;
+        for (path, size, age) in &st.orphans {
+            if *age >= 86_400 {
+                std::fs::remove_file(path).map_err(|e| format!("{} : {e}", path.display()))?;
+                freed += size;
+            } else {
+                kept += 1;
+            }
+        }
+        println!("nettoyage : {} libérés, {kept} orphelin(s) trop récent(s) gardé(s)", mo(freed));
+    }
+    Ok(())
+}
+
+async fn bridge_copy_cmd(args: BridgeCopyArgs) -> Result<(), Failure> {
+    let BridgeCopyArgs { from_db, from, to_db, to, blobs, path, dest, same_person, dry_run } = args;
+    if !same_person {
+        return Err("partager des blobs et leurs clés entre deux comptes demande un accord explicite : ajoutez --same-person pour attester que ce sont les deux comptes d'une même personne".into());
+    }
+    let (from_owner, to_owner) = (astroportd::bridge::resolve_owner(&from_db, &from)?, astroportd::bridge::resolve_owner(&to_db, &to)?);
+    let dst = Db::open(&to_db, 2)?;
+    let pool = astro_dav::FsBlobStore::open(&blobs)?;
+    let config = astro_dav::DavConfig::new(Vec::new());
+    let opts = astroportd::bridge::Options { from_owner, to_owner, path, dest, dry_run };
+    let r = astroportd::bridge::adopt(&from_db, &dst, &pool, &config, &opts).await?;
+    println!("{} : {} fichier(s) adopté(s) sans copie ({} Mo), {} déjà là, {} en conflit, {} de l'ancien format (Kubo), {} absent(s) du bassin, {} refusé(s) par le quota", if dry_run { "à blanc" } else { "adoption" }, r.adopted, r.bytes >> 20, r.same, r.conflicts, r.legacy, r.missing, r.quota);
+    if r.missing > 0 || r.legacy > 0 {
+        println!("les fichiers de l'ancien format ou absents du bassin ne sont jamais copiés en silence : leur transfert demande un ré-chiffrement");
+    }
+    Ok(())
+}
+
 async fn pull_webdav_cmd(args: PullArgs) -> Result<(), Failure> {
     use astroportd::webdav_pull as pull;
     let PullArgs { account, action, db, blobs, game_dir, kubo } = args;

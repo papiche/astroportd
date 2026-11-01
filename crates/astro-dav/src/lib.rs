@@ -16,6 +16,7 @@ pub mod locks;
 pub mod media;
 pub mod manifest;
 pub mod parse;
+pub mod pool;
 pub mod server;
 pub mod share;
 pub mod thumb;

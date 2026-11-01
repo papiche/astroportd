@@ -43,7 +43,23 @@ pub struct Wallets {
     db: Arc<Db>,
     tech: OnceCell<Arc<Ed25519Signer>>,
     coop: OnceCell<Arc<Coop>>,
+    master: OnceCell<Arc<Ed25519Signer>>,
+    targets: OnceCell<Arc<Vec<(String, Account)>>>,
 }
+
+/// Portefeuilles coopératifs d'une UPlanet à marquer par transaction primale : nom et sel (`<UPLANETNAME>.<sel>`) ; le
+/// premier n'a pas de suffixe. Les mêmes que `tools/my.sh` d'Astroport.ONE (le portefeuille maître `G1` les finance).
+const PRIMAL_SUFFIXES: [(&str, Option<&str>); 9] = [
+    ("UPLANETNAME", None),
+    ("SOCIETY", Some("SOCIETY")),
+    ("TREASURY", Some("TREASURY")),
+    ("RND", Some("RND")),
+    ("ASSETS", Some("ASSETS")),
+    ("IMPOT", Some("IMPOT")),
+    ("INTRUSION", Some("INTRUSION")),
+    ("CAPITAL", Some("CAPITAL")),
+    ("AMORTISSEMENT", Some("AMORTISSEMENT")),
+];
 
 /// Compte `<UPLANETNAME>.<suffixe>` : (signataire, adresse).
 fn derive(uplanet_name: &str, suffix: &str) -> Result<(Ed25519Signer, Account), String> {
@@ -54,18 +70,64 @@ fn derive(uplanet_name: &str, suffix: &str) -> Result<(Ed25519Signer, Account), 
     Ok((signer, account))
 }
 
+/// Adresse du portefeuille `<UPLANETNAME>[.<suffixe>]`.
+fn derive_bare(uplanet_name: &str, suffix: Option<&str>) -> Result<Account, String> {
+    let input = FormulaInput { salt: "", pepper: "", uplanet_name, coop_suffix: suffix };
+    let seed = KeyFormula::CoopPrefix.credentials(&input).map_err(|e| e.to_string())?.seed().map_err(|e| e.to_string())?;
+    Account::from_str(&seed.g1_ss58().map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+}
+
 impl Wallets {
     /// Portefeuilles de la constellation `uplanet_name` ; l'email du Capitaine et les adresses du NODE et du Capitaine
     /// sont lus dans `db`.
     pub fn new(uplanet_name: String, db: Arc<Db>) -> Self {
-        Self { uplanet_name, db, tech: OnceCell::new(), coop: OnceCell::new() }
+        Self { uplanet_name, db, tech: OnceCell::new(), coop: OnceCell::new(), master: OnceCell::new(), targets: OnceCell::new() }
     }
 
     /// Portefeuilles déjà connus (tests) : aucune dérivation.
     pub fn fixed(db: Arc<Db>, tech: Ed25519Signer, coop: Coop) -> Self {
-        let (t, c) = (OnceCell::new(), OnceCell::new());
-        let _ = (t.set(Arc::new(tech)), c.set(Arc::new(coop)));
-        Self { uplanet_name: String::new(), db, tech: t, coop: c }
+        let (t, c, g) = (OnceCell::new(), OnceCell::new(), OnceCell::new());
+        let targets = vec![("HOSTING".to_owned(), tech.account()), ("NODE".to_owned(), coop.node), ("IMPOT".to_owned(), coop.impot), ("TREASURY".to_owned(), coop.treasury), ("RND".to_owned(), coop.rnd), ("ASSETS".to_owned(), coop.assets)];
+        let _ = (t.set(Arc::new(tech)), c.set(Arc::new(coop)), g.set(Arc::new(targets)));
+        Self { uplanet_name: String::new(), db, tech: t, coop: c, master: OnceCell::new(), targets: g }
+    }
+
+    /// Portefeuille maître déjà connu (tests).
+    pub fn with_master(self, master: Ed25519Signer) -> Self {
+        let _ = self.master.set(Arc::new(master));
+        self
+    }
+
+    /// Portefeuille maître `UPLANETNAME_G1` : il finance les transactions primales.
+    pub async fn master(&self) -> Result<Arc<Ed25519Signer>, String> {
+        self.master
+            .get_or_try_init(|| async {
+                let name = self.uplanet_name.clone();
+                let (signer, _) = tokio::task::spawn_blocking(move || derive(&name, "G1")).await.map_err(|e| e.to_string())??;
+                Ok(Arc::new(signer))
+            })
+            .await
+            .cloned()
+    }
+
+    /// Tous les portefeuilles à marquer par transaction primale : les coopératifs, le compte technique d'hébergement et le NODE.
+    pub async fn targets(&self) -> Result<Arc<Vec<(String, Account)>>, String> {
+        let tech = self.tech().await?.account();
+        let coop = self.coop().await?;
+        self.targets
+            .get_or_try_init(|| async {
+                let name = self.uplanet_name.clone();
+                let mut out = tokio::task::spawn_blocking(move || -> Result<Vec<(String, Account)>, String> {
+                    PRIMAL_SUFFIXES.iter().map(|(label, suffix)| derive_bare(&name, *suffix).map(|a| ((*label).to_owned(), a))).collect()
+                })
+                .await
+                .map_err(|e| e.to_string())??;
+                out.push(("HOSTING".to_owned(), tech));
+                out.push(("NODE".to_owned(), coop.node));
+                Ok(Arc::new(out))
+            })
+            .await
+            .cloned()
     }
 
     async fn node_id(&self) -> Result<String, String> {

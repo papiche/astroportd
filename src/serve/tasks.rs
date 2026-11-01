@@ -223,6 +223,14 @@ pub(super) fn funds(p: &Parts<'_>, funds_chain: Option<Arc<RpcPool<SubxtConnecto
                 // au compte technique ; chaque semaine clôturée, celui-ci règle le NODE (PAF), le Capitaine (2×PAF) puis la coopérative.
                 {
                     let wallets = Arc::new(astroportd::coop_wallets::Wallets::new(uplanet_name.to_string(), db.clone()));
+                    // D'abord la transaction primale : les portefeuilles coopératifs (dont le compte technique) sont marqués par le maître.
+                    if a.primal_init {
+                        let primal = Arc::new(astroportd::primal_init::PrimalInit::new(db.clone(), chain.clone(), wallets.clone(), activity.clone()));
+                        background.push(tokio::spawn(primal.run(stop_watch.clone())));
+                        println!("Transactions primales : actives (1 Ğ1 du portefeuille maître à chaque portefeuille coopératif vide)");
+                    } else {
+                        println!("Transactions primales : inactives (--primal-init pour marquer les portefeuilles coopératifs, comme UPLANET.init.sh)");
+                    }
                     let fees = Arc::new(astroportd::hosting_fee::HostingFees::new(db.clone(), chain.clone(), secrets_dir.clone(), wallets.clone(), activity.clone(), notify.clone()));
                     background.push(tokio::spawn(fees.run(stop_watch.clone())));
                     let settle = Arc::new(astroportd::settlement::Settlement::new(db.clone(), chain.clone(), wallets, activity.clone(), astro_core::Amount(a.weekly_costs)));

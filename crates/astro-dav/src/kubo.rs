@@ -352,6 +352,8 @@ pub struct AutoBlobStore {
     fs: FsBlobStore,
     health_ttl: Duration,
     health: Mutex<Option<(Instant, bool)>>,
+    /// Bases des autres plans qui partagent ce dossier de blobs (voir [`crate::pool`]).
+    peers: Vec<std::path::PathBuf>,
 }
 
 /// Écrivain de [`AutoBlobStore`].
@@ -373,7 +375,13 @@ pub enum AutoReader {
 impl AutoBlobStore {
     /// `kubo` : `None` pour rester purement local.
     pub fn new(kubo: Option<KuboBlobStore>, fs: FsBlobStore) -> Self {
-        Self { kubo, fs, health_ttl: Duration::from_secs(10), health: Mutex::new(None) }
+        Self { kubo, fs, health_ttl: Duration::from_secs(10), health: Mutex::new(None), peers: Vec::new() }
+    }
+
+    /// Bases des autres `astroportd` qui partagent le même dossier de blobs : un blob qu'elles référencent n'est jamais supprimé.
+    pub fn with_pool_peers(mut self, peers: Vec<std::path::PathBuf>) -> Self {
+        self.peers = peers;
+        self
     }
 
     /// Durée de validité de la dernière vérification de Kubo.
@@ -492,6 +500,12 @@ impl BlobStore for AutoBlobStore {
     async fn remove(&self, cid: &str) -> Result<(), BlobError> {
         if is_legacy_cid(cid) {
             return Ok(()); // partagé avec l'ancienne station : jamais désépinglé d'ici
+        }
+        if !self.peers.is_empty() {
+            let (peers, c) = (self.peers.clone(), cid.to_owned());
+            if tokio::task::spawn_blocking(move || crate::pool::referenced_by_peers(&peers, &c)).await.unwrap_or(true) {
+                return Ok(()); // un autre plan s'en sert encore : le blob reste dans le bassin
+            }
         }
         self.fs.remove(cid).await?;
         if let Some(kubo) = self.kubo_up().await {

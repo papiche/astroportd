@@ -59,6 +59,14 @@ Cette version fait de la **clé de secours** un secret qu'on peut perdre sans da
 - **Règlement hebdomadaire du compte technique** (semaine clôturée à 20h12, **seulement si `--weekly-costs` > 0**, comme `PAF = 0` désactive l'économie du legacy) : `weekly_costs` = 3×PAF. **Si le montant reçu le permet** : 1×PAF au NODE, 2×PAF au MULTIPASS du Capitaine, puis le surplus tel que la clôture l'a ventilé (provision d'impôt `IMPOT`, prime de gestion 1 % au Capitaine, puis `TREASURY`, `RND`, `ASSETS`). Jamais plus que les recettes de la semaine ni que le solde du compte technique ; chaque virement est noté avant l'envoi. Un déficit reste celui de la clôture (trésorerie ou bénévolat actif) : aucun prélèvement sur `TREASURY`, `RND` ni `ASSETS`.
 - Le membre voit son prix, son dernier prélèvement et son statut dans « Empreinte sur les communs ».
 
+### Transaction primale des portefeuilles coopératifs
+- Le portefeuille maître `UPLANETNAME_G1` envoie **1 Ğ1** à chaque portefeuille coopératif vide (`UPLANETNAME`, `SOCIETY`, `TREASURY`, `RND`, `ASSETS`, `IMPOT`, `INTRUSION`, `CAPITAL`, `AMORTISSEMENT`), au compte technique d'hébergement et au NODE : leur **primal** les marque comme appartenant à cette UPlanet (équivalent de `UPLANET.init.sh`, indispensable aussi pour qu'ils reçoivent de petits montants). **Option `--primal-init`, désactivée par défaut** (cela dépense de vrais Ğ1). Un envoi par portefeuille, noté avant la signature ; maître trop pauvre : alerte quotidienne et reprise seule.
+
+### Plusieurs astroportd, un seul bassin de blobs
+- **`--pool-peer`** : plusieurs `astroportd` (ORIGIN, ZEN*) partagent le même dossier `--blobs` ; un blob n'est supprimé que si **aucun** plan ne le référence (lecture seule des bases des pairs ; pair illisible = blob gardé).
+- **`bridge-copy`** : adoption **sans copie** de fichiers d'un plan dans l'autre (même blob, même clé), sur accord explicite `--same-person`, rejouable, sans écrasement, quota de destination appliqué. L'ancien format (Kubo) et les blobs absents du bassin sont signalés, jamais copiés en silence.
+- **`pool-status`** : poids du bassin, part de chaque plan, place économisée, orphelins (`--sweep`).
+
 ### Base de données : schéma allégé (mesuré)
 - **`nostr_events`** passe à une table à `rowid` (clé interne `seq`) ; `nostr_tags` et l'index plein texte s'y rattachent par cet entier au lieu de l'identifiant de 64 caractères. Sur 200 000 événements : base **28 % plus petite**, insertion **2× plus rapide**, jointure par tag **≈ 9× plus rapide**.
 - **`ucloud_entries`** passe aussi à une table à `rowid` (unicité de `(owner_hex, path)` conservée) : base **26 % plus petite**, insertion **1,6× plus rapide**, liste d'un dossier **≈ 100× plus rapide** (150 000 entrées).

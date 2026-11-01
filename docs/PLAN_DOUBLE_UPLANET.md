@@ -160,8 +160,8 @@ Un test automatisé « plusieurs plans, un seul processus » reprend T1, T2, T10
 | Phase | Contenu | Taille |
 |---|---|---|
 | 0 | Plans en processus séparés (ports, dossiers, `swarm.key` d'essai), **y compris une paire ZEN + ZEN sans Kubo** ; MULTIPASS de `fred@qwantic.com` dans chacun ; T1, T2, T10, T11, T14, T16, T18 à la main | S |
-| 1a | **Bassin de blobs commun + comptage de références + index `sha_plain`** (aussi utile dans un seul plan : une photo déposée deux fois n'occupe qu'une place) ; T20 | M — *fait pour un plan (2026-11-01) : index `ue_sha_plain`, comptage `cid_in_use`, déduplication à l'écriture par compte (`commit_file_dedup_tx`). Reste : le dossier `pool/` partagé entre plans, avec Phase 6* |
-| 1b | `astroportd bridge copy` : adoption par défaut, ré-chiffrement seulement si I1 l'impose ; audit, idempotence ; T4, T5, T19, T21 | M |
+| 1a | **Bassin de blobs commun + comptage de références + index `sha_plain`** (aussi utile dans un seul plan : une photo déposée deux fois n'occupe qu'une place) ; T20 | M — *fait pour un plan (2026-11-01) : index `ue_sha_plain`, comptage `cid_in_use`, déduplication à l'écriture par compte (`commit_file_dedup_tx`). Fait aussi (2026-11-02), sans attendre la phase 6 : plans en processus séparés sur un dossier de blobs commun (`--pool-peer`, suppression gardée par les bases des pairs, `pool-status`)* |
+| 1b | `astroportd bridge copy` : adoption par défaut, ré-chiffrement seulement si I1 l'impose ; audit, idempotence ; T4, T5, T19, T21 | M — *adoption sans copie faite (`bridge-copy --same-person`, T19, T22 partiel) ; reste le ré-chiffrement (T21), l'ancien format Kubo, les règles pivot/rayon* |
 | 2 | Charte (`charte.toml`) + contrôle I4 + aperçu ; T8 | M |
 | 3 | Rattachements (carnet chiffré dans chaque compte, double signature, annuaire ORIGIN s'il existe) ; T3, T17 | M |
 | 4 | Règles `miroir` par `dav_changes`, conflits, révocation ; T6, T7, T9 | M |
