@@ -179,10 +179,23 @@ Un test automatisé « plusieurs plans, un seul processus » reprend T1, T2, T10
 6. **Clé de fichier partagée entre les comptes d'une même personne : acceptée par défaut** pour les fichiers qu'elle choisit de synchroniser (prix de la copie unique, I6). Chaque règle le rappelle, et la personne peut exiger un ré-chiffrement.
 7. **Deux plans privés peuvent partager un même blob, sur accord explicite de la personne** (priorité : minimiser l'espace disque). L'accord se donne par règle de synchronisation, qui rappelle la conséquence : le même CID est servi dans deux essaims, et quelqu'un présent dans les deux pourrait rapprocher le contenu. Sans accord, on re-chiffre.
 
-## 11. Points encore ouverts
+## 11. Décisions du 2026-11-02 et points encore ouverts
 
-1. **Carnet de secours maître dans ORIGIN** (§6) : oui ou non ? Il simplifie la vie de la personne (une seule carte à garder) mais fait de la carte ORIGIN la clé de toutes ses UPlanet.
-2. **Qui peut créer une UPlanet ?** Le Capitaine d'une station, n'importe qui avec une `swarm.key`, ou une validation par ORIGIN ?
-3. **Annuaire ORIGIN des UPlanet.** Publier leur empreinte, nom et charte résumée sur ORIGIN pour qu'on les découvre ? (Une UPlanet privée peut refuser d'y figurer.)
-4. **Sens d'un miroir bidirectionnel** : autorisé dès la phase 4, ou d'abord source → cible seulement ?
-5. **Économie.** Les parités et valeurs entre UPlanet (1 Zen = 0,1 Ğ1 contre 1 ẐEN = 1 €) : hors de ce plan, à traiter à part.
+Décidé par Fred :
+8. **Phase 6 d'abord** : type `Plane` et une base par plan dans un seul processus (ORIGIN, ZEN1…), chacun avec sa base, son dossier de comptes et sa charte ; routage par nom d'hôte ; `--plane` sur les commandes. Fait par étapes testables ; le multi-processus avec bassin commun (`--pool-peer`) reste la voie de repli.
+9. **Pas de carnet de secours maître dans ORIGIN** : une carte de secours par UPlanet. Perdre ou compromettre la carte ORIGIN ne donne jamais accès aux autres UPlanet.
+10. **Toute personne qui possède une `swarm.key` peut créer et héberger une UPlanet** : aucune autorité centrale, ORIGIN n'est jamais requis.
+11. **Miroir : source → cible d'abord.** Un seul sens par règle ; le sens inverse se fait avec une seconde règle explicite. Le bidirectionnel (avec arbitrage des conflits) viendra plus tard.
+
+Encore ouverts :
+1. **Annuaire ORIGIN des UPlanet.** Publier leur empreinte, nom et charte résumée sur ORIGIN pour qu'on les découvre ? (Une UPlanet privée peut refuser d'y figurer.) Sans objet tant qu'aucune UPlanet n'est publique.
+2. **Économie.** Les parités et valeurs entre UPlanet (1 Zen = 0,1 Ğ1 contre 1 ẐEN = 1 €) : hors de ce plan, à traiter à part.
+3. **Ré-chiffrement** (T21) et transfert des anciens fichiers Kubo (`Qm…`) vers un plan privé : à faire avec la phase 1b restante.
+
+### Ordre des étapes de la phase 6 (proposé)
+a. `Plane` : regroupe `{ nom, uplanet_name, psk, Db, BlobStore, nœud P2P, Relay, dossier de comptes, charte }` ; `serve` construit la liste ; un plan unique se comporte exactement comme aujourd'hui (aucune migration d'ORIGIN).
+b. Routage HTTP par nom d'hôte (`<plan>.<station>`), le plan connu **avant** l'authentification ; en test, un port par plan.
+c. `--plane <nom>` sur `multipass`, `token`, `import-ucloud`, `replay`, `doctor`, `bridge-copy`, `pool-status` ; dossiers `~/.zen/astroportd/<plan>/…`.
+d. Un nœud libp2p et un port par plan réseau privé, même `IPFSNODEID` ; Kubo pour ORIGIN seulement (I1).
+e. Test automatisé « plusieurs plans, un seul processus » (T1, T2, T10, T13) avec de faux pairs.
+f. Sélecteur de plan dans l'en-tête de l'interface.
