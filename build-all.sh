@@ -8,13 +8,17 @@
 #   ./build-all.sh --debug            # profil dev (rapide) au lieu de release
 #   ./build-all.sh --test             # lance aussi `cargo test --workspace` sur la machine hôte
 #
-# Cibles (Linux uniquement : le binaire dépend de /proc, systemd et des outils POSIX de la station) :
+# Cibles par défaut (Linux) :
 #   x86_64-unknown-linux-gnu       PC / serveur / VM                              (natif)
 #   aarch64-unknown-linux-gnu      Raspberry Pi 4/5, Pi Zero 2 W en 64 bits       (gcc-aarch64-linux-gnu)
 #   armv7-unknown-linux-gnueabihf  Raspberry Pi 2/3, Pi OS 32 bits                (gcc-arm-linux-gnueabihf)
 #   x86_64-unknown-linux-musl      binaire statique, sans dépendance à la glibc   (musl-tools)
 #   aarch64-unknown-linux-musl     binaire statique ARM 64 bits : smartphone Android (Termux), Pi, NAS
 #                                                                                 (zig : pip install ziglang cargo-zigbuild)
+#
+# macOS (à construire SUR un Mac, avec --targets ; jamais dans la liste par défaut) :
+#   aarch64-apple-darwin           iMac / Mac Apple Silicon (M1 à M4) : mémoire unifiée, Brain GPU (Metal)
+#   x86_64-apple-darwin            Mac Intel                                        (rustup target add)
 #
 # Une cible dont le compilateur C croisé ou le `rustup target` manque est SAUTÉE en le disant (jamais en silence) :
 # le récapitulatif final la liste avec la commande d'installation.
@@ -31,7 +35,7 @@ TARGETS=("${ALL_TARGETS[@]}")
 BIN=astroportd
 OUT=dist
 
-usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -131,6 +135,9 @@ if [ "$RUN_TESTS" = 1 ]; then
   cargo test --workspace --locked
 fi
 
+# sha256sum (GNU) ou shasum (macOS) : même format de sortie.
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+
 mkdir -p "$OUT"
 built=(); skipped=(); failed=()
 
@@ -146,7 +153,7 @@ for t in "${TARGETS[@]}"; do
   uses_zigbuild "$t" && build=(cargo zigbuild)
   # Inférence faciale locale (ONNX Runtime chargé à l'exécution) : impossible dans un binaire statique musl.
   feat=()
-  case "$t" in *-gnu*) feat=(--features onnx) ;; esac
+  case "$t" in *-gnu*|*-apple-darwin) feat=(--features onnx) ;; esac
   if ( cross_env "$t"; "${build[@]}" "${CARGO_FLAGS[@]}" ${feat[@]+"${feat[@]}"} --target "$t" ); then
     src="target/$t/$PROFILE/$BIN"
     name="$BIN-$VERSION-$t"
@@ -160,7 +167,7 @@ for t in "${TARGETS[@]}"; do
     [ -f README.md ] && cp README.md "$stage/"
     tar -C "$OUT" -czf "$OUT/$name.tar.gz" "$name"
     rm -rf "$stage"
-    ( cd "$OUT" && sha256sum "$name.tar.gz" >> SHA256SUMS.tmp )
+    ( cd "$OUT" && sha256 "$name.tar.gz" >> SHA256SUMS.tmp )
     built+=("$t")
   else
     echo "✗ $t : la compilation a échoué" >&2

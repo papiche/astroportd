@@ -1,6 +1,6 @@
 name: Release
 
-# Un tag `vX.Y.Z` construit les 5 cibles de build-all.sh et publie les archives + SHA256SUMS dans une release GitHub.
+# Un tag `vX.Y.Z` construit les 7 cibles de build-all.sh (dont 2 macOS, au mieux) et publie les archives + SHA256SUMS dans une release GitHub.
 # Un tag avec suffixe (`v0.2.0-beta`, `v0.2.0-rc1`) est marqué « préversion ».
 
 on:
@@ -16,8 +16,8 @@ env:
 jobs:
   build:
     name: ${{ matrix.target }}
-    runs-on: ubuntu-latest
-    # La cible statique (musl) est « au mieux » : son échec ne bloque pas la publication des autres.
+    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
+    # Les cibles statiques (musl) et macOS sont « au mieux » : leur échec ne bloque pas la publication des autres.
     continue-on-error: ${{ matrix.experimental == true }}
     strategy:
       fail-fast: false
@@ -36,6 +36,15 @@ jobs:
           - target: aarch64-unknown-linux-musl
             apt: ''
             zig: true
+            experimental: true
+          # macOS : « au mieux » tant qu'une compilation n'a pas réussi sur ces cibles (voir docs/MACOS.md).
+          - target: aarch64-apple-darwin
+            apt: ''
+            os: macos-14
+            experimental: true
+          - target: x86_64-apple-darwin
+            apt: ''
+            os: macos-14
             experimental: true
     steps:
       - uses: actions/checkout@v4

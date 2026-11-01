@@ -196,7 +196,7 @@ Nostr peuvent donc s'ouvrir un accès SSH entre machines de confiance, à traver
 
 ![Individus, Astroports, territoire](docs/img/individu-astroport-territoire.svg)
 
-*Ce qui est dans astroportd :* le rituel, la vérification, les tunnels P2P (`--p2p-expose ssh=…`, `--p2p-forward`).
+*Ce qui est dans astroportd :* le rituel, la vérification, les tunnels P2P (SSH, ComfyUI et Ollama offerts par défaut mais **fermés**, `--p2p-expose` pour d'autres, `--p2p-forward`), réglés par le Capitaine dans Options › Tunnels.
 *Ce qui reste dans Astroport.ONE :* le suivi automatique des Capitaines (kind 30850) et la mise à jour des clés SSH
 autorisées.
 
@@ -212,8 +212,10 @@ Les binaires sont publiés dans les [**Releases**](https://github.com/papiche/as
 | `aarch64-unknown-linux-gnu` | Raspberry Pi 4/5, Pi Zero 2 W (64 bits) |
 | `armv7-unknown-linux-gnueabihf` | Raspberry Pi 2/3, Pi OS 32 bits |
 | `x86_64-unknown-linux-musl` | binaire statique, sans glibc |
+| `aarch64-unknown-linux-musl` | binaire statique ARM 64 bits (Android sous Termux, Pi, NAS) |
+| `aarch64-apple-darwin` · `x86_64-apple-darwin` | **macOS** (Apple Silicon : Brain GPU par mémoire unifiée ; Mac Intel). *Au mieux* : première version, voir [docs/MACOS.md](docs/MACOS.md) |
 
-Linux uniquement. Compiler soi-même : `./build-all.sh` (voir §4).
+Linux, et macOS en bêta. Compiler soi-même : `./build-all.sh` (voir §4).
 
 ---
 
@@ -335,7 +337,8 @@ Le workspace compte **16 crates** (+ le binaire `astroportd`, qui est aussi une 
 cargo build --release
 # → target/release/astroportd
 
-# Toutes les plateformes supportées (x86_64, aarch64/Raspberry Pi 4-5, armv7/Pi 2-3, x86_64 statique musl) :
+# Toutes les plateformes Linux supportées (x86_64, aarch64/Raspberry Pi 4-5, armv7/Pi 2-3, statiques musl) ;
+# sur un Mac : ./build-all.sh --targets aarch64-apple-darwin (voir docs/MACOS.md) :
 ./build-all.sh --list      # état de la chaîne d'outils de chaque cible, et la commande qui installe ce qui manque
 ./build-all.sh             # construit ce qui est possible → dist/astroportd-<version>-<cible>.tar.gz + SHA256SUMS
 ./build-all.sh --strict    # échoue si une cible a dû être sautée (CI)
@@ -382,6 +385,10 @@ automatiquement dans `~/.zen/game` (`--game-dir` ou `ASTRO_GAME_DIR`).
 | `astroportd replay --db uplanet.db [--from ws://relai --hosted <hex>] [--blobs blobs]` | Reconstruit la base depuis les événements (et restaure uCloud depuis les manifestes). |
 | `astroportd route ollama --mode closest --lat 45.7 --lon 4.8` | Meilleur nœud du swarm pour un service. |
 | `astroportd swarm-key` | Génère la clé d'un réseau privé de constellation. |
+| `astroportd plane-setup list \| add \| remove` · `astroportd planes [--check]` | Plusieurs UPlanet (ORIGIN, ZEN1…) dans un seul processus : assistant, puis démarrage de tous les plans. |
+| `astroportd pool-status` · `bridge-copy` | Bassin de blobs partagé entre plans : état et orphelins ; adoption sans copie d'un plan à l'autre. |
+| `astroportd import-ucloud` · `pull-webdav` | Reprend l'uCloud d'Astroport.ONE ; remplit un uCloud depuis un autre serveur WebDAV. |
+| `astroportd doctor` · `face-check` | Diagnostic de la station ; vérification de l'inférence faciale locale (ONNX). |
 | `astroportd plugin [--dir plugins] list \| call <nom> '<json>'` | Gère les extensions Wasm. |
 | `astroportd relay`, `astroportd dav` | Le relai seul, le WebDAV seul. |
 
@@ -509,9 +516,13 @@ Livré et testé : relai, uCloud chiffré avec manifeste rejouable et miniatures
 - **MULTIPASS** : la création reprend l'essentiel de `make_NOSTRCARD.sh`, mais **pas** le découpage SSSS 2-sur-3 de
   DISCO (remplacé par la **clé de secours** en 3 parts, P1 en QR), l'import de la clé IPNS dans Kubo, l'envoi du zine par
   email, la ZenCard ni la primo-transaction. Retrouver un compte repose donc sur cette carte, remise **une seule fois** ;
-- **une station = une constellation** (une `swarm.key`, ou aucune). Raccorder une même station à ORIGIN **et** à ẐEN en
-  parallèle est *prévu* (deux réseaux P2P parallèles, même identité Y-Level, chaque MULTIPASS rattaché à une
-  constellation), pas encore disponible ;
+- **un processus `serve` = une constellation** (une `swarm.key`, ou aucune). Raccorder une même station à ORIGIN **et** à
+  des UPlanet privées passe par `astroportd planes` (un seul processus, même identité Y-Level, une base, un dossier de
+  comptes et un port par plan ; assistant `plane-setup` ou Station › Plans). Reste à faire : routage par nom d'hôte sur un
+  port commun, `--plane` sur les autres commandes, sélecteur de plan dans l'en-tête ;
+- **macOS** : le binaire est portable (POSIX, `rustix`), la détection du matériel lit `sysctl hw.memsize` et compte la
+  mémoire unifiée d'un Mac Apple Silicon comme VRAM, mais **aucune compilation sur macOS n'a encore été éprouvée** : la CI
+  macOS et les archives `*-apple-darwin` sont « au mieux » ([docs/MACOS.md](docs/MACOS.md)) ;
 - le client Duniter (`subxt`) n'a été éprouvé que hors ligne : son comportement sur un nœud réel reste à valider ;
 - une nuit de 20h12 manquée n'est rejouée qu'au démarrage et seulement pour la veille et le jour courant ;
 - l'inférence faciale a deux moteurs : un « Brain » HTTP, ou l'inférence **locale** (SCRFD + ArcFace par ONNX Runtime, `--face-models`, binaire compilé avec `--features onnx`, `astroportd face-check` pour diagnostiquer). Le binaire publié sans la fonction `onnx`, et les binaires statiques (musl, `libonnxruntime` introuvable), n'ont que le Brain HTTP ; les modèles ne sont jamais embarqués dans le binaire ;

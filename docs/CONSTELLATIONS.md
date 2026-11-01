@@ -170,7 +170,7 @@ astroportd serve ... --p2p-forward 127.0.0.1:2222=<PeerID de l'hôte>/ssh
 ssh -p 2222 utilisateur@127.0.0.1
 ```
 
-- Tout service exposé par `--p2p-expose` passe par une garde de flux. Pour l'instant c'est une garde provisoire qui **refuse tout** (`src/tunnel_gate.rs`) : la politique de tunnels du Capitaine la remplacera. Le partage d'un Brain GPU entre Capitaines relève de l'entraide, pas d'un paiement.
+- Tout service exposé (`ssh`, `comfyui`, `ollama` par défaut, plus ceux de `--p2p-expose`) passe par une garde de flux : la **politique de tunnels du Capitaine** (`src/tunnel_policy.rs`, Options › Tunnels), mode par service `off` · `listed` · `friends` · `swarm`. Le SSH est fermé par défaut en ẐEN. Le partage d'un Brain GPU entre Capitaines relève de l'entraide, pas d'un paiement.
 - `astroportd route <service>` choisit le meilleur nœud de l'essaim (Power-Score, distance, tirage).
 
 ### Ce qu'astroportd ne fait pas encore

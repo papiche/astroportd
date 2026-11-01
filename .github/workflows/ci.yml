@@ -35,3 +35,24 @@ jobs:
           sudo apt-get install -y --no-install-recommends shellcheck
           bash -n install.sh build-all.sh
           shellcheck install.sh build-all.sh
+
+  macos:
+    name: macOS (Apple Silicon)
+    runs-on: macos-14
+    # Première CI macOS : le binaire n'avait jamais été compilé sur ce système. Non bloquante tant qu'elle n'a pas été
+    # verte une fois ; retirer `continue-on-error` ensuite.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Dépendances système
+        run: brew install ffmpeg pkg-config
+      - name: Clippy (aucun avertissement toléré)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: "Clippy avec l'inférence locale (libonnxruntime.dylib est chargée à l'exécution)"
+        run: cargo clippy -p astroportd -p astro-facecloud --all-targets --features onnx --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked

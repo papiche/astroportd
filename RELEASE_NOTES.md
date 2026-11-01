@@ -2,6 +2,11 @@
 
 Cette version fait de la **clé de secours** un secret qu'on peut perdre sans danger, et ajoute l'**agenda** : « Agenda » du téléphone se synchronise avec la station, comme « Contacts ».
 
+### macOS (bêta), crawl plus rapide, documentation recalée
+- **macOS** : la station détecte la RAM par `sysctl hw.memsize` et compte la **mémoire unifiée** d'un Mac Apple Silicon comme VRAM (66 %, `ASTRO_VRAM_GB` pour corriger) : un Mac peut être un Brain GPU ; la bibliothèque ONNX Runtime `.dylib` est reconnue (Homebrew compris) ; le nom de la machine se lit aussi par `hostname`. Nouveau : [docs/MACOS.md](docs/MACOS.md), CI macOS et archives `aarch64-apple-darwin` / `x86_64-apple-darwin`, toutes **au mieux** (jamais compilées sur un Mac avant cette version).
+- **Crawl N²** : les couples clé × relai se synchronisent **8 à la fois** (`CrawlConfig::concurrency`) au lieu d'un par un ; curseurs, filtres et contrôles d'auteur inchangés.
+- **Documentation** : la garde de flux « provisoire qui refuse tout » (`tunnel_gate.rs`, disparu) est remplacée par la politique des tunnels ; la limite « une station = une constellation » dit maintenant que `astroportd planes` en sert plusieurs ; tableau des commandes complété.
+
 ### Clé de secours en 3 parts (remplace la carte complète)
 - Le secret du compte (SALT et PEPPER) est découpé en **3 parts, dont 2 suffisent** (partage de Shamir). **P1** va au membre (QR imprimable `astro-share:v1|…`), **P2** reste sur la station (`<compte>/.ssss/2`, `0600`), **P3** est confiée d'elle-même, chiffrée pour chacun, aux amis qui hébergent la sauvegarde. Une part seule ne révèle rien : un QR volé ou photographié ne donne pas accès au compte.
 - **« J'appelle un ami »** : sur la nouvelle station (`/restore`, ou `astroportd multipass recover -`), on saisit ou scanne P1 et la part que l'ami montre dans *Compte › Sauvegarde privée* (texte et QR). La station rétablie recalcule les trois parts d'origine : le P1 imprimé et le P3 des amis restent valables.
