@@ -84,6 +84,20 @@ async fn a_stranger_who_is_not_followed_is_ignored_but_a_followed_one_gets_throu
 }
 
 #[tokio::test]
+async fn a_member_of_the_n2_circle_filled_by_replication_gets_through() {
+    let (dir, db, chat) = rig("n2", false).await;
+    // Eve n'est pas suivie directement : elle est dans le cercle N² (niveau 2), alimenté par la réplication.
+    db.writer().execute("INSERT INTO social_graph(owner_hex, pubkey, level, updated_at) VALUES (?1, ?2, 2, 0)", vec![hex(&ALICE).into(), hex(&EVE).into()]).await.unwrap();
+    let eve = Chat::new(db.clone(), Arc::new(StaticKeySource::new().with(EVE)), into_db(&db, false), into_db(&db, false), ActivityBus::default());
+    eve.send(&hex(&EVE), &hex(&ALICE), "Salut depuis N²").await.unwrap();
+    chat.poll_once().await;
+    let m = chat.messages(&hex(&ALICE), &hex(&EVE), None).await.unwrap();
+    assert_eq!(m["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(m["messages"][0]["text"], "Salut depuis N²");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
 async fn a_failed_delivery_is_kept_and_said_and_bad_input_is_refused() {
     let (dir, _db, chat) = rig("fail", true).await;
     let sent = chat.send(&hex(&ALICE), &hex(&BOB), "Tu es là ?").await.unwrap();

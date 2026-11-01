@@ -283,7 +283,7 @@ impl Chat {
         self.db
             .readers()
             .read(move |c| {
-                let follows = c.query_row("SELECT 1 FROM social_graph WHERE owner_hex = ?1 AND pubkey = ?2 AND level = 1", [&o, &s], |r| r.get::<_, i64>(0)).optional()?.is_some();
+                let follows = c.query_row("SELECT 1 FROM social_graph WHERE owner_hex = ?1 AND pubkey = ?2 AND level IN (1, 2)", [&o, &s], |r| r.get::<_, i64>(0)).optional()?.is_some();
                 let local = c.query_row("SELECT 1 FROM identities WHERE hex = ?1 AND hosted = 1", [&s], |r| r.get::<_, i64>(0)).optional()?.is_some();
                 Ok(follows || local)
             })
