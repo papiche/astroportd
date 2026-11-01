@@ -560,6 +560,10 @@ pub trait Backend: Send + Sync + 'static {
     fn admin_get(&self, _who: &Principal, _section: &str) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::not_found("section d'administration inconnue")) }
     }
+    /// Tourne des photos d'un quart de tour (`turn` : 1 vers la droite, -1 vers la gauche) ; rend `{ rotated, failed: [{path, error}] }`.
+    fn rotate_photos(&self, _who: &Principal, _paths: Vec<String>, _turn: i8) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("rotation non disponible sur cette station")) }
+    }
     /// Interroge la bibliothèque du compte (photos, souvenirs, chronologie, recherche, doublons).
     fn library(&self, _who: &Principal, _q: LibraryQuery) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("bibliothèque non disponible sur cette station")) }
@@ -688,13 +692,14 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/book", get(book_list::<B>))
         .route("/api/v1/book/card", get(book_get::<B>).post(book_save::<B>))
         .route("/api/v1/book/delete", post(book_delete::<B>))
+.route("/api/v1/ucloud/rotate", post(library_rotate::<B>))
+.route("/api/v1/book/delete-many", post(book_delete_many::<B>))
+.route("/api/v1/book/photo", get(book_photo::<B>).post(book_set_photo::<B>))
+.route("/api/v1/book/photo-choices", get(book_photo_choices::<B>))
         .route("/api/v1/book/take", post(book_take::<B>))
         .route("/api/v1/book/group", post(book_group::<B>))
         .route("/api/v1/book/import", post(book_import::<B>))
         .route("/api/v1/book/duplicates", get(book_duplicates::<B>))
-.route("/api/v1/book/delete-many", post(book_delete_many::<B>))
-.route("/api/v1/book/photo", get(book_photo::<B>).post(book_set_photo::<B>))
-.route("/api/v1/book/photo-choices", get(book_photo_choices::<B>))
         .route("/api/v1/book/merge", post(book_merge::<B>))
         .route("/api/v1/book/me", get(book_me::<B>).post(book_save_me::<B>))
         .route("/api/v1/me/links", get(my_links::<B>).post(announce_links::<B>))
@@ -906,11 +911,6 @@ async fn book_save<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Aut
     reply(st.backend.book(&p, BookOp::Save(b.path, b.fields)).await)
 }
 
-async fn book_delete<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookPathBody>) -> Response {
-    reply(st.backend.book(&p, BookOp::Delete(b.path)).await)
-}
-
-async fn book_take<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookTakeBody>) -> Response {
 #[derive(Deserialize)]
 struct BookPathsBody {
 paths: Vec<String>,
@@ -932,6 +932,11 @@ reply(st.backend.book(&p, BookOp::SetPhoto(b.path, b.uri)).await)
 async fn book_photo_choices<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<BookPathQuery>) -> Response {
 reply(st.backend.book(&p, BookOp::PhotoChoices(q.path)).await)
 }
+async fn book_delete<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookPathBody>) -> Response {
+    reply(st.backend.book(&p, BookOp::Delete(b.path)).await)
+}
+
+async fn book_take<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookTakeBody>) -> Response {
     reply(st.backend.book(&p, BookOp::Take(b.path, b.keys.into_iter().take(10).collect())).await)
 }
 
@@ -1029,6 +1034,17 @@ struct HaveBody {
     shas: Vec<String>,
 }
 
+#[derive(Deserialize)]
+struct RotateBody {
+paths: Vec<String>,
+turn: i8,
+}
+async fn library_rotate<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<RotateBody>) -> Response {
+if b.paths.is_empty() || b.paths.len() > 200 || !matches!(b.turn, 1 | -1) {
+return reply(Err(ApiError::bad_request("1 à 200 photos, quart de tour 1 ou -1")));
+}
+reply(st.backend.rotate_photos(&p, b.paths, b.turn).await)
+}
 async fn library_have<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<HaveBody>) -> Response {
     if body.shas.len() > 500 {
         return reply(Err(ApiError::bad_request("500 empreintes au plus par appel")));

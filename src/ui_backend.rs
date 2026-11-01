@@ -907,6 +907,17 @@ impl<B: BlobStore> Backend for StationUi<B> {
         }
     }
 
+    async fn rotate_photos(&self, who: &Principal, paths: Vec<String>, turn: i8) -> Result<Value, ApiError> {
+        let (mut rotated, mut failed) = (0, Vec::new());
+        for p in paths {
+            match crate::rotate::rotate_entry(&self.dav, &who.hex, &p, turn).await {
+                Ok(()) => rotated += 1,
+                Err(error) => failed.push(json!({ "path": p, "error": error })),
+            }
+        }
+        Ok(json!({ "rotated": rotated, "failed": failed }))
+    }
+
     async fn book(&self, who: &Principal, op: BookOp) -> Result<Value, ApiError> {
         let book = self.book.as_ref().ok_or_else(|| ApiError::unavailable("le carnet d'adresses n'est pas disponible sur cette station"))?;
         let o = who.hex.as_str();
@@ -922,6 +933,10 @@ impl<B: BlobStore> Backend for StationUi<B> {
             },
             BookOp::Save(path, f) => book.save(o, path.as_deref(), &fields(f)?).await,
             BookOp::Delete(path) => book.delete(o, &path).await,
+            BookOp::DeleteMany(paths) => book.delete_many(o, &paths).await,
+            BookOp::Photo(path) => book.photo(o, &path).await,
+            BookOp::PhotoChoices(path) => book.photo_choices(o, &path).await,
+            BookOp::SetPhoto(path, uri) => book.set_photo(o, &path, uri.as_deref()).await,
             BookOp::Take(path, keys) => book.take(o, &path, &keys).await,
             BookOp::Group(from, to) => book.set_group(o, &from, to.as_deref()).await,
             BookOp::Import(vcf) => book.import(o, &vcf).await,
@@ -933,10 +948,6 @@ impl<B: BlobStore> Backend for StationUi<B> {
         out.map_err(book_error)
     }
 
-            BookOp::DeleteMany(paths) => book.delete_many(o, &paths).await,
-            BookOp::Photo(path) => book.photo(o, &path).await,
-            BookOp::PhotoChoices(path) => book.photo_choices(o, &path).await,
-            BookOp::SetPhoto(path, uri) => book.set_photo(o, &path, uri.as_deref()).await,
     async fn my_links(&self, who: &Principal) -> Result<Value, ApiError> {
         let people = self.people.as_ref().ok_or_else(|| ApiError::unavailable("annuaire des UPlanet non disponible sur cette station"))?;
         let keys = people.class_of(&who.hex).await;

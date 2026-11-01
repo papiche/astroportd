@@ -1,0 +1,5 @@
+.tile .tick { display: none; position: absolute; left: .3rem; top: .3rem; width: 1.4rem; height: 1.4rem; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: .9rem; line-height: 1.4rem; text-align: center; }
+.tile.sel { outline: 3px solid var(--accent); outline-offset: -3px; }
+.tile.sel .tick { display: block; }
+.sel-on .tile { cursor: copy; }
+button.danger { color: var(--warn); }

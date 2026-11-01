@@ -109,10 +109,15 @@ const kindOf = m => (m || '').startsWith('image/') ? 'image' : (m || '').startsW
 const viewer = $('#view');
 let items = [], at = 0;
 async function show(i) {
+if (!items.length) { viewer.close(); return; }
 at = (i + items.length) % items.length;
 const it = items[at], box = $('#view-b');
 box.replaceChildren(h('p', { class: 'muted' }, 'Déchiffrement…'));
-$('#view-t').replaceChildren(`${lastName(it.path)} · ${when(it.taken_at || it.mtime)} · `, h('button', { class: 'ghost', onclick: () => share([it.path]) }, 'Partager'));
+const isImg = kindOf(it.mime) === 'image';
+$('#view-p').hidden = $('#view-n').hidden = items.length < 2;
+$('#view-t').replaceChildren(h('span', {}, `${at + 1} / ${items.length} · ${lastName(it.path)} · ${when(it.taken_at || it.mtime)} `),
+h('button', { class: 'ghost', onclick: () => share([it.path]) }, 'Partager'));
+photos().then(m => { if (items[at] === it) $('#view-t').append(...m.actions(it, isImg)); });
 try {
 const u = await blobUrl(it.path);
 if (items[at] === it) box.replaceChildren(kindOf(it.mime) === 'video' ? h('video', { src: u, controls: true, autoplay: true }) : h('img', { src: u, alt: lastName(it.path) }));
@@ -120,25 +125,23 @@ if (items[at] === it) box.replaceChildren(kindOf(it.mime) === 'video' ? h('video
 }
 function open(list, i) { items = list; viewer.showModal(); show(i); }
 $('#view-x').onclick = () => viewer.close();
+$('#view-p').onclick = () => show(at - 1);
+$('#view-n').onclick = () => show(at + 1);
 viewer.addEventListener('close', () => $('#view-b').replaceChildren());
 viewer.addEventListener('keydown', e => { if (e.key === 'ArrowRight') show(at + 1); else if (e.key === 'ArrowLeft') show(at - 1); else if (e.key === 'Home') show(0); else if (e.key === 'End') show(items.length - 1); else if (e.key === 's') share([items[at].path]); });
-$('#share-x').onclick = () => $('#share').close();
-async function share(paths) {
-const box = $('#share-b'), dlg = $('#share');
-$('#share-t').textContent = 'Lien magique';
-box.replaceChildren(h('p', { class: 'muted' }, 'Création du lien…'));
-if (!dlg.open) dlg.showModal();
-try {
-const r = await api('/api/v1/ucloud/share', { method: 'POST', body: { paths, ttl_hours: 72 } });
-const inp = h('input', { value: r.url, readOnly: true, 'aria-label': 'Lien magique', onfocus: () => inp.select() });
-const copy = h('button', { onclick: async () => { try { await navigator.clipboard.writeText(r.url); copy.textContent = 'Copié ✓'; toast('Lien magique copié', 1); } catch { inp.select(); } } }, 'Copier');
-toast(`Lien magique créé (${r.items} fichier(s))`, 1);
-box.replaceChildren(
-h('p', { class: 'muted' }, `${r.items} fichier(s), valable jusqu'au ${when(r.expires_at)}. La clé de déchiffrement est dans la partie après « # » : un navigateur ne l'envoie jamais au serveur.`),
-inp, h('p', {}, copy),
-r.qr_svg && h('img', { alt: 'QR code du lien à scanner avec un smartphone', src: 'data:image/svg+xml;base64,' + b64(r.qr_svg) }));
-} catch (e) { box.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }
+let x0 = null;
+$('#view-b').addEventListener('pointerdown', e => { x0 = e.clientX; });
+$('#view-b').addEventListener('pointerup', e => { if (x0 !== null && Math.abs(e.clientX - x0) > 60) show(at + (e.clientX < x0 ? 1 : -1)); x0 = null; });
+const del = p => req(dav + enc(p), { method: 'DELETE' });
+const picker = { on: false, set: new Set(), all: new Set(), lists: new Set(), change: () => {} };
+function mark() {
+for (const b of picker.all) { if (!b.isConnected) { picker.all.delete(b); continue; } const on = picker.set.has(b.dataset.path); b.classList.toggle('sel', on); b.setAttribute('aria-pressed', String(on)); }
+picker.change();
 }
+function togglePick(path) { if (picker.set.has(path)) picker.set.delete(path); else picker.set.add(path); mark(); }
+const photos = async () => (await import('/ui/m-photos.js')).default({ api, toast, t, h, blobs, del, picker, mark, viewer, cur: () => ({ items, at }), show });
+$('#share-x').onclick = () => $('#share').close();
+const share = async paths => (await import('/ui/m-share.js')).default({ api, toast, h, $, when, b64 })(paths);
 let cleanups = [];
 const every = (ms, fn) => { const t = setInterval(fn, ms); cleanups.push(() => clearInterval(t)); };
 const pill = s => h('span', { class: 'pill ' + s }, { ok: 'OK', degraded: 'Dégradé', down: 'Panne', disabled: 'Inactif' }[s] || s);
@@ -304,23 +307,12 @@ r.entries.length ? h('ul', { class: 'files' }, r.entries.map(li)) : h('p', { cla
 // Tuiles de photos ajoutées à `grid` ; `list` est la liste que la visionneuse parcourt (flèches, Début, Fin).
 function tiles(grid, list, its) {
 for (const it of its) {
-const i = list.push(it) - 1, img = h('img', { alt: '', decoding: 'async' });
-grid.append(lazy(h('button', { class: 'tile', 'aria-label': lastName(it.path), onclick: () => open(list, i) }, img, kindOf(it.mime) === 'video' && h('span', { class: 'badge' }, '▶')), () => (kindOf(it.mime) === 'image' ? blobUrl(it.path, !!it.thumb).then(u => { img.src = u; }) : 0)));
+list.push(it); picker.lists.add(list);
+const img = h('img', { alt: '', decoding: 'async' });
+const btn = h('button', { class: 'tile', 'aria-label': lastName(it.path), onclick: () => (picker.on ? togglePick(it.path) : open(list, list.indexOf(it))) }, img, kindOf(it.mime) === 'video' && h('span', { class: 'badge' }, '▶'), h('span', { class: 'tick', 'aria-hidden': 'true' }, '✓'));
+btn.dataset.path = it.path; picker.all.add(btn);
+grid.append(lazy(btn, () => (kindOf(it.mime) === 'image' ? blobUrl(it.path, !!it.thumb).then(u => { img.src = u; }) : 0)));
 }
-}
-async function viewBro(root) {
-const log = h('ol', { id: 'log', 'aria-live': 'polite', 'aria-label': 'Activité de la station', 'data-empty': t('Rien pour l\'instant : écrivez à BRO ci-dessous, ou attendez l\'activité de la station.') });
-const add = (ev, me) => { const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30; log.append(h('li', { class: me ? 'me' : '' }, h('span', { class: 'k' }, me ? 'vous' : ev.kind), ev.message)); if (stick) log.scrollTop = log.scrollHeight; };
-const input = h('input', { placeholder: 'Parler à BRO… (#solde, #statut, #aide)', 'aria-label': 'Message pour BRO', maxLength: 2000, required: true });
-const say = h('form', { id: 'say', onsubmit: async ev => {
-ev.preventDefault();
-const text = input.value; input.value = ''; add({ message: text }, true);
-try { add({ kind: 'bro', message: (await api('/api/v1/bro/say', { method: 'POST', body: { text } })).reply }); } catch (e) { add({ kind: 'erreur', message: e.message }); }
-} }, input, h('button', {}, 'Envoyer'));
-root.replaceChildren(h('div', { class: 'grid' }, h('section', { class: 'card wide' }, h('h2', {}, 'BRO LifeOS ', h('small', {}, 'en direct'), ' '), log, say)));
-feed.forEach(ev => add(ev));
-listeners.add(add);
-cleanups.push(() => listeners.delete(add));
 }
 const feed = [], listeners = new Set(), started = Date.now();
 function badge(n) { const a = document.querySelector('nav a[data-r=chat]'); let b = a.querySelector('.ch-badge'); if (!n) return b?.remove(); if (!b) a.append(b = h('span', { class: 'ch-badge' })); b.textContent = n; }
@@ -379,9 +371,9 @@ try { dict = (await import(`/ui/m-lang-${lang}.js`)).default; } catch (e) { toas
 tr(document.body); new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(tr))).observe(document.body, { childList: true, subtree: true });
 }
 // Écrans lourds chargés à la demande (hors budget de la coque) : ils reçoivent la boîte à outils ci-dessous.
-const K = { t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, tiles, every, enc, del: p => req(dav + enc(p), { method: 'DELETE' }), dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n) };
+const K = { t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, tiles, every, enc, del, picker, mark, photos, dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n), feed, listeners };
 const lazyView = f => async (root, q) => (await import('/ui/' + f)).default(root, K, q);
-const views = { home: viewHome, station: viewStation, cloud: viewCloud, account: lazyView('m-account.js'), contacts: lazyView('m-contacts.js'), chat: lazyView('m-chat.js'), people: lazyView('m-people.js'), replication: lazyView('m-replication.js'), library: lazyView('m-library.js'), coop: lazyView('m-coop.js'), options: lazyView('m-options.js'), planes: lazyView('m-planes.js'), bro: viewBro };
+const views = { home: viewHome, station: viewStation, cloud: viewCloud, account: lazyView('m-account.js'), contacts: lazyView('m-contacts.js'), chat: lazyView('m-chat.js'), people: lazyView('m-people.js'), replication: lazyView('m-replication.js'), library: lazyView('m-library.js'), coop: lazyView('m-coop.js'), options: lazyView('m-options.js'), planes: lazyView('m-planes.js'), bro: lazyView('m-bro.js') };
 let me = null;
 async function route() {
 cleanups.forEach(c => c()); cleanups = [];

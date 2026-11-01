@@ -10,12 +10,12 @@ export default async function library(root, K) {
   const month = ym => new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5) - 1)).toLocaleDateString(K.lang, { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
   // ── Ce jour-là ──
-  const mem = h('div', {});
+  const mem = h('div', {}), memList = [];
   const now = new Date(), two = n => String(n).padStart(2, '0');
   K.api(A + `memories?md=${two(now.getMonth() + 1)}-${two(now.getDate())}&y=${now.getFullYear()}`).then(r => {
     if (!r.memories.length) return;
     mem.replaceChildren(h('section', { class: 'card wide' }, h('h2', {}, t('Ce jour-là')),
-      r.memories.flatMap(m => [h('h3', {}, (m.ago === 1 ? t('Il y a 1 an') : t('Il y a {0} ans', m.ago)) + ' · ' + m.year), grid(m.items)])));
+      r.memories.flatMap(m => [h('h3', {}, (m.ago === 1 ? t('Il y a 1 an') : t('Il y a {0} ans', m.ago)) + ' · ' + m.year), grid(m.items, memList)])));
   }, () => {});
 
   // ── Recherche ──
@@ -46,6 +46,7 @@ export default async function library(root, K) {
     h('form', { class: 'bar', onsubmit: ev => { ev.preventDefault(); run(true); } }, q, kind, person, from, to, h('button', {}, t('Chercher'))), out, h('p', {}, more));
 
   // ── Temps : un fil continu, jour par jour, du plus récent au plus ancien ──
+  const streamList = []; // une seule liste pour tout le fil : la visionneuse passe d'un jour au suivant
   const tl = h('section', { class: 'card wide' }, h('h2', {}, t('Temps')), h('p', { class: 'muted' }, t('Chargement…')));
   K.api(A + 'timeline').then(r => {
     if (!r.months.length) { tl.lastChild.textContent = t('Aucune photo datée pour le moment.'); return; }
@@ -57,7 +58,7 @@ export default async function library(root, K) {
       const byDay = new Map();
       for (const it of items) { const d = Math.floor((it.t || 0) / day) * day; (byDay.get(d) || byDay.set(d, []).get(d)).push(it); }
       return h('section', { class: 'month' }, h('h3', { class: 'sticky' }, `${month(m.ym)} · ${m.count}`),
-        [...byDay].flatMap(([d, its]) => [h('h4', {}, `${dayLabel(d)} · ${its.length}`), grid(its)]));
+        [...byDay].flatMap(([d, its]) => [h('h4', {}, `${dayLabel(d)} · ${its.length}`), grid(its, streamList)]));
     };
     const loadNext = async () => {
       if (busy || next >= months.length) return;
@@ -66,7 +67,7 @@ export default async function library(root, K) {
       busy = false; more2.hidden = next >= months.length;
     };
     more2.onclick = loadNext;
-    jump.onchange = () => { box.replaceChildren(); next = +jump.value; loadNext(); };
+    jump.onchange = () => { box.replaceChildren(); streamList.length = 0; next = +jump.value; loadNext(); };
     new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) loadNext(); }, { rootMargin: '600px' }).observe(more2);
     tl.lastChild.replaceWith(h('div', {}, h('p', {}, h('label', {}, t('Aller au mois'), ' '), jump), box, h('p', {}, more2)));
     loadNext();
@@ -77,38 +78,67 @@ export default async function library(root, K) {
   import('/ui/m-map.js').then(m => mapSection.append(m.default(K, grid)), e => mapSection.append(h('p', { class: 'err' }, e.message)));
 
   // ── Doublons ──
-  const dupBox = h('div', {}), allFiles = h('input', { type: 'checkbox', id: 'dup-all' });
+  const dupBox = h('div', {});
   const dupBtn = h('button', { class: 'ghost', onclick: async ev => {
     const self = ev.currentTarget; self.disabled = true;
     try {
-      const r = await K.api(A + 'duplicates' + (allFiles.checked ? '?all=1' : '')), name = p => p.split('/').pop();
-      const group = (g, label) => {
-        const keep = g.items[g.keep], others = g.items.filter((_, i) => i !== g.keep);
-        return h('div', { class: 'card' }, h('h3', {}, label), grid(g.items),
-          h('p', { class: 'muted' }, t('À garder : {0} ({1})', name(keep.path), K.bytes(keep.size))),
-          h('button', { class: 'ghost', onclick: async ev2 => {
-            const del = ev2.currentTarget;
-            if (!confirm(t('Supprimer définitivement {0} fichier(s) ? Le fichier gardé est « {1} ».', others.length, name(keep.path)))) return;
-            del.disabled = true;
-            try { for (const o of others) { const r2 = await K.del(o.path); if (!r2.ok && r2.status !== 404) throw new Error(`${name(o.path)} : ${r2.status}`); } K.toast(t('{0} fichier(s) supprimé(s)', others.length), 1); dupBtn.click(); } catch (e) { K.toast(e.message); del.disabled = false; }
-          } }, t('Supprimer les {0} autre(s)', others.length)));
+      const r = await K.api(A + 'duplicates'), name = p => p.split('/').pop();
+      const groups = [...r.exact.map(g => [g, t('{0} copies identiques', g.items.length)]), ...r.similar.map(g => [g, t('{0} versions de la même image', g.items.length)])];
+      if (!groups.length) { dupBox.replaceChildren(h('p', { class: 'muted' }, t('Aucun doublon.'))); self.disabled = false; return; }
+      const boxes = [], total = h('strong', {}), del = h('button', { class: 'ghost danger' });
+      const chosen = () => boxes.filter(b => b.checked);
+      const sync = () => { const n = chosen().length; total.textContent = t('{0} sélectionné(s)', n); del.textContent = t('Supprimer la sélection ({0})', n); del.disabled = !n; };
+      const setAll = f => { boxes.forEach(b => { b.checked = f(b); }); sync(); };
+      const rows = groups.map(([g, label]) => h('section', { class: 'card' }, h('h3', {}, label),
+        g.items.map((it, i) => {
+          const cb = h('input', { type: 'checkbox', id: 'dup-' + boxes.length, 'aria-label': name(it.path), onchange: sync }); cb.dataset.path = it.path; cb.dataset.keep = i === g.keep ? '1' : ''; cb.checked = i !== g.keep; boxes.push(cb);
+          const th = h('div', { class: 'photos dup-th' }); K.tiles(th, g.items, [it]);
+          return h('div', { class: 'dup-row' }, cb, th, h('label', { for: cb.id }, h('strong', {}, name(it.path)), h('small', { class: 'muted' }, ` ${K.bytes(it.size)} · ${it.path}`), i === g.keep ? h('span', { class: 'pill ok' }, t('à garder')) : null));
+        })));
+      del.onclick = async () => {
+        const sel = chosen(), paths = sel.map(b => b.dataset.path);
+        const groupsAll = groups.filter(([g]) => g.items.every(it => paths.includes(it.path))).length;
+        if (!confirm(t('Supprimer définitivement {0} fichier(s) ?', paths.length) + (groupsAll ? '\n' + t('Attention : dans {0} groupe(s), toutes les copies sont cochées.', groupsAll) : ''))) return;
+        del.disabled = true; let done = 0;
+        try { for (const p of paths) { const r2 = await K.del(p); if (!r2.ok && r2.status !== 404) throw new Error(`${name(p)} : ${r2.status}`); done++; } K.toast(t('{0} fichier(s) supprimé(s)', done), 1); }
+        catch (e) { K.toast(e.message); }
+        dupBtn.click();
       };
-      dupBox.replaceChildren(...[
-        r.exact.length || r.similar.length ? null : h('p', { class: 'muted' }, t('Aucun doublon.')),
-        r.exact.length ? [h('h3', {}, t('Fichiers identiques')), r.exact.map(g => group(g, t('{0} copies identiques', g.items.length)))] : null,
-        r.similar.length ? [h('h3', {}, t('Images très ressemblantes')), r.similar.map(g => group(g, t('{0} versions de la même image', g.items.length)))] : null].flat(2).filter(Boolean));
+      dupBox.replaceChildren(h('div', { class: 'bar dup-bar' }, total, h('button', { class: 'ghost', onclick: () => setAll(() => true) }, t('Tout sélectionner')),
+        h('button', { class: 'ghost', onclick: () => setAll(b => !b.dataset.keep) }, t('Tout sauf un par groupe')), h('button', { class: 'ghost', onclick: () => setAll(() => false) }, t('Tout désélectionner')), del), ...rows);
+      sync();
     } catch (e) { K.toast(e.message); }
     self.disabled = false;
   } }, t('Chercher les doublons'));
-  const dups = h('section', { class: 'card wide' }, h('h2', {}, t('Doublons')), h('p', { class: 'muted' }, t('Mêmes fichiers et images presque identiques (recadrage, recompression). Rien n\'est supprimé sans votre confirmation.')), h('p', {}, dupBtn, ' ', allFiles, h('label', { for: 'dup-all' }, ' ' + t('Inclure aussi les documents et autres fichiers'))), dupBox);
+  const dups = h('section', { class: 'card wide' }, h('h2', {}, t('Doublons')), h('p', { class: 'muted' }, t('Images identiques ou presque (recadrage, recompression). Cochez ce que vous voulez supprimer, en une seule action : rien n\'est supprimé sans votre confirmation.')), h('p', {}, dupBtn), dupBox);
 
   // ── Onglets : une vue à la fois (le fil du temps est long, la carte a besoin de place) ──
   const views = [['time', 'Temps', tl], ['map', 'Carte', mapSection], ['search', 'Recherche', search], ['dups', 'Doublons', dups]];
   const tabs = h('div', { class: 'bar', role: 'tablist' }, views.map(([id, label]) => h('button', { role: 'tab', id: 'lib-tab-' + id, 'aria-selected': 'false', onclick: () => pick(id) }, t(label))));
   const pick = id => {
-    views.forEach(([k, , el]) => { el.hidden = k !== id; tabs.querySelector('#lib-tab-' + k).setAttribute('aria-selected', String(k === id)); tabs.querySelector('#lib-tab-' + k).className = k === id ? '' : 'ghost'; });
+    views.forEach(([k, , el]) => { el.hidden = k !== id; mem.hidden = id !== 'time'; tabs.querySelector('#lib-tab-' + k).setAttribute('aria-selected', String(k === id)); tabs.querySelector('#lib-tab-' + k).className = k === id ? '' : 'ghost'; });
     if (id === 'map') window.dispatchEvent(new Event('resize'));
   };
-  root.replaceChildren(h('h2', {}, t('Bibliothèque')), tabs, mem, h('div', { class: 'grid' }, ...views.map(v => v[2])));
+  const css = h('link', { rel: 'stylesheet', href: '/ui/m-photos.css' }); document.head.append(css); K.cleanup(() => css.remove());
+  // ── Sélection de vignettes : tout sélectionner, tourner, supprimer ──
+  const P = K.picker, selBtn = h('button', { class: 'ghost', 'aria-pressed': 'false' }, t('Sélectionner')), selBar = h('div', { class: 'bar', hidden: true });
+  const visible = () => [...P.all].filter(b => b.isConnected && b.offsetParent !== null).map(b => b.dataset.path);
+  const paint = () => {
+    const n = P.set.size, none = !n;
+    selBar.replaceChildren(h('strong', {}, t('{0} sélectionnée(s)', n)),
+      h('button', { class: 'ghost', onclick: () => { visible().forEach(p => P.set.add(p)); K.mark(); } }, t('Tout sélectionner')),
+      h('button', { class: 'ghost', disabled: none, onclick: () => { P.set.clear(); K.mark(); } }, t('Tout désélectionner')),
+      h('button', { class: 'ghost', disabled: none, 'aria-label': t('Tourner vers la gauche'), title: t('Tourner vers la gauche'), onclick: () => K.photos().then(p => p.turn([...P.set], -1)) }, '↺'),
+      h('button', { class: 'ghost', disabled: none, 'aria-label': t('Tourner vers la droite'), title: t('Tourner vers la droite'), onclick: () => K.photos().then(p => p.turn([...P.set], 1)) }, '↻'),
+      h('button', { class: 'ghost danger', disabled: none, onclick: () => K.photos().then(p => p.remove([...P.set])) }, t('Supprimer la sélection ({0})', n)));
+  };
+  selBtn.onclick = () => {
+    P.on = !P.on; P.set.clear(); K.mark();
+    selBtn.setAttribute('aria-pressed', String(P.on)); selBtn.textContent = P.on ? t('Terminer la sélection') : t('Sélectionner');
+    selBar.hidden = !P.on; root.classList.toggle('sel-on', P.on);
+  };
+  P.change = paint; paint();
+  K.cleanup(() => { P.on = false; P.set.clear(); P.all.clear(); P.lists.clear(); P.change = () => {}; });
+  root.replaceChildren(h('h2', {}, t('Bibliothèque')), tabs, h('div', { class: 'bar' }, selBtn), selBar, mem, h('div', { class: 'grid' }, ...views.map(v => v[2])));
   pick('time');
 }

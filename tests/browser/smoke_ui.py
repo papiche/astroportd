@@ -122,6 +122,8 @@ class H(BaseHTTPRequestHandler):
             if p == '/api/v1/book/me': return self.send(200, dict(path='/Contacts/Moi.vcf', me=True, pubkey='aa' * 32, fields=dict(lea, name='Alice', given='Alice', family='', org='', phones=[], emails=[dict(kind='home', value='alice@example.org')], groups=[], about='Capitaine'), faces=0, hosted_here='alice@example.org', profile=None, diff=None, drift=False))
             if p == '/api/v1/book/card': return self.send(200, dict(path='/Contacts/Lea.vcf', me=False, pubkey='ab' * 32, via='vcard', fields=lea, faces=12, hosted_here=None, plane='origin', keys=[dict(plane='origin', hex='ab' * 32, via='station'), dict(plane='zen1', hex='cd' * 32, via='lien')], profile=dict(name='Léa M.'), drift=True, diff=[
                 dict(key='name', label='Nom', mine='Léa Martin', theirs='Léa M.', same=False, can_take=True), dict(key='about', label='Présentation', mine='', theirs='Boulangère', same=False, can_take=True), dict(key='nip05', label='NIP-05', mine='', theirs='', same=True, can_take=False)]))
+            if p == '/api/v1/book/photo': return self.send(200, dict(uri=None))
+            if p == '/api/v1/book/photo-choices': return self.send(200, dict(faces=[7]))
             if p == '/api/v1/book/duplicates': return self.send(200, dict(groups=[dict(reasons=['même téléphone'], cards=[dict(path='/Contacts/Lea.vcf', name='Léa Martin', emails=[], phones=['+33 6 12']), dict(path='/Contacts/Lea2.vcf', name='L. Martin', emails=[], phones=['06 12'])])]))
         if p == '/api/v1/ucloud/memories': return self.send(200, dict(memories=[]))
         if p == '/api/v1/ucloud/timeline':
@@ -151,6 +153,8 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/v1/station/planes': return self.send(200, dict(name=body['name'], http='127.0.0.1:18082', p2p='/ip4/0.0.0.0/tcp/4102', swarm_key_path='/x/zen2/swarm.key', created_key='/key/swarm/psk/1.0.0/\\n/base16/\\n' + 'ab' * 32))
         if p == '/api/v1/me/ai':
             STATE['ai'] = bool(body.get('ollama_url') or body.get('provider')); return self.send(200, dict(ollama_url=body.get('ollama_url'), provider=body.get('provider'), has_key=False, model=None, declared=STATE['ai']))
+        if p == '/api/v1/book/delete-many': return self.send(200, dict(deleted=len(body['paths']), failed=[]))
+        if p == '/api/v1/ucloud/rotate': return self.send(200, dict(rotated=len(body['paths']), failed=[]))
         if p.startswith('/api/v1/book'): return self.send(200, dict(path='/Contacts/Lea.vcf', taken=body.get('keys'), imported=2, duplicates=1, rejected=[], merged=True, removed=1, changed=1, fields=body.get('fields') or body))
         if p == '/api/v1/me/links': return self.send(200, dict(linked=[dict(plane='zen1', key='ee' * 32)], skipped=[]))
         if p == '/api/v1/chat/send':
@@ -320,6 +324,19 @@ with sync_playwright() as pw:
     page.fill('.ab-search input', 'lea'); page.wait_for_timeout(500)
     check(any('q=lea' in g for g in STATE.get('gets', [])), 'la recherche part au fil de la frappe : ' + str([g for g in STATE.get('gets', []) if 'q=' in g][-1:]))
     page.click('.ab-item:has-text("Léa Martin")'); page.wait_for_selector('.ab-card'); page.wait_for_timeout(300)
+    # Photo de la fiche : envoyer une image, prendre un visage reconnu, retirer ; sélection de fiches pour suppression groupée.
+    page.click('.ab-head button:has-text("Photo…")'); page.wait_for_selector('.ab-face'); page.click('.ab-face >> nth=0'); page.wait_for_timeout(400)
+    ph = [b for p_, b in STATE['posts'] if p_ == '/api/v1/book/photo']
+    check(ph and str(ph[-1]['uri']).startswith('data:image/jpeg;base64,') and ph[-1]['path'] == '/Contacts/Lea.vcf', 'un visage reconnu devient la photo de la fiche')
+    page.click('.ab-head button:has-text("Photo…")'); page.click('button:has-text("Retirer la photo")'); page.wait_for_timeout(400)
+    check([b for p_, b in STATE['posts'] if p_ == '/api/v1/book/photo'][-1]['uri'] is None, 'la photo se retire')
+    page.click('button:has-text("Sélectionner")'); page.locator('.ab-chk >> nth=1').check(); page.wait_for_timeout(200)
+    check('1 sélectionnée(s)' in page.inner_text('main'), 'une fiche cochée : le compte est affiché')
+    page.click('button:has-text("Tout sélectionner")'); page.click('button:has-text("Supprimer la sélection")'); page.wait_for_timeout(400)
+    dm = [b for p_, b in STATE['posts'] if p_ == '/api/v1/book/delete-many']
+    check(dm and len(dm[-1]['paths']) >= 1, 'la suppression groupée envoie les fiches cochées')
+    page.click('button:has-text("Terminer la sélection")')
+    page.reload(); page.wait_for_selector('.ab-list li button'); page.click('.ab-item:has-text("Léa Martin")'); page.wait_for_selector('.ab-card'); page.wait_for_timeout(300)
     check(page.input_value('#f-name') == 'Léa Martin' and page.locator('.ab-diff table tbody tr').count() == 2, 'la fiche affiche ses champs et la comparaison avec le profil Nostr')
     ks = page.inner_text('.ab-keys')
     check('origin' in ks and 'zen1' in ks and 'lien signé des deux clés' in ks and page.locator('.ab-keys a.btn').count() == 1 and page.get_attribute('.ab-keys a.btn', 'href') == '#/chat?peer=' + 'ab' * 32, "la fiche liste la clé de chaque UPlanet ; « Écrire » n'est actif que pour l'UPlanet courante")
@@ -564,6 +581,18 @@ with sync_playwright() as pw:
     # Bibliothèque : fil du temps jour par jour, carte du monde hors ligne avec ses groupes, doublons sans options superflues.
     page.goto(f'http://127.0.0.1:{port}/#/library'); page.wait_for_selector('#lib-tab-time'); page.wait_for_timeout(700)
     check(page.locator('.stream h3.sticky').count() >= 1 and page.locator('.stream h4').count() >= 2, "l'affichage sur le temps groupe les photos par jour : " + str(page.locator('.stream h4').all_inner_texts()[:2]))
+    # Sélection de vignettes (tout sélectionner, quart de tour) et visionneuse à boutons précédent/suivant.
+    page.click('button:has-text("Sélectionner")'); page.locator('.stream .tile >> nth=0').click(); page.locator('.stream .tile >> nth=1').click()
+    check('2 sélectionnée(s)' in page.inner_text('main'), 'deux vignettes cochées : le compte est affiché')
+    page.click('button[aria-label="Tourner vers la droite"]'); page.wait_for_timeout(400)
+    rot = [b for p_, b in STATE['posts'] if p_ == '/api/v1/ucloud/rotate']
+    check(rot and rot[-1]['turn'] == 1 and len(rot[-1]['paths']) == 2, 'le quart de tour part avec les deux photos choisies')
+    page.click('button:has-text("Tout sélectionner")'); check(page.locator('.tile.sel').count() >= 3, 'tout sélectionner coche les vignettes visibles')
+    page.click('button:has-text("Terminer la sélection")'); page.locator('.stream .tile >> nth=0').click(); page.wait_for_selector('#view[open]'); page.wait_for_timeout(300)
+    check(page.locator('#view-n').is_visible() and page.locator('#view-t').inner_text().startswith('1 / '), 'la visionneuse propose suivante et précédente avec le rang')
+    page.click('#view-n'); page.wait_for_timeout(300); check(page.locator('#view-t').inner_text().startswith('2 / '), 'suivante passe à la photo d\'après')
+    check(page.locator('#view-t button[aria-label="Tourner vers la gauche"]').count() == 1, 'la visionneuse permet de tourner la photo')
+    page.click('#view-x')
     page.click('#lib-tab-map'); page.wait_for_selector('canvas.map'); page.wait_for_timeout(600)
     lit = page.evaluate("(() => { const c = document.querySelector('canvas.map'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; const seen = new Set(); for (let i = 0; i < d.length; i += 4 * 97) seen.add(d[i] + ',' + d[i+1] + ',' + d[i+2]); return seen.size; })()")
     check(lit >= 3, f'la carte du monde est dessinée (fond, continents, groupes : {lit} couleurs)')

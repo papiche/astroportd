@@ -235,3 +235,25 @@ async fn the_service_runs_in_the_background_and_allows_one_pass_per_account() {
     assert_eq!(service.undo(&owner, &run).await.unwrap(), 7);
     assert!(files(&b).await.contains(&"/Imports/A/doc.pdf".to_owned()));
 }
+
+#[tokio::test]
+async fn a_photo_is_turned_in_place_keeping_its_date_and_a_non_image_is_refused() {
+    let b = bench("rotate").await;
+    let me = hex(&ALICE);
+    let mut img = image::RgbImage::new(40, 20);
+    img.put_pixel(0, 0, image::Rgb([250, 0, 0]));
+    let mut jpeg = Vec::new();
+    img.write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 95)).unwrap();
+    astro_dav::ingest::ingest(&b.dav, &me, "/Photos", "a.jpg", Some("image/jpeg"), std::io::Cursor::new(jpeg)).await.unwrap();
+    astro_dav::ingest::ingest(&b.dav, &me, "/Photos", "note.txt", Some("text/plain"), std::io::Cursor::new(b"bonjour".to_vec())).await.unwrap();
+    b.dav.db.writer().execute("UPDATE ucloud_entries SET mtime = ?1, taken_at = ?1, lat = 43.6, lon = 1.44 WHERE path = '/Photos/a.jpg'", vec![V::Integer(NOV_2018)]).await.unwrap();
+    astroportd::rotate::rotate_entry(&b.dav, &me, "/Photos/a.jpg", 1).await.unwrap();
+    let (taken, lat, mtime): (i64, f64, i64) = b.dav.db.readers().read(|c| Ok(c.query_row("SELECT taken_at, lat, mtime FROM ucloud_entries WHERE path = '/Photos/a.jpg'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?)).await.unwrap();
+    assert_eq!((taken, lat, mtime), (NOV_2018, 43.6, NOV_2018), "date et position gardées");
+    let bytes = astro_dav::carddav::read_file(&b.dav, &me, "/Photos/a.jpg").await.unwrap();
+    let mut d = image::ImageReader::new(std::io::Cursor::new(&bytes)).with_guessed_format().unwrap().into_decoder().unwrap();
+    use image::ImageDecoder;
+    assert_eq!(d.orientation().unwrap(), image::metadata::Orientation::Rotate90, "orientation EXIF réécrite, pixels intacts");
+    assert!(astroportd::rotate::rotate_entry(&b.dav, &me, "/Photos/note.txt", 1).await.is_err());
+    assert!(astroportd::rotate::rotate_entry(&b.dav, &me, "/Photos/absente.jpg", 1).await.is_err());
+}

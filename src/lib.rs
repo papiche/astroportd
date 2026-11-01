@@ -28,6 +28,7 @@ pub mod mesh_outbox;
 pub mod organize;
 pub mod p2p_relay;
 pub mod person_keys;
+pub mod rotate;
 pub mod private_backup;
 pub mod register;
 pub mod share_inbox;
