@@ -275,6 +275,19 @@ pub trait Backend: Send + Sync + 'static {
     fn account_quota(&self, _who: &Principal, _hex: String, _quota_bytes: Option<u64>) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("quota non réglable sur cette station")) }
     }
+    /// Fixe le quota ET le prix hebdomadaire (ẑ) d'un compte hébergé (Capitaine) ; `None` retire le réglage propre au
+    /// compte (retour au palier par défaut du Capitaine).
+    fn account_hosting(&self, _who: &Principal, _hex: String, _quota_bytes: Option<u64>, _weekly_zen: Option<u64>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("hébergement non réglable sur cette station")) }
+    }
+    /// Palier par défaut du Capitaine (quota et prix hebdomadaire des MULTIPASS sans réglage propre) : lecture.
+    fn hosting_defaults(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("hébergement non réglable sur cette station")) }
+    }
+    /// Palier par défaut du Capitaine : écriture (`None` retire le réglage).
+    fn set_hosting_defaults(&self, _who: &Principal, _quota_bytes: Option<u64>, _weekly_zen: Option<u64>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("hébergement non réglable sur cette station")) }
+    }
     /// Dialogue avec BRO.
     fn bro_say(&self, who: &Principal, text: String) -> impl Future<Output = Result<Value, ApiError>> + Send;
     /// Attestation de copie privée du compte : `{ accepted, version, accepted_at, text }`.
@@ -630,6 +643,8 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/station/accounts", get(accounts::<B>))
         .route("/api/v1/station/accounts/{hex}/token", post(account_token::<B>))
         .route("/api/v1/station/accounts/{hex}/quota", post(account_quota::<B>))
+        .route("/api/v1/station/accounts/{hex}/hosting", post(account_hosting::<B>))
+        .route("/api/v1/station/hosting", get(hosting_defaults::<B>).post(set_hosting_defaults::<B>))
         .with_state(state)
 }
 
@@ -952,6 +967,45 @@ async fn account_quota<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: H
         Ok(p) => match captain_only(&p) {
             Ok(()) if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) => reply(st.backend.account_quota(&p, hex.to_ascii_lowercase(), body.quota_bytes).await),
             Ok(()) => reply(Err(ApiError::bad_request("clé de compte invalide (64 hexadécimaux)"))),
+            Err(r) => r,
+        },
+        Err(r) => r,
+    }
+}
+
+#[derive(Deserialize)]
+struct HostingBody {
+    /// Octets ; absent ou `null` : pas de quota propre (palier par défaut).
+    quota_bytes: Option<u64>,
+    /// ẑ par semaine ; absent ou `null` : pas de prix propre (prix par défaut).
+    weekly_zen: Option<u64>,
+}
+
+async fn account_hosting<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(hex): Path<String>, Json(body): Json<HostingBody>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => match captain_only(&p) {
+            Ok(()) if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) => reply(st.backend.account_hosting(&p, hex.to_ascii_lowercase(), body.quota_bytes, body.weekly_zen).await),
+            Ok(()) => reply(Err(ApiError::bad_request("clé de compte invalide (64 hexadécimaux)"))),
+            Err(r) => r,
+        },
+        Err(r) => r,
+    }
+}
+
+async fn hosting_defaults<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => match captain_only(&p) {
+            Ok(()) => reply(st.backend.hosting_defaults(&p).await),
+            Err(r) => r,
+        },
+        Err(r) => r,
+    }
+}
+
+async fn set_hosting_defaults<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<HostingBody>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => match captain_only(&p) {
+            Ok(()) => reply(st.backend.set_hosting_defaults(&p, body.quota_bytes, body.weekly_zen).await),
             Err(r) => r,
         },
         Err(r) => r,

@@ -127,8 +127,12 @@ async fn ingest_with<B: BlobStore, R: AsyncRead + Unpin>(st: &Arc<DavState<B>>, 
     let meta = blob.commit().await?;
     let file = NewFile { cid: meta.cid.clone(), size_cid: meta.size, size_plain: size, sha_plain, mime: mime.clone(), key_hex: key.to_hex(), now: now() };
     let (o, p) = (owner.to_owned(), path.clone());
-    match vfs_tx(&st.db, move |tx| vfs::commit_file_tx(tx, &o, &p, &file, limits)).await {
-        Ok(old) => {
+    match vfs_tx(&st.db, move |tx| vfs::commit_file_dedup_tx(tx, &o, &p, &file, limits)).await {
+        Ok((old, redundant)) => {
+            // Même clair déjà présent : le blob qu'on vient d'écrire fait doublon, on garde l'ancien.
+            if let Some(dup) = redundant {
+                let _ = st.blobs.remove(&dup).await;
+            }
             // Remplacement : l'ancien blob n'est plus référencé par personne, il est libéré.
             if let Some(prev) = old.and_then(|e| e.cid) {
                 crate::server::release_blobs(st, vec![prev]).await;

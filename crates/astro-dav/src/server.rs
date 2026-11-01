@@ -633,8 +633,11 @@ pub(crate) async fn put<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str,
     let Ok(meta) = blob.commit().await else { return reply(StatusCode::INTERNAL_SERVER_ERROR, "stockage indisponible") };
     let file = NewFile { cid: meta.cid.clone(), size_cid: meta.size, size_plain, sha_plain, mime: mime.clone(), key_hex: key.to_hex(), now: now_secs() };
     let (o, p) = (owner.clone(), path.to_owned());
-    match vfs_tx(&st.db, move |tx| vfs::commit_file_tx(tx, &o, &p, &file, limits)).await {
-        Ok(old) => {
+    match vfs_tx(&st.db, move |tx| vfs::commit_file_dedup_tx(tx, &o, &p, &file, limits)).await {
+        Ok((old, redundant)) => {
+            if let Some(dup) = redundant {
+                let _ = st.blobs.remove(&dup).await;
+            }
             if let Some(hook) = &st.on_upload {
                 hook(&owner, path, &mime);
             }

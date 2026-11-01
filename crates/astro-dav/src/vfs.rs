@@ -313,6 +313,28 @@ pub fn commit_file_tx(tx: &Transaction<'_>, owner: &str, path: &str, f: &NewFile
     Ok(old)
 }
 
+/// Comme [`commit_file_tx`], mais un fichier dont le clair (SHA-256 + taille) existe déjà chez ce compte, chiffré en
+/// UENC v2, **réutilise** ce blob et sa clé : une photo déposée deux fois n'occupe qu'une place. Retourne l'ancienne
+/// entrée remplacée et, si le blob qu'on vient d'écrire est devenu redondant, son CID (à supprimer du magasin par
+/// l'appelant). Les anciens blobs UENC v1 (Kubo) ne servent jamais de cible : on ne les déplace pas.
+pub fn commit_file_dedup_tx(tx: &Transaction<'_>, owner: &str, path: &str, f: &NewFile, limits: Limits) -> Result<(Option<Entry>, Option<String>), VfsError> {
+    let twin: Option<(String, String, Option<i64>)> = tx
+        .query_row(
+            "SELECT e.cid, k.key_hex, json_extract(e.data, '$.size_cid') FROM ucloud_entries e \
+             JOIN ucloud_keyring k ON k.owner_hex = e.owner_hex AND k.cid = e.cid \
+             WHERE e.owner_hex = ?1 AND e.sha_plain = ?2 AND e.size = ?3 AND e.type = 'file' AND k.enc = 'uenc2' AND e.cid <> ?4 LIMIT 1",
+            params![owner, f.sha_plain, f.size_plain as i64, f.cid],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((cid, key_hex, size_cid)) = twin else {
+        return commit_file_tx(tx, owner, path, f, limits).map(|old| (old, None));
+    };
+    let shared = NewFile { cid, key_hex, size_cid: size_cid.map_or(f.size_cid, |n| n as u64), ..f.clone() };
+    let old = commit_file_tx(tx, owner, path, &shared, limits)?;
+    Ok((old, Some(f.cid.clone())))
+}
+
 /// Supprime la clé d'un blob que plus aucune entrée du compte ne référence (une copie partage le CID et la clé).
 fn drop_unreferenced_key(tx: &Transaction<'_>, owner: &str, cid: &str) -> Result<(), VfsError> {
     tx.execute(

@@ -103,13 +103,15 @@ fn account_from_row(owner: String, role: &str, contract: Option<&str>, quota: Op
     Account { owner, tier, quota_override: quota.and_then(|q| u64::try_from(q).ok()) }
 }
 
+// Palier gratuit du Capitaine : `kv('hosting', 'default_quota')` (octets) s'applique aux MULTIPASS sans quota propre.
+
 /// Compte hébergé ici pour une clé publique.
 pub async fn lookup_by_hex(db: &Db, hex: &str) -> Option<Account> {
     let hex = hex.to_owned();
     db.readers()
         .read(move |c| {
             let row: Option<(String, Option<String>, Option<i64>)> = rusqlite::OptionalExtension::optional(
-                c.query_row("SELECT role, contract, quota_bytes FROM identities WHERE hex = ?1 AND hosted = 1", [&hex], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))),
+                c.query_row("SELECT role, contract, COALESCE(quota_bytes, CASE WHEN role = 'multipass' THEN (SELECT CAST(value AS INTEGER) FROM kv WHERE scope = 'hosting' AND key = 'default_quota') END) FROM identities WHERE hex = ?1 AND hosted = 1", [&hex], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))),
             )?;
             Ok(row.map(|(role, contract, quota)| account_from_row(hex, &role, contract.as_deref(), quota)))
         })
@@ -124,7 +126,7 @@ pub async fn lookup_by_login(db: &Db, login: &str) -> Option<Account> {
     db.readers()
         .read(move |c| {
             let row: Option<(String, String, Option<String>, Option<i64>)> = rusqlite::OptionalExtension::optional(c.query_row(
-                "SELECT hex, role, contract, quota_bytes FROM identities WHERE hosted = 1 AND (hex = ?1 OR email = ?1) ORDER BY hex LIMIT 1",
+                "SELECT hex, role, contract, COALESCE(quota_bytes, CASE WHEN role = 'multipass' THEN (SELECT CAST(value AS INTEGER) FROM kv WHERE scope = 'hosting' AND key = 'default_quota') END) FROM identities WHERE hosted = 1 AND (hex = ?1 OR email = ?1) ORDER BY hex LIMIT 1",
                 [&login],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             ))?;

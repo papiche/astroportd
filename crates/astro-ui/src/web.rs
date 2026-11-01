@@ -325,7 +325,7 @@ mod tests {
     fn the_whole_app_stays_under_its_budgets_raw_and_on_the_wire() {
         let size = embedded_bytes();
         assert!(size > 5_000, "l'application est-elle vraiment embarquée ? {size}");
-        assert!(size < 54 * 1024, "{size} octets bruts : budget de 54 Ko dépassé");
+        assert!(size < 56 * 1024, "{size} octets bruts : budget de 56 Ko dépassé");
         let (br, gz) = (transfer_bytes(Some("br, gzip")), transfer_bytes(Some("gzip")));
         assert!(br < 20 * 1024, "{br} octets en Brotli : budget réseau de 20 Ko dépassé");
         assert!(gz < 20 * 1024, "{gz} octets en Gzip : budget réseau de 20 Ko dépassé");

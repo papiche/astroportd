@@ -32,6 +32,7 @@ pub mod sharing;
 pub mod solar_cron;
 pub mod upload_worker;
 pub mod webdav_pull;
+pub mod hosting_fee;
 pub mod zen_react;
 pub mod station;
 pub mod tunnel_policy;

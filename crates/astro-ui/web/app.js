@@ -167,7 +167,8 @@ h('p', { class: 'big' }, e.weeks.toFixed(1), h('small', { class: 'muted' }, ' se
 h('section', { class: 'card' }, h('h2', {}, 'Empreinte sur les communs'),
 h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: Math.min(pct, 1), 'aria-label': 'Disque utilisé' }),
 h('p', { class: 'big' }, bytes(k.used_bytes), h('small', { class: 'muted' }, k.unlimited ? ` ${t('sans quota')} · ${t('disque de la station')} ${bytes(k.quota_bytes)}` : ` / ${bytes(k.quota_bytes)}`)),
-h('p', { class: 'muted' }, `${k.files} fichier(s) · formule ${k.tier}`)),
+h('p', { class: 'muted' }, `${k.files} fichier(s) · formule ${k.tier}`),
+fp.hosting && fp.hosting.weekly_zen > 0 ? h('p', { class: 'muted' }, `${t('Hébergement')} : ${price(fp.hosting.weekly_zen)}${fp.hosting.fee === 'unpaid' ? ` · ${t('non réglé cette semaine : solde insuffisant')}` : fp.hosting.fee === 'paid' ? ` · ${t('réglé cette semaine')}` : ''}`) : null),
 h('section', { class: 'card' }, h('h2', {}, 'Souveraineté ', h('small', {}, 'vos données, chiffrées')),
 h('p', { class: 'big' }, String(w.encrypted_files), h('small', { class: 'muted' }, ` fichiers chiffrés · ${bytes(w.encrypted_bytes)}`)),
 h('dl', {}, row('Dernier manifeste', w.last_manifest_at ? when(w.last_manifest_at) : 'aucun'), row('Événement Nostr', w.last_manifest_event || '—'), row('Révision', w.last_manifest_rev ?? '—'))),
@@ -188,7 +189,7 @@ every(30000, () => draw().catch(() => {}));
 async function viewStation(root) {
 const draw = async () => {
 const { codeCell, codeSummary } = await import('/ui/m-code.js');
-const [d, z, cs, ec, ac] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()), api('/api/v1/station/constellation'), api('/api/v1/station/economy'), api('/api/v1/station/accounts')]);
+const [d, z, cs, ec, ac, hd] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()), api('/api/v1/station/constellation'), api('/api/v1/station/economy'), api('/api/v1/station/accounts'), api('/api/v1/station/hosting')]);
 const s = d.station, r = d.relay, p = d.p2p, sub = z.subsystems || {};
 const love = ec.love, sh = ec.shares;
 root.replaceChildren(h('div', { class: 'grid' },
@@ -212,10 +213,11 @@ h('dl', {}, row('Surplus réparti', `${zen(ec.allocation.surplus_cents)} Ẑ`), 
 h('h3', {}, 'Love Ledger'), h('p', {}, h('strong', {}, `${zen(love.total_cents)} Ẑ`), ` donnés sur ${love.weeks} semaine(s)`),
 love.recent.length ? h('ul', { class: 'muted' }, love.recent.map(x => h('li', {}, `${day(x.at)} : ${zen(x.amount_cents)} Ẑ${x.detail?.week ? ` (semaine ${x.detail.week})` : ''}`))) : null),
 h('section', { class: 'card wide' }, h('h2', {}, 'Comptes hébergés ', h('small', {}, `${ac.accounts.length}`)),
-ac.accounts.length ? table('MULTIPASS et ZenCards de la station', ['Compte', 'Cycle de vie', 'Disque', 'Fichiers', 'Secours'],
+h('p', { class: 'muted' }, `${t('Palier par défaut des MULTIPASS')} : ${hd.default_quota_bytes == null ? t('quota de leur formule') : bytes(hd.default_quota_bytes)} · ${price(hd.default_weekly_zen)} `, h('button', { class: 'ghost', onclick: () => hostingDefaults(hd) }, 'Modifier')),
+ac.accounts.length ? table('MULTIPASS et ZenCards de la station', ['Compte', 'Cycle de vie', 'Disque', 'Hébergement', 'Fichiers', 'Secours'],
 ac.accounts.map(a => [a.email || a.hex.slice(0, 12), [pill(tone(a.status)), ' ', LIFE[a.status] || a.status || 'inconnu', a.grace_ends_at ? ` (jusqu'au ${day(a.grace_ends_at)})` : ''],
-[h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: a.quota_bytes ? Math.min(a.used_bytes / a.quota_bytes, 1) : 0, 'aria-label': 'Disque' }), ` ${bytes(a.used_bytes)} / ${a.unlimited ? t('illimité') : bytes(a.quota_bytes)}`], String(a.files),
-[h('button', { class: 'ghost', onclick: () => token(a) }, 'Jeton de secours'), a.unlimited ? null : [' ', h('button', { class: 'ghost', onclick: () => quota(a) }, 'Quota')], a.pass_locked_until ? [' ', h('button', { onclick: async () => { await api(`/api/v1/station/accounts/${a.hex}/unlock-pass`, { method: 'POST' }); toast('PASS déverrouillé', 1); draw(); } }, 'Déverrouiller le PASS')] : null]]))
+[h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: a.quota_bytes ? Math.min(a.used_bytes / a.quota_bytes, 1) : 0, 'aria-label': 'Disque' }), ` ${bytes(a.used_bytes)} / ${a.unlimited ? t('illimité') : bytes(a.quota_bytes)}`], a.unlimited ? '—' : `${price(a.weekly_zen)}${a.fee === 'unpaid' ? ` · ${t('impayé cette semaine')}` : a.fee === 'paid' ? ` · ${t('réglé')}` : ''}`, String(a.files),
+[h('button', { class: 'ghost', onclick: () => token(a) }, 'Jeton de secours'), a.unlimited ? null : [' ', h('button', { class: 'ghost', onclick: () => hosting(a) }, 'Hébergement')], a.pass_locked_until ? [' ', h('button', { onclick: async () => { await api(`/api/v1/station/accounts/${a.hex}/unlock-pass`, { method: 'POST' }); toast('PASS déverrouillé', 1); draw(); } }, 'Déverrouiller le PASS')] : null]]))
 : h('p', { class: 'muted' }, 'Aucun compte hébergé.')),
 h('section', { class: 'card wide' }, h('h2', {}, 'Configuration coopérative'), h('p', { class: 'muted' }, 'Paramètres partagés par toute la constellation (OpenCollective, Mailjet, règle 3×1/3…). Les secrets sont chiffrés et ne s\'affichent jamais.'), h('button', { onclick: () => { location.hash = '#/coop'; } }, 'Modifier la configuration')),
 h('section', { class: 'card wide' }, h('h2', {}, 'Options de la station'), h('p', { class: 'muted' }, 'Moteur de reconnaissance des visages (local, Brain GPU ou arrêt) et règles du relai par kind, sans redémarrer.'), h('button', { onclick: () => { location.hash = '#/options'; } }, 'Ouvrir les options'))));
@@ -235,13 +237,29 @@ toast('Jeton de secours généré', 1);
 box.replaceChildren(h('p', { class: 'muted' }, `Compte ${r.login}. À transmettre de vive voix ou par un canal chiffré : l'opération est tracée dans le journal d'audit.`), inp);
 } catch (e) { box.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }
 }
-async function quota(a) {
-const cur = a.quota_bytes ? Math.round(a.quota_bytes / 2 ** 30) : '';
-const v = prompt(t('Quota de {0}, en Go (vide : celui de sa formule)', a.email || a.hex.slice(0, 12)), cur);
-if (v === null) return;
-const gb = v.trim() === '' ? null : Number(v.replace(',', '.'));
+const price = z => z > 0 ? `${z} ẑ / ${t('semaine')}` : t('gratuit');
+// Réglage d'un compte : quota (Go) puis prix hebdomadaire (ẑ) ; une réponse vide retire le réglage propre au compte.
+async function hosting(a) {
+const who = a.email || a.hex.slice(0, 12);
+const q = prompt(t('Quota de {0}, en Go (vide : palier par défaut)', who), a.own_quota_bytes ? Math.round(a.own_quota_bytes / 2 ** 30) : '');
+if (q === null) return;
+const z = prompt(t('Prix de {0}, en ẑ par semaine (0 : gratuit ; vide : prix par défaut)', who), a.own_weekly_zen == null ? '' : a.own_weekly_zen);
+if (z === null) return;
+const gb = q.trim() === '' ? null : Number(q.replace(',', '.')), zen = z.trim() === '' ? null : Number(z.replace(',', '.'));
 if (gb !== null && !(gb >= 0 && Number.isFinite(gb))) return toast('Nombre de Go attendu');
-try { await api(`/api/v1/station/accounts/${a.hex}/quota`, { method: 'POST', body: { quota_bytes: gb === null ? null : Math.round(gb * 2 ** 30) } }); toast('Quota enregistré', 1); location.reload(); } catch (e) { toast(e.message); }
+if (zen !== null && !(Number.isInteger(zen) && zen >= 0)) return toast('Nombre entier de ẑ attendu');
+try { await api(`/api/v1/station/accounts/${a.hex}/hosting`, { method: 'POST', body: { quota_bytes: gb === null ? null : Math.round(gb * 2 ** 30), weekly_zen: zen } }); toast('Hébergement enregistré', 1); location.reload(); } catch (e) { toast(e.message); }
+}
+// Palier par défaut des MULTIPASS sans réglage propre.
+async function hostingDefaults(hd) {
+const q = prompt(t('Quota par défaut des MULTIPASS, en Go (vide : celui de leur formule)'), hd.default_quota_bytes ? Math.round(hd.default_quota_bytes / 2 ** 30) : '');
+if (q === null) return;
+const z = prompt(t('Prix par défaut, en ẑ par semaine (vide ou 0 : gratuit)'), hd.default_weekly_zen || '');
+if (z === null) return;
+const gb = q.trim() === '' ? null : Number(q.replace(',', '.')), zen = z.trim() === '' ? null : Number(z.replace(',', '.'));
+if (gb !== null && !(gb >= 0 && Number.isFinite(gb))) return toast('Nombre de Go attendu');
+if (zen !== null && !(Number.isInteger(zen) && zen >= 0)) return toast('Nombre entier de ẑ attendu');
+try { await api('/api/v1/station/hosting', { method: 'POST', body: { quota_bytes: gb === null ? null : Math.round(gb * 2 ** 30), weekly_zen: zen } }); toast('Palier enregistré', 1); location.reload(); } catch (e) { toast(e.message); }
 }
 async function viewCloud(root, q) {
 const path = q.get('p') || '/', mode = q.get('m'), album = mode === 'album', sources = mode === 'sources', organize = mode === 'organize';

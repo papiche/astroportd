@@ -749,6 +749,10 @@ impl<B: BlobStore> Backend for StationUi<B> {
         let quota = if unlimited { self.dav.blobs.disk_space().map_or(0, |(_, total)| total) } else { limits.quota_total };
         let owner = who.hex.clone();
         let (opex, capex) = self.opex_capex(&who.hex, &account).await?;
+        let hosting = {
+            let h = who.hex.clone();
+            svc.db.readers().read(move |c| Ok(json!({ "weekly_zen": crate::hosting_fee::weekly_price(c, &h)?, "fee": crate::hosting_fee::current_state(c, &h, now_secs().unsigned_abs()) }))).await.map_err(db_err)?
+        };
         let (used, files) = svc
             .db
             .readers()
@@ -760,6 +764,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
         Ok(json!({
             "disk": { "used_bytes": used, "files": files, "quota_bytes": quota, "unlimited": unlimited, "tier": format!("{:?}", account.tier) },
             "opex": opex, "capex": capex,
+            "hosting": hosting,
         }))
     }
 
@@ -1125,7 +1130,22 @@ impl<B: BlobStore> Backend for StationUi<B> {
                 Some(a) => a.pass_locked_until(&hex).await,
                 None => None,
             };
+            let h = hex.clone();
+            let (own_quota, own_price, price, fee): (Option<i64>, Option<u64>, u64, Option<String>) = self
+                .services
+                .db
+                .readers()
+                .read(move |c| {
+                    let own_quota = c.query_row("SELECT quota_bytes FROM identities WHERE hex = ?1", [&h], |r| r.get::<_, Option<i64>>(0))?;
+                    let own_price = c.query_row("SELECT value FROM kv WHERE scope = ?1 AND key = ?2", rusqlite::params![crate::hosting_fee::PRICE_SCOPE, h], |r| r.get::<_, String>(0)).ok().and_then(|v| v.trim().parse().ok());
+                    let price = crate::hosting_fee::weekly_price(c, &h)?;
+                    let fee = crate::hosting_fee::current_state(c, &h, now_secs().unsigned_abs());
+                    Ok((own_quota, own_price, price, fee))
+                })
+                .await
+                .map_err(db_err)?;
             out.push(json!({
+                "own_quota_bytes": own_quota, "own_weekly_zen": own_price, "weekly_zen": price, "fee": fee,
                 "pass_locked_until": pass_locked_until,
                 "hex": hex, "role": role, "email": email, "contract": contract, "status": status, "tracked": !life.is_null(),
                 "last_ok_at": life["last_ok_at"], "status_since": life["status_since"], "grace_ends_at": grace_ends,
@@ -1145,6 +1165,55 @@ impl<B: BlobStore> Backend for StationUi<B> {
         self.services.activity.publish_to(astro_core::Audience::Captain, "quota", "quota", format!("Quota de {} : {}", hex.get(..8).unwrap_or(&hex), quota_bytes.map_or_else(|| "celui de sa formule".to_owned(), |q| format!("{} Go", q >> 30))), None);
         let _ = who;
         Ok(json!({ "hex": hex, "quota_bytes": quota_bytes }))
+    }
+
+    async fn account_hosting(&self, _who: &Principal, hex: String, quota_bytes: Option<u64>, weekly_zen: Option<u64>) -> Result<Value, ApiError> {
+        let account = astro_dav::auth::lookup_by_hex(&self.services.db, &hex).await.ok_or_else(|| ApiError::not_found("compte non hébergé ici"))?;
+        if account.tier == astro_dav::auth::Tier::Captain {
+            return Err(ApiError::bad_request("le Capitaine n'a ni quota ni prix : seul le disque de la station le borne"));
+        }
+        if weekly_zen.is_some_and(|z| z > crate::hosting_fee::MAX_WEEKLY_ZEN) {
+            return Err(ApiError::bad_request(format!("prix hebdomadaire au plus {} ẑ", crate::hosting_fee::MAX_WEEKLY_ZEN)));
+        }
+        let value: rusqlite::types::Value = quota_bytes.map_or(rusqlite::types::Value::Null, |q| rusqlite::types::Value::Integer(i64::try_from(q).unwrap_or(i64::MAX)));
+        let w = self.services.db.writer();
+        w.execute("UPDATE identities SET quota_bytes = ?2 WHERE hex = ?1 AND hosted = 1", vec![hex.clone().into(), value]).await.map_err(db_err)?;
+        match weekly_zen {
+            Some(z) => w.execute("INSERT OR REPLACE INTO kv(scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?4)", vec![crate::hosting_fee::PRICE_SCOPE.to_owned().into(), hex.clone().into(), z.to_string().into(), now_secs().into()]).await,
+            None => w.execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", vec![crate::hosting_fee::PRICE_SCOPE.to_owned().into(), hex.clone().into()]).await,
+        }
+        .map_err(db_err)?;
+        let label = |q: Option<u64>, z: Option<u64>| format!("{} · {}", q.map_or_else(|| "quota par défaut".to_owned(), |q| format!("{} Go", q >> 30)), z.map_or_else(|| "prix par défaut".to_owned(), |z| format!("{z} ẑ/semaine")));
+        self.services.activity.publish_to(astro_core::Audience::Captain, "quota", "quota", format!("Hébergement de {} : {}", hex.get(..8).unwrap_or(&hex), label(quota_bytes, weekly_zen)), None);
+        Ok(json!({ "hex": hex, "quota_bytes": quota_bytes, "weekly_zen": weekly_zen }))
+    }
+
+    async fn hosting_defaults(&self, _who: &Principal) -> Result<Value, ApiError> {
+        self.services
+            .db
+            .readers()
+            .read(|c| {
+                let get = |key: &str| -> rusqlite::Result<Option<u64>> { Ok(c.query_row("SELECT value FROM kv WHERE scope = ?1 AND key = ?2", rusqlite::params![crate::hosting_fee::DEFAULT_SCOPE, key], |r| r.get::<_, String>(0)).ok().and_then(|v| v.trim().parse().ok())) };
+                Ok(json!({ "default_quota_bytes": get("default_quota")?, "default_weekly_zen": get("default_price")? }))
+            })
+            .await
+            .map_err(db_err)
+    }
+
+    async fn set_hosting_defaults(&self, _who: &Principal, quota_bytes: Option<u64>, weekly_zen: Option<u64>) -> Result<Value, ApiError> {
+        if weekly_zen.is_some_and(|z| z > crate::hosting_fee::MAX_WEEKLY_ZEN) {
+            return Err(ApiError::bad_request(format!("prix hebdomadaire au plus {} ẑ", crate::hosting_fee::MAX_WEEKLY_ZEN)));
+        }
+        let w = self.services.db.writer();
+        for (key, value) in [("default_quota", quota_bytes), ("default_price", weekly_zen)] {
+            match value {
+                Some(v) => w.execute("INSERT OR REPLACE INTO kv(scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?4)", vec![crate::hosting_fee::DEFAULT_SCOPE.to_owned().into(), key.to_owned().into(), v.to_string().into(), now_secs().into()]).await,
+                None => w.execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", vec![crate::hosting_fee::DEFAULT_SCOPE.to_owned().into(), key.to_owned().into()]).await,
+            }
+            .map_err(db_err)?;
+        }
+        self.services.activity.publish_to(astro_core::Audience::Captain, "quota", "quota", format!("Palier par défaut : {} · {}", quota_bytes.map_or_else(|| "quota de la formule".to_owned(), |q| format!("{} Go", q >> 30)), weekly_zen.map_or_else(|| "gratuit".to_owned(), |z| format!("{z} ẑ/semaine"))), None);
+        Ok(json!({ "default_quota_bytes": quota_bytes, "default_weekly_zen": weekly_zen }))
     }
 
     async fn account_token(&self, who: &Principal, hex: String) -> Result<Value, ApiError> {

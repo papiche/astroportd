@@ -101,7 +101,7 @@ async fn streaming_put_then_propfind_range_get_and_container_check() {
 async fn each_file_gets_its_own_key_and_empty_files_work() {
     let b = bench("keys").await;
     for name in ["a.txt", "b.txt", "vide.txt"] {
-        let body = if name == "vide.txt" { Vec::new() } else { b"meme contenu".to_vec() };
+        let body = if name == "vide.txt" { Vec::new() } else { format!("contenu de {name}").into_bytes() };
         assert_eq!(call(&b.app, "PUT", &format!("/dav/{name}"), Some(&alice()), &[], Body::from(body)).await.status(), 201);
     }
     let keys: Vec<String> = b.db.readers().read(|c| Ok(c.prepare("SELECT key_hex FROM ucloud_keyring")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?)).await.unwrap();
@@ -373,4 +373,63 @@ async fn the_captain_has_no_quota_and_can_set_one_per_hosted_account() {
     assert_eq!(call(&b.app, "PUT", "/dav/trop.bin", Some(&z), &[], Body::from(vec![0u8; 4500])).await.status(), 413, "le plafond par fichier reste");
     let acc = astro_dav::auth::lookup_by_hex(&b.db, &bob_hex).await.unwrap();
     assert_eq!(acc.tier, astro_dav::auth::Tier::Captain);
+}
+
+#[tokio::test]
+async fn the_same_file_deposited_twice_takes_one_place_until_both_are_deleted() {
+    let b = bench("dedup").await;
+    let blobs = || std::fs::read_dir(b.blobs.root()).unwrap().filter_map(Result::ok).filter(|e| e.file_name() != ".tmp").count();
+    let photo = sample(300_000, 7);
+    for name in ["a.bin", "b.bin"] {
+        assert_eq!(call(&b.app, "PUT", &format!("/dav/{name}"), Some(&alice()), &[], Body::from(photo.clone())).await.status(), 201);
+    }
+    assert_eq!(blobs(), 1, "le second dépôt ne crée aucun blob");
+    let keys: i64 = b.db.readers().read(|c| Ok(c.query_row("SELECT count(*) FROM ucloud_keyring", [], |r| r.get(0))?)).await.unwrap();
+    assert_eq!(keys, 1, "une seule clé pour un seul blob");
+    for name in ["a.bin", "b.bin"] {
+        let (status, _, body) = bytes(call(&b.app, "GET", &format!("/dav/{name}"), Some(&alice()), &[], Body::empty()).await).await;
+        assert_eq!((status, body == photo), (200, true), "{name} se relit");
+    }
+    // Un contenu différent ne fusionne pas.
+    assert_eq!(call(&b.app, "PUT", "/dav/c.bin", Some(&alice()), &[], Body::from(sample(300_000, 8))).await.status(), 201);
+    assert_eq!(blobs(), 2);
+    // Supprimé d'un côté : le blob reste ; des deux côtés : il disparaît.
+    assert_eq!(call(&b.app, "DELETE", "/dav/a.bin", Some(&alice()), &[], Body::empty()).await.status(), 204);
+    assert_eq!(blobs(), 2, "b.bin le référence encore");
+    assert_eq!(call(&b.app, "DELETE", "/dav/b.bin", Some(&alice()), &[], Body::empty()).await.status(), 204);
+    assert_eq!(blobs(), 1, "plus aucune entrée : le blob est libéré");
+    // Remplacer un fichier par son propre contenu ne perd rien.
+    assert_eq!(call(&b.app, "PUT", "/dav/c.bin", Some(&alice()), &[], Body::from(sample(300_000, 8))).await.status(), 204);
+    let (_, _, body) = bytes(call(&b.app, "GET", "/dav/c.bin", Some(&alice()), &[], Body::empty()).await).await;
+    assert_eq!(body, sample(300_000, 8));
+    assert_eq!(blobs(), 1);
+}
+
+#[tokio::test]
+async fn two_accounts_never_share_a_blob() {
+    let b = bench("dedup2").await;
+    let photo = sample(50_000, 9);
+    for who in [alice(), bob()] {
+        assert_eq!(call(&b.app, "PUT", "/dav/p.bin", Some(&who), &[], Body::from(photo.clone())).await.status(), 201);
+    }
+    let n = std::fs::read_dir(b.blobs.root()).unwrap().filter_map(Result::ok).filter(|e| e.file_name() != ".tmp").count();
+    assert_eq!(n, 2, "deux comptes, deux clés, deux blobs : le partage entre comptes demande un accord explicite");
+}
+
+/// Le palier gratuit du Capitaine (`kv hosting/default_quota`) vaut pour les MULTIPASS sans quota propre, jamais pour le Capitaine.
+#[tokio::test]
+async fn the_captains_default_tier_applies_to_multipass_without_their_own_quota() {
+    let b = bench_with("default-tier", |c| {
+        c.max_file_multipass = 1000;
+        c.quota_multipass = 1500;
+    })
+    .await;
+    let (alice_hex, a) = (hex(&ALICE), alice());
+    assert_eq!(call(&b.app, "PUT", "/dav/a.bin", Some(&a), &[], Body::from(vec![1u8; 900])).await.status(), 201);
+    assert_eq!(call(&b.app, "PUT", "/dav/b.bin", Some(&a), &[], Body::from(vec![2u8; 700])).await.status(), 507, "quota de la formule");
+    b.db.writer().execute("INSERT OR REPLACE INTO kv(scope, key, value, updated_at) VALUES ('hosting', 'default_quota', '5000', 0)", vec![]).await.unwrap();
+    assert_eq!(call(&b.app, "PUT", "/dav/b.bin", Some(&a), &[], Body::from(vec![2u8; 700])).await.status(), 201, "palier par défaut du Capitaine");
+    // Un quota propre l'emporte sur le palier par défaut.
+    b.db.writer().execute("UPDATE identities SET quota_bytes = 1000 WHERE hex = ?1", vec![alice_hex.into()]).await.unwrap();
+    assert_eq!(call(&b.app, "PUT", "/dav/c.bin", Some(&a), &[], Body::from(vec![3u8; 500])).await.status(), 507);
 }

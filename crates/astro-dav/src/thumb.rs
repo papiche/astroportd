@@ -258,7 +258,7 @@ pub async fn generate<B: BlobStore>(st: &Arc<DavState<B>>, owner: &str, path: &s
     st.db
         .writer()
         .execute(
-            "UPDATE ucloud_entries SET lat = COALESCE(lat, s.lat), lon = COALESCE(lon, s.lon), taken_at = COALESCE(taken_at, s.taken_at), phash = COALESCE(ucloud_entries.phash, s.phash), data = json_set(data, '$.exif_scanned', 1) \
+            "UPDATE ucloud_entries SET lat = COALESCE(ucloud_entries.lat, s.lat), lon = COALESCE(ucloud_entries.lon, s.lon), taken_at = COALESCE(ucloud_entries.taken_at, s.taken_at), phash = COALESCE(ucloud_entries.phash, s.phash), data = json_set(ucloud_entries.data, '$.exif_scanned', 1) \
              FROM (SELECT lat, lon, taken_at, phash FROM ucloud_entries WHERE owner_hex = ?1 AND cid = ?3 AND (lat IS NOT NULL OR taken_at IS NOT NULL OR phash IS NOT NULL) LIMIT 1) s \
              WHERE ucloud_entries.owner_hex = ?1 AND ucloud_entries.path = ?2",
             vec![o.into(), p.into(), cid.clone().into()],

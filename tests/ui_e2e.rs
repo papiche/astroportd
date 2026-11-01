@@ -1172,3 +1172,35 @@ async fn a_device_token_opens_webdav_only_never_the_api() {
     let (s, _, _) = call(&b.app, Method::from_bytes(b"PROPFIND").unwrap(), "/dav/", Some(&device), &[("depth", "0")], vec![]).await;
     assert_eq!(s.as_u16(), 207);
 }
+
+/// Quota et prix hebdomadaire (ẑ) d'un MULTIPASS hébergé : fixés par le Capitaine seul, visibles du membre.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_captain_sets_quota_and_weekly_price_and_the_member_sees_them() {
+    let b = bench("hosting", None).await;
+    let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
+    let a = hex(&ALICE);
+    // Un membre ne règle rien, ni pour lui ni pour les autres.
+    assert_eq!(b.post(&format!("/api/v1/station/accounts/{a}/hosting"), &alice, json!({ "quota_bytes": 1u64 << 40, "weekly_zen": 0 })).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(b.get("/api/v1/station/hosting", &alice).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(b.post("/api/v1/station/hosting", &alice, json!({ "weekly_zen": 1 })).await.0, StatusCode::FORBIDDEN);
+    // Le Capitaine : 128 Go à 3 ẑ la semaine pour Alice.
+    let (s, r) = b.post(&format!("/api/v1/station/accounts/{a}/hosting"), &bob, json!({ "quota_bytes": 128u64 << 30, "weekly_zen": 3 })).await;
+    assert_eq!((s, r["weekly_zen"].as_u64()), (StatusCode::OK, Some(3)), "{r}");
+    let fp = b.get("/api/v1/me/footprint", &alice).await.1;
+    assert_eq!((fp["disk"]["quota_bytes"].as_u64(), fp["hosting"]["weekly_zen"].as_u64()), (Some(128u64 << 30), Some(3)));
+    let accounts = b.get("/api/v1/station/accounts", &bob).await.1;
+    let row = accounts["accounts"].as_array().unwrap().iter().find(|x| x["hex"] == a.as_str()).unwrap().clone();
+    assert_eq!((row["own_weekly_zen"].as_u64(), row["weekly_zen"].as_u64(), row["own_quota_bytes"].as_u64()), (Some(3), Some(3), Some(128u64 << 30)));
+    // Garde-fous : prix absurde, Capitaine lui-même, clé invalide.
+    assert_eq!(b.post(&format!("/api/v1/station/accounts/{a}/hosting"), &bob, json!({ "weekly_zen": 10_001 })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.post(&format!("/api/v1/station/accounts/{}/hosting", hex(&BOB)), &bob, json!({ "weekly_zen": 1 })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.post("/api/v1/station/accounts/zz/hosting", &bob, json!({})).await.0, StatusCode::BAD_REQUEST);
+    // Retrait des réglages propres : retour au palier par défaut.
+    let (s, _) = b.post("/api/v1/station/hosting", &bob, json!({ "quota_bytes": 20u64 << 30, "weekly_zen": 2 })).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(b.post(&format!("/api/v1/station/accounts/{a}/hosting"), &bob, json!({})).await.0, StatusCode::OK);
+    let fp = b.get("/api/v1/me/footprint", &alice).await.1;
+    assert_eq!((fp["disk"]["quota_bytes"].as_u64(), fp["hosting"]["weekly_zen"].as_u64()), (Some(20u64 << 30), Some(2)), "palier par défaut du Capitaine");
+    let d = b.get("/api/v1/station/hosting", &bob).await.1;
+    assert_eq!((d["default_quota_bytes"].as_u64(), d["default_weekly_zen"].as_u64()), (Some(20u64 << 30), Some(2)));
+}

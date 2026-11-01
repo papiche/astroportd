@@ -48,6 +48,16 @@ Cette version fait de la **clé de secours** un secret qu'on peut perdre sans da
 - Le client voit son dossier comme la racine du WebDAV (liens sans préfixe, `..` sans effet, destinations de `MOVE`/`COPY` replacées sous la racine) ; contacts et agenda lui sont fermés ; le jeton n'ouvre jamais l'interface.
 - Budgets de l'interface : écrans à la demande relevés à 160 Ko bruts et 56 Ko compressés (128 et 48 avant les écrans Sources et Ranger).
 
+### Un fichier déposé deux fois n'occupe qu'une place
+- Au dépôt (WebDAV, interface, reprise), un fichier dont le clair (SHA-256 et taille) existe déjà dans le **même compte**, en UENC v2, **réutilise le blob et la clé** existants ; le blob qu'on vient d'écrire est jeté. Le blob n'est libéré que quand plus aucune entrée ne le référence (suppression d'une copie sur deux : il reste).
+- Deux comptes ne partagent jamais un blob (clés distinctes) : le partage entre comptes viendra avec l'accord explicite prévu au plan double UPlanet. Les fichiers UENC v1 (Kubo) ne servent jamais de cible et ne sont jamais dépinglés. Pas de nettoyage rétroactif : sur le uCloud repris de `fred@qwantic.com`, les doublons ne pèsent que 4 Mo sur 49 Go.
+
+### Hébergement facturé par le Capitaine (ẑ)
+- **Le Capitaine fixe, pour chaque MULTIPASS hébergé, un quota et un prix hebdomadaire en ẑ** (ex. 128 Go à 0 ẑ pour l'un, 128 Go à 3 ẑ pour l'autre) : écran Station › Comptes hébergés › **Hébergement**. Une réponse vide retire le réglage propre au compte. (ẑ minuscule : les Ẑen du MULTIPASS, côté Opex ; le Ẑ majuscule de la ZenCard, côté Capex, n'est pas touché.)
+- **Palier par défaut** (même écran) : quota et prix des MULTIPASS sans réglage propre. Sans rien régler, **tout est gratuit** et rien n'est débité.
+- **Virement chaque semaine** : une tâche de fond (toutes les 6 h, idempotente) vire le prix du MULTIPASS vers le portefeuille du Capitaine, **un seul virement par compte et par semaine ISO**, noté avant l'envoi ; une issue inconnue n'est jamais rejouée (alerte au Capitaine). Solde insuffisant : le membre et le Capitaine sont prévenus une fois, le virement est retenté à chaque passage de la semaine ; **rien n'est coupé ni supprimé**. Le membre voit son prix et l'état de la semaine dans « Empreinte sur les communs ».
+- Reste à brancher : le résultat de ces virements dans le cycle de vie (grâce, suspension) — il lit aujourd'hui les loyers du registre Ğ1-N², pas ces virements.
+
 ### Base de données : schéma allégé (mesuré)
 - **`nostr_events`** passe à une table à `rowid` (clé interne `seq`) ; `nostr_tags` et l'index plein texte s'y rattachent par cet entier au lieu de l'identifiant de 64 caractères. Sur 200 000 événements : base **28 % plus petite**, insertion **2× plus rapide**, jointure par tag **≈ 9× plus rapide**.
 - **`ucloud_entries`** passe aussi à une table à `rowid` (unicité de `(owner_hex, path)` conservée) : base **26 % plus petite**, insertion **1,6× plus rapide**, liste d'un dossier **≈ 100× plus rapide** (150 000 entrées).

@@ -219,6 +219,11 @@ pub(super) fn funds(p: &Parts<'_>, funds_chain: Option<Arc<RpcPool<SubxtConnecto
                     background.push(tokio::spawn(zen.run(relay.subscribe(), stop_watch.clone())));
                     println!("Ẑen : les réactions +N des MULTIPASS hébergés ici envoient N Ẑen (plafonds : {} par réaction, {} par jour)", a.zen_per_reaction, a.zen_per_day);
                 }
+                // Hébergement : le prix hebdomadaire fixé par le Capitaine (0 par défaut) est viré chaque semaine au Capitaine.
+                {
+                    let fees = Arc::new(astroportd::hosting_fee::HostingFees::new(db.clone(), chain.clone(), secrets_dir.clone(), activity.clone(), notify.clone()));
+                    background.push(tokio::spawn(fees.run(stop_watch.clone())));
+                }
                 let watch = Arc::new(astroportd::funds::FundsWatch::new(db.clone(), activity.clone(), master, indexer, notify.clone(), nostr_dir.clone()));
                 background.push(tokio::spawn(watch.run(chain, stop_watch.clone())));
             }
