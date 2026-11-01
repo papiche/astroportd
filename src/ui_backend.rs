@@ -882,7 +882,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
         let info = plane::describe(&file, home).map_err(|e| ApiError::internal(e.to_string()))?;
         let multi = !plane::running().is_empty();
         let pending: Vec<&str> = info.iter().filter(|p| !p.running).map(|p| p.name.as_str()).collect();
-        Ok(json!({ "configured": existed, "multi_process": multi, "planes": info, "restart_needed": !pending.is_empty(), "pending": pending, "path": path.display().to_string() }))
+        Ok(json!({ "configured": existed, "multi_process": multi, "front": plane::front(), "planes": info, "restart_needed": !pending.is_empty(), "pending": pending, "path": path.display().to_string() }))
     }
 
     async fn plane_add(&self, _who: &Principal, name: String, swarm_key: Option<String>) -> Result<Value, ApiError> {

@@ -197,6 +197,59 @@ pub fn plan(file: &PlanesFile, home: &Path) -> Result<Vec<Plane>, PlaneError> {
     Ok(out)
 }
 
+/// Retire `--plane NOM` (ou `--plane=NOM`) des arguments : rend le nom demandé et le reste.
+pub fn take_plane_flag(raw: Vec<String>) -> (Option<String>, Vec<String>) {
+    let (mut name, mut rest, mut it) = (None, Vec::new(), raw.into_iter());
+    while let Some(a) = it.next() {
+        if a == "--plane" {
+            name = it.next();
+        } else if let Some(v) = a.strip_prefix("--plane=") {
+            name = Some(v.to_owned());
+        } else {
+            rest.push(a);
+        }
+    }
+    (name, rest)
+}
+
+/// Options que `--plane` ajoute à une commande, **sans jamais remplacer** une option déjà donnée. Pour `serve`, toute la configuration du plan
+/// (`full`) : base, blobs, comptes, écoutes, `swarm.key`, pairs du bassin ; pour les autres commandes, seulement `--db`, `--blobs`, `--game-dir`
+/// et `--swarm-key` (les commandes qui n'en connaissent pas certaines les ignorent : voir [`without_flag`]).
+pub fn inject(raw: &[String], plane: &Plane, full: bool) -> Vec<String> {
+    let given = |flag: &str| raw.iter().any(|a| a == flag || a.starts_with(&format!("{flag}=")));
+    let mut out = raw.to_vec();
+    let mut i = 0;
+    while i < plane.args.len() {
+        let flag = plane.args[i].as_str();
+        let value = plane.args.get(i + 1).cloned();
+        i += 2;
+        let wanted = full || matches!(flag, "--db" | "--blobs" | "--game-dir" | "--swarm-key");
+        // `--pool-peer` et `--p2p-listen` se répètent ; les autres sont uniques.
+        let repeatable = matches!(flag, "--pool-peer" | "--p2p-listen");
+        if wanted && (repeatable || !given(flag)) && !(repeatable && given(flag) && !full) {
+            if let Some(v) = value {
+                out.extend([flag.to_owned(), v]);
+            }
+        }
+    }
+    out
+}
+
+/// `raw` sans l'option `flag` ni sa valeur (pour les commandes qui ne la connaissent pas).
+pub fn without_flag(raw: &[String], flag: &str) -> Vec<String> {
+    let (mut out, mut skip) = (Vec::new(), false);
+    for a in raw {
+        if skip {
+            skip = false;
+        } else if a == flag {
+            skip = true;
+        } else if !a.starts_with(&format!("{flag}=")) {
+            out.push(a.clone());
+        }
+    }
+    out
+}
+
 /// Plans servis par CE processus (renseigné par `astroportd planes`) ; vide quand le démon est lancé par `serve`.
 static RUNNING: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
 
@@ -208,6 +261,18 @@ pub fn set_running(names: Vec<String>) {
 /// Plans servis par ce processus (vide : un seul plan, lancé par `serve`).
 pub fn running() -> &'static [String] {
     RUNNING.get().map_or(&[], Vec::as_slice)
+}
+
+static FRONT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Note que ce processus route par nom d'hôte (`planes --front`) : l'interface peut alors proposer le changement de plan.
+pub fn set_front(on: bool) {
+    let _ = FRONT.set(on);
+}
+
+/// Ce processus route-t-il par nom d'hôte ?
+pub fn front() -> bool {
+    FRONT.get().copied().unwrap_or(false)
 }
 
 /// Chemin de `planes.json` par défaut.
@@ -365,6 +430,10 @@ pub fn prepare(plane: &Plane, node_game: &Path) -> std::io::Result<Vec<String>> 
     if let Some(parent) = plane.db.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    // Le bassin de blobs commun existe dès que le premier plan est préparé.
+    if let Some(pool) = plane.args.windows(2).find(|w| w[0] == "--blobs").map(|w| &w[1]) {
+        std::fs::create_dir_all(pool)?;
+    }
     Ok(linked)
 }
 
@@ -466,6 +535,23 @@ mod tests {
         assert!(b.swarm_key_path.exists() && file.planes.len() == 2);
         assert!(remove(&mut file, "zen9").unwrap_err().to_string().contains("plan inconnu"));
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn plane_flag_is_taken_out_and_its_paths_are_added_without_replacing_what_was_given() {
+        let planes = plan(&file(r#"{ "planes": [ { "name": "origin", "dir": "/o" }, { "name": "zen1", "swarm_key": "/k1", "dir": "/z", "p2p_listen": ["/ip4/0.0.0.0/tcp/4101"] } ] }"#), &home()).unwrap();
+        let z = &planes[1];
+        let argv = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(take_plane_flag(argv(&["doctor", "--plane", "zen1", "-x"])), (Some("zen1".into()), argv(&["doctor", "-x"])));
+        assert_eq!(take_plane_flag(argv(&["doctor", "--plane=zen1"])).0.as_deref(), Some("zen1"));
+        assert_eq!(take_plane_flag(argv(&["doctor"])).0, None);
+        let short = inject(&argv(&["pool-status"]), z, false);
+        assert_eq!(short, argv(&["pool-status", "--db", "/z/uplanet.db", "--blobs", "/home/fred/.zen/astroportd/pool", "--game-dir", "/home/fred/.zen/game/zen1", "--swarm-key", "/k1"]));
+        let given = inject(&argv(&["pool-status", "--db", "/autre.db"]), z, false);
+        assert!(given.windows(2).any(|w| w == ["--db", "/autre.db"]) && !given.contains(&"/z/uplanet.db".to_owned()), "une option donnée n'est jamais remplacée");
+        let full = inject(&argv(&["serve"]), z, true);
+        assert!(full.windows(2).any(|w| w == ["--pool-peer", "/o/uplanet.db"]) && full.windows(2).any(|w| w == ["--p2p-listen", "/ip4/0.0.0.0/tcp/4101"]) && full.contains(&"--http-listen".to_owned()), "serve reçoit toute la configuration du plan");
+        assert_eq!(without_flag(&short, "--swarm-key"), argv(&["pool-status", "--db", "/z/uplanet.db", "--blobs", "/home/fred/.zen/astroportd/pool", "--game-dir", "/home/fred/.zen/game/zen1"]));
     }
 
     #[test]

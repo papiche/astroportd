@@ -389,6 +389,7 @@ const [p, qs] = (location.hash.slice(1) || '/').split('?'), main = h('main', { i
 $('#main').replaceWith(main);
 try {
 if (!me) { me = await api('/api/v1/me'); import('/ui/m-nostr.js').then(m => m.default(me, api), () => {}); import('/ui/m-ux.js').then(m => m.default(me, api, t), () => {}); }
+if (me.captain) planeSwitch();
 document.querySelector('nav a[data-r=station]').hidden = !me.captain; // l'écran Capitaine n'existe pas pour un MULTIPASS
 const name = ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/planes') && me.captain ? 'planes' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/station') && me.captain ? 'station' : 'home');
 document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (name === 'coop' || name === 'options' || name === 'planes' ? 'station' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
@@ -396,6 +397,22 @@ await views[name](main, new URLSearchParams(qs || ''));
 $('#out').hidden = false;
 startLive();
 } catch (e) { main.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }
+}
+// Sélecteur de plan (Capitaine) : quand la station route par nom d'hôte (`astroportd planes --front`), `<plan>.<domaine>` ouvre l'interface de ce plan.
+let planeSwitched = false;
+async function planeSwitch() {
+  if (planeSwitched) return;
+  planeSwitched = true;
+  try {
+    const r = await api('/api/v1/station/planes');
+    if (!r.front || r.planes.length < 2) return;
+    const names = r.planes.map(p => p.name), host = location.hostname, first = host.split('.')[0];
+    const onPlane = host.includes('.') && names.includes(first), base = onPlane ? host.slice(first.length + 1) : host;
+    const current = onPlane ? first : (r.planes.find(p => p.origin) || r.planes[0]).name;
+    const go = n => { const origin = r.planes.find(p => p.name === n)?.origin; location.href = `${location.protocol}//${origin ? '' : n + '.'}${base}${location.port ? ':' + location.port : ''}/`; };
+    $('.tools').prepend(h('select', { id: 'plane', 'aria-label': t('Plan (UPlanet)'), title: t('Plan (UPlanet)'), onchange: ev => go(ev.target.value) },
+      r.planes.map(p => h('option', { value: p.name, selected: p.name === current }, p.origin ? `${p.name} (ORIGIN)` : p.name))));
+  } catch { /* pas d'écran des plans (station sans configuration) : pas de sélecteur */ }
 }
 addEventListener('hashchange', route);
 addEventListener('offline', () => toast('Hors ligne : la station est injoignable'));

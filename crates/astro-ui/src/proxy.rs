@@ -157,9 +157,78 @@ pub fn proxy_router(routes: Vec<ProxyRoute>, timeout: Duration) -> Router {
     router
 }
 
+/// Plan visé par un nom d'hôte : `zen1.station.example` → `zen1` quand `zen1` est un plan connu et que le nom a au moins deux étiquettes
+/// (`zen1.localhost` compte) ; le nom nu (`station.example`, `localhost`, une adresse IP) et tout autre sous-domaine vont au plan par défaut.
+/// Le port est ignoré, la casse aussi.
+pub fn plane_of_host<'a>(host: &str, planes: &'a [(String, String)]) -> Option<&'a str> {
+    let host = host.rsplit_once(':').filter(|(_, p)| p.bytes().all(|b| b.is_ascii_digit())).map_or(host, |(h, _)| h).to_ascii_lowercase();
+    let (first, rest) = host.split_once('.')?;
+    if rest.is_empty() || host.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        return None;
+    }
+    planes.iter().find(|(n, _)| n == first).map(|(n, _)| n.as_str())
+}
+
+/// Routeur **par nom d'hôte** pour plusieurs plans servis par un même processus : chaque plan écoute sur son port local ; ce routeur, sur
+/// un port commun, envoie `<plan>.<domaine>` vers le plan du même nom et tout le reste vers `default`. Chemins, requêtes, WebSockets
+/// et en-têtes `X-Forwarded-*` suivent comme pour [`proxy_router`]. Le plan est donc connu **avant** toute authentification : un même
+/// email sur deux plans ne prête jamais à confusion.
+pub fn host_router(planes: Vec<(String, String)>, default: &str, timeout: Duration) -> Router {
+    let client = Client::builder(TokioExecutor::new()).build_http();
+    let state = |upstream: &str| Arc::new(ProxyState { route: ProxyRoute { prefix: String::new(), upstream: upstream.trim_end_matches('/').to_owned(), gate: None }, client: client.clone(), timeout });
+    let by_name: Vec<(String, Arc<ProxyState>)> = planes.iter().map(|(n, u)| (n.clone(), state(u))).collect();
+    let fallback = state(default);
+    let shared = Arc::new((planes, by_name, fallback));
+    Router::new().fallback(any(move |req: Request| {
+        let shared = shared.clone();
+        async move {
+            let host = req.headers().get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or_default().to_owned();
+            let st = plane_of_host(&host, &shared.0).and_then(|n| shared.1.iter().find(|(name, _)| name == n)).map_or_else(|| shared.2.clone(), |(_, s)| s.clone());
+            forward(State(st), req).await
+        }
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn planes() -> Vec<(String, String)> {
+        vec![("zen1".into(), "http://127.0.0.1:1".into()), ("zen2".into(), "http://127.0.0.1:2".into())]
+    }
+
+    #[test]
+    fn a_host_name_picks_its_plane_and_anything_else_goes_to_the_default() {
+        let p = planes();
+        for (host, want) in [("zen1.station.example", Some("zen1")), ("ZEN2.Station.example:8443", Some("zen2")), ("zen1.localhost:18080", Some("zen1")), ("station.example", None), ("localhost:18080", None), ("zen1", None), ("autre.station.example", None), ("127.0.0.1:18080", None), ("zen3.station.example", None), ("", None)] {
+            assert_eq!(plane_of_host(host, &p), want, "{host}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_host_router_sends_each_plane_to_its_own_service_with_the_path_and_query_kept() {
+        async fn serve(name: &'static str) -> String {
+            let app = Router::new().fallback(any(move |req: Request| async move { format!("{name}|{}|{}", req.uri().path(), req.uri().query().unwrap_or("")) }));
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = l.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+            format!("http://{addr}")
+        }
+        let (origin, zen1, zen2) = (serve("origin").await, serve("zen1").await, serve("zen2").await);
+        let router = host_router(vec![("zen1".into(), zen1), ("zen2".into(), zen2)], &origin, Duration::from_secs(5));
+        let ask = |host: &'static str, uri: &'static str| {
+            let router = router.clone();
+            async move {
+                use tower::ServiceExt;
+                let resp = router.oneshot(Request::builder().uri(uri).header(header::HOST, host).body(Body::empty()).unwrap()).await.unwrap();
+                String::from_utf8(axum::body::to_bytes(resp.into_body(), 4096).await.unwrap().to_vec()).unwrap()
+            }
+        };
+        assert_eq!(ask("zen1.station.example", "/api/v1/me?x=1").await, "zen1|/api/v1/me|x=1");
+        assert_eq!(ask("zen2.station.example:443", "/").await, "zen2|/|");
+        assert_eq!(ask("station.example", "/dav/a").await, "origin|/dav/a|");
+        assert_eq!(ask("zen9.station.example", "/").await, "origin|/|", "un nom inconnu va au plan par défaut, jamais à un plan par hasard");
+    }
 
     #[test]
     fn route_specs_are_validated() {

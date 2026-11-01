@@ -503,6 +503,10 @@ struct PlanesArgs {
     /// Vérifie la configuration, prépare les dossiers et affiche ce qui serait lancé, sans rien démarrer.
     #[arg(long)]
     check: bool,
+    /// Écoute commune qui route par **nom d'hôte** : `<plan>.<domaine>` va au plan du même nom, le nom nu à ORIGIN (ex. `127.0.0.1:18000`).
+    /// HTTP en clair : à placer derrière le terminateur TLS (Nginx Proxy Manager) ou à utiliser en local (`zen1.localhost`).
+    #[arg(long)]
+    front: Option<std::net::SocketAddr>,
 }
 
 /// Options de `pool-status`.
@@ -661,9 +665,41 @@ enum MediaAction {
     },
 }
 
+/// Lit la ligne de commande. `--plane NOM` (partout) remplit base, blobs, dossier de comptes et clé du plan choisi dans `planes.json`
+/// pour la commande demandée, sans remplacer ce que l'on donne soi-même ; avec `serve`, c'est toute la configuration du plan.
+fn parse_cli() -> Cli {
+    let (name, rest) = astroportd::plane::take_plane_flag(std::env::args().collect());
+    let Some(name) = name else { return Cli::parse_from(rest) };
+    let fail = |why: String| -> ! {
+        eprintln!("erreur : --plane {name} : {why}");
+        std::process::exit(2)
+    };
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { fail("$HOME introuvable".into()) };
+    let (file, _) = astroportd::plane::load(&astroportd::plane::default_path(&home), &home).unwrap_or_else(|e| fail(e.to_string()));
+    let planes = astroportd::plane::plan(&file, &home).unwrap_or_else(|e| fail(e.to_string()));
+    let Some(plane) = planes.iter().find(|p| p.name == name) else { fail(format!("plan inconnu (plans configurés : {})", planes.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "))) };
+    let serving = rest.get(1).is_some_and(|c| c == "serve");
+    let mut argv = astroportd::plane::inject(&rest, plane, serving);
+    // Une commande qui ne connaît pas l'une des options ajoutées (ex. `pool-status` n'a pas `--game-dir`) l'ignore.
+    for _ in 0..8 {
+        match Cli::try_parse_from(&argv) {
+            Ok(cli) => return cli,
+            Err(e) if e.kind() == clap::error::ErrorKind::UnknownArgument => {
+                let text = e.to_string();
+                match ["--db", "--blobs", "--game-dir", "--swarm-key", "--http-listen", "--kubo", "--p2p-listen", "--pool-peer"].into_iter().find(|f| text.contains(&format!("'{f}")) && rest.iter().all(|a| a != f)) {
+                    Some(flag) => argv = astroportd::plane::without_flag(&argv, flag),
+                    None => e.exit(),
+                }
+            }
+            Err(e) => e.exit(),
+        }
+    }
+    Cli::parse_from(argv)
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
-    match run(Cli::parse()).await {
+    match run(parse_cli()).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("erreur : {e}");
@@ -1085,11 +1121,23 @@ async fn planes_cmd(args: PlanesArgs) -> Result<(), Failure> {
         return Ok(());
     }
     astroportd::plane::set_running(planes.iter().map(|p| p.name.clone()).collect());
+    astroportd::plane::set_front(args.front.is_some());
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
         let _ = stop_tx.send(true);
     });
+    if let Some(addr) = args.front {
+        let routes: Vec<(String, String)> = planes.iter().map(|p| (p.name.clone(), format!("http://{}", p.http))).collect();
+        let default = planes.iter().find(|p| p.origin).or(planes.first()).map(|p| format!("http://{}", p.http)).ok_or("aucun plan")?;
+        let app = astro_ui::proxy::host_router(routes, &default, Duration::from_secs(60));
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        println!("routage par nom d'hôte sur http://{} : <plan>.<domaine> → son plan, le nom nu → {default}", listener.local_addr()?);
+        let mut rx = stop_rx.clone();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).with_graceful_shutdown(async move { let _ = rx.wait_for(|s| *s).await; }).await;
+        });
+    }
     let runs = parsed.into_iter().map(|(name, a)| {
         let mut rx = stop_rx.clone();
         async move {

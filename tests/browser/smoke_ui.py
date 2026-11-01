@@ -104,7 +104,7 @@ class H(BaseHTTPRequestHandler):
             import time; time.sleep(STATE.get('delay', 0))
             return self.send(200, dict(enabled=True, dav='/dav', faces=STATE['faces'], people=people(), unknown=sum(1 for f in STATE['faces'] if not f['named']), groups_skipped=False, truncated=False))
         if p.startswith('/dav/'): return self.send(200, base64.b64decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), 'image/gif')
-        if p == '/api/v1/station/planes': return self.send(200, dict(configured=True, multi_process=False, planes=[dict(name='origin', origin=True, http='127.0.0.1:18080', db='/x/uplanet.db', db_exists=True, running=True), dict(name='zen1', origin=False, http='127.0.0.1:18081', db='/x/zen1/uplanet.db', db_exists=False, running=False)], restart_needed=True, pending=['zen1'], path='/x/planes.json'))
+        if p == '/api/v1/station/planes': return self.send(200, dict(configured=True, multi_process=True, front=True, planes=[dict(name='origin', origin=True, http='127.0.0.1:18080', db='/x/uplanet.db', db_exists=True, running=True), dict(name='zen1', origin=False, http='127.0.0.1:18081', db='/x/zen1/uplanet.db', db_exists=False, running=False)], restart_needed=True, pending=['zen1'], path='/x/planes.json'))
         if p == '/api/v1/ucloud/memories': return self.send(200, dict(memories=[]))
         if p == '/api/v1/ucloud/timeline':
             q = self.path.split('ym=')[1] if 'ym=' in self.path else None
@@ -472,6 +472,7 @@ with sync_playwright() as pw:
     # Plans : liste, redémarrage nécessaire, ajout d'une UPlanet neuve (la clé créée est montrée pour être copiée).
     page.goto(f'http://127.0.0.1:{port}/#/planes'); page.wait_for_selector('input[aria-label="Nom du plan"]'); page.wait_for_timeout(500)
     check(page.locator('table tbody tr').count() == 2 and 'zen1' in page.inner_text('main'), 'les plans de la station sont listés')
+    check(page.locator('#plane option').count() == 2 and page.input_value('#plane') == 'origin', "le sélecteur de plan de l'en-tête propose ORIGIN et zen1")
     check('Redémarrez' in page.inner_text('main'), 'le redémarrage nécessaire est dit')
     page.fill('input[aria-label="Nom du plan"]', 'zen2'); page.click('form button:has-text("Ajouter")'); page.wait_for_selector('textarea[readonly]'); page.wait_for_timeout(300)
     check('/key/swarm/psk/1.0.0/' in page.input_value('textarea[readonly]') and 'zen2' in [b['name'] for p_, b in STATE['posts'] if p_ == '/api/v1/station/planes'], 'fonder une UPlanet montre la swarm.key créée, à copier')
