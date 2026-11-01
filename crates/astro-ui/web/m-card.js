@@ -5,9 +5,39 @@
 const KINDS = [['mobile', 'Mobile'], ['work', 'Travail'], ['home', 'Maison'], ['other', 'Autre']];
 const copy = o => JSON.parse(JSON.stringify(o));
 
+// Photo de la fiche : envoyer une image (réduite ici à 256 px), prendre l'un des visages reconnus de la personne, ou la retirer.
+async function photoEditor(K, box, path, onSaved) {
+  const { h, t, api, toast } = K;
+  if (!box.hidden) { box.hidden = true; return; }
+  box.hidden = false;
+  const save = async uri => { try { await api('/api/v1/book/photo', { method: 'POST', body: { path, uri } }); toast(uri ? t('Photo enregistrée') : t('Photo retirée'), 1); onSaved(path, true); } catch (e) { toast(e.message); } };
+  const file = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async () => {
+    const f = file.files[0]; if (!f) return;
+    try {
+      const bmp = await createImageBitmap(f), k = Math.min(1, 256 / Math.max(bmp.width, bmp.height)), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k)); c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      save(c.toDataURL('image/jpeg', .85));
+    } catch (e) { toast(t('Image illisible')); }
+    file.value = '';
+  } });
+  const faces = h('div', { class: 'ab-faces' }, h('span', { class: 'muted' }, t('Visages reconnus…')));
+  box.replaceChildren(h('p', {}, h('button', { type: 'button', onclick: () => file.click() }, t('Envoyer une image')), ' ', h('button', { type: 'button', class: 'ghost danger', onclick: () => save(null) }, t('Retirer la photo')), file), faces);
+  try {
+    const ids = (await api('/api/v1/book/photo-choices?path=' + encodeURIComponent(path))).faces;
+    if (!ids.length) { faces.replaceChildren(h('span', { class: 'muted' }, t('Aucun visage reconnu pour cette personne : envoyez une image.'))); return; }
+    const th = (await api('/api/v1/faces/thumbs', { method: 'POST', body: { ids, size: 128 } })).thumbs;
+    faces.replaceChildren(h('span', { class: 'muted' }, t('Choisir parmi ses visages :')), ' ', ...ids.filter(i => th[i]).map(i => h('button', { type: 'button', class: 'ab-face', 'aria-label': t('Utiliser ce visage'), onclick: () => save(th[i]) }, h('img', { src: th[i], alt: '', width: 56, height: 56 }))));
+  } catch (e) { faces.replaceChildren(h('span', { class: 'muted' }, e.message)); }
+}
+
 export default async function card(K, { path, me, blank, groups, onSaved, onClose }) {
   const { h, t } = K, api = K.api;
   const d = blank ? { fields: { name: '', phones: [], emails: [], addresses: [], urls: [], groups: [] }, me: false, path: null, diff: null } : await api(me ? '/api/v1/book/me' : '/api/v1/book/card?path=' + encodeURIComponent(path));
+  const embedded = (path, name) => {
+    const av = h('span', { class: 'ab-av' }, (name || '?')[0].toUpperCase());
+    if (path) api('/api/v1/book/photo?path=' + encodeURIComponent(path)).then(r => { if (r.uri) av.replaceChildren(h('img', { src: r.uri, alt: '', width: 64, height: 64, class: 'ab-photo' })); }, () => {});
+    return av;
+  };
   const f = copy(d.fields), isMe = !!d.me, pub = isMe || !!d.pubkey;
   const box = h('form', { class: 'ab-card', onsubmit: async ev => { ev.preventDefault(); await save(); } });
   const text = (key, label, opts = {}) => {
@@ -54,8 +84,9 @@ export default async function card(K, { path, me, blank, groups, onSaved, onClos
   };
 
   // En-tête : qui est-ce, lien avec un MULTIPASS, visages.
+  const pic = h('div', { class: 'ab-picker', hidden: true });
   const head = h('div', { class: 'ab-head' }, h('button', { type: 'button', class: 'ghost ab-back', onclick: onClose }, '← ' + t('Contacts')),
-    f.picture ? h('img', { src: f.picture, alt: '', width: 64, height: 64, referrerpolicy: 'no-referrer' }) : h('span', { class: 'ab-av' }, (f.name || '?')[0].toUpperCase()),
+    h('div', { class: 'ab-pic' }, f.picture ? h('img', { src: f.picture, alt: '', width: 64, height: 64, referrerpolicy: 'no-referrer' }) : embedded(d.path, f.name), !isMe && d.path ? h('button', { type: 'button', class: 'ghost', onclick: () => photoEditor(K, pic, d.path, onSaved) }, t('Photo…')) : null),
     h('div', {}, h('h3', {}, f.name || t('Nouvelle fiche'), isMe ? h('span', { class: 'pill ok' }, t('Moi')) : null),
       isMe ? h('p', { class: 'muted' }, t('Votre profil Nostr et votre fiche sont réunis : ce que vous changez ici est publié (champs « public ») et enregistré dans votre fiche chiffrée (tout le reste, qui ne quitte jamais votre uCloud).'))
         : d.pubkey ? h('p', {}, h('span', { class: 'pill ok' }, d.hosted_here ? t('MULTIPASS de la station') : t('Clé Nostr')), d.faces ? ` · ${d.faces} ${t('visage(s) reconnu(s)')}` : '') : h('p', { class: 'muted' }, t('Pas encore reliée à un MULTIPASS'), d.faces ? ` · ${d.faces} ${t('visage(s) reconnu(s)')}` : '')));
@@ -101,7 +132,7 @@ export default async function card(K, { path, me, blank, groups, onSaved, onClos
     try { await api('/api/v1/book/delete', { method: 'POST', body: { path: d.path } }); K.toast(t('Fiche supprimée'), 1); onSaved(null, true); } catch (e) { K.toast(e.message); }
   } }, t('Supprimer'));
 
-  box.append(head, compare(),
+  box.append(head, pic, compare(),
     h('fieldset', {}, h('legend', {}, t('Identité')), text('name', t('Nom affiché'), { public: true, max: 80 }), h('div', { class: 'ab-2' }, text('given', t('Prénom'), { max: 60 }), text('family', t('Nom de famille'), { max: 60 })), h('div', { class: 'ab-2' }, text('org', t('Société'), { max: 80 }), text('title', t('Fonction'), { max: 80 })), text('birthday', t('Anniversaire'), { type: 'date', max: 12 })),
     h('fieldset', {}, h('legend', {}, t('Joindre')), typedList('phones', t('Téléphones'), '+33 6 12 34 56 78', 'tel'), typedList('emails', t('Emails'), 'nom@exemple.org', 'email'), addresses(), urls(), link, keys),
     h('fieldset', {}, h('legend', {}, pub ? t('Profil public (Nostr)') : t('À propos')), text('about', t('Présentation'), { area: true, max: 500, public: true }), text('picture', t('Image (https)'), { type: 'url', max: 256, public: true }), text('nip05', t('Identifiant NIP-05'), { ph: 'nom@domaine.org', max: 100, public: true }), text('lud16', t('Adresse Lightning'), { ph: 'nom@domaine.org', max: 100, public: true })),

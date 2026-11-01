@@ -299,6 +299,82 @@ impl<B: BlobStore> AddressBook<B> {
         Ok(json!({ "path": path }))
     }
 
+    /// Photo incorporée d'une fiche, en URI `data:` (`{"uri": null}` si elle n'en a pas).
+    pub async fn photo(&self, owner: &str, path: &str) -> Result<Value, BookError> {
+        let text = self.read(owner, path).await?;
+        Ok(json!({ "uri": vcard::embedded_photo(&text) }))
+    }
+
+    /// Visages reconnus de la personne de la fiche (les plus nets d'abord, 12 au plus) : `{ faces: [face_id] }`.
+    pub async fn photo_choices(&self, owner: &str, path: &str) -> Result<Value, BookError> {
+        let text = self.read(owner, path).await?;
+        let key = vcard::name_key(&vcard::read_fields(&text).name);
+        let o = owner.to_owned();
+        let rows: Vec<(i64, String)> = self
+            .db
+            .readers()
+            .read(move |c| {
+                let mut st = c.prepare("SELECT face_id, name FROM faces WHERE owner_hex = ?1 AND ucloud_path IS NOT NULL AND bbox_x1 IS NOT NULL AND name NOT LIKE 'Inconnu\\_%' ESCAPE '\\' ORDER BY det_score DESC LIMIT 5000")?;
+                Ok(st.query_map([&o], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .map_err(internal)?;
+        let faces: Vec<i64> = rows.into_iter().filter(|(_, n)| vcard::name_key(n) == key).map(|(id, _)| id).take(12).collect();
+        Ok(json!({ "faces": faces }))
+    }
+
+    /// Change la photo d'une fiche. `uri` : image `data:` (JPEG, PNG, WebP ou GIF, 2 Mo au plus) ramenée à 256 px et
+    /// ré-encodée en JPEG ; `None` retire la photo. La photo reste **dans** la fiche : le téléphone la synchronise.
+    pub async fn set_photo(&self, owner: &str, path: &str, uri: Option<&str>) -> Result<Value, BookError> {
+        use base64::Engine;
+        let b64 = match uri {
+            None => None,
+            Some(u) => {
+                let (head, data) = u.strip_prefix("data:").and_then(|r| r.split_once(',')).ok_or_else(|| BookError::Invalid("image attendue (data:)".into()))?;
+                if !head.ends_with(";base64") || !matches!(head.split(';').next(), Some("image/jpeg" | "image/png" | "image/webp" | "image/gif")) {
+                    return Err(BookError::Invalid("JPEG, PNG, WebP ou GIF attendu".into()));
+                }
+                if data.len() > 2_800_000 {
+                    return Err(BookError::Invalid("image trop grosse (2 Mo au plus)".into()));
+                }
+                let raw = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|_| BookError::Invalid("image illisible".into()))?;
+                let jpeg = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+                    let img = image::load_from_memory(&raw).map_err(|e| e.to_string())?.thumbnail(256, 256).to_rgb8();
+                    let mut out = Vec::new();
+                    img.write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85)).map_err(|e| e.to_string())?;
+                    Ok(out)
+                })
+                .await
+                .map_err(internal)?
+                .map_err(|_| BookError::Invalid("image illisible".into()))?;
+                Some(base64::engine::general_purpose::STANDARD.encode(jpeg))
+            }
+        };
+        let text = self.read(owner, path).await?;
+        if vcard::is_me(&text) {
+            return Err(BookError::Invalid("votre propre photo se change dans votre profil".into()));
+        }
+        self.write(owner, path, vcard::set_embedded_photo(&text, b64.as_deref(), now())).await?;
+        self.links.sync_owner(owner).await?;
+        Ok(json!({ "path": path, "photo": b64.is_some() }))
+    }
+
+    /// Supprime plusieurs fiches d'un coup (500 au plus ; jamais celle du titulaire).
+    /// Chaque échec est dit dans `failed`, sans arrêter les autres.
+    pub async fn delete_many(&self, owner: &str, paths: &[String]) -> Result<Value, BookError> {
+        if paths.is_empty() || paths.len() > 500 {
+            return Err(BookError::Invalid("entre 1 et 500 fiches à la fois".into()));
+        }
+        let (mut deleted, mut failed) = (0, Vec::new());
+        for p in paths {
+            match self.delete(owner, p).await {
+                Ok(_) => deleted += 1,
+                Err(BookError::Invalid(m) | BookError::NotFound(m) | BookError::Conflict(m) | BookError::Internal(m)) => failed.push(json!({ "path": p, "error": m })),
+            }
+        }
+        Ok(json!({ "deleted": deleted, "failed": failed }))
+    }
+
     /// Supprime une fiche (jamais celle du titulaire).
     pub async fn delete(&self, owner: &str, path: &str) -> Result<Value, BookError> {
         let text = self.read(owner, path).await?;

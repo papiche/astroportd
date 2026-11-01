@@ -221,6 +221,25 @@ pub fn set_property(card: &str, name: &str, value: Option<&str>, now: i64) -> St
     out
 }
 
+/// Remplace **toutes** les photos de la fiche par une photo incorporée JPEG (`b64` : base64 sans espace) ; `None` les retire.
+/// `REV` est mis à jour, le reste est conservé.
+pub fn set_embedded_photo(card: &str, b64: Option<&str>, now: i64) -> String {
+    let mut lines: Vec<String> = unfold(card);
+    let end = lines.iter().rposition(|l| l.trim().eq_ignore_ascii_case("END:VCARD")).unwrap_or(lines.len());
+    lines.truncate(end);
+    lines.retain(|l| !split_property(l).is_some_and(|(n, _)| n == "PHOTO" || n == "REV"));
+    if let Some(b) = b64 {
+        // Forme de la version de la fiche : 3.0 « ENCODING=b », 4.0 URI `data:` (RFC 6350).
+        let v4 = lines.iter().any(|l| split_property(l).is_some_and(|(n, v)| n == "VERSION" && v.trim() == "4.0"));
+        lines.push(if v4 { format!("PHOTO:data:image/jpeg;base64,{b}") } else { format!("PHOTO;ENCODING=b;TYPE=JPEG:{b}") });
+    }
+    lines.push(format!("REV:{}", rev_now(now)));
+    lines.push("END:VCARD".to_owned());
+    let mut out = lines.iter().map(|l| fold(l)).collect::<Vec<_>>().join("\r\n");
+    out.push_str("\r\n");
+    out
+}
+
 /// Nouvelle fiche 3.0.
 pub fn new_card(uid: &str, name: &str, email: Option<&str>, nostr_hex: Option<&str>, now: i64) -> String {
     let mut lines = vec!["BEGIN:VCARD".to_owned(), "VERSION:3.0".to_owned(), format!("UID:{uid}"), format!("FN:{}", escape(name)), format!("N:;{};;;", escape(name))];
@@ -367,6 +386,39 @@ fn properties(text: &str) -> Vec<(String, String, String)> {
             (!name.is_empty()).then(|| (name, parts.collect::<Vec<_>>().join(";"), value.to_owned()))
         })
         .collect()
+}
+
+/// Photo **incorporée** à la fiche (`PHOTO;ENCODING=b…` ou `PHOTO:data:image/…;base64,…`), rendue en URI `data:` pour l'affichage.
+/// Lecture seule : la fiche n'est jamais modifiée. Rend `None` si la photo est absente, distante, trop grosse (> 1,5 Mo) ou mal formée.
+pub fn embedded_photo(text: &str) -> Option<String> {
+    const MAX_B64: usize = 2_000_000;
+    for (name, params, value) in properties(text) {
+        if name != "PHOTO" {
+            continue;
+        }
+        let value = value.trim();
+        let (mime, b64) = if let Some(rest) = value.strip_prefix("data:") {
+            let (head, data) = rest.split_once(',')?;
+            (head.split(';').next().unwrap_or("").to_ascii_lowercase(), data.to_owned())
+        } else if params.to_ascii_uppercase().split(';').any(|p| p == "ENCODING=B" || p == "ENCODING=BASE64" || p == "BASE64") {
+            let kind = params.to_ascii_uppercase().split(';').find_map(|p| p.strip_prefix("TYPE=").or_else(|| p.strip_prefix("MEDIATYPE=IMAGE/")).map(str::to_owned)).unwrap_or_else(|| "JPEG".into());
+            let mime = match kind.trim_start_matches("IMAGE/") {
+                "PNG" => "image/png",
+                "GIF" => "image/gif",
+                "WEBP" => "image/webp",
+                _ => "image/jpeg",
+            };
+            (mime.to_owned(), value.to_owned())
+        } else {
+            continue;
+        };
+        let b64: String = b64.chars().filter(|c| !c.is_whitespace()).collect();
+        if !matches!(mime.as_str(), "image/jpeg" | "image/png" | "image/gif" | "image/webp") || b64.is_empty() || b64.len() > MAX_B64 || !b64.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=')) {
+            continue;
+        }
+        return Some(format!("data:{mime};base64,{b64}"));
+    }
+    None
 }
 
 /// Découpe une valeur composée sur `sep` en respectant les `\` d'échappement.
@@ -531,6 +583,23 @@ mod tests {
     fn npub(hex: &str) -> String {
         let bytes: Vec<u8> = (0..64).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
         bech32::encode::<bech32::Bech32>(bech32::Hrp::parse("npub").unwrap(), &bytes).unwrap()
+    }
+
+    #[test]
+    fn an_embedded_photo_is_shown_but_remote_or_hostile_ones_are_not() {
+        let v3 = "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Léa\r\nPHOTO;ENCODING=b;TYPE=PNG:AAAA\r\n BBBB\r\nEND:VCARD\r\n";
+        assert_eq!(embedded_photo(v3).as_deref(), Some("data:image/png;base64,AAAABBBB"));
+        let v4 = "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Léa\r\nPHOTO:data:image/jpeg;base64,/9j/AAA=\r\nEND:VCARD\r\n";
+        assert_eq!(embedded_photo(v4).as_deref(), Some("data:image/jpeg;base64,/9j/AAA="));
+        assert!(embedded_photo("BEGIN:VCARD\r\nPHOTO;VALUE=uri:https://x/y.jpg\r\nEND:VCARD\r\n").is_none());
+        assert!(embedded_photo("BEGIN:VCARD\r\nPHOTO:data:text/html;base64,AAAA\r\nEND:VCARD\r\n").is_none());
+        let swapped = set_embedded_photo("BEGIN:VCARD\r\nFN:Léa\r\nPHOTO;VALUE=uri:https://x/y.jpg\r\nPHOTO;ENCODING=b:AAAA\r\nX-NOSTR-PUBKEY:ab\r\nEND:VCARD\r\n", Some("QQQQ"), 1_700_000_000);
+        assert_eq!(swapped.matches("PHOTO").count(), 1, "une seule photo après remplacement");
+        assert!(swapped.contains("X-NOSTR-PUBKEY:ab") && embedded_photo(&swapped).as_deref() == Some("data:image/jpeg;base64,QQQQ"));
+        assert!(!set_embedded_photo(&swapped, None, 1).contains("PHOTO"));
+        let v4 = set_embedded_photo("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Léa\r\nEND:VCARD\r\n", Some("QQQQ"), 1);
+        assert!(v4.contains("PHOTO:data:image/jpeg;base64,QQQQ") && !v4.contains("ENCODING=b") && embedded_photo(&v4).is_some(), "fiche 4.0 : URI data:");
+        assert!(embedded_photo("BEGIN:VCARD\r\nPHOTO;ENCODING=b:<script>\r\nEND:VCARD\r\n").is_none());
     }
 
     const FULL: &str = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:u1\r\nFN:Léa Martin\r\nN:Martin;Léa;;;\r\nORG:Atelier\\, Sud;Pôle\r\nTITLE:Cheffe\r\nTEL;TYPE=CELL:+33 6 12 34 56 78\r\nTEL;TYPE=WORK,VOICE:+33 5 61 00 00 00\r\nEMAIL;TYPE=HOME:Lea@Example.org\r\nADR;TYPE=HOME:;;1 rue des Fleurs;Toulouse;Occitanie;31000;France\r\nBDAY:1988-04-12\r\nNOTE:Rencontrée au marché\\nà revoir\r\nURL:https://lea.example\r\nCATEGORIES:Famille,Voisins\r\nX-NOSTR-ABOUT:Boulangère\\, voisine\r\nX-NOSTR-NIP05:lea@example.org\r\nPHOTO;VALUE=uri:https://img.example/lea.jpg\r\nPHOTO;ENCODING=b;TYPE=JPEG:AAAA\r\nX-ASTRO-ME:1\r\nX-NOSTR-PUBKEY:7d1a5f6c0b3e9a24c8f1d5b7e2a40c93186fb5d2e7a9034c1d8f6b2a5e70913c\r\nEND:VCARD\r\n";

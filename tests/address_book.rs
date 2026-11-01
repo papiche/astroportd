@@ -103,6 +103,32 @@ async fn cards_are_created_found_by_name_phone_or_group_and_edited_without_losin
     assert!(text.contains("PHOTO;ENCODING=b;TYPE=JPEG:AAAA") && text.contains(&format!("X-NOSTR-PUBKEY:{}", hex(&BEA))) && text.contains("UID:tel-1"), "{text}");
     let d = b.book.get(&me, "/Contacts/Bea.vcf").await.unwrap();
     assert_eq!((d["fields"]["title"].as_str(), d["pubkey"].as_str()), (Some("Boulangère"), Some(hex(&BEA).as_str())), "le lien avec le MULTIPASS survit à la modification");
+    // La photo incorporée à la fiche est montrée (lecture seule) ; une fiche sans photo répond `null`.
+    assert_eq!(b.book.photo(&me, "/Contacts/Bea.vcf").await.unwrap()["uri"], "data:image/jpeg;base64,AAAA");
+    assert!(b.book.photo(&me, &path).await.unwrap()["uri"].is_null());
+    // Changer la photo : image réduite et ré-encodée en JPEG dans la fiche ; une donnée qui n'est pas une image est refusée.
+    {
+        use base64::Engine;
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(image::RgbImage::new(600, 400)).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let uri = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png));
+        b.book.set_photo(&me, "/Contacts/Bea.vcf", Some(&uri)).await.unwrap();
+        let shown = b.book.photo(&me, "/Contacts/Bea.vcf").await.unwrap()["uri"].as_str().unwrap().to_owned();
+        assert!(shown.starts_with("data:image/jpeg;base64,") && shown != "data:image/jpeg;base64,AAAA", "{shown}");
+        let text = card_text(&b, "/Contacts/Bea.vcf").await;
+        assert_eq!(text.matches("PHOTO").count(), 1, "une seule photo dans la fiche");
+        for bad in ["data:image/png;base64,AAAA", "data:text/html;base64,AAAA", "https://x/y.png", "data:image/png,AAAA"] {
+            assert!(matches!(b.book.set_photo(&me, "/Contacts/Bea.vcf", Some(bad)).await, Err(BookError::Invalid(_))), "{bad}");
+        }
+        assert_eq!(b.book.photo_choices(&me, "/Contacts/Bea.vcf").await.unwrap()["faces"], json!([]));
+        b.book.set_photo(&me, "/Contacts/Bea.vcf", None).await.unwrap();
+        assert!(b.book.photo(&me, "/Contacts/Bea.vcf").await.unwrap()["uri"].is_null());
+    }
+    // Suppression en lot : chaque échec est dit sans arrêter les autres.
+    let (x, y) = (b.book.save(&me, None, &fields("Lot Un")).await.unwrap()["path"].as_str().unwrap().to_owned(), b.book.save(&me, None, &fields("Lot Deux")).await.unwrap()["path"].as_str().unwrap().to_owned());
+    let r = b.book.delete_many(&me, &[x, "/Contacts/absente.vcf".into(), y]).await.unwrap();
+    assert_eq!((r["deleted"].as_i64(), r["failed"].as_array().map(Vec::len)), (Some(2), Some(1)));
+    assert!(matches!(b.book.delete_many(&me, &[]).await, Err(BookError::Invalid(_))));
     // Chemins hostiles et fiche sans nom refusés.
     for bad in ["/Contacts/../x.vcf", "/etc/passwd", "/Contacts/a/b.vcf", "/Contacts/x.txt"] {
         assert!(matches!(b.book.get(&me, bad).await, Err(BookError::Invalid(_))), "{bad}");

@@ -12,6 +12,15 @@ export default async function contacts(root, K) {
   const chips = h('div', { class: 'ab-chips' }), count = h('span', { class: 'muted' }), detail = h('section', { class: 'ab-detail' }), tools = h('div', { class: 'bar' });
   const main = h('div', { class: 'ab' }, h('div', { class: 'ab-side' }, h('div', { class: 'ab-search' }, q, count), chips, h('div', { class: 'ab-scroll' }, list, index)), detail);
   let timer = 0, groups = [];
+  const sel = new Set(), selbar = h('div', { class: 'bar', hidden: true }), selbtn = h('button', { class: 'ghost' }, t('Sélectionner'));
+  const seen = new Map(), shown = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { shown.unobserve(e.target); photo(e.target); } }), { root: null, rootMargin: '200px' });
+  K.cleanup(() => shown.disconnect());
+  async function photo(av) {
+    const path = av.dataset.path; if (!path) return;
+    if (!seen.has(path)) seen.set(path, api('/api/v1/book/photo?path=' + encodeURIComponent(path)).then(r => r.uri, () => null));
+    const uri = await seen.get(path);
+    if (uri && av.isConnected) av.replaceChildren(h('img', { src: uri, alt: '', width: 36, height: 36 }));
+  }
 
   async function load() {
     const p = new URLSearchParams({ q: s.q }); if (s.group) p.set('group', s.group);
@@ -24,12 +33,36 @@ export default async function contacts(root, K) {
     list.replaceChildren(...s.data.contacts.map(c => {
       const first = c.letter !== last && !c.me; last = c.me ? last : c.letter;
       return h('li', { id: first ? 'ab-' + c.letter : null, role: 'option', 'aria-selected': String(c.path === s.path), class: c.path === s.path ? 'on' : '' },
-        h('button', { type: 'button', class: 'ab-item', onclick: () => select(c) },
-          c.picture ? h('img', { src: c.picture, alt: '', width: 36, height: 36, loading: 'lazy', referrerpolicy: 'no-referrer' }) : h('span', { class: 'ab-av' }, (c.name || '?')[0].toUpperCase()),
+        !c.me && s.select ? h('input', { type: 'checkbox', class: 'ab-chk', 'aria-label': c.name, checked: sel.has(c.path), onchange: ev => { if (ev.target.checked) sel.add(c.path); else sel.delete(c.path); bar(); } }) : null,
+        h('button', { type: 'button', class: 'ab-item', onclick: () => (s.select && !c.me ? toggle(c) : select(c)) },
+          c.picture ? h('img', { src: c.picture, alt: '', width: 36, height: 36, loading: 'lazy', referrerpolicy: 'no-referrer' }) : avatar(c),
           h('span', { class: 'ab-name' }, h('strong', {}, c.name), c.me ? h('span', { class: 'pill ok' }, t('Moi')) : null, h('small', { class: 'muted' }, [c.org, c.emails[0], c.phones[0]?.value].filter(Boolean).join(' · ')))));
     }));
     index.replaceChildren(...s.data.letters.map(l => h('a', { href: '#/contacts', onclick: ev => { ev.preventDefault(); document.getElementById('ab-' + l)?.scrollIntoView({ block: 'start' }); } }, l)));
     if (!s.data.contacts.length) list.replaceChildren(h('li', { class: 'muted ab-empty' }, s.q || s.group ? t('Aucune fiche ne correspond.') : t('Aucune fiche. Créez-en une, importez un fichier .vcf ou synchronisez votre téléphone.')));
+  }
+  function toggle(c) { if (sel.has(c.path)) sel.delete(c.path); else sel.add(c.path); load(); bar(); }
+  function bar() {
+    const mine = (s.data?.contacts || []).filter(c => !c.me).map(c => c.path);
+    selbar.hidden = !s.select;
+    const rm = h('button', { class: 'ghost danger', disabled: !sel.size, onclick: async ev => {
+      if (!confirm(t('Supprimer définitivement {0} fiche(s) ?', sel.size))) return;
+      ev.target.disabled = true;
+      try {
+        const r = await api('/api/v1/book/delete-many', { method: 'POST', body: { paths: [...sel] } });
+        K.toast(t('{0} fiche(s) supprimée(s)', r.deleted) + (r.failed.length ? ' · ' + t('{0} refusée(s)', r.failed.length) : ''), r.failed.length ? 0 : 1);
+        sel.clear(); s.path = null; s.open = false; show0();
+      } catch (e) { K.toast(e.message); ev.target.disabled = false; }
+    } }, t('Supprimer la sélection ({0})', sel.size));
+    selbar.replaceChildren(h('strong', {}, t('{0} sélectionnée(s)', sel.size)),
+      h('button', { class: 'ghost', onclick: () => { mine.forEach(p => sel.add(p)); load(); bar(); } }, t('Tout sélectionner') + ` (${mine.length})`),
+      h('button', { class: 'ghost', onclick: () => { sel.clear(); load(); bar(); } }, t('Tout désélectionner')), rm);
+  }
+  selbtn.onclick = () => { s.select = !s.select; sel.clear(); selbtn.textContent = s.select ? t('Terminer la sélection') : t('Sélectionner'); load().then(bar); };
+  function avatar(c) {
+    const av = h('span', { class: 'ab-av' }, (c.name || '?')[0].toUpperCase());
+    if (!c.me && c.path) { av.dataset.path = c.path; if (seen.has(c.path)) photo(av); else shown.observe(av); }
+    return av;
   }
   async function show() {
     detail.replaceChildren(h('p', { class: 'muted' }, t('Chargement…')));
@@ -66,9 +99,9 @@ export default async function contacts(root, K) {
   }
   const tabs = h('div', { class: 'bar', role: 'tablist' }, h('button', { role: 'tab', 'aria-selected': 'true' }, t('Carnet')),
     h('button', { role: 'tab', class: 'ghost', 'aria-selected': 'false', onclick: async () => { const sync = (await import('/ui/m-sync.js')).default; K.cleanup(() => {}); await sync(root, K); root.prepend(h('p', {}, h('button', { class: 'ghost', onclick: () => contacts(root, K) }, '← ' + t('Retour au carnet')))); } }, t('Synchroniser et inviter')));
-  tools.append(h('button', { onclick: create }, '＋ ' + t('Nouvelle fiche')), h('button', { class: 'ghost', onclick: () => file.click() }, t('Importer un .vcf')), h('button', { class: 'ghost', onclick: duplicates }, t('Doublons')), file);
+  tools.append(h('button', { onclick: create }, '＋ ' + t('Nouvelle fiche')), h('button', { class: 'ghost', onclick: () => file.click() }, t('Importer un .vcf')), h('button', { class: 'ghost', onclick: duplicates }, t('Doublons')), selbtn, file);
   q.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { s.q = q.value; load(); }, 200); };
   K.cleanup(() => clearTimeout(timer));
-  root.replaceChildren(h('h2', {}, t('Contacts')), tabs, tools, main);
+  root.replaceChildren(h('h2', {}, t('Contacts')), tabs, tools, selbar, main);
   show0();
 }

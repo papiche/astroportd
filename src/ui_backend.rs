@@ -933,6 +933,10 @@ impl<B: BlobStore> Backend for StationUi<B> {
         out.map_err(book_error)
     }
 
+            BookOp::DeleteMany(paths) => book.delete_many(o, &paths).await,
+            BookOp::Photo(path) => book.photo(o, &path).await,
+            BookOp::PhotoChoices(path) => book.photo_choices(o, &path).await,
+            BookOp::SetPhoto(path, uri) => book.set_photo(o, &path, uri.as_deref()).await,
     async fn my_links(&self, who: &Principal) -> Result<Value, ApiError> {
         let people = self.people.as_ref().ok_or_else(|| ApiError::unavailable("annuaire des UPlanet non disponible sur cette station"))?;
         let keys = people.class_of(&who.hex).await;

@@ -33,3 +33,7 @@
   .ab-addr{grid-template-columns:1fr 1fr}.ab-2{grid-template-columns:1fr}
 }
 .ab-keys{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.35rem}
+.ab-list li{display:flex;align-items:center;gap:.4rem}.ab-list li .ab-item{flex:1;min-width:0}.ab-chk{width:1.1rem;height:1.1rem;flex:none}
+.ab-av img,.ab-item img{width:36px;height:36px;border-radius:50%;object-fit:cover}
+.ab-photo{width:64px;height:64px;border-radius:50%;object-fit:cover}
+.ab-pic{display:flex;flex-direction:column;align-items:center;gap:.3rem}.ab-picker{flex-basis:100%;margin:.3rem 0}.ab-faces{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center}.ab-face{padding:0;border:2px solid transparent;border-radius:50%;overflow:hidden;line-height:0;background:none}.ab-face:hover,.ab-face:focus-visible{border-color:var(--accent)}.ab-face img{border-radius:50%;object-fit:cover}

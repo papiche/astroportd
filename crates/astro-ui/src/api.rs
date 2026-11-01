@@ -89,6 +89,14 @@ pub enum BookOp {
     Save(Option<String>, Value),
     /// Supprime une fiche.
     Delete(String),
+    /// Supprime plusieurs fiches.
+    DeleteMany(Vec<String>),
+    /// Photo incorporée d'une fiche.
+    Photo(String),
+    /// Visages reconnus proposés comme photo d'une fiche.
+    PhotoChoices(String),
+    /// Change (`Some(data:…)`) ou retire (`None`) la photo d'une fiche.
+    SetPhoto(String, Option<String>),
     /// Prend des valeurs du profil Nostr dans la fiche.
     Take(String, Vec<String>),
     /// Renomme ou retire un groupe.
@@ -684,6 +692,9 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/book/group", post(book_group::<B>))
         .route("/api/v1/book/import", post(book_import::<B>))
         .route("/api/v1/book/duplicates", get(book_duplicates::<B>))
+.route("/api/v1/book/delete-many", post(book_delete_many::<B>))
+.route("/api/v1/book/photo", get(book_photo::<B>).post(book_set_photo::<B>))
+.route("/api/v1/book/photo-choices", get(book_photo_choices::<B>))
         .route("/api/v1/book/merge", post(book_merge::<B>))
         .route("/api/v1/book/me", get(book_me::<B>).post(book_save_me::<B>))
         .route("/api/v1/me/links", get(my_links::<B>).post(announce_links::<B>))
@@ -900,6 +911,27 @@ async fn book_delete<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): A
 }
 
 async fn book_take<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookTakeBody>) -> Response {
+#[derive(Deserialize)]
+struct BookPathsBody {
+paths: Vec<String>,
+}
+async fn book_delete_many<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookPathsBody>) -> Response {
+reply(st.backend.book(&p, BookOp::DeleteMany(b.paths)).await)
+}
+async fn book_photo<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<BookPathQuery>) -> Response {
+reply(st.backend.book(&p, BookOp::Photo(q.path)).await)
+}
+#[derive(Deserialize)]
+struct BookPhotoBody {
+path: String,
+uri: Option<String>,
+}
+async fn book_set_photo<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookPhotoBody>) -> Response {
+reply(st.backend.book(&p, BookOp::SetPhoto(b.path, b.uri)).await)
+}
+async fn book_photo_choices<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<BookPathQuery>) -> Response {
+reply(st.backend.book(&p, BookOp::PhotoChoices(q.path)).await)
+}
     reply(st.backend.book(&p, BookOp::Take(b.path, b.keys.into_iter().take(10).collect())).await)
 }
 
