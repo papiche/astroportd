@@ -19,6 +19,9 @@ pub(super) fn wire<B: astro_dav::BlobStore>(mut ui: StationUi<B>, db: &Arc<Db>, 
         Box::pin(async move { astroportd::coop_config::save(&db, &publisher, &name, &patch).await })
     });
     ui = ui.with_coop(coop_get, coop_set);
+    if let Some(home) = std::env::var_os("HOME") {
+        ui = ui.with_planes_home(PathBuf::from(home));
+    }
     let (for_friends, for_send) = (sharing.clone(), sharing.clone());
     let friends: astroportd::ui_backend::FriendsFn = Arc::new(move |owner: String| {
         let sharing = for_friends.clone();

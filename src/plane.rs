@@ -26,7 +26,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Erreur de configuration des plans.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -49,40 +49,48 @@ fn rule(plane: &str, why: impl Into<String>) -> PlaneError {
 }
 
 /// Fichier `planes.json`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlanesFile {
     /// Dossier de blobs commun (défaut : `<racine>/pool`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pool: Option<String>,
     /// Dossier `~/.zen/game` d'ORIGIN et du NODE (défaut : `~/.zen/game`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_dir: Option<String>,
     /// Racine des dossiers des plans (défaut : `~/.zen/astroportd`) ; un plan peut préciser le sien (`dir`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root: Option<String>,
     /// Les plans.
     pub planes: Vec<PlaneSpec>,
 }
 
 /// Un plan tel que l'écrit le Capitaine.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlaneSpec {
     /// Nom court : `origin`, `zen1`…
     pub name: String,
     /// Dossier du plan (base `uplanet.db`, snapshots) ; défaut : `<racine>/<nom>`. Pour ORIGIN déjà en service, son dossier actuel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dir: Option<String>,
     /// Dossier `game` du plan (comptes dans `nostr/`) ; défaut : `game_dir` pour ORIGIN, `<game_dir>/<nom>` sinon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game: Option<String>,
     /// Clé de réseau privé : sa présence fait de ce plan une UPlanet privée ; absente, c'est ORIGIN.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swarm_key: Option<String>,
     /// Écoute HTTP du plan (défaut : `127.0.0.1:18080` + rang).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http_listen: Option<String>,
     /// Écoutes libp2p du plan.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub p2p_listen: Vec<String>,
     /// API de Kubo : **réservé à ORIGIN**.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kubo: Option<String>,
     /// Autres options de `astroportd serve`, telles quelles.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
 }
 
@@ -189,6 +197,156 @@ pub fn plan(file: &PlanesFile, home: &Path) -> Result<Vec<Plane>, PlaneError> {
     Ok(out)
 }
 
+/// Plans servis par CE processus (renseigné par `astroportd planes`) ; vide quand le démon est lancé par `serve`.
+static RUNNING: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// Note les plans servis par ce processus.
+pub fn set_running(names: Vec<String>) {
+    let _ = RUNNING.set(names);
+}
+
+/// Plans servis par ce processus (vide : un seul plan, lancé par `serve`).
+pub fn running() -> &'static [String] {
+    RUNNING.get().map_or(&[], Vec::as_slice)
+}
+
+/// Chemin de `planes.json` par défaut.
+pub fn default_path(home: &Path) -> PathBuf {
+    home.join(".zen/astroportd/planes.json")
+}
+
+/// Configuration actuelle : le fichier s'il existe, sinon **la station telle qu'elle tourne aujourd'hui** (un seul plan ORIGIN, dans son
+/// dossier actuel) : ajouter un premier plan ne déplace donc rien. Le booléen dit si le fichier existait.
+pub fn load(path: &Path, home: &Path) -> Result<(PlanesFile, bool), PlaneError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok((parse(&text)?, true)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let origin = PlaneSpec { name: "origin".into(), dir: Some("~/.zen/astroportd".into()), game: None, swarm_key: None, http_listen: Some("127.0.0.1:18080".into()), p2p_listen: Vec::new(), kubo: Some("http://127.0.0.1:5001".into()), args: Vec::new() };
+            let _ = home;
+            Ok((PlanesFile { pool: None, game_dir: None, root: None, planes: vec![origin] }, false))
+        }
+        Err(e) => Err(PlaneError::Config(format!("{} : {e}", path.display()))),
+    }
+}
+
+/// Écrit `planes.json` (écriture atomique : fichier voisin puis renommage).
+pub fn save(path: &Path, file: &PlanesFile) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(file).map_err(std::io::Error::other)? + "\n")?;
+    std::fs::rename(&tmp, path)
+}
+
+/// Un plan à ajouter.
+#[derive(Debug, Clone, Default)]
+pub struct NewPlane {
+    /// Nom court.
+    pub name: String,
+    /// Contenu d'une `swarm.key` reçue d'un Capitaine ; `None` : en créer une neuve (on fonde cette UPlanet).
+    pub swarm_key: Option<String>,
+    /// Écoute HTTP ; défaut : la première libre à partir de `127.0.0.1:18080`.
+    pub http_listen: Option<String>,
+    /// Port libp2p ; défaut : le premier libre à partir de 4101.
+    pub p2p_port: Option<u16>,
+}
+
+/// Ce que l'ajout a fait.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Added {
+    /// Fichier de la clé de réseau privé du plan.
+    pub swarm_key_path: PathBuf,
+    /// Contenu de la clé **si elle vient d'être créée** : à copier sur chaque station qui rejoindra cette UPlanet.
+    pub created_key: Option<String>,
+    /// Écoute HTTP choisie.
+    pub http_listen: String,
+    /// Écoute libp2p choisie.
+    pub p2p_listen: String,
+}
+
+fn port_of(addr: &str) -> Option<u16> {
+    addr.rsplit([':', '/']).next().and_then(|p| p.parse().ok())
+}
+
+/// Ajoute un plan à `file` : nom, clé de réseau privé (créée ou reçue, écrite en 0600 sous `<game>/<nom>/swarm.key`, jamais écrasée),
+/// ports libres. L'ensemble est **validé comme au démarrage** ; en cas de refus, rien n'est laissé sur le disque.
+pub fn add(file: &mut PlanesFile, new: &NewPlane, home: &Path) -> Result<Added, PlaneError> {
+    let name = new.name.trim();
+    let game_root = file.game_dir.as_deref().map_or_else(|| home.join(".zen/game"), |g| expand(g, home));
+    let key_path = game_root.join(name).join("swarm.key");
+    if !valid_name(name) {
+        return Err(rule(name, "nom invalide (lettres minuscules, chiffres et tirets, 32 caractères au plus)"));
+    }
+    if file.planes.iter().any(|p| p.name == name) {
+        return Err(rule(name, "nom déjà pris"));
+    }
+    if key_path.exists() {
+        return Err(rule(name, format!("{} existe déjà : on n'écrase jamais une clé de réseau privé", key_path.display())));
+    }
+    let used_http: HashSet<u16> = file.planes.iter().enumerate().filter_map(|(i, p)| p.http_listen.as_deref().and_then(port_of).or(u16::try_from(18_080 + i).ok())).collect();
+    let used_p2p: HashSet<u16> = file.planes.iter().flat_map(|p| p.p2p_listen.iter().filter_map(|a| port_of(a))).collect();
+    let free = |start: u16, used: &HashSet<u16>| (start..start + 200).find(|p| !used.contains(p));
+    let http = new.http_listen.clone().or_else(|| free(18_080, &used_http).map(|p| format!("127.0.0.1:{p}"))).ok_or_else(|| rule(name, "aucun port HTTP libre"))?;
+    let p2p_port = new.p2p_port.or_else(|| free(4_101, &used_p2p)).ok_or_else(|| rule(name, "aucun port libp2p libre"))?;
+    let p2p = format!("/ip4/0.0.0.0/tcp/{p2p_port}");
+    let (text, created) = match &new.swarm_key {
+        Some(t) => (t.trim().to_owned() + "\n", None),
+        None => {
+            let t = astro_p2p::generate_swarm_key().map_err(|e| rule(name, e.to_string()))?;
+            (t.clone(), Some(t))
+        }
+    };
+    astro_p2p::parse_swarm_key(&text).map_err(|e| rule(name, format!("swarm.key illisible : {e}")))?;
+    let spec = PlaneSpec { name: name.to_owned(), dir: None, game: None, swarm_key: Some(key_path.display().to_string()), http_listen: Some(http.clone()), p2p_listen: vec![p2p.clone()], kubo: None, args: Vec::new() };
+    let mut candidate = file.clone();
+    candidate.planes.push(spec.clone());
+    plan(&candidate, home)?; // mêmes règles qu'au démarrage, avant d'écrire quoi que ce soit
+    let write = || -> std::io::Result<()> {
+        std::fs::create_dir_all(key_path.parent().unwrap_or(&game_root))?;
+        std::fs::write(&key_path, &text)?;
+        #[cfg(unix)]
+        std::fs::set_permissions(&key_path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+        Ok(())
+    };
+    write().map_err(|e| rule(name, format!("clé non écrite : {e}")))?;
+    file.planes.push(spec);
+    Ok(Added { swarm_key_path: key_path, created_key: created, http_listen: http, p2p_listen: p2p })
+}
+
+/// Retire un plan de la configuration. **Ne supprime aucune donnée** (base, comptes, clé) ; ORIGIN n'est jamais retiré.
+pub fn remove(file: &mut PlanesFile, name: &str) -> Result<(), PlaneError> {
+    let i = file.planes.iter().position(|p| p.name == name).ok_or_else(|| rule(name, "plan inconnu"))?;
+    if file.planes[i].swarm_key.is_none() {
+        return Err(rule(name, "ORIGIN est le plan de base de la station : il n'est pas retiré"));
+    }
+    file.planes.remove(i);
+    Ok(())
+}
+
+/// État d'un plan pour l'affichage.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PlaneInfo {
+    /// Nom.
+    pub name: String,
+    /// ORIGIN ?
+    pub origin: bool,
+    /// Écoute HTTP.
+    pub http: String,
+    /// Base.
+    pub db: String,
+    /// La base existe déjà (le plan a déjà tourné).
+    pub db_exists: bool,
+    /// Servi par ce processus.
+    pub running: bool,
+}
+
+/// Décrit les plans de `file` (sans rien créer).
+pub fn describe(file: &PlanesFile, home: &Path) -> Result<Vec<PlaneInfo>, PlaneError> {
+    let served = running();
+    Ok(plan(file, home)?.into_iter().map(|p| PlaneInfo { running: served.contains(&p.name) || (served.is_empty() && p.origin), db_exists: p.db.exists(), name: p.name, origin: p.origin, http: p.http, db: p.db.display().to_string() }).collect())
+}
+
 /// Prépare le dossier `game` d'un plan : il reçoit, par **liens symboliques**, les fichiers du NODE d'ORIGIN (`secret.nostr`,
 /// `secret.NODE.dunikey`) : tous les plans ont donc le même `IPFSNODEID` et la même clé de NODE. Ne remplace jamais un fichier.
 pub fn prepare(plane: &Plane, node_game: &Path) -> std::io::Result<Vec<String>> {
@@ -268,6 +426,46 @@ mod tests {
         let planes = plan(&file(r#"{ "planes": [ { "name": "zen1", "swarm_key": "/k1" }, { "name": "zen2", "swarm_key": "/k2" } ] }"#), &home()).unwrap();
         assert!(planes.iter().all(|p| !p.origin && arg_of(p, "--kubo").is_empty()));
         assert_eq!(arg_of(&planes[1], "--http-listen"), ["127.0.0.1:18081"]);
+    }
+
+    #[test]
+    fn adding_a_plane_creates_or_takes_the_key_picks_free_ports_and_refuses_what_the_startup_would_refuse() {
+        let home = std::env::temp_dir().join(format!("astroportd-planeadd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let path = default_path(&home);
+        let (mut file, existed) = load(&path, &home).unwrap();
+        assert!(!existed && file.planes.len() == 1 && file.planes[0].name == "origin", "sans fichier : la station actuelle, ORIGIN seul");
+        // Fonder une UPlanet : clé neuve, ports libres après ORIGIN (18080).
+        let a = add(&mut file, &NewPlane { name: "zen1".into(), ..NewPlane::default() }, &home).unwrap();
+        assert_eq!((a.http_listen.as_str(), a.p2p_listen.as_str()), ("127.0.0.1:18081", "/ip4/0.0.0.0/tcp/4101"));
+        let key = a.created_key.clone().unwrap();
+        assert_eq!(std::fs::read_to_string(&a.swarm_key_path).unwrap(), key);
+        #[cfg(unix)]
+        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&a.swarm_key_path).unwrap().permissions()) & 0o777, 0o600, "clé de réseau en 0600");
+        // Rejoindre une UPlanet existante avec la clé reçue ; ports suivants.
+        let other = astro_p2p::generate_swarm_key().unwrap();
+        let b = add(&mut file, &NewPlane { name: "zen2".into(), swarm_key: Some(other.clone()), ..NewPlane::default() }, &home).unwrap();
+        assert_eq!((b.http_listen.as_str(), b.p2p_listen.as_str(), b.created_key), ("127.0.0.1:18082", "/ip4/0.0.0.0/tcp/4102", None));
+        assert_eq!(std::fs::read_to_string(&b.swarm_key_path).unwrap().trim(), other.trim());
+        // Refus : doublon, nom invalide, clé illisible (rien n'est écrit), clé existante jamais écrasée.
+        assert!(add(&mut file, &NewPlane { name: "zen1".into(), ..NewPlane::default() }, &home).unwrap_err().to_string().contains("nom déjà pris"));
+        assert!(add(&mut file, &NewPlane { name: "Zen 3".into(), ..NewPlane::default() }, &home).unwrap_err().to_string().contains("nom invalide"));
+        let bad = add(&mut file, &NewPlane { name: "zen3".into(), swarm_key: Some("pas une clé".into()), ..NewPlane::default() }, &home).unwrap_err().to_string();
+        assert!(bad.contains("swarm.key illisible") && !home.join(".zen/game/zen3").exists(), "{bad}");
+        assert_eq!(file.planes.len(), 3);
+        // Enregistrement puis relecture identiques, et description.
+        save(&path, &file).unwrap();
+        let (again, existed) = load(&path, &home).unwrap();
+        assert!(existed);
+        assert_eq!(again.planes.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["origin", "zen1", "zen2"]);
+        let info = describe(&again, &home).unwrap();
+        assert_eq!((info[0].origin, info[0].running, info[1].running), (true, true, false), "hors `planes`, seul ORIGIN est servi");
+        // Retrait : ORIGIN jamais ; la clé et les données restent.
+        assert!(remove(&mut file, "origin").unwrap_err().to_string().contains("plan de base"));
+        remove(&mut file, "zen2").unwrap();
+        assert!(b.swarm_key_path.exists() && file.planes.len() == 2);
+        assert!(remove(&mut file, "zen9").unwrap_err().to_string().contains("plan inconnu"));
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

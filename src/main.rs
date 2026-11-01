@@ -67,6 +67,9 @@ enum Command {
     /// Sert **plusieurs plans** (ORIGIN, ZEN1…) dans un seul processus, depuis `planes.json` : même NODE, même bassin de blobs, une base
     /// et un port par plan. Voir `docs/GUIDE.md` (plans) ; sans `--check`, démarre les plans.
     Planes(Box<PlanesArgs>),
+    /// Assistant des plans (ORIGIN, ZEN1…) : liste, ajoute (fonder une UPlanet ou rejoindre avec une `swarm.key`) ou retire un plan dans
+    /// `planes.json`, sans jamais toucher aux données. Sans option, `plane-setup add` pose les questions.
+    PlaneSetup(Box<PlaneSetupArgs>),
     /// État du bassin de blobs partagé entre plusieurs plans : poids, part de chaque plan, place économisée par le partage,
     /// blobs que plus personne ne référence (`--sweep` supprime ceux de plus de 24 h).
     PoolStatus(Box<PoolStatusArgs>),
@@ -376,6 +379,121 @@ enum PullAction {
     },
 }
 
+/// Options de `plane-setup`.
+#[derive(clap::Args)]
+struct PlaneSetupArgs {
+    /// Fichier `planes.json` (défaut : `~/.zen/astroportd/planes.json`).
+    #[arg(long)]
+    config: Option<PathBuf>,
+    #[command(subcommand)]
+    action: PlaneSetupAction,
+}
+
+#[derive(Subcommand)]
+enum PlaneSetupAction {
+    /// Liste les plans configurés.
+    List,
+    /// Ajoute un plan. Sans `--name`, pose les questions.
+    Add {
+        /// Nom court (`zen1`).
+        #[arg(long)]
+        name: Option<String>,
+        /// Rejoint une UPlanet existante avec la `swarm.key` reçue d'un Capitaine.
+        #[arg(long, conflicts_with = "found")]
+        swarm_key: Option<PathBuf>,
+        /// Fonde une UPlanet neuve : crée sa `swarm.key` (à copier ensuite sur chaque station qui la rejoint).
+        #[arg(long)]
+        found: bool,
+        /// Écoute HTTP (défaut : la première libre à partir de `127.0.0.1:18080`).
+        #[arg(long)]
+        http_listen: Option<String>,
+        /// Port libp2p (défaut : le premier libre à partir de 4101).
+        #[arg(long)]
+        p2p_port: Option<u16>,
+    },
+    /// Retire un plan de la configuration (ses données, ses comptes et sa clé restent sur le disque).
+    Remove {
+        /// Nom du plan.
+        name: String,
+        /// Ne demande pas confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+fn ask(question: &str, default: Option<&str>) -> Result<String, Failure> {
+    use std::io::Write;
+    print!("{question}{} ", default.map_or(String::new(), |d| format!(" [{d}]")));
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    if std::io::stdin().read_line(&mut line)? == 0 {
+        return Err("entrée standard fermée : donnez les options (--name, --found ou --swarm-key)".into());
+    }
+    let line = line.trim();
+    Ok(if line.is_empty() { default.unwrap_or_default().to_owned() } else { line.to_owned() })
+}
+
+fn plane_setup_cmd(args: PlaneSetupArgs) -> Result<(), Failure> {
+    use astroportd::plane;
+    let home = PathBuf::from(std::env::var_os("HOME").ok_or("$HOME introuvable")?);
+    let path = args.config.unwrap_or_else(|| plane::default_path(&home));
+    let (mut file, existed) = plane::load(&path, &home)?;
+    match args.action {
+        PlaneSetupAction::List => {
+            if !existed {
+                println!("aucun planes.json : la station tourne avec un seul plan, ORIGIN (astroportd serve)");
+            }
+            for p in plane::describe(&file, &home)? {
+                println!("{:<12} {:<14} http://{}  base {}{}", p.name, if p.origin { "ORIGIN" } else { "UPlanet privée" }, p.http, p.db, if p.db_exists { "" } else { "  (pas encore créée)" });
+            }
+        }
+        PlaneSetupAction::Add { name, swarm_key, found, http_listen, p2p_port } => {
+            let name = match name {
+                Some(n) => n,
+                None => ask("Nom du plan (lettres minuscules, chiffres, tirets ; ex. zen1) :", None)?,
+            };
+            let key_text = match (&swarm_key, found) {
+                (Some(f), _) => Some(std::fs::read_to_string(f).map_err(|e| format!("{} : {e}", f.display()))?),
+                (None, true) => None,
+                (None, false) => {
+                    println!("1) Fonder une UPlanet neuve (je crée sa swarm.key)\n2) Rejoindre une UPlanet existante (vous avez reçu une swarm.key d'un Capitaine)");
+                    match ask("Votre choix :", Some("1"))?.as_str() {
+                        "2" => {
+                            let f = ask("Chemin du fichier swarm.key reçu :", None)?;
+                            Some(std::fs::read_to_string(&f).map_err(|e| format!("{f} : {e}"))?)
+                        }
+                        _ => None,
+                    }
+                }
+            };
+            let added = plane::add(&mut file, &plane::NewPlane { name: name.clone(), swarm_key: key_text, http_listen, p2p_port }, &home)?;
+            plane::save(&path, &file)?;
+            let planes = plane::plan(&file, &home)?;
+            let node_game = file.game_dir.as_deref().map_or_else(|| home.join(".zen/game"), |g| g.strip_prefix("~/").map_or_else(|| PathBuf::from(g), |r| home.join(r)));
+            if let Some(p) = planes.iter().find(|p| p.name == name) {
+                plane::prepare(p, &node_game)?;
+            }
+            println!("plan « {name} » ajouté : http://{} · libp2p {} · clé {}", added.http_listen, added.p2p_listen, added.swarm_key_path.display());
+            if let Some(key) = &added.created_key {
+                println!("\nVoici la swarm.key de cette UPlanet : donnez-la (par un canal sûr) à chaque station qui doit la rejoindre ; sans elle personne n'y entre.\n{key}");
+            }
+            if !existed {
+                println!("ORIGIN reste le plan de la station (base et dossier actuels, rien n'est déplacé).");
+            }
+            println!("Pour servir tous les plans dans un seul processus : astroportd planes --check, puis astroportd planes (à la place de serve).");
+        }
+        PlaneSetupAction::Remove { name, yes } => {
+            if !yes && ask(&format!("Retirer le plan « {name} » de la configuration ? Ses données et sa clé restent sur le disque. (o/N)"), Some("n"))?.to_lowercase() != "o" {
+                return Err("abandon".into());
+            }
+            plane::remove(&mut file, &name)?;
+            plane::save(&path, &file)?;
+            println!("plan « {name} » retiré de {} (rien n'est supprimé sur le disque)", path.display());
+        }
+    }
+    Ok(())
+}
+
 /// Options de `planes`.
 #[derive(clap::Args)]
 struct PlanesArgs {
@@ -598,6 +716,7 @@ async fn run(cli: Cli) -> Result<(), Failure> {
         Command::BridgeCopy(args) => bridge_copy_cmd(*args).await,
         Command::PoolStatus(args) => pool_status_cmd(*args),
         Command::Planes(args) => planes_cmd(*args).await,
+        Command::PlaneSetup(args) => plane_setup_cmd(*args),
         Command::Multipass { action } => multipass_cmd(action).await,
         Command::Route { service, mode, swarm_dir, lat, lon } => route(&service, mode, swarm_dir, lat.zip(lon)),
         Command::SwarmKey => {
@@ -965,6 +1084,7 @@ async fn planes_cmd(args: PlanesArgs) -> Result<(), Failure> {
         println!("configuration valide : {} plan(s)", planes.len());
         return Ok(());
     }
+    astroportd::plane::set_running(planes.iter().map(|p| p.name.clone()).collect());
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;

@@ -74,6 +74,11 @@ Cette version fait de la **clé de secours** un secret qu'on peut perdre sans da
 - **Bibliothèque en onglets** : *Temps* (fil continu, jour par jour, du plus récent au plus ancien, avec saut au mois), *Carte*, *Recherche*, *Doublons*.
 - **Carte du monde hors ligne** : contour embarqué (Natural Earth, domaine public, 6 Ko), aucun serveur de tuiles appelé. Les photos géolocalisées sont regroupées par la station (jamais 30 000 points dans le navigateur), zoom à la molette ou aux boutons, glisser pour se déplacer, clic sur un groupe pour voir ses photos, période par dates, préréglages et histogramme par mois.
 
+### Plusieurs UPlanet dans un seul processus (phase 6, étapes a et assistant)
+- **`astroportd planes`** sert ORIGIN et des UPlanet privées dans **un seul processus** (`planes.json`) : même NODE et même `IPFSNODEID`, un bassin de blobs commun, une base, un dossier de comptes et un port par plan. Invariants vérifiés avant tout démarrage : Kubo réservé à ORIGIN, un seul ORIGIN, jamais deux plans avec la même `swarm.key`, base, dossier de comptes ou port. `--check` valide et prépare sans lancer. Essayé pour de bon : deux plans, un processus, même PeerID, réseau privé pour le second.
+- **Assistant en ligne de commande** (`plane-setup list | add | remove`, avec questions si on n'a rien précisé) **et sur le web** (Station › Plans) : fonder une UPlanet (clé créée et montrée pour être copiée) ou rejoindre avec une `swarm.key` reçue ; ports libres, clé en `0600` jamais écrasée, ORIGIN intact, rien de supprimé en retirant un plan.
+- Reste de la phase 6 : routage par nom d'hôte sur un port commun, `--plane` sur les autres commandes, sélecteur de plan dans l'en-tête, test automatisé « plusieurs plans, un processus ».
+
 ### Base de données : schéma allégé (mesuré)
 - **`nostr_events`** passe à une table à `rowid` (clé interne `seq`) ; `nostr_tags` et l'index plein texte s'y rattachent par cet entier au lieu de l'identifiant de 64 caractères. Sur 200 000 événements : base **28 % plus petite**, insertion **2× plus rapide**, jointure par tag **≈ 9× plus rapide**.
 - **`ucloud_entries`** passe aussi à une table à `rowid` (unicité de `(owner_hex, path)` conservée) : base **26 % plus petite**, insertion **1,6× plus rapide**, liste d'un dossier **≈ 100× plus rapide** (150 000 entrées).

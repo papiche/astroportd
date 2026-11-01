@@ -54,6 +54,7 @@ pub struct StationUi<B: BlobStore> {
     board: astro_facecloud::board::BoardCache,
     registrar: Option<Arc<crate::register::Registrar>>,
     probe: Mutex<Option<(Instant, Result<(), String>)>>,
+    planes_home: Option<std::path::PathBuf>,
 }
 
 /// Réponse au lot de photos en attente pour un ami `(titulaire, ami, accepter)` → `(envoyées, retirées)` ; fourni par le binaire.
@@ -99,7 +100,17 @@ pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Fu
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None) }
+        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None), planes_home: None }
+    }
+
+    /// Dossier personnel où vit `planes.json` : active l'écran des plans du Capitaine.
+    pub fn with_planes_home(mut self, home: std::path::PathBuf) -> Self {
+        self.planes_home = Some(home);
+        self
+    }
+
+    fn planes_home(&self) -> Result<&std::path::Path, ApiError> {
+        self.planes_home.as_deref().ok_or_else(|| ApiError::unavailable("configuration des plans non disponible sur cette station"))
     }
 
     /// Active l'attestation de copie privée depuis l'interface.
@@ -861,6 +872,47 @@ impl<B: BlobStore> Backend for StationUi<B> {
             Err(astro_facecloud::FaceError::Invalid(m)) => Err(ApiError::bad_request(m)),
             Err(e) => Err(db_err(e)),
         }
+    }
+
+    async fn planes(&self, _who: &Principal) -> Result<Value, ApiError> {
+        use crate::plane;
+        let home = self.planes_home()?;
+        let path = plane::default_path(home);
+        let (file, existed) = plane::load(&path, home).map_err(|e| ApiError::internal(e.to_string()))?;
+        let info = plane::describe(&file, home).map_err(|e| ApiError::internal(e.to_string()))?;
+        let multi = !plane::running().is_empty();
+        let pending: Vec<&str> = info.iter().filter(|p| !p.running).map(|p| p.name.as_str()).collect();
+        Ok(json!({ "configured": existed, "multi_process": multi, "planes": info, "restart_needed": !pending.is_empty(), "pending": pending, "path": path.display().to_string() }))
+    }
+
+    async fn plane_add(&self, _who: &Principal, name: String, swarm_key: Option<String>) -> Result<Value, ApiError> {
+        use crate::plane;
+        let home = self.planes_home()?;
+        let path = plane::default_path(home);
+        let (mut file, _) = plane::load(&path, home).map_err(|e| ApiError::internal(e.to_string()))?;
+        let added = plane::add(&mut file, &plane::NewPlane { name: name.clone(), swarm_key, ..plane::NewPlane::default() }, home).map_err(|e| ApiError::bad_request(e.to_string()))?;
+        plane::save(&path, &file).map_err(|e| ApiError::internal(format!("planes.json non écrit : {e}")))?;
+        let node_game = file.game_dir.as_deref().map_or_else(|| home.join(".zen/game"), |g| g.strip_prefix("~/").map_or_else(|| std::path::PathBuf::from(g), |r| home.join(r)));
+        if let Ok(planes) = plane::plan(&file, home) {
+            if let Some(p) = planes.iter().find(|p| p.name == name.trim()) {
+                plane::prepare(p, &node_game).map_err(|e| ApiError::internal(format!("dossier du plan : {e}")))?;
+            }
+        }
+        self.services.activity.publish_to(astro_core::Audience::Captain, "system", "ui:planes", format!("plan « {} » ajouté (redémarrage de `astroportd planes` nécessaire)", name.trim()), None);
+        Ok(json!({ "name": name.trim(), "http": added.http_listen, "p2p": added.p2p_listen, "swarm_key_path": added.swarm_key_path.display().to_string(), "created_key": added.created_key }))
+    }
+
+    async fn plane_remove(&self, _who: &Principal, name: String) -> Result<Value, ApiError> {
+        use crate::plane;
+        let home = self.planes_home()?;
+        let path = plane::default_path(home);
+        let (mut file, existed) = plane::load(&path, home).map_err(|e| ApiError::internal(e.to_string()))?;
+        if !existed {
+            return Err(ApiError::bad_request("aucun planes.json : rien à retirer"));
+        }
+        plane::remove(&mut file, name.trim()).map_err(|e| ApiError::bad_request(e.to_string()))?;
+        plane::save(&path, &file).map_err(|e| ApiError::internal(format!("planes.json non écrit : {e}")))?;
+        Ok(json!({ "removed": name.trim() }))
     }
 
     async fn faces_folders(&self, who: &Principal) -> Result<Value, ApiError> {

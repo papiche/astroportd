@@ -305,6 +305,18 @@ pub trait Backend: Send + Sync + 'static {
     fn set_hosting_defaults(&self, _who: &Principal, _quota_bytes: Option<u64>, _weekly_zen: Option<u64>) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("hébergement non réglable sur cette station")) }
     }
+    /// Plans (ORIGIN, UPlanet privées) configurés sur cette station et ceux que ce processus sert (Capitaine).
+    fn planes(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("configuration des plans non disponible sur cette station")) }
+    }
+    /// Ajoute un plan : fonde une UPlanet (`swarm_key` absent) ou rejoint celle de la `swarm.key` donnée (Capitaine).
+    fn plane_add(&self, _who: &Principal, _name: String, _swarm_key: Option<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("configuration des plans non disponible sur cette station")) }
+    }
+    /// Retire un plan de la configuration, sans toucher à ses données (Capitaine).
+    fn plane_remove(&self, _who: &Principal, _name: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("configuration des plans non disponible sur cette station")) }
+    }
     /// Dialogue avec BRO.
     fn bro_say(&self, who: &Principal, text: String) -> impl Future<Output = Result<Value, ApiError>> + Send;
     /// Attestation de copie privée du compte : `{ accepted, version, accepted_at, text }`.
@@ -673,6 +685,8 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/station/accounts/{hex}/quota", post(account_quota::<B>))
         .route("/api/v1/station/accounts/{hex}/hosting", post(account_hosting::<B>))
         .route("/api/v1/station/hosting", get(hosting_defaults::<B>).post(set_hosting_defaults::<B>))
+        .route("/api/v1/station/planes", get(planes::<B>).post(plane_add::<B>))
+        .route("/api/v1/station/planes/remove", post(plane_remove::<B>))
         .with_state(state)
 }
 
@@ -1028,6 +1042,39 @@ async fn account_quota<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: H
         Ok(p) => match captain_only(&p) {
             Ok(()) if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) => reply(st.backend.account_quota(&p, hex.to_ascii_lowercase(), body.quota_bytes).await),
             Ok(()) => reply(Err(ApiError::bad_request("clé de compte invalide (64 hexadécimaux)"))),
+            Err(r) => r,
+        },
+        Err(r) => r,
+    }
+}
+
+#[derive(Deserialize)]
+struct PlaneBody {
+    name: String,
+    /// Contenu d'une `swarm.key` reçue ; absent : on fonde une UPlanet neuve.
+    swarm_key: Option<String>,
+}
+
+async fn planes<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
+    reply(st.backend.planes(&p).await)
+}
+
+async fn plane_add<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<PlaneBody>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => match captain_only(&p) {
+            Ok(()) if body.name.len() <= 64 && body.swarm_key.as_ref().is_none_or(|k| k.len() <= 1024) => reply(st.backend.plane_add(&p, body.name, body.swarm_key.filter(|k| !k.trim().is_empty())).await),
+            Ok(()) => reply(Err(ApiError::bad_request("nom ou clé trop long"))),
+            Err(r) => r,
+        },
+        Err(r) => r,
+    }
+}
+
+async fn plane_remove<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Json(body): Json<PlaneBody>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => match captain_only(&p) {
+            Ok(()) if body.name.len() <= 64 => reply(st.backend.plane_remove(&p, body.name).await),
+            Ok(()) => reply(Err(ApiError::bad_request("nom trop long"))),
             Err(r) => r,
         },
         Err(r) => r,

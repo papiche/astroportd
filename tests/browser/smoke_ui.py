@@ -104,6 +104,7 @@ class H(BaseHTTPRequestHandler):
             import time; time.sleep(STATE.get('delay', 0))
             return self.send(200, dict(enabled=True, dav='/dav', faces=STATE['faces'], people=people(), unknown=sum(1 for f in STATE['faces'] if not f['named']), groups_skipped=False, truncated=False))
         if p.startswith('/dav/'): return self.send(200, base64.b64decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), 'image/gif')
+        if p == '/api/v1/station/planes': return self.send(200, dict(configured=True, multi_process=False, planes=[dict(name='origin', origin=True, http='127.0.0.1:18080', db='/x/uplanet.db', db_exists=True, running=True), dict(name='zen1', origin=False, http='127.0.0.1:18081', db='/x/zen1/uplanet.db', db_exists=False, running=False)], restart_needed=True, pending=['zen1'], path='/x/planes.json'))
         if p == '/api/v1/ucloud/memories': return self.send(200, dict(memories=[]))
         if p == '/api/v1/ucloud/timeline':
             q = self.path.split('ym=')[1] if 'ym=' in self.path else None
@@ -129,6 +130,7 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get('Content-Length', 0)); body = json.loads(self.rfile.read(n) or b'{}'); p = self.path
         STATE['posts'].append((p, body))
         if p == '/api/v1/faces/thumbs': return self.send(200, dict(thumbs={str(i): thumb(i) for i in body['ids']}, failed=[]))
+        if p == '/api/v1/station/planes': return self.send(200, dict(name=body['name'], http='127.0.0.1:18082', p2p='/ip4/0.0.0.0/tcp/4102', swarm_key_path='/x/zen2/swarm.key', created_key='/key/swarm/psk/1.0.0/\\n/base16/\\n' + 'ab' * 32))
         if p == '/api/v1/faces/delete-photos': return self.send(200, dict(deleted=len({f['path'] for f in STATE['faces'] if f['id'] in body['ids']}), missing=0, bytes=0))
         if p == '/api/v1/faces/assign':
             for f in STATE['faces']:
@@ -467,6 +469,12 @@ with sync_playwright() as pw:
     check(len(sent) == 1 and sent[0]['by_date'] == 'month' and 'archives' not in sent[0]['kinds'] and len(sent[0]['kinds']) == 4 and sent[0]['scope'] == '/', 'le rangement part avec le dossier, les types et les sous-dossiers par date choisis')
     page.click('button:text-is("Annuler ce rangement")'); page.wait_for_timeout(400)
     check(any(p_ == '/api/v1/organize/undo' and b_ == {'run': 'r1'} for p_, b_ in STATE['posts']), "« Annuler ce rangement » demande l'annulation du bon passage")
+    # Plans : liste, redémarrage nécessaire, ajout d'une UPlanet neuve (la clé créée est montrée pour être copiée).
+    page.goto(f'http://127.0.0.1:{port}/#/planes'); page.wait_for_selector('input[aria-label="Nom du plan"]'); page.wait_for_timeout(500)
+    check(page.locator('table tbody tr').count() == 2 and 'zen1' in page.inner_text('main'), 'les plans de la station sont listés')
+    check('Redémarrez' in page.inner_text('main'), 'le redémarrage nécessaire est dit')
+    page.fill('input[aria-label="Nom du plan"]', 'zen2'); page.click('form button:has-text("Ajouter")'); page.wait_for_selector('textarea[readonly]'); page.wait_for_timeout(300)
+    check('/key/swarm/psk/1.0.0/' in page.input_value('textarea[readonly]') and 'zen2' in [b['name'] for p_, b in STATE['posts'] if p_ == '/api/v1/station/planes'], 'fonder une UPlanet montre la swarm.key créée, à copier')
     # Bibliothèque : fil du temps jour par jour, carte du monde hors ligne avec ses groupes, doublons sans options superflues.
     page.goto(f'http://127.0.0.1:{port}/#/library'); page.wait_for_selector('#lib-tab-time'); page.wait_for_timeout(700)
     check(page.locator('.stream h3.sticky').count() >= 1 and page.locator('.stream h4').count() >= 2, "l'affichage sur le temps groupe les photos par jour : " + str(page.locator('.stream h4').all_inner_texts()[:2]))

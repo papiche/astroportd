@@ -123,7 +123,7 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
         });
         Arc::new(astroportd::agents::Agents::new(db.clone(), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), publish).with_activity(bus.clone()))
     };
-    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_agents(agents).with_registrar(registrar).with_invites(invites).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), Arc::new(|_| Box::pin(async { Ok(()) })), None).with_activity(bus.clone()))).with_contacts(links).with_coop(
+    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_planes_home(dir.join("home")).with_agents(agents).with_registrar(registrar).with_invites(invites).with_account(Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), Arc::new(|_| Box::pin(async { Ok(()) })), None).with_activity(bus.clone()))).with_contacts(links).with_coop(
         Arc::new(|| Box::pin(async { Ok(json!({ "exists": false, "sections": [] })) })),
         Arc::new(|values| Box::pin(async move { Ok(json!({ "saved": values.keys().collect::<Vec<_>>() })) })),
     ).with_admin(Arc::new(|section, body| Box::pin(async move {
@@ -1203,4 +1203,27 @@ async fn the_captain_sets_quota_and_weekly_price_and_the_member_sees_them() {
     assert_eq!((fp["disk"]["quota_bytes"].as_u64(), fp["hosting"]["weekly_zen"].as_u64()), (Some(20u64 << 30), Some(2)), "palier par défaut du Capitaine");
     let d = b.get("/api/v1/station/hosting", &bob).await.1;
     assert_eq!((d["default_quota_bytes"].as_u64(), d["default_weekly_zen"].as_u64()), (Some(20u64 << 30), Some(2)));
+}
+
+/// Assistant web des plans : réservé au Capitaine ; fonder une UPlanet crée sa clé, rejoindre en demande une valide, ORIGIN n'est pas retiré.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_captain_sets_up_planes_from_the_web_and_nobody_else_can() {
+    let b = bench("planes-web", None).await;
+    let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
+    assert_eq!(b.get("/api/v1/station/planes", &alice).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(b.post("/api/v1/station/planes", &alice, json!({ "name": "zen1" })).await.0, StatusCode::FORBIDDEN);
+    let (s, v) = b.get("/api/v1/station/planes", &bob).await;
+    assert_eq!((s, v["configured"].as_bool(), v["planes"].as_array().unwrap().len(), v["planes"][0]["name"].as_str()), (StatusCode::OK, Some(false), 1, Some("origin")), "sans fichier : ORIGIN seul");
+    // Fonder une UPlanet : une clé neuve est rendue (à copier), le plan attend un redémarrage.
+    let (s, v) = b.post("/api/v1/station/planes", &bob, json!({ "name": "zen1" })).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v["created_key"].as_str().unwrap().contains("/key/swarm/psk/1.0.0/") && v["http"] == "127.0.0.1:18081");
+    let (_, v) = b.get("/api/v1/station/planes", &bob).await;
+    assert_eq!((v["configured"].as_bool(), v["planes"].as_array().unwrap().len(), v["restart_needed"].as_bool()), (Some(true), 2, Some(true)));
+    // Refus : doublon, clé illisible ; ORIGIN jamais retiré ; un plan privé l'est.
+    assert_eq!(b.post("/api/v1/station/planes", &bob, json!({ "name": "zen1" })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.post("/api/v1/station/planes", &bob, json!({ "name": "zen2", "swarm_key": "pas une clé" })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.post("/api/v1/station/planes/remove", &bob, json!({ "name": "origin" })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.post("/api/v1/station/planes/remove", &bob, json!({ "name": "zen1" })).await.0, StatusCode::OK);
+    assert_eq!(b.get("/api/v1/station/planes", &bob).await.1["planes"].as_array().unwrap().len(), 1);
 }

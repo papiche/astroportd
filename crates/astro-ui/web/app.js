@@ -220,6 +220,7 @@ ac.accounts.map(a => [a.email || a.hex.slice(0, 12), [pill(tone(a.status)), ' ',
 [h('button', { class: 'ghost', onclick: () => token(a) }, 'Jeton de secours'), a.unlimited ? null : [' ', h('button', { class: 'ghost', onclick: () => hosting(a) }, 'Hébergement')], a.pass_locked_until ? [' ', h('button', { onclick: async () => { await api(`/api/v1/station/accounts/${a.hex}/unlock-pass`, { method: 'POST' }); toast('PASS déverrouillé', 1); draw(); } }, 'Déverrouiller le PASS')] : null]]))
 : h('p', { class: 'muted' }, 'Aucun compte hébergé.')),
 h('section', { class: 'card wide' }, h('h2', {}, 'Configuration coopérative'), h('p', { class: 'muted' }, 'Paramètres partagés par toute la constellation (OpenCollective, Mailjet, règle 3×1/3…). Les secrets sont chiffrés et ne s\'affichent jamais.'), h('button', { onclick: () => { location.hash = '#/coop'; } }, 'Modifier la configuration')),
+h('section', { class: 'card wide' }, h('h2', {}, t('Plans (UPlanet)')), h('p', { class: 'muted' }, t('ORIGIN et les UPlanet privées de cette station : en fonder une, en rejoindre une avec sa swarm.key.')), h('button', { onclick: () => { location.hash = '#/planes'; } }, t('Gérer les plans'))),
 h('section', { class: 'card wide' }, h('h2', {}, 'Options de la station'), h('p', { class: 'muted' }, 'Moteur de reconnaissance des visages (local, Brain GPU ou arrêt) et règles du relai par kind, sans redémarrer.'), h('button', { onclick: () => { location.hash = '#/options'; } }, 'Ouvrir les options'))));
 };
 await draw();
@@ -377,7 +378,7 @@ tr(document.body); new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEa
 // Écrans lourds chargés à la demande (hors budget de la coque) : ils reçoivent la boîte à outils ci-dessous.
 const K = { t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, tiles, every, enc, del: p => req(dav + enc(p), { method: 'DELETE' }), dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f) };
 const lazyView = f => async (root, q) => (await import('/ui/' + f)).default(root, K, q);
-const views = { home: viewHome, station: viewStation, cloud: viewCloud, account: lazyView('m-account.js'), contacts: lazyView('m-contacts.js'), people: lazyView('m-people.js'), replication: lazyView('m-replication.js'), library: lazyView('m-library.js'), coop: lazyView('m-coop.js'), options: lazyView('m-options.js'), bro: viewBro };
+const views = { home: viewHome, station: viewStation, cloud: viewCloud, account: lazyView('m-account.js'), contacts: lazyView('m-contacts.js'), people: lazyView('m-people.js'), replication: lazyView('m-replication.js'), library: lazyView('m-library.js'), coop: lazyView('m-coop.js'), options: lazyView('m-options.js'), planes: lazyView('m-planes.js'), bro: viewBro };
 let me = null;
 async function route() {
 cleanups.forEach(c => c()); cleanups = [];
@@ -389,8 +390,8 @@ $('#main').replaceWith(main);
 try {
 if (!me) { me = await api('/api/v1/me'); import('/ui/m-nostr.js').then(m => m.default(me, api), () => {}); import('/ui/m-ux.js').then(m => m.default(me, api, t), () => {}); }
 document.querySelector('nav a[data-r=station]').hidden = !me.captain; // l'écran Capitaine n'existe pas pour un MULTIPASS
-const name = ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/station') && me.captain ? 'station' : 'home');
-document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (name === 'coop' || name === 'options' ? 'station' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
+const name = ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/planes') && me.captain ? 'planes' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/station') && me.captain ? 'station' : 'home');
+document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (name === 'coop' || name === 'options' || name === 'planes' ? 'station' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
 await views[name](main, new URLSearchParams(qs || ''));
 $('#out').hidden = false;
 startLive();
