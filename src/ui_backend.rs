@@ -751,7 +751,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
         let (opex, capex) = self.opex_capex(&who.hex, &account).await?;
         let hosting = {
             let h = who.hex.clone();
-            svc.db.readers().read(move |c| Ok(json!({ "weekly_zen": crate::hosting_fee::weekly_price(c, &h)?, "fee": crate::hosting_fee::current_state(c, &h, now_secs().unsigned_abs()) }))).await.map_err(db_err)?
+            svc.db.readers().read(move |c| Ok(json!({ "weekly_zen": crate::hosting_fee::weekly_price(c, &h)?, "lifecycle": crate::hosting_fee::lifecycle_summary(c, &h) }))).await.map_err(db_err)?
         };
         let (used, files) = svc
             .db
@@ -1131,7 +1131,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
                 None => None,
             };
             let h = hex.clone();
-            let (own_quota, own_price, price, fee): (Option<i64>, Option<u64>, u64, Option<String>) = self
+            let (own_quota, own_price, price, fee): (Option<i64>, Option<u64>, u64, Option<Value>) = self
                 .services
                 .db
                 .readers()
@@ -1139,7 +1139,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
                     let own_quota = c.query_row("SELECT quota_bytes FROM identities WHERE hex = ?1", [&h], |r| r.get::<_, Option<i64>>(0))?;
                     let own_price = c.query_row("SELECT value FROM kv WHERE scope = ?1 AND key = ?2", rusqlite::params![crate::hosting_fee::PRICE_SCOPE, h], |r| r.get::<_, String>(0)).ok().and_then(|v| v.trim().parse().ok());
                     let price = crate::hosting_fee::weekly_price(c, &h)?;
-                    let fee = crate::hosting_fee::current_state(c, &h, now_secs().unsigned_abs());
+                    let fee = crate::hosting_fee::lifecycle_summary(c, &h);
                     Ok((own_quota, own_price, price, fee))
                 })
                 .await
@@ -1301,7 +1301,7 @@ impl<B: BlobStore> StationUi<B> {
             .read(move |c| {
                 let since = now - 28 * 86_400;
                 let (rent_28, rent_total): (i64, i64) = c.query_row(
-                    "SELECT COALESCE(SUM(CASE WHEN at >= ?2 THEN amount_cents END), 0), COALESCE(SUM(amount_cents), 0) FROM rent_payments WHERE owner_hex = ?1",
+                    "SELECT COALESCE(SUM(CASE WHEN at >= ?2 THEN amount_cents END), 0), COALESCE(SUM(amount_cents), 0) FROM rents WHERE owner_hex = ?1",
                     rusqlite::params![owner, since],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )?;

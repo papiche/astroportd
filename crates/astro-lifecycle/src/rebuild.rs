@@ -53,7 +53,7 @@ pub async fn rebuild_all(db: &Db, now: u64) -> Result<usize, DbError> {
         .readers()
         .read(|c| {
             let mut stmt = c.prepare(
-                "SELECT i.hex, i.contract, i.created_at, (SELECT MAX(at) FROM rent_payments r WHERE r.owner_hex = i.hex) \
+                "SELECT i.hex, i.contract, i.created_at, (SELECT MAX(at) FROM rents r WHERE r.owner_hex = i.hex) \
                  FROM identities i \
                  WHERE i.hosted = 1 AND i.role = 'multipass' AND i.contract IS NOT NULL \
                    AND NOT EXISTS (SELECT 1 FROM kv WHERE scope = 'lifecycle' AND key = i.hex)",

@@ -81,6 +81,23 @@ impl AccountState {
         Self { contract, status: Status::good_standing(contract), created_at, last_ok_at: None, status_since: created_at }
     }
 
+    /// Relit le JSON de [`AccountState::to_json`] ; `None` s'il est illisible (l'appelant repart d'un compte neuf).
+    pub fn from_json(v: &serde_json::Value) -> Option<Self> {
+        let contract = match v.get("contract")?.as_str()? {
+            "active_rental" => Contract::ActiveRental,
+            "cooperative_member" => Contract::CooperativeMember,
+            _ => return None,
+        };
+        let status = match v.get("status")?.as_str()? {
+            "active_rental" => Status::ActiveRental,
+            "cooperative_member" => Status::CooperativeMember,
+            "grace_period" => Status::GracePeriod,
+            "suspended" => Status::Suspended,
+            _ => return None,
+        };
+        Some(Self { contract, status, created_at: v.get("created_at")?.as_u64()?, last_ok_at: v.get("last_ok_at").and_then(serde_json::Value::as_u64), status_since: v.get("status_since")?.as_u64()? })
+    }
+
     /// JSON stocké dans `kv` (scope `lifecycle`).
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
@@ -188,6 +205,15 @@ mod tests {
 
     fn cycle(balance: u64) -> Cycle {
         Cycle { rent_due: Amount(5_000), balance: Amount(balance), shares_valid: true }
+    }
+
+    #[test]
+    fn the_stored_json_reads_back_identically() {
+        let mut s = AccountState::new(Contract::ActiveRental, T0);
+        s.status = Status::GracePeriod;
+        s.last_ok_at = Some(T0 + 5);
+        assert_eq!(AccountState::from_json(&s.to_json()), Some(s));
+        assert_eq!(AccountState::from_json(&serde_json::json!({ "status": "?" })), None);
     }
 
     #[test]

@@ -339,6 +339,13 @@ CREATE TABLE IF NOT EXISTS rent_payments (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS rent_owner ON rent_payments(owner_hex, at DESC);
 
+-- Tout ce que le cycle de vie et la clôture hebdomadaire comptent comme loyer : les loyers du registre Ğ1-N² ci-dessus ET
+-- les virements d'hébergement faits par la station sur la Ğ1 (journal `hosting_fee`, montant en centimes de ẑ).
+CREATE VIEW IF NOT EXISTS rents(owner_hex, at, amount_cents) AS
+  SELECT owner_hex, at, amount_cents FROM rent_payments
+  UNION ALL
+  SELECT json_extract(data, '$.owner'), at, CAST(json_extract(data, '$.zen') AS INTEGER) * 100 FROM journal WHERE stream = 'hosting_fee';
+
 -- Attestation de copie privée (CPI L. 122-5) : kind 31903, d = private_copy, signée du titulaire. Sans elle, aucun
 -- film ni série n'est déposé ni publié.
 CREATE TABLE IF NOT EXISTS private_copy_consent (

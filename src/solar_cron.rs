@@ -258,7 +258,7 @@ impl<P: Publisher> Nightly<P> {
             .readers()
             .read(move |c| {
                 Ok(c.query_row(
-                    "SELECT COALESCE(SUM(amount_cents), 0) FROM rent_payments WHERE at >= ?1 AND at < ?2",
+                    "SELECT COALESCE(SUM(amount_cents), 0) FROM rents WHERE at >= ?1 AND at < ?2",
                     rusqlite::params![i64::try_from(start).unwrap_or(0), i64::try_from(end).unwrap_or(i64::MAX)],
                     |r| r.get(0),
                 )?)
