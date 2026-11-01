@@ -146,7 +146,7 @@ const row = (k, v) => [h('dt', {}, k), h('dd', {}, v)];
 const LIFE = { active_rental: 'Locataire actif', cooperative_member: 'Membre coopérateur', grace_period: 'Période de grâce', suspended: 'Suspendu' };
 const tone = s => (s === 'grace_period' ? 'degraded' : s === 'suspended' ? 'down' : s ? 'ok' : 'disabled');
 const day = t => (t ? new Date(t * 1000).toLocaleDateString('fr', { dateStyle: 'medium' }) : '—');
-const table = (cap, head, rows) => h('table', {}, h('caption', { class: 'muted' }, cap), h('thead', {}, h('tr', {}, head.map(x => h('th', { scope: 'col' }, x)))), h('tbody', {}, rows.map(r => h('tr', {}, r.map(c => h('td', {}, c))))));
+const table = (cap, head, rows) => h('table', {}, h('caption', { class: 'muted' }, cap), h('thead', {}, h('tr', {}, head.map(x => h('th', { scope: 'col' }, x)))), h('tbody', {}, rows.map(r => h('tr', {}, r.map(c => h('td', {}, Array.isArray(c) ? c.flat(Infinity) : c))))));
 function consentForm(cp, redraw) {
 const ok = h('input', { type: 'checkbox', id: 'cp-ok' }), go = h('button', { disabled: true, onclick: async () => {
 try { await api('/api/v1/consent/private-copy', { method: 'POST', body: { version: cp.current_version } }); toast('Copie privée attestée', 1); redraw(); } catch (e) { toast(e.message, 0); }
@@ -411,7 +411,7 @@ async function planeSwitch() {
     const current = onPlane ? first : (r.planes.find(p => p.origin) || r.planes[0]).name;
     const go = n => { const origin = r.planes.find(p => p.name === n)?.origin; location.href = `${location.protocol}//${origin ? '' : n + '.'}${base}${location.port ? ':' + location.port : ''}/`; };
     $('.tools').prepend(h('select', { id: 'plane', 'aria-label': t('Plan (UPlanet)'), title: t('Plan (UPlanet)'), onchange: ev => go(ev.target.value) },
-      r.planes.map(p => h('option', { value: p.name, selected: p.name === current }, p.origin ? `${p.name} (ORIGIN)` : p.name))));
+      r.planes.map(p => h('option', { value: p.name, selected: p.name === current }, p.name))));
   } catch { /* pas d'écran des plans (station sans configuration) : pas de sélecteur */ }
 }
 addEventListener('hashchange', route);

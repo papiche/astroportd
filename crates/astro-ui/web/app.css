@@ -202,3 +202,4 @@ nav a[data-r=replication]::before { content: "🔁"; } nav a[data-r=bro]::before
 }
 .grid + .card { margin-top: 1rem; }
 main > .card, main > div:not(.grid):not(.bar) > .card { margin-top: 1rem; }
+.tools #plane{max-width:4.6rem;text-overflow:ellipsis}
