@@ -23,7 +23,7 @@ pub const DETECTOR_FILE: &str = "det_10g.onnx";
 /// Nom du modèle d'empreinte dans le dossier des modèles.
 pub const RECOGNIZER_FILE: &str = "w600k_r50.onnx";
 
-/// Dossiers où chercher `libonnxruntime.so*` quand `ORT_DYLIB_PATH` n'est pas défini.
+/// Dossiers où chercher `libonnxruntime.so*` (Linux) ou `libonnxruntime*.dylib` (macOS, Homebrew) quand `ORT_DYLIB_PATH` n'est pas défini.
 fn library_dirs(home: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(h) = home {
@@ -33,7 +33,7 @@ fn library_dirs(home: Option<&Path>) -> Vec<PathBuf> {
             dirs.extend(rd.flatten().map(|e| e.path().join("site-packages/onnxruntime/capi")));
         }
     }
-    dirs.extend(["/usr/local/lib", "/usr/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/usr/lib/arm-linux-gnueabihf"].map(PathBuf::from));
+    dirs.extend(["/usr/local/lib", "/usr/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/usr/lib/arm-linux-gnueabihf", "/opt/homebrew/lib"].map(PathBuf::from));
     dirs
 }
 
@@ -47,7 +47,7 @@ pub fn find_library(env: Option<&str>, home: Option<&Path>) -> Option<PathBuf> {
         .into_iter()
         .filter_map(|d| std::fs::read_dir(d).ok())
         .flat_map(|rd| rd.flatten().map(|e| e.path()))
-        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("libonnxruntime.so") && !n.contains("providers")))
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| (n.starts_with("libonnxruntime.so") || (n.starts_with("libonnxruntime") && n.ends_with(".dylib"))) && !n.contains("providers")))
         .collect();
     found.sort();
     found.pop()
@@ -177,6 +177,14 @@ mod tests {
         std::fs::write(capi.join("libonnxruntime.so.1.27.0"), b"").unwrap();
         std::fs::write(capi.join("libonnxruntime_providers_shared.so"), b"").unwrap();
         assert_eq!(find_library(None, Some(&home)).unwrap().file_name().unwrap(), "libonnxruntime.so.1.27.0", "la plus récente, jamais un module de fournisseur");
+        let mac = home.join(".zen/astroportd/lib");
+        std::fs::create_dir_all(&mac).unwrap();
+        std::fs::write(mac.join("libonnxruntime.1.30.0.dylib"), b"").unwrap();
+        std::fs::remove_file(capi.join("libonnxruntime.so.1.27.0")).unwrap();
+        std::fs::remove_file(capi.join("libonnxruntime.so.1.20.0")).unwrap();
+        assert_eq!(find_library(None, Some(&home)).unwrap().file_name().unwrap(), "libonnxruntime.1.30.0.dylib", "dylib reconnue (macOS)");
+        std::fs::remove_file(mac.join("libonnxruntime.1.30.0.dylib")).unwrap();
+        std::fs::write(capi.join("libonnxruntime.so.1.27.0"), b"").unwrap();
         assert_eq!(find_library(Some("/choix/explicite.so"), Some(&home)), Some(PathBuf::from("/choix/explicite.so")), "l'environnement l'emporte");
         assert_eq!(find_library(Some(""), Some(&home)).unwrap().file_name().unwrap(), "libonnxruntime.so.1.27.0", "variable vide : ignorée");
         let _ = std::fs::remove_dir_all(home);

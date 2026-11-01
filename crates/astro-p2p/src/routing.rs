@@ -83,10 +83,49 @@ impl Hardware {
     /// NVIDIA. **Bloquant** : à appeler depuis `spawn_blocking`.
     pub fn detect() -> Self {
         let cpu_cores = std::thread::available_parallelism().map_or(1, |n| u32::try_from(n.get()).unwrap_or(1));
-        let ram_gb = std::fs::read_to_string("/proc/meminfo").ok().and_then(|m| parse_meminfo_gb(&m)).unwrap_or(0.0);
-        let vram_gb = std::env::var("ASTRO_VRAM_GB").ok().and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or_else(nvidia_vram_gb);
+        let ram_gb = total_ram_gb();
+        let vram_gb = std::env::var("ASTRO_VRAM_GB").ok().and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or_else(|| gpu_vram_gb(ram_gb));
         Self { vram_gb, cpu_cores, ram_gb }
     }
+}
+
+/// Mémoire vive totale : `/proc/meminfo` (Linux), `sysctl -n hw.memsize` (macOS) ; 0 si inconnue.
+fn total_ram_gb() -> f64 {
+    if let Some(gb) = std::fs::read_to_string("/proc/meminfo").ok().and_then(|m| parse_meminfo_gb(&m)) {
+        return gb;
+    }
+    if cfg!(target_os = "macos") {
+        return sysctl_memsize_gb().unwrap_or(0.0);
+    }
+    0.0
+}
+
+fn sysctl_memsize_gb() -> Option<f64> {
+    let out = std::process::Command::new("sysctl").args(["-n", "hw.memsize"]).stderr(std::process::Stdio::null()).output().ok()?;
+    parse_memsize_gb(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Octets (`hw.memsize`) → Go.
+fn parse_memsize_gb(text: &str) -> Option<f64> {
+    let bytes: f64 = text.trim().parse().ok()?;
+    (bytes > 0.0).then_some(bytes / 1024.0 / 1024.0 / 1024.0)
+}
+
+/// Part de la mémoire unifiée d'un Mac Apple Silicon que Metal peut réellement adresser (le système garde le reste).
+const APPLE_GPU_SHARE: f64 = 0.66;
+
+/// Apple Silicon : mémoire unifiée partagée avec le GPU (Metal) ; les Mac Intel n'en ont pas de comparable.
+fn apple_silicon() -> bool {
+    cfg!(all(target_os = "macos", target_arch = "aarch64"))
+}
+
+/// VRAM utilisable : cartes NVIDIA, sinon la part GPU de la mémoire unifiée d'un Mac Apple Silicon.
+fn gpu_vram_gb(ram_gb: f64) -> f64 {
+    let nvidia = nvidia_vram_gb();
+    if nvidia > 0.0 || !apple_silicon() {
+        return nvidia;
+    }
+    (ram_gb * APPLE_GPU_SHARE).floor()
 }
 
 fn parse_meminfo_gb(meminfo: &str) -> Option<f64> {
@@ -296,6 +335,13 @@ mod tests {
         assert_eq!(Tier::of(41.0), Tier::Brain);
         assert_eq!(Tier::of(40.0), Tier::Standard);
         assert_eq!(Tier::of(10.0), Tier::Light);
+    }
+
+    #[test]
+    fn macos_memsize_is_read_in_gigabytes() {
+        assert_eq!(parse_memsize_gb("17179869184\n"), Some(16.0));
+        assert_eq!(parse_memsize_gb("0"), None);
+        assert_eq!(parse_memsize_gb("pas un nombre"), None);
     }
 
     #[test]

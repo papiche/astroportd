@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use astro_db::Db;
 use astro_nostr_proto::{Event, Filter, is_hex64};
+use futures_util::StreamExt;
 use tokio::sync::watch;
 
 use crate::client::RelayClient;
@@ -31,6 +32,8 @@ pub struct CrawlConfig {
     pub overlap_secs: u64,
     /// Délai de grâce par page.
     pub fetch_timeout: Duration,
+    /// Synchronisations `(clé, relai)` menées de front. Le curseur reste par couple : rien ne change pour la reprise.
+    pub concurrency: usize,
 }
 
 impl Default for CrawlConfig {
@@ -42,6 +45,7 @@ impl Default for CrawlConfig {
             max_pages: 20,
             overlap_secs: 3600,
             fetch_timeout: Duration::from_secs(30),
+            concurrency: 8,
         }
     }
 }
@@ -105,7 +109,7 @@ pub const STATUS_SCOPE: &str = "crawl_status";
 /// Clé du dernier passage.
 pub const STATUS_KEY: &str = "last";
 
-/// Moteur de crawl séquentiel.
+/// Moteur de crawl (couples clé × relai en parallèle borné).
 pub struct Crawler<C: RelayClient> {
     db: Arc<Db>,
     client: C,
@@ -167,7 +171,7 @@ impl<C: RelayClient> Crawler<C> {
             .await?)
     }
 
-    /// Un passage complet : chaque clé, l'une après l'autre, sur chaque relai. `extra` ajoute des clés d'amorçage.
+    /// Un passage complet : chaque clé sur chaque relai, `concurrency` couples à la fois. `extra` ajoute des clés d'amorçage.
     pub async fn run_once(&self, extra: &[String]) -> Result<CrawlStats, SyncError> {
         let mut keys = self.targets().await?;
         for k in extra {
@@ -177,19 +181,21 @@ impl<C: RelayClient> Crawler<C> {
         }
         let mut stats = CrawlStats::default();
         let relays = self.current_relays();
-        for key in &keys {
-            stats.keys += 1;
-            for relay in &relays {
-                match self.sync_key(relay, key).await {
-                    Ok(s) => stats.merge(s),
-                    Err(e) => {
-                        if stats.errors.len() < 20 {
-                            stats.errors.push((relay.clone(), key.clone(), e.to_string()));
-                        }
+        stats.keys = keys.len();
+        // Ordre clé par clé : les premières places sont réparties entre les relais plutôt que tout sur un seul.
+        let pairs: Vec<(String, String)> = keys.iter().flat_map(|key| relays.iter().map(move |relay| (relay.clone(), key.clone()))).collect();
+        let mut running = futures_util::stream::iter(pairs).map(|pair| self.sync_pair(pair)).buffer_unordered(self.config.concurrency.max(1));
+        while let Some((relay, key, outcome)) = running.next().await {
+            match outcome {
+                Ok(s) => stats.merge(s),
+                Err(e) => {
+                    if stats.errors.len() < 20 {
+                        stats.errors.push((relay, key, e.to_string()));
                     }
                 }
             }
         }
+        drop(running);
         purge_claimed(self.db.writer(), CLAIM_RETENTION_SECS).await?;
         Ok(stats)
     }
@@ -207,6 +213,12 @@ impl<C: RelayClient> Crawler<C> {
             }
         }
         Ok(total)
+    }
+
+    /// `sync_key` avec son couple rendu : fonction nommée pour que le futur reste utilisable dans `tokio::spawn`.
+    async fn sync_pair(&self, (relay, key): (String, String)) -> (String, String, Result<CrawlStats, SyncError>) {
+        let outcome = self.sync_key(&relay, &key).await;
+        (relay, key, outcome)
     }
 
     /// Synchronise une clé sur un relai, de façon incrémentale.

@@ -112,7 +112,14 @@ fn now() -> u64 {
 }
 
 fn hostname() -> String {
-    std::fs::read_to_string("/etc/hostname").ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).or_else(|| std::env::var("HOSTNAME").ok()).unwrap_or_else(|| "station".to_owned())
+    // `/etc/hostname` (Linux), puis `HOSTNAME`, puis la commande `hostname` (macOS n'a ni l'un ni l'autre sous launchd).
+    std::fs::read_to_string("/etc/hostname")
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("HOSTNAME").ok().filter(|s| !s.is_empty()))
+        .or_else(|| std::process::Command::new("hostname").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| "station".to_owned())
 }
 
 struct Asker {
