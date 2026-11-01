@@ -473,8 +473,8 @@ impl<B: BlobStore> Backend for StationUi<B> {
             }
             None => (None, None, None),
         };
-        let (balance, weeks) = match svc.balance_of(&who.hex).await {
-            Ok(b) => (json!({ "g1_cents": b.g1_cents, "zen_cents": b.zen_cents, "error": null }), (svc.weekly_rent_cents > 0).then(|| b.zen_cents as f64 / svc.weekly_rent_cents as f64)),
+        let (balance, weeks) = match svc.balance_quick(&who.hex).await {
+            Ok((b, stale)) => (json!({ "g1_cents": b.g1_cents, "zen_cents": b.zen_cents, "error": null, "stale": stale }), (svc.weekly_rent_cents > 0).then(|| b.zen_cents as f64 / svc.weekly_rent_cents as f64)),
             Err(e) => (json!({ "g1_cents": null, "zen_cents": null, "error": e }), None),
         };
         let p2p = match &svc.p2p {

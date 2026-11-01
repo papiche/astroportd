@@ -160,7 +160,7 @@ const [d, fp, cp] = await Promise.all([api('/api/v1/dashboard'), api('/api/v1/me
 const b = d.balance, e = d.energy, w = d.sovereignty, k = fp.disk, pct = k.quota_bytes ? k.used_bytes / k.quota_bytes : 0, ox = fp.opex, cx = fp.capex;
 root.replaceChildren(h('div', { class: 'grid' },
 h('section', { class: 'card' }, h('h2', {}, 'Solde'),
-b.error ? h('p', { class: 'degraded', role: 'status' }, b.error) : [h('p', { class: 'big' }, zen(b.zen_cents), h('small', { class: 'muted' }, ' Ẑen')), h('p', { class: 'muted' }, `${zen(b.g1_cents)} Ğ1`)]),
+b.error ? h('p', { class: 'degraded', role: 'status' }, b.error) : [h('p', { class: 'big' }, zen(b.zen_cents), h('small', { class: 'muted' }, ' Ẑen')), h('p', { class: 'muted' }, `${zen(b.g1_cents)} Ğ1`), b.stale ? h('p', { class: 'muted' }, t('Dernier solde connu : le nœud Duniter est lent.')) : null]),
 h('section', { class: 'card' }, h('h2', {}, 'Autonomie'),
 e.weeks == null ? h('p', { class: 'muted' }, 'Solde indisponible.') : [h('meter', { min: 0, max: e.max_weeks, low: 2, high: 6, optimum: e.max_weeks, value: Math.min(e.weeks, e.max_weeks), 'aria-label': 'Autonomie en semaines' }),
 h('p', { class: 'big' }, e.weeks.toFixed(1), h('small', { class: 'muted' }, ' semaine(s) de loyer')), h('p', { class: 'muted' }, `Loyer : ${zen(e.weekly_rent_cents)} Ẑen / semaine`)]),

@@ -20,6 +20,8 @@ pub const RESERVE_G1_CENTS: u64 = 100;
 pub const ZEN_PER_G1: u64 = 10;
 /// Délai d'une lecture de solde.
 const BALANCE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Attente maximale du solde pour afficher une page.
+const QUICK_BALANCE: Duration = Duration::from_millis(1500);
 
 /// Identité publique de la station.
 pub struct StationInfo {
@@ -99,6 +101,8 @@ pub struct StationServices {
     pub exposed: Vec<String>,
     /// Dernier appel Duniter : `(quand, réussi)`, pour `/health` sans appel réseau.
     chain_seen: Mutex<Option<(Instant, bool)>>,
+    /// Dernier solde lu par compte : affiché quand le nœud est lent, pour ne jamais bloquer une page.
+    last_balance: Mutex<std::collections::HashMap<String, BalanceView>>,
     /// Build exécuté ici (version, empreinte du binaire), renseigné au démarrage une fois haché.
     build: std::sync::OnceLock<crate::build_attest::BuildInfo>,
 }
@@ -106,7 +110,7 @@ pub struct StationServices {
 impl StationServices {
     /// Assemble le contexte.
     pub fn new(d: StationDeps) -> Self {
-        Self { db: d.db, info: d.info, nostr_dir: d.nostr_dir, chain: d.chain, hardware: d.hardware, p2p: d.p2p, weekly_rent_cents: d.weekly_rent_cents, activity: d.activity, swarm_dir: d.swarm_dir, origin: d.origin, exposed: d.exposed, chain_seen: Mutex::new(None), build: std::sync::OnceLock::new() }
+        Self { db: d.db, info: d.info, nostr_dir: d.nostr_dir, chain: d.chain, hardware: d.hardware, p2p: d.p2p, weekly_rent_cents: d.weekly_rent_cents, activity: d.activity, swarm_dir: d.swarm_dir, origin: d.origin, exposed: d.exposed, chain_seen: Mutex::new(None), last_balance: Mutex::new(std::collections::HashMap::new()), build: std::sync::OnceLock::new() }
     }
 
     /// Enregistre le build exécuté ici (une seule fois).
@@ -152,12 +156,32 @@ impl StationServices {
         let ok = matches!(result, Ok(Ok(_)));
         *self.chain_seen.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), ok));
         match result {
-            Ok(Ok(b)) => Ok(BalanceView { g1_cents: b.total.0, zen_cents: zen_of_g1(b.total.0) }),
+            Ok(Ok(b)) => {
+                let view = BalanceView { g1_cents: b.total.0, zen_cents: zen_of_g1(b.total.0) };
+                self.last_balance.lock().unwrap_or_else(|e| e.into_inner()).insert(owner.to_owned(), view);
+                Ok(view)
+            }
             Ok(Err(e)) => {
                 self.activity.publish_to(astro_core::Audience::Owner(owner.to_owned()), "economy", "station:balance", format!("lecture du solde impossible : {e}"), None);
                 Err(format!("lecture du solde impossible : {e}"))
             }
             Err(_) => Err(format!("le nœud Duniter ne répond pas ({} s)", BALANCE_TIMEOUT.as_secs())),
+        }
+    }
+
+    /// Solde pour une page : attend au plus `QUICK_BALANCE`, puis rend le dernier solde connu (marqué périmé) ou l'erreur.
+    /// La lecture continue en arrière-plan et alimente la mémoire pour la page suivante.
+    /// Rend `(solde, périmé)`.
+    pub async fn balance_quick(self: &Arc<Self>, owner: &str) -> Result<(BalanceView, bool), String> {
+        let (me, o) = (self.clone(), owner.to_owned());
+        let task = tokio::spawn(async move { me.balance_of(&o).await });
+        match tokio::time::timeout(QUICK_BALANCE, task).await {
+            Ok(Ok(r)) => r.map(|b| (b, false)),
+            Ok(Err(e)) => Err(format!("lecture du solde interrompue : {e}")),
+            Err(_) => match self.last_balance.lock().unwrap_or_else(|e| e.into_inner()).get(owner) {
+                Some(b) => Ok((*b, true)),
+                None => Err("le nœud Duniter est lent : solde en cours de lecture, actualisez dans un instant".into()),
+            },
         }
     }
 }
