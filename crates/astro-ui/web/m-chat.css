@@ -1,0 +1,13 @@
+.ch-detail{display:flex;flex-direction:column;height:calc(100vh - 6rem);min-height:20rem;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.ch-head{display:flex;gap:.6rem;align-items:center;padding:.6rem .8rem;border-bottom:1px solid var(--line)}
+.ch-thread{flex:1;overflow-y:auto;padding:.8rem;display:flex;flex-direction:column;gap:.35rem}
+.ch-day{align-self:center;font-size:.75rem;color:var(--muted);margin:.5rem 0}
+.ch-msg{max-width:min(34rem,80%);padding:.4rem .7rem;border-radius:14px;background:var(--panel);border:1px solid var(--line)}
+.ch-msg p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.ch-msg small{display:block;text-align:right;font-size:.7rem}
+.ch-msg.mine{align-self:flex-end;background:var(--accent);color:var(--on-accent);border-color:transparent}.ch-msg.mine small{color:inherit;opacity:.8}
+.ch-msg.failed{outline:2px solid var(--bad)}
+.ch-form{display:flex;gap:.5rem;padding:.6rem;border-top:1px solid var(--line)}.ch-form textarea{flex:1;resize:none;max-height:8rem}
+.ch-meta{display:flex;flex-direction:column;align-items:flex-end;gap:.2rem;margin-left:auto}
+.ch-badge{min-width:1.3rem;padding:0 .35rem;border-radius:1rem;background:var(--accent);color:var(--on-accent);font-size:.75rem;text-align:center}
+@media (max-width:52rem){.ch-detail{height:calc(100vh - 8rem)}}
+.ch-planes{display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.15rem}

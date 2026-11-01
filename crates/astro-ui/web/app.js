@@ -323,9 +323,12 @@ listeners.add(add);
 cleanups.push(() => listeners.delete(add));
 }
 const feed = [], listeners = new Set(), started = Date.now();
+function badge(n) { const a = document.querySelector('nav a[data-r=chat]'); let b = a.querySelector('.ch-badge'); if (!n) return b?.remove(); if (!b) a.append(b = h('span', { class: 'ch-badge' })); b.textContent = n; }
+const refreshBadge = () => api('/api/v1/chat').then(r => badge(r.unread)).catch(() => {}); // sans chat sur cette station : pas de pastille
 function startLive() {
 startLive = () => {};
 live(ev => {
+if (ev.source === 'chat:msg') { refreshBadge(); if (!location.hash.startsWith('#/chat')) toast(t('Nouveau message'), 1); }
 feed.push(ev); if (feed.length > 200) feed.shift();
 listeners.forEach(l => l(ev));
 if (ev.at * 1000 > started - 5000) { if (ev.kind === 'economy') toast(ev.message, 1); else if (ev.source === 'bro:upload') toast(ev.message, 1); }
@@ -376,9 +379,9 @@ try { dict = (await import(`/ui/m-lang-${lang}.js`)).default; } catch (e) { toas
 tr(document.body); new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(tr))).observe(document.body, { childList: true, subtree: true });
 }
 // Écrans lourds chargés à la demande (hors budget de la coque) : ils reçoivent la boîte à outils ci-dessous.
-const K = { t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, tiles, every, enc, del: p => req(dav + enc(p), { method: 'DELETE' }), dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f) };
+const K = { t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, tiles, every, enc, del: p => req(dav + enc(p), { method: 'DELETE' }), dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n) };
 const lazyView = f => async (root, q) => (await import('/ui/' + f)).default(root, K, q);
-const views = { home: viewHome, station: viewStation, cloud: viewCloud, account: lazyView('m-account.js'), contacts: lazyView('m-contacts.js'), people: lazyView('m-people.js'), replication: lazyView('m-replication.js'), library: lazyView('m-library.js'), coop: lazyView('m-coop.js'), options: lazyView('m-options.js'), planes: lazyView('m-planes.js'), bro: viewBro };
+const views = { home: viewHome, station: viewStation, cloud: viewCloud, account: lazyView('m-account.js'), contacts: lazyView('m-contacts.js'), chat: lazyView('m-chat.js'), people: lazyView('m-people.js'), replication: lazyView('m-replication.js'), library: lazyView('m-library.js'), coop: lazyView('m-coop.js'), options: lazyView('m-options.js'), planes: lazyView('m-planes.js'), bro: viewBro };
 let me = null;
 async function route() {
 cleanups.forEach(c => c()); cleanups = [];
@@ -393,15 +396,15 @@ document.querySelector('nav a[data-r=bro]').hidden = !me.ai; // BRO n'existe que
 if (!me.ai && location.hash.startsWith('#/bro')) { toast(t('Déclarez une IA (Ollama ou clé d\'API) dans Mon compte pour utiliser BRO')); location.hash = '#/account'; return; }
 if (me.captain) planeSwitch();
 document.querySelector('nav a[data-r=station]').hidden = !me.captain; // l'écran Capitaine n'existe pas pour un MULTIPASS
-const name = ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/planes') && me.captain ? 'planes' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/station') && me.captain ? 'station' : 'home');
+const name = ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts', 'chat'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/planes') && me.captain ? 'planes' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/station') && me.captain ? 'station' : 'home');
 document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (name === 'coop' || name === 'options' || name === 'planes' ? 'station' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
 await views[name](main, new URLSearchParams(qs || ''));
 $('#out').hidden = false;
-startLive();
+startLive(); refreshBadge();
 } catch (e) { main.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }
 }
 // Sélecteur de plan (Capitaine) : quand la station route par nom d'hôte (`astroportd planes --front`), `<plan>.<domaine>` ouvre l'interface de ce plan.
-let planeSwitched = false;
+let planeSwitched = false, planeHref = null;
 async function planeSwitch() {
   if (planeSwitched) return;
   planeSwitched = true;
@@ -411,6 +414,7 @@ async function planeSwitch() {
     const names = r.planes.map(p => p.name), host = location.hostname, first = host.split('.')[0];
     const onPlane = host.includes('.') && names.includes(first), base = onPlane ? host.slice(first.length + 1) : host;
     const current = onPlane ? first : (r.planes.find(p => p.origin) || r.planes[0]).name;
+    planeHref = (n, hash) => { const origin = r.planes.find(p => p.name === n)?.origin; return `${location.protocol}//${origin ? '' : n + '.'}${base}${location.port ? ':' + location.port : ''}/${hash || ''}`; };
     const go = n => { const origin = r.planes.find(p => p.name === n)?.origin; location.href = `${location.protocol}//${origin ? '' : n + '.'}${base}${location.port ? ':' + location.port : ''}/`; };
     $('.tools').prepend(h('select', { id: 'plane', 'aria-label': t('Plan (UPlanet)'), title: t('Plan (UPlanet)'), onchange: ev => go(ev.target.value) },
       r.planes.map(p => h('option', { value: p.name, selected: p.name === current }, p.name))));

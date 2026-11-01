@@ -46,6 +46,7 @@ struct Bench {
     db: Arc<Db>,
     bus: ActivityBus,
     dir: std::path::PathBuf,
+    chat: Arc<astroportd::chat::Chat>,
 }
 
 impl Bench {
@@ -124,9 +125,32 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
         let keys = || Arc::new(StaticKeySource::new().with(ALICE).with(BOB));
         (Arc::new(astroportd::agents::Agents::new(db.clone(), keys(), publish.clone()).with_activity(bus.clone())), Arc::new(astroportd::member_ai::MemberAi::new(db.clone(), keys(), publish.clone())), publish)
     };
+    let people = {
+        let relay = relay.clone();
+        let publish: astroportd::register::PublishFn = Arc::new(move |e| {
+            let relay = relay.clone();
+            Box::pin(async move {
+                let (ok, why) = relay.publish_local(&e).await;
+                if ok { Ok(()) } else { Err(why) }
+            })
+        });
+        Arc::new(astroportd::person_keys::PersonKeys::new(db.clone(), "origin".into(), vec![], Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), publish))
+    };
+    let chat = {
+        // Relai local pour tous : Alice et Bob sont hébergés ici, les enveloppes entrent par le vrai relai.
+        let relay = relay.clone();
+        let local: astroportd::chat::DeliverFn = Arc::new(move |_to, e| {
+            let relay = relay.clone();
+            Box::pin(async move {
+                let (ok, why) = relay.publish_local(&e).await;
+                if ok { Ok(()) } else { Err(why) }
+            })
+        });
+        Arc::new(astroportd::chat::Chat::new(db.clone(), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), local.clone(), local, bus.clone()).with_people(people.clone()))
+    };
     let account_svc = Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), relay_publish, None).with_activity(bus.clone()));
     let address_book = Arc::new(astroportd::address_book::AddressBook::new(db.clone(), dav.clone(), links.clone(), Some(account_svc.clone())));
-    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_planes_home(dir.join("home")).with_agents(agents).with_ai(member_ai).with_registrar(registrar).with_invites(invites).with_account(account_svc).with_book(address_book).with_contacts(links).with_coop(
+    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_planes_home(dir.join("home")).with_agents(agents).with_ai(member_ai).with_registrar(registrar).with_invites(invites).with_account(account_svc).with_book(address_book).with_chat(chat.clone()).with_people(people).with_contacts(links).with_coop(
         Arc::new(|| Box::pin(async { Ok(json!({ "exists": false, "sections": [] })) })),
         Arc::new(|values| Box::pin(async move { Ok(json!({ "saved": values.keys().collect::<Vec<_>>() })) })),
     ).with_admin(Arc::new(|section, body| Box::pin(async move {
@@ -142,7 +166,7 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
         .merge(astro_ui::web::static_router())
         .merge(astro_ui::api::router(ui, bus.clone(), Some("https://station.test".into())))
         .layer(axum::middleware::from_fn(astro_ui::web::negotiate));
-    Bench { app, db, bus, dir }
+    Bench { app, db, bus, dir, chat }
 }
 
 async fn call(app: &Router, method: Method, uri: &str, auth: Option<&str>, headers: &[(&str, &str)], body: Vec<u8>) -> (StatusCode, HeaderMap, Vec<u8>) {
@@ -1284,6 +1308,46 @@ async fn the_address_book_api_searches_edits_and_keeps_my_own_card_and_nostr_pro
     // La personne reconnue sur les photos reçoit sa fiche d'office.
     let (_, listed) = b.get("/api/v1/book", &alice).await;
     assert_eq!(listed["contacts"][0]["me"], true, "ma fiche en tête");
+}
+
+/// Chat privé : Alice écrit à Bob par l'API, le message arrive chiffré, non lu, et l'historique se lit des deux côtés.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_private_chat_api_delivers_a_sealed_message_and_counts_unread() {
+    let b = bench("chat", None).await;
+    let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
+    let (s, sent) = b.post("/api/v1/chat/send", &alice, json!({ "peer": hex(&BOB), "text": "Salut Bob" })).await;
+    assert_eq!((s, sent["state"].as_str()), (StatusCode::OK, Some("ok")), "{sent}");
+    // Sur le fil, l'enveloppe est un kind 1059 : le texte n'apparaît nulle part en clair.
+    let leak: i64 = b.db.readers().read(|c| Ok(c.query_row("SELECT COUNT(*) FROM nostr_events WHERE content LIKE '%Salut Bob%'", [], |r| r.get(0))?)).await.unwrap();
+    assert_eq!(leak, 0);
+    b.chat.poll_once().await;
+    let (_, list) = b.get("/api/v1/chat", &bob).await;
+    assert_eq!((list["unread"].as_i64(), list["conversations"][0]["peer"].as_str()), (Some(1), Some(hex(&ALICE).as_str())), "{list}");
+    let (_, msgs) = b.get(&format!("/api/v1/chat/messages?peer={}", hex(&ALICE)), &bob).await;
+    assert_eq!(msgs["messages"][0]["text"], "Salut Bob");
+    assert_eq!(b.post("/api/v1/chat/read", &bob, json!({ "peer": hex(&ALICE) })).await.0, StatusCode::OK);
+    assert_eq!(b.get("/api/v1/chat", &bob).await.1["unread"], 0);
+    assert_eq!(b.post("/api/v1/chat/send", &alice, json!({ "peer": "nimporte", "text": "x" })).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(b.get(&format!("/api/v1/chat/messages?peer={}", hex(&BOB)), &bob).await.1["messages"].as_array().map_or(9, Vec::len), 0, "chacun ne lit que ses conversations");
+    assert_eq!(b.get("/api/v1/chat", "").await.0, StatusCode::UNAUTHORIZED);
+}
+
+/// Une fiche montre les clés de la personne dans chaque UPlanet, retrouvées par son email ; « mes liens » dit où j'ai des comptes.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_card_shows_the_person_keys_found_by_email_and_my_links_are_listed() {
+    let b = bench("person-keys", None).await;
+    let alice = basic("alice@example.org", &ALICE);
+    let (s, saved) = b.post("/api/v1/book/card", &alice, json!({ "fields": { "name": "Bob Martin", "emails": [{ "kind": "home", "value": "BOB@example.org" }] } })).await;
+    assert_eq!(s, StatusCode::OK, "{saved}");
+    let path: String = saved["path"].as_str().unwrap().bytes().map(|c| if c.is_ascii_alphanumeric() || c == b'.' { (c as char).to_string() } else { format!("%{c:02X}") }).collect();
+    let (_, card) = b.get(&format!("/api/v1/book/card?path={path}"), &alice).await;
+    assert_eq!((card["keys"][0]["hex"].as_str(), card["keys"][0]["plane"].as_str(), card["keys"][0]["via"].as_str()), (Some(hex(&BOB).as_str()), Some("origin"), Some("station")), "{card}");
+    let (s, mine) = b.get("/api/v1/me/links", &alice).await;
+    assert_eq!((s, mine["plane"].as_str(), mine["keys"][0]["hex"].as_str()), (StatusCode::OK, Some("origin"), Some(hex(&ALICE).as_str())), "{mine}");
+    // Rien à annoncer sans plan voisin : réponse vide, pas d'erreur ; sans authentification, refus.
+    let (s, r) = b.post("/api/v1/me/links", &alice, json!({})).await;
+    assert_eq!((s, r["linked"].as_array().map(Vec::len)), (StatusCode::OK, Some(0)), "{r}");
+    assert_eq!(b.get("/api/v1/me/links", "").await.0, StatusCode::UNAUTHORIZED);
 }
 
 /// Nommer des visages inconnus relie la personne à sa fiche de Contacts, créée sur le champ si aucune ne porte ce nom.

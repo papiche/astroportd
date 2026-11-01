@@ -76,6 +76,15 @@ export default async function card(K, { path, me, blank, groups, onSaved, onClos
     h('button', { type: 'button', class: 'ghost', onclick: async () => { try { await api('/api/v1/contacts/link', { method: 'POST', body: { path: d.path, target: target.value.trim() } }); K.toast(t('Fiche reliée'), 1); onSaved(d.path, true); } catch (e) { K.toast(e.message); } } }, t('Relier')),
     d.pubkey && d.via === 'vcard' ? h('button', { type: 'button', class: 'ghost', onclick: async () => { try { await api('/api/v1/contacts/link', { method: 'POST', body: { path: d.path, target: null } }); K.toast(t('Fiche déliée'), 1); onSaved(d.path, true); } catch (e) { K.toast(e.message); } } }, t('Délier')) : null));
 
+  // Les clés de la personne, une par UPlanet (retrouvées par ses emails et par les liens signés des deux clés) : on écrit dans l'UPlanet commune.
+  const keys = isMe || !(d.keys || []).length ? null : h('div', { class: 'ab-f' }, h('label', {}, t('Messagerie : clés de cette personne')),
+    h('ul', { class: 'ab-keys' }, d.keys.map(k => {
+      const here = !k.plane || k.plane === d.plane, away = !here && K.planeHref ? K.planeHref(k.plane, '#/chat?peer=' + k.hex) : null;
+      const via = { station: t('compte hébergé sur la station'), lien: t('lien signé des deux clés'), fiche: t('clé de la fiche') }[k.via] || k.via;
+      return h('li', {}, h('span', { class: 'pill' + (here ? ' ok' : '') }, k.plane || t('UPlanet inconnue')), ' ', h('small', { class: 'muted' }, via + ' · ' + k.hex.slice(0, 8) + '…'), ' ',
+        here ? h('a', { class: 'btn', href: '#/chat?peer=' + k.hex }, t('Écrire')) : away ? h('a', { class: 'ghost', href: away }, t('Écrire depuis {0}', k.plane)) : h('small', { class: 'muted' }, t('depuis {0}', k.plane)));
+    })));
+
   async function save() {
     if (!f.name?.trim()) { K.toast(t('Un nom est nécessaire')); return; }
     const body = copy(f);
@@ -94,7 +103,7 @@ export default async function card(K, { path, me, blank, groups, onSaved, onClos
 
   box.append(head, compare(),
     h('fieldset', {}, h('legend', {}, t('Identité')), text('name', t('Nom affiché'), { public: true, max: 80 }), h('div', { class: 'ab-2' }, text('given', t('Prénom'), { max: 60 }), text('family', t('Nom de famille'), { max: 60 })), h('div', { class: 'ab-2' }, text('org', t('Société'), { max: 80 }), text('title', t('Fonction'), { max: 80 })), text('birthday', t('Anniversaire'), { type: 'date', max: 12 })),
-    h('fieldset', {}, h('legend', {}, t('Joindre')), typedList('phones', t('Téléphones'), '+33 6 12 34 56 78', 'tel'), typedList('emails', t('Emails'), 'nom@exemple.org', 'email'), addresses(), urls(), link),
+    h('fieldset', {}, h('legend', {}, t('Joindre')), typedList('phones', t('Téléphones'), '+33 6 12 34 56 78', 'tel'), typedList('emails', t('Emails'), 'nom@exemple.org', 'email'), addresses(), urls(), link, keys),
     h('fieldset', {}, h('legend', {}, pub ? t('Profil public (Nostr)') : t('À propos')), text('about', t('Présentation'), { area: true, max: 500, public: true }), text('picture', t('Image (https)'), { type: 'url', max: 256, public: true }), text('nip05', t('Identifiant NIP-05'), { ph: 'nom@domaine.org', max: 100, public: true }), text('lud16', t('Adresse Lightning'), { ph: 'nom@domaine.org', max: 100, public: true })),
     h('fieldset', {}, h('legend', {}, t('Classement et notes privées')), groupsEditor(), text('note', t('Notes (privées)'), { area: true, max: 2000 })),
     h('div', { class: 'ab-actions' }, h('button', {}, isMe ? t('Publier et enregistrer') : t('Enregistrer')), remove));

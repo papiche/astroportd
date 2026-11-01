@@ -81,6 +81,7 @@ impl Projector {
             "DELETE FROM kv WHERE scope = 'station_build'",
             "DELETE FROM kv WHERE scope = 'agents'",
             "DELETE FROM kv WHERE scope = 'member_ai'",
+            "DELETE FROM key_links",
         ]
         .into_iter()
         .map(|sql| Statement::new(sql, vec![]))
@@ -396,12 +397,38 @@ fn app_params(e: &Event) -> Vec<Statement> {
             vec![text(scope), text(&e.pubkey), text(&e.content), int(e.created_at)],
         )];
     }
+    if e.tag_value("d") == Some(PLANE_LINK) {
+        return plane_link(e);
+    }
     let Some(version) = astro_dav::media::parse_consent(&e.tags, &e.content) else { return Vec::new() };
     vec![Statement::new(
         "INSERT INTO private_copy_consent(owner_hex, version, accepted_at, src_event) VALUES (?1, ?2, ?3, ?4) \
          ON CONFLICT(owner_hex) DO UPDATE SET version = excluded.version, accepted_at = excluded.accepted_at, src_event = excluded.src_event \
          WHERE excluded.accepted_at >= private_copy_consent.accepted_at",
         vec![text(&e.pubkey), Value::Integer(i64::from(version)), int(e.created_at), text(&e.id)],
+    )]
+}
+
+/// `d`-tag du lien entre deux clés d'une même personne (voir [`plane_link`]).
+pub const PLANE_LINK: &str = "plane-link";
+/// `d`-tag de la preuve signée par l'autre clé, portée dans le contenu du lien.
+pub const PLANE_LINK_PROOF: &str = "plane-link-proof";
+
+/// Lien entre deux clés d'une même personne (`d = plane-link`) : l'événement est signé par la clé `a` et nomme `b` (tag `p`) ;
+/// son contenu est un événement signé par `b` qui nomme `a`. Sans ces deux signatures croisées, rien n'est retenu : une clé ne peut
+/// pas se prétendre liée à celle d'un autre.
+fn plane_link(e: &Event) -> Vec<Statement> {
+    let Some(b) = e.tag_value("p").filter(|b| astro_nostr_proto::is_hex64(b) && *b != e.pubkey) else { return Vec::new() };
+    let Ok(proof) = serde_json::from_str::<Event>(&e.content) else { return Vec::new() };
+    let valid = proof.verify().is_ok() && proof.kind == kind::APP_PARAMS && proof.pubkey == b && proof.tag_value("d") == Some(PLANE_LINK_PROOF) && proof.tag_value("p") == Some(e.pubkey.as_str());
+    if !valid {
+        return Vec::new();
+    }
+    let plane: String = e.tag_value("plane").unwrap_or_default().chars().filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-').take(32).collect();
+    vec![Statement::new(
+        "INSERT INTO key_links(a, b, plane, at, src_event) VALUES (?1, ?2, ?3, ?4, ?5) \
+         ON CONFLICT(a, b) DO UPDATE SET plane = excluded.plane, at = excluded.at, src_event = excluded.src_event WHERE excluded.at >= key_links.at",
+        vec![text(&e.pubkey), text(b), text(&plane), int(e.created_at), text(&e.id)],
     )]
 }
 

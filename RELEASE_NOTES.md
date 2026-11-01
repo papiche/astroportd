@@ -91,6 +91,13 @@ Cette version fait de la **clé de secours** un secret qu'on peut perdre sans da
 - **Personnes ↔ Contacts** : nommer des visages inconnus (table de tri) **crée la fiche de la personne si aucune ne porte ce nom**, sinon les relie à la fiche existante (comparaison sans accents ni casse) ; le dialogue « Qui est-ce ? » propose les noms de vos contacts.
 - Le profil publié accepte aussi le site web, le NIP-05 et l'adresse Lightning.
 
+### Messages privés 1 à 1 et une personne dans plusieurs UPlanet
+- **Écran « Messages »** : conversations 1 à 1 **chiffrées de bout en bout (NIP-17, enveloppes NIP-59)**, non lus avec pastille dans le menu, envoi par Entrée, arrivée en direct. Chaque message est aussi emballé pour son auteur : l'historique se retrouve sur toute station qui héberge le compte. Seuls comptent les messages d'un proche que vous suivez (ou d'un compte hébergé ici) ; un message non remis reste dans le fil, marqué « non remis ».
+- **Une personne a une clé Nostr par UPlanet** (formule isolée) : sa clé dans une autre UPlanet ne se déduit **pas** de son email. Elle se retrouve par deux voies, jamais par un email auto-déclaré : (1) **l'annuaire de la station** : les plans de `planes.json` sont lus en lecture seule, l'email d'un MULTIPASS hébergé donne sa clé dans chaque plan ; (2) **les liens prouvés** (kind 31903 `d = plane-link`) : un lien n'existe que si **les deux clés l'ont signé** (l'événement d'une clé porte la preuve signée de l'autre). Table `key_links` (projection).
+- **La fiche contact** liste les clés de la personne, une par UPlanet, avec leur origine ; « Écrire » est actif pour l'UPlanet courante, et renvoie vers l'autre UPlanet sinon.
+- **Le chat parle à la personne** : une conversation par personne (clés liées regroupées, historique commun), canal choisi dans l'UPlanet commune ; les conversations des plans voisins (même email) s'affichent en lecture seule avec leur UPlanet. Si la personne n'a pas de clé dans l'UPlanet courante, l'erreur dit où lui écrire.
+- **Annoncer ses autres comptes** (`POST /api/v1/me/links`) ne part que **sur demande** : le lien est public (il révèle que deux clés vont ensemble). À faire dans chaque UPlanet.
+
 ### Base de données : schéma allégé (mesuré)
 - **`nostr_events`** passe à une table à `rowid` (clé interne `seq`) ; `nostr_tags` et l'index plein texte s'y rattachent par cet entier au lieu de l'identifiant de 64 caractères. Sur 200 000 événements : base **28 % plus petite**, insertion **2× plus rapide**, jointure par tag **≈ 9× plus rapide**.
 - **`ucloud_entries`** passe aussi à une table à `rowid` (unicité de `(owner_hex, path)` conservée) : base **26 % plus petite**, insertion **1,6× plus rapide**, liste d'un dossier **≈ 100× plus rapide** (150 000 entrées).

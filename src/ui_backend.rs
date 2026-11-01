@@ -8,7 +8,7 @@ use astro_bro::{MemoryStore, Meta, OllamaClient, Slot};
 use astro_core::Amount;
 use astro_dav::{BlobStore, DavState};
 use astro_p2p::routing::{Candidate, haversine_km};
-use astro_ui::api::{Applicant, BookOp};
+use astro_ui::api::{Applicant, BookOp, ChatOp};
 use astro_ui::{ApiError, Backend, Principal, Status, Subsystem};
 use axum::http::{HeaderMap, Uri};
 use rusqlite::{Connection, params};
@@ -57,6 +57,8 @@ pub struct StationUi<B: BlobStore> {
     planes_home: Option<std::path::PathBuf>,
     ai: Option<Arc<crate::member_ai::MemberAi>>,
     book: Option<Arc<crate::address_book::AddressBook<B>>>,
+    chat: Option<Arc<crate::chat::Chat>>,
+    people: Option<Arc<crate::person_keys::PersonKeys>>,
 }
 
 /// Réponse au lot de photos en attente pour un ami `(titulaire, ami, accepter)` → `(envoyées, retirées)` ; fourni par le binaire.
@@ -102,7 +104,19 @@ pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Fu
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None }
+        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None, chat: None, people: None }
+    }
+
+    /// Annuaire des clés d'une même personne dans plusieurs UPlanet.
+    pub fn with_people(mut self, people: Arc<crate::person_keys::PersonKeys>) -> Self {
+        self.people = Some(people);
+        self
+    }
+
+    /// Chat privé 1 à 1 (NIP-17).
+    pub fn with_chat(mut self, chat: Arc<crate::chat::Chat>) -> Self {
+        self.chat = Some(chat);
+        self
     }
 
     /// Carnet d'adresses (fiches, groupes, doublons, « Ma fiche »).
@@ -899,7 +913,13 @@ impl<B: BlobStore> Backend for StationUi<B> {
         let fields = |v: Value| serde_json::from_value::<astro_dav::vcard::Fields>(v).map_err(|e| ApiError::bad_request(format!("champs de la fiche invalides : {e}")));
         let out = match op {
             BookOp::List(q, group) => book.list(o, &q, group.as_deref()).await,
-            BookOp::Get(path) => book.get(o, &path).await,
+            BookOp::Get(path) => match book.get(o, &path).await {
+                Ok(mut card) => {
+                    self.add_keys(&mut card).await;
+                    Ok(card)
+                }
+                e => e,
+            },
             BookOp::Save(path, f) => book.save(o, path.as_deref(), &fields(f)?).await,
             BookOp::Delete(path) => book.delete(o, &path).await,
             BookOp::Take(path, keys) => book.take(o, &path, &keys).await,
@@ -911,6 +931,37 @@ impl<B: BlobStore> Backend for StationUi<B> {
             BookOp::SaveMe(f) => book.save_me(o, &fields(f)?).await,
         };
         out.map_err(book_error)
+    }
+
+    async fn my_links(&self, who: &Principal) -> Result<Value, ApiError> {
+        let people = self.people.as_ref().ok_or_else(|| ApiError::unavailable("annuaire des UPlanet non disponible sur cette station"))?;
+        let keys = people.class_of(&who.hex).await;
+        Ok(json!({ "plane": people.plane(), "siblings": people.siblings().iter().map(|s| &s.name).collect::<Vec<_>>(), "keys": keys }))
+    }
+
+    async fn announce_links(&self, who: &Principal) -> Result<Value, ApiError> {
+        let people = self.people.as_ref().ok_or_else(|| ApiError::unavailable("annuaire des UPlanet non disponible sur cette station"))?;
+        let email = who.email.as_deref().ok_or_else(|| ApiError::bad_request("ce compte n'a pas d'email : rien à relier"))?;
+        people.announce(&who.hex, email).await.map_err(ApiError::bad_request)
+    }
+
+    async fn chat(&self, who: &Principal, op: ChatOp) -> Result<Value, ApiError> {
+        let chat = self.chat.as_ref().ok_or_else(|| ApiError::unavailable("le chat privé n'est pas disponible sur cette station"))?;
+        let o = who.hex.as_str();
+        let out = match op {
+            ChatOp::List => chat.conversations(o).await,
+            ChatOp::Messages(peer, before) => chat.messages(o, &peer, before).await,
+            ChatOp::Send(peer, text) => chat.send(o, &peer, &text).await,
+            ChatOp::Read(peer) => chat.mark_read(o, &peer).await,
+        };
+        out.map_err(|e| match e {
+            crate::chat::ChatError::Invalid(m) => ApiError::bad_request(m),
+            crate::chat::ChatError::NoKey => ApiError::unavailable("clé du compte indisponible sur cette station : envoi impossible"),
+            crate::chat::ChatError::Db(m) => {
+                eprintln!("interface : chat : {m}");
+                ApiError::internal("opération impossible : voir les journaux de la station")
+            }
+        })
     }
 
     async fn ai_declared(&self, who: &Principal) -> bool {
@@ -1644,6 +1695,17 @@ fn ai_error(e: crate::member_ai::AiError) -> ApiError {
             eprintln!("interface : paramètres IA : {m}");
             ApiError::internal("paramètres IA indisponibles")
         }
+    }
+}
+
+impl<B: BlobStore> StationUi<B> {
+    /// Ajoute à une fiche `keys` : les clés de la personne dans chaque UPlanet (emails de la fiche, clé déclarée, liens prouvés).
+    async fn add_keys(&self, card: &mut Value) {
+        let Some(people) = &self.people else { return };
+        let emails: Vec<String> = card["fields"]["emails"].as_array().map(|a| a.iter().filter_map(|e| e["value"].as_str().map(str::to_owned)).collect()).unwrap_or_default();
+        let declared = card["pubkey"].as_str().map(str::to_owned);
+        card["keys"] = json!(people.keys_for(&emails, declared.as_deref()).await);
+        card["plane"] = json!(people.plane());
     }
 }
 

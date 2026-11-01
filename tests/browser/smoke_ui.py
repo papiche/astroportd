@@ -48,7 +48,7 @@ INVITES = dict(invites=[dict(token='1' * 32, label='Marc', email=None, contact_p
 TOKEN = 'a1' * 16
 QR = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>'
 CARD = 'astro-share:v1|alice@example.org|' + 'ab' * 32 + '|isolated|0123456789abcdef|1|c2VjcmV0c2VjcmV0|abcd'
-STATE = dict(faces=make_faces(), posts=[], deleted=[])
+STATE = dict(faces=make_faces(), posts=[], deleted=[], chat=[])
 
 def people():
     by = {}
@@ -99,6 +99,12 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/v1/station/coop': return self.send(200, COOP)
         if p == '/api/v1/account': return self.send(200, ACCOUNT)
         if p == '/api/v1/contacts': return self.send(200, CONTACTS)
+        if p == '/api/v1/me/links': return self.send(200, dict(plane='origin', siblings=['zen1'], keys=[dict(plane='origin', hex='aa' * 32, via='fiche'), dict(plane='zen1', hex='ee' * 32, via='station')]))
+        if p == '/api/v1/friends': return self.send(200, dict(friends=[dict(hex='ab' * 32, label='Léa', hosted=False), dict(hex='cd' * 32, label='Marc', hosted=True)]))
+        if p == '/api/v1/chat':
+            c = STATE['chat']; unread = sum(1 for m in c if not m['mine'] and not STATE.get('chat_read'))
+            return self.send(200, dict(unread=unread, plane='origin', conversations=[dict(peer='ab' * 32, label='Léa', last=c[-1]['text'], at=c[-1]['at'], mine=c[-1]['mine'], unread=unread, plane='origin', channels=[dict(plane='origin', peer='ab' * 32, unread=unread), dict(plane='zen1', peer='cd' * 32, unread=0)])] if c else []))
+        if p == '/api/v1/chat/messages': return self.send(200, dict(peer='ab' * 32, messages=STATE['chat'], more=False))
         if p.startswith('/api/v1/station/admin/'): k = p.rsplit('/', 1)[1]; return self.send(200, ADMIN[k]) if k in ADMIN else self.send(404, dict(error='non simulé'))
         if p == '/api/v1/faces/folders': return self.send(200, dict(folders=[dict(dir='/Images/2026/10', faces=12, todo=9), dict(dir='/Images/2026/09', faces=4, todo=0)]))
         if p == '/api/v1/faces/board':
@@ -114,7 +120,7 @@ class H(BaseHTTPRequestHandler):
                 dict(path='/Contacts/Lea.vcf', name='Léa Martin', org='Atelier', title='', emails=['lea@example.org'], phones=lea['phones'], groups=['Famille'], letter='L', me=False, pubkey='ab' * 32, via='vcard', warning=None, faces=12, picture=''),
                 dict(path='/Contacts/Paul.vcf', name='Paul Durand', org='', title='', emails=[], phones=[], groups=[], letter='P', me=False, pubkey=None, via=None, warning=None, faces=0, picture='')]))
             if p == '/api/v1/book/me': return self.send(200, dict(path='/Contacts/Moi.vcf', me=True, pubkey='aa' * 32, fields=dict(lea, name='Alice', given='Alice', family='', org='', phones=[], emails=[dict(kind='home', value='alice@example.org')], groups=[], about='Capitaine'), faces=0, hosted_here='alice@example.org', profile=None, diff=None, drift=False))
-            if p == '/api/v1/book/card': return self.send(200, dict(path='/Contacts/Lea.vcf', me=False, pubkey='ab' * 32, via='vcard', fields=lea, faces=12, hosted_here=None, profile=dict(name='Léa M.'), drift=True, diff=[
+            if p == '/api/v1/book/card': return self.send(200, dict(path='/Contacts/Lea.vcf', me=False, pubkey='ab' * 32, via='vcard', fields=lea, faces=12, hosted_here=None, plane='origin', keys=[dict(plane='origin', hex='ab' * 32, via='station'), dict(plane='zen1', hex='cd' * 32, via='lien')], profile=dict(name='Léa M.'), drift=True, diff=[
                 dict(key='name', label='Nom', mine='Léa Martin', theirs='Léa M.', same=False, can_take=True), dict(key='about', label='Présentation', mine='', theirs='Boulangère', same=False, can_take=True), dict(key='nip05', label='NIP-05', mine='', theirs='', same=True, can_take=False)]))
             if p == '/api/v1/book/duplicates': return self.send(200, dict(groups=[dict(reasons=['même téléphone'], cards=[dict(path='/Contacts/Lea.vcf', name='Léa Martin', emails=[], phones=['+33 6 12']), dict(path='/Contacts/Lea2.vcf', name='L. Martin', emails=[], phones=['06 12'])])]))
         if p == '/api/v1/ucloud/memories': return self.send(200, dict(memories=[]))
@@ -146,6 +152,10 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/v1/me/ai':
             STATE['ai'] = bool(body.get('ollama_url') or body.get('provider')); return self.send(200, dict(ollama_url=body.get('ollama_url'), provider=body.get('provider'), has_key=False, model=None, declared=STATE['ai']))
         if p.startswith('/api/v1/book'): return self.send(200, dict(path='/Contacts/Lea.vcf', taken=body.get('keys'), imported=2, duplicates=1, rejected=[], merged=True, removed=1, changed=1, fields=body.get('fields') or body))
+        if p == '/api/v1/me/links': return self.send(200, dict(linked=[dict(plane='zen1', key='ee' * 32)], skipped=[]))
+        if p == '/api/v1/chat/send':
+            m = dict(id=str(len(STATE['chat'])), mine=True, at=1790000000 + len(STATE['chat']) * 60, text=body['text'], state='ok'); STATE['chat'].append(m); return self.send(200, m)
+        if p == '/api/v1/chat/read': STATE['chat_read'] = True; return self.send(200, dict(read=1))
         if p == '/api/v1/faces/delete-photos': return self.send(200, dict(deleted=len({f['path'] for f in STATE['faces'] if f['id'] in body['ids']}), missing=0, bytes=0))
         if p == '/api/v1/faces/assign':
             for f in STATE['faces']:
@@ -311,6 +321,8 @@ with sync_playwright() as pw:
     check(any('q=lea' in g for g in STATE.get('gets', [])), 'la recherche part au fil de la frappe : ' + str([g for g in STATE.get('gets', []) if 'q=' in g][-1:]))
     page.click('.ab-item:has-text("Léa Martin")'); page.wait_for_selector('.ab-card'); page.wait_for_timeout(300)
     check(page.input_value('#f-name') == 'Léa Martin' and page.locator('.ab-diff table tbody tr').count() == 2, 'la fiche affiche ses champs et la comparaison avec le profil Nostr')
+    ks = page.inner_text('.ab-keys')
+    check('origin' in ks and 'zen1' in ks and 'lien signé des deux clés' in ks and page.locator('.ab-keys a.btn').count() == 1 and page.get_attribute('.ab-keys a.btn', 'href') == '#/chat?peer=' + 'ab' * 32, "la fiche liste la clé de chaque UPlanet ; « Écrire » n'est actif que pour l'UPlanet courante")
     page.locator('.ab-diff tr:has-text("Nom") button:has-text("Prendre")').click(); page.wait_for_timeout(400)
     taken = [b for p_, b in STATE['posts'] if p_ == '/api/v1/book/take']
     check(taken and taken[-1] == dict(path='/Contacts/Lea.vcf', keys=['name']), 'on prend UNE valeur du profil, pas tout : ' + str(taken[-1:]))
@@ -469,6 +481,29 @@ with sync_playwright() as pw:
     page.goto(f'http://127.0.0.1:{port}/#/account'); page.wait_for_selector('#ac-name'); page.wait_for_timeout(200)
     check('Compte invité' in page.inner_text('main') and 'clé de secours' in page.inner_text('main'), 'un compte invité voit le bandeau de récupération')
     ACCOUNT['guest'] = False
+    # Messages : liste, fil chiffré, envoi par Entrée, non lus remis à zéro à l'ouverture, ouverture depuis une fiche de contact.
+    STATE['chat'] = [dict(id='a', mine=False, at=1790000000, text='Salut, tu viens samedi ?', state='ok')]; STATE['chat_read'] = False
+    page.goto(f'http://127.0.0.1:{port}/#/chat'); page.wait_for_selector('.ab-list li button'); page.wait_for_timeout(300)
+    check('Léa' in page.inner_text('.ab-list') and page.query_selector('.ab-list .ch-badge') is not None, 'la conversation apparaît avec son compteur de non lus')
+    check(page.query_selector('nav a[data-r=chat] .ch-badge') is not None, 'la pastille de non lus est dans le menu')
+    page.click('.ab-list li button'); page.wait_for_selector('.ch-msg'); page.wait_for_timeout(300)
+    check('zen1' in page.inner_text('.ab-list') and 'origin' in page.inner_text('.ab-list'), "la conversation indique ses canaux : une UPlanet par clé de la personne")
+    check('Salut, tu viens samedi ?' in page.inner_text('.ch-thread') and 'Chiffré de bout en bout' in page.inner_text('.ch-head'), 'le fil affiche le message reçu et la mention de chiffrement')
+    check(page.query_selector('nav a[data-r=chat] .ch-badge') is None, "ouvrir la conversation retire la pastille")
+    page.fill('.ch-form textarea', 'Oui, avec plaisir !'); page.press('.ch-form textarea', 'Enter'); page.wait_for_selector('.ch-msg.mine'); page.wait_for_timeout(300)
+    sent = [b for p_, b in STATE['posts'] if p_ == '/api/v1/chat/send']
+    check(sent and sent[-1] == dict(peer='ab' * 32, text='Oui, avec plaisir !') and 'Oui, avec plaisir !' in page.inner_text('.ch-msg.mine'), 'Entrée envoie le message et il apparaît à droite')
+    page.screenshot(path=str(OUT / 'chat.png'))
+    page.goto(f'http://127.0.0.1:{port}/#/chat?peer=' + 'ab' * 32); page.wait_for_selector('.ch-msg'); page.wait_for_timeout(200)
+    check('Oui, avec plaisir !' in page.inner_text('.ch-thread'), "le lien depuis une fiche ouvre directement la conversation")
+    # Mes UPlanet : les clés dans les autres plans et l'annonce publique, sur demande seulement.
+    page.goto(f'http://127.0.0.1:{port}/#/account'); page.wait_for_selector('#announce-links'); page.wait_for_timeout(200)
+    check('zen1' in page.inner_text('main') and 'Mes UPlanet' in page.inner_text('main'), 'Mon compte liste mes clés dans les autres UPlanet')
+    before = len([1 for p_, _ in STATE['posts'] if p_ == '/api/v1/me/links'])
+    check(before == 0, "l'annonce ne part jamais d'elle-même : rien n'est publié à l'ouverture de l'écran")
+    page.once('dialog', lambda d: STATE.setdefault('dialogs_links', []).append(d.message))  # la confirmation est acceptée par le gestionnaire général
+    page.click('#announce-links'); page.wait_for_timeout(300)
+    check(len([1 for p_, _ in STATE['posts'] if p_ == '/api/v1/me/links']) == 1 and 'publiquement' in STATE['dialogs_links'][-1], "l'annonce part après une confirmation qui dit qu'elle est publique")
     # Thème sombre.
     page.emulate_media(color_scheme='dark'); page.goto(f'http://127.0.0.1:{port}/#/people'); page.wait_for_selector('canvas.pe-board'); page.wait_for_timeout(800); page.screenshot(path=str(OUT / 'board-dark.png'))
     # Quitter un écran lent avant la fin de son chargement ne doit pas faire apparaître son erreur dans l'écran suivant.

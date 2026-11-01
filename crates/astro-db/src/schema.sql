@@ -230,6 +230,22 @@ CREATE TABLE IF NOT EXISTS contact_cards (
   PRIMARY KEY (owner_hex, path)
 ) STRICT, WITHOUT ROWID;
 
+-- Conversations privées 1 à 1 (NIP-17) : messages déchiffrés. ÉTAT LOCAL (les enveloppes restent dans nostr_events ;
+-- remettre le repère kv `chat_seq` à zéro les rouvre toutes).
+CREATE TABLE IF NOT EXISTS chat_messages (
+  owner_hex TEXT NOT NULL,
+  id        TEXT NOT NULL,             -- identifiant NIP-01 de la rumeur
+  peer      TEXT NOT NULL,             -- l'autre personne (clé Nostr, 64 hex)
+  mine      INTEGER NOT NULL CHECK (mine IN (0,1)),
+  at        INTEGER NOT NULL,
+  text      TEXT NOT NULL,
+  state     TEXT NOT NULL DEFAULT 'ok' CHECK (state IN ('ok','failed')),
+  read      INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0,1)),
+  n         INTEGER NOT NULL DEFAULT 0,   -- ordre d'insertion : départage deux messages de la même seconde
+  PRIMARY KEY (owner_hex, id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS chat_by_peer ON chat_messages(owner_hex, peer, at);
+
 -- Partages FaceCloud déjà effectués (un par photo et destinataire) : état LOCAL, évite les doublons au retraitement.
 CREATE TABLE IF NOT EXISTS face_shares (
   owner_hex     TEXT NOT NULL,
@@ -521,6 +537,18 @@ CREATE TABLE IF NOT EXISTS journal (
   data   TEXT NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS journal_stream ON journal(stream, at);
+
+-- Liens entre les clés d'une même personne dans des UPlanet différentes (kind 31903 `d = plane-link`). PROJECTION rejouable.
+-- Un lien n'existe que si LES DEUX clés l'ont signé : `a` signe l'événement, `b` signe la preuve qu'il porte.
+CREATE TABLE IF NOT EXISTS key_links (
+  a         TEXT NOT NULL,             -- clé qui annonce (signataire de l'événement)
+  b         TEXT NOT NULL,             -- l'autre clé de la personne (signataire de la preuve)
+  plane     TEXT NOT NULL DEFAULT '',  -- UPlanet où vit `b`, selon `a` (indication d'affichage, non prouvée)
+  at        INTEGER NOT NULL,
+  src_event TEXT NOT NULL,
+  PRIMARY KEY (a, b)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS key_links_b ON key_links(b);
 
 -- Caches et états mutables divers (jamais purgés par la maintenance nocturne).
 CREATE TABLE IF NOT EXISTS kv (

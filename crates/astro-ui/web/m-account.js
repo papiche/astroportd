@@ -51,6 +51,20 @@ export default async function account(root, K) {
         p.has_key ? [' ', h('button', { class: 'ghost', onclick: () => { if (confirm(t('Retirer la clé d\'API enregistrée ?'))) send({ api_key: null }); } }, t('Retirer la clé'))] : null));
   }, e => ai.append(h('p', { class: 'err', role: 'alert' }, e.message)));
 
+  // ── Mes UPlanet : mes clés dans les autres plans de la station, et l'annonce (publique, sur demande) qu'elles sont les miennes ──
+  const planes = h('section', { class: 'card', hidden: true }, h('h2', {}, t('Mes UPlanet')));
+  K.api('/api/v1/me/links').then(r => {
+    if (!r.siblings.length) return;
+    planes.hidden = false;
+    planes.append(h('p', { class: 'muted' }, t('Vous avez une clé Nostr différente dans chaque UPlanet. L\'annoncer permet à vos amis de vous écrire dans l\'UPlanet qu\'ils habitent : le lien est public, signé par vos deux clés.')),
+      h('ul', {}, r.keys.map(k => h('li', {}, h('strong', {}, k.plane || '?'), ' ', h('small', { class: 'muted' }, k.hex.slice(0, 8) + '… · ' + k.via)))),
+      h('p', {}, h('button', { id: 'announce-links', onclick: async ev => {
+        if (!confirm(t('Annoncer publiquement que vos comptes des autres UPlanet sont les vôtres ?'))) return;
+        ev.target.disabled = true;
+        try { const a = await K.api('/api/v1/me/links', { method: 'POST', body: {} }); K.toast(t('{0} lien(s) annoncé(s)', a.linked.length), 1); } catch (e) { K.toast(e.message); } finally { ev.target.disabled = false; }
+      } }, t('Annoncer mes autres comptes')), ' ', h('small', { class: 'muted' }, t('À faire dans chaque UPlanet.'))));
+  }, () => { /* sans annuaire sur cette station : pas de carte */ });
+
   // ── Accès WebDAV : jeton ──
   // L'API donne un chemin (`/dav`) : on affiche et on copie l'adresse complète, celle qu'on saisit dans un client WebDAV.
   const davUrl = a.dav.url.startsWith('/') ? location.origin + a.dav.url : a.dav.url;
@@ -164,5 +178,5 @@ export default async function account(root, K) {
   const title = a.profile.name || a.email || 'Mon compte';
   const hero = h('div', { class: 'hero' }, h('div', { class: 'avatar', 'aria-hidden': 'true' }, [...title][0].toUpperCase()),
     h('div', { class: 'who' }, h('h2', {}, title), a.email && a.email !== title ? h('div', { class: 'sub' }, a.email) : null, h('span', { class: 'pill' }, ROLE[a.role] || a.role), a.guest ? h('span', { class: 'pill' }, 'Invité') : null));
-  root.replaceChildren(...[hero, guest, h('div', { class: 'grid' }, idCard, profile, ai, dav, devices, backup, keys)].filter(Boolean));
+  root.replaceChildren(...[hero, guest, h('div', { class: 'grid' }, idCard, profile, ai, planes, dav, devices, backup, keys)].filter(Boolean));
 }

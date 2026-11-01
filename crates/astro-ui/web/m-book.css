@@ -32,3 +32,4 @@
   .ab .ab-detail{display:none}.ab.open .ab-detail{display:block}.ab.open .ab-side{display:none}.ab-back{display:inline-block}
   .ab-addr{grid-template-columns:1fr 1fr}.ab-2{grid-template-columns:1fr}
 }
+.ab-keys{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.35rem}

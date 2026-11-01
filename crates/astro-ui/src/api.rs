@@ -105,6 +105,19 @@ pub enum BookOp {
     SaveMe(Value),
 }
 
+/// Opération du chat privé 1 à 1.
+#[derive(Debug, Clone)]
+pub enum ChatOp {
+    /// Conversations et nombre de messages non lus.
+    List,
+    /// Messages avec un correspondant, avant un horodatage éventuel.
+    Messages(String, Option<i64>),
+    /// Envoie un texte à un correspondant.
+    Send(String, String),
+    /// Marque la conversation comme lue.
+    Read(String),
+}
+
 /// Demande de carte telle que l'URL la porte.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct MapQuery {
@@ -347,6 +360,18 @@ pub trait Backend: Send + Sync + 'static {
     /// Carnet d'adresses : une opération ([`BookOp`]) sur les fiches du titulaire.
     fn book(&self, _who: &Principal, _op: BookOp) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("le carnet d'adresses n'est pas disponible sur cette station")) }
+    }
+    /// Chat privé : une opération ([`ChatOp`]) pour le titulaire.
+    fn chat(&self, _who: &Principal, _op: ChatOp) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("le chat privé n'est pas disponible sur cette station")) }
+    }
+    /// Mes clés dans les UPlanet de cette station et les liens prouvés : `{ plane, keys: [{plane, hex, via}] }`.
+    fn my_links(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("annuaire des UPlanet non disponible sur cette station")) }
+    }
+    /// Annonce, sur demande, que mes comptes des autres UPlanet de la station sont les miens (lien signé des deux clés, public).
+    fn announce_links(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("annuaire des UPlanet non disponible sur cette station")) }
     }
     /// Plans (ORIGIN, UPlanet privées) configurés sur cette station et ceux que ce processus sert (Capitaine).
     fn planes(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
@@ -661,6 +686,11 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/book/duplicates", get(book_duplicates::<B>))
         .route("/api/v1/book/merge", post(book_merge::<B>))
         .route("/api/v1/book/me", get(book_me::<B>).post(book_save_me::<B>))
+        .route("/api/v1/me/links", get(my_links::<B>).post(announce_links::<B>))
+        .route("/api/v1/chat", get(chat_list::<B>))
+        .route("/api/v1/chat/messages", get(chat_messages::<B>))
+        .route("/api/v1/chat/send", post(chat_send::<B>))
+        .route("/api/v1/chat/read", post(chat_read::<B>))
         .route("/api/v1/dashboard", get(dashboard::<B>))
         .route("/api/v1/activity", get(activity_stream::<B>))
         .route("/api/v1/ucloud/list", get(ucloud_list::<B>))
@@ -895,6 +925,47 @@ async fn book_me<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authe
 
 async fn book_save_me<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(fields): Json<Value>) -> Response {
     reply(st.backend.book(&p, BookOp::SaveMe(fields)).await)
+}
+
+#[derive(Deserialize)]
+struct ChatPeerQuery {
+    peer: String,
+    before: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct ChatSendBody {
+    peer: String,
+    text: String,
+}
+
+#[derive(Deserialize)]
+struct ChatPeerBody {
+    peer: String,
+}
+
+async fn my_links<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.my_links(&p).await)
+}
+
+async fn announce_links<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.announce_links(&p).await)
+}
+
+async fn chat_list<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.chat(&p, ChatOp::List).await)
+}
+
+async fn chat_messages<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<ChatPeerQuery>) -> Response {
+    reply(st.backend.chat(&p, ChatOp::Messages(q.peer.chars().take(80).collect(), q.before)).await)
+}
+
+async fn chat_send<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<ChatSendBody>) -> Response {
+    reply(st.backend.chat(&p, ChatOp::Send(b.peer.chars().take(80).collect(), b.text.chars().take(20_000).collect())).await)
+}
+
+async fn chat_read<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<ChatPeerBody>) -> Response {
+    reply(st.backend.chat(&p, ChatOp::Read(b.peer.chars().take(80).collect())).await)
 }
 
 async fn ai_params<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {

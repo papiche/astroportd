@@ -227,6 +227,17 @@ pub struct ServeArgs {
     bus_poll_secs: u64,
 }
 
+/// Nom du plan servi par cette base et plans voisins de la station (`planes.json`, ORIGIN seul à défaut).
+fn station_planes(own_db: &std::path::Path) -> (String, Vec<astroportd::person_keys::Sibling>) {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return ("origin".into(), Vec::new()) };
+    let Ok((file, _)) = astroportd::plane::load(&astroportd::plane::default_path(&home), &home) else { return ("origin".into(), Vec::new()) };
+    let Ok(planes) = astroportd::plane::plan(&file, &home) else { return ("origin".into(), Vec::new()) };
+    let same = |a: &std::path::Path, b: &std::path::Path| a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y);
+    let name = planes.iter().find(|p| same(&p.db, own_db)).map_or_else(|| "origin".to_owned(), |p| p.name.clone());
+    let siblings = planes.iter().filter(|p| !same(&p.db, own_db)).map(|p| astroportd::person_keys::Sibling { name: p.name.clone(), db: p.db.clone(), game: Some(p.game.clone()) }).collect();
+    (name, siblings)
+}
+
 fn default_swarm_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".zen/tmp/swarm"))
 }
@@ -412,6 +423,8 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
     };
     let mesh_outbox = Arc::new(astroportd::mesh_outbox::MeshOutbox::new(db.clone(), relay_client.clone(), a.relays.clone(), a.swarm_dir.clone().or_else(default_swarm_dir)));
     let sharing_keys = keys.clone();
+    let chat_keys = keys.clone();
+    let people_keys = keys.clone();
     let account_keys = keys.clone();
     let agent_keys = keys.clone();
     let agent_keys2 = keys.clone();
@@ -677,7 +690,36 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
     let account_origin = a.domains.first().map(|d| format!("https://{d}"));
     let account_svc = Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone()));
     let address_book = Arc::new(astroportd::address_book::AddressBook::new(db.clone(), dav.clone(), links.clone(), Some(account_svc.clone())));
-    let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
+    // Une personne, plusieurs UPlanet : les plans voisins de cette station (planes.json), lus en lecture seule.
+    let people = {
+        let (plane_name, siblings) = station_planes(&a.db);
+        Arc::new(astroportd::person_keys::PersonKeys::new(db.clone(), plane_name, siblings, people_keys, publish_fn(&event_publisher)))
+    };
+    // Chat privé 1 à 1 : un ami hébergé ici reçoit sur le relai local, les autres par le maillage ; la copie de l'expéditeur reste ici.
+    let chat = {
+        let (local_pub, mesh, hosted_db) = (publish_fn(&event_publisher), mesh_outbox.clone(), db.clone());
+        let publish_local: astroportd::chat::DeliverFn = {
+            let p = local_pub.clone();
+            Arc::new(move |_to, ev| p(ev))
+        };
+        let deliver: astroportd::chat::DeliverFn = Arc::new(move |to: String, ev: astro_nostr_proto::Event| {
+            let (local_pub, mesh, db) = (local_pub.clone(), mesh.clone(), hosted_db.clone());
+            Box::pin(async move {
+                let peer = to.clone();
+                let hosted = db.readers().read(move |c| Ok(c.query_row("SELECT 1 FROM identities WHERE hex = ?1 AND hosted = 1", [peer], |r| r.get::<_, i64>(0)).is_ok())).await.unwrap_or(false);
+                if hosted {
+                    local_pub(ev).await
+                } else {
+                    astro_facecloud::Outbox::send(&*mesh, &to, ev).await.map_err(|e| e.to_string())
+                }
+            })
+        });
+        let chat = Arc::new(astroportd::chat::Chat::new(db.clone(), chat_keys, deliver, publish_local, activity.clone()).with_people(people.clone()));
+        background.push(tokio::spawn(chat.clone().run(Duration::from_secs(3), stop_watch.clone())));
+        println!("chat : conversations privées 1 à 1 (NIP-17), réception toutes les 3 s");
+        chat
+    };
+    let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_chat(chat).with_people(people.clone()).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
         .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), assist: Some(assist_admin), tasks: Some(db.clone()) }).handler());
     if let Some(f) = thumbs_fn {
         ui = ui.with_face_thumbs(f);
