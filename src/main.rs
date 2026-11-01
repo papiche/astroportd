@@ -64,6 +64,9 @@ enum Command {
     /// Adopte **sans copie** des fichiers d'un plan dans un autre (ORIGIN / ZEN*) quand les deux astroportd partagent le même
     /// bassin de blobs (`--blobs` identique, `--pool-peer` croisés) : même blob, même clé, aucun octet de plus sur le disque.
     BridgeCopy(Box<BridgeCopyArgs>),
+    /// Sert **plusieurs plans** (ORIGIN, ZEN1…) dans un seul processus, depuis `planes.json` : même NODE, même bassin de blobs, une base
+    /// et un port par plan. Voir `docs/GUIDE.md` (plans) ; sans `--check`, démarre les plans.
+    Planes(Box<PlanesArgs>),
     /// État du bassin de blobs partagé entre plusieurs plans : poids, part de chaque plan, place économisée par le partage,
     /// blobs que plus personne ne référence (`--sweep` supprime ceux de plus de 24 h).
     PoolStatus(Box<PoolStatusArgs>),
@@ -373,6 +376,17 @@ enum PullAction {
     },
 }
 
+/// Options de `planes`.
+#[derive(clap::Args)]
+struct PlanesArgs {
+    /// Fichier `planes.json` (défaut : `~/.zen/astroportd/planes.json`).
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Vérifie la configuration, prépare les dossiers et affiche ce qui serait lancé, sans rien démarrer.
+    #[arg(long)]
+    check: bool,
+}
+
 /// Options de `pool-status`.
 #[derive(clap::Args)]
 struct PoolStatusArgs {
@@ -583,6 +597,7 @@ async fn run(cli: Cli) -> Result<(), Failure> {
         Command::PullWebdav(args) => pull_webdav_cmd(*args).await,
         Command::BridgeCopy(args) => bridge_copy_cmd(*args).await,
         Command::PoolStatus(args) => pool_status_cmd(*args),
+        Command::Planes(args) => planes_cmd(*args).await,
         Command::Multipass { action } => multipass_cmd(action).await,
         Command::Route { service, mode, swarm_dir, lat, lon } => route(&service, mode, swarm_dir, lat.zip(lon)),
         Command::SwarmKey => {
@@ -923,6 +938,58 @@ async fn stored_birth_events(db: &Db, hex: &str) -> Result<Vec<astro_nostr_proto
 }
 
 /// `astroportd media …` : copie privée et dépôt d'un film ou d'un épisode.
+/// Enveloppe pour relire les options de `serve` d'un plan comme sur la ligne de commande.
+#[derive(Parser)]
+struct PlaneServe {
+    #[command(flatten)]
+    serve: serve::ServeArgs,
+}
+
+async fn planes_cmd(args: PlanesArgs) -> Result<(), Failure> {
+    let home = PathBuf::from(std::env::var_os("HOME").ok_or("$HOME introuvable")?);
+    let path = args.config.unwrap_or_else(|| home.join(".zen/astroportd/planes.json"));
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{} : {e}", path.display()))?;
+    let file = astroportd::plane::parse(&text)?;
+    let planes = astroportd::plane::plan(&file, &home)?;
+    let node_game = file.game_dir.as_deref().map_or_else(|| home.join(".zen/game"), |g| g.strip_prefix("~/").map_or_else(|| PathBuf::from(g), |r| home.join(r)));
+    let mut parsed = Vec::new();
+    for p in &planes {
+        for linked in astroportd::plane::prepare(p, &node_game)? {
+            println!("plan {} : {linked} relié au NODE de {} (même IPFSNODEID)", p.name, node_game.display());
+        }
+        let a = PlaneServe::try_parse_from(std::iter::once("astroportd serve".to_owned()).chain(p.args.iter().cloned())).map_err(|e| format!("plan « {} » : {e}", p.name))?;
+        println!("plan {} ({}) : http://{}, base {}", p.name, if p.origin { "ORIGIN" } else { "UPlanet privée" }, p.http, p.db.display());
+        parsed.push((p.name.clone(), a.serve));
+    }
+    if args.check {
+        println!("configuration valide : {} plan(s)", planes.len());
+        return Ok(());
+    }
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        let _ = stop_tx.send(true);
+    });
+    let runs = parsed.into_iter().map(|(name, a)| {
+        let mut rx = stop_rx.clone();
+        async move {
+            let r = serve::run_until(a, async move {
+                let _ = rx.wait_for(|stop| *stop).await;
+            })
+            .await;
+            (name, r)
+        }
+    });
+    let mut failed = 0;
+    for (name, r) in futures_util::future::join_all(runs).await {
+        if let Err(e) = r {
+            eprintln!("plan {name} : arrêté sur erreur : {e}");
+            failed += 1;
+        }
+    }
+    if failed > 0 { Err(format!("{failed} plan(s) arrêté(s) sur erreur").into()) } else { Ok(()) }
+}
+
 fn pool_status_cmd(args: PoolStatusArgs) -> Result<(), Failure> {
     let PoolStatusArgs { blobs, dbs, sweep } = args;
     let st = astro_dav::pool::status(&blobs, &dbs)?;

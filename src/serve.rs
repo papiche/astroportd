@@ -334,6 +334,14 @@ async fn watch_relay(mut live: tokio::sync::broadcast::Receiver<Arc<Event>>, act
 
 /// Lance le démon complet.
 pub async fn run(a: ServeArgs) -> Result<(), Failure> {
+    run_until(a, async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await
+}
+
+/// Comme [`run`], mais s'arrête quand `shutdown` se termine : plusieurs plans d'un même processus partagent un seul signal d'arrêt.
+pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output = ()>) -> Result<(), Failure> {
     let station = identity::resolve(a.game_dir.as_deref(), true)?;
     let station_secret = station.secret.clone();
     let signer = station.signer.clone();
@@ -723,7 +731,7 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
         Some(front)
     };
 
-    tokio::signal::ctrl_c().await?;
+    shutdown.await;
     let _ = stop.send(true);
     for t in background {
         let _ = t.await;

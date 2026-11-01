@@ -35,6 +35,7 @@ pub mod webdav_pull;
 pub mod bridge;
 pub mod coop_wallets;
 pub mod hosting_fee;
+pub mod plane;
 pub mod primal_init;
 pub mod settlement;
 pub mod zen_react;
