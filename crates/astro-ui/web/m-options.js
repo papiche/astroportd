@@ -57,7 +57,10 @@ export default async function options(root, K) {
   if (tun) {
     const apply = async (body, msg) => { try { await post('tunnels', body); K.toast(msg, 1); options(root, K); } catch (e) { K.toast(e.message); } };
     const when = u => u ? new Date(u * 1000).toLocaleString() : t('sans limite');
-    const svc = tun.services.map(sv => {
+    // Pas de carte pour un service qui ne répond pas, sauf SSH, réglé ou avec pairs nommés.
+    const idle = sv => sv.up === false && sv.name !== 'ssh' && !sv.customized && !sv.grants.length;
+    const absent = tun.services.filter(idle);
+    const svc = tun.services.filter(sv => !idle(sv)).map(sv => {
       const mode = h('select', { 'aria-label': t('Accès à {0}', sv.name) }, tun.modes.map(m => h('option', { value: m, selected: m === sv.mode }, t(TMODE[m]) + (m === sv.default_mode ? ' ' + t('(défaut)') : ''))));
       mode.onchange = () => apply({ service: sv.name, mode: mode.value }, t('{0} : accès modifié', sv.name));
       const who = h('select', { 'aria-label': t('Capitaine ami') }, h('option', { value: '' }, t('Choisir un ami…')), tun.friends.map(f => h('option', { value: f.peer }, f.label)));
@@ -67,7 +70,7 @@ export default async function options(root, K) {
         if (!p) return K.toast(t('Choisissez un ami ou collez un PeerID'));
         apply({ service: sv.name, grant: { peer: p, label, hours: Number(hours.value) } }, t('Accès accordé'));
       } }, t('Autoriser'));
-      return h('div', { class: 'card' }, h('h3', {}, t(TNAME[sv.name] || sv.name)),
+      return h('div', { class: 'card' }, h('h3', {}, t(TNAME[sv.name] || sv.name), ' ', sv.up === false ? h('span', { class: 'pill disabled' }, t('ne répond pas')) : null),
         sv.name === 'ssh' ? h('p', { class: sv.mode === 'off' ? 'muted' : 'degraded', role: 'note' }, sv.mode === 'off' ? t('Fermé : personne ne peut entrer par SSH.') : t('Ouvert : les Capitaines autorisés peuvent se connecter à cette machine (clé jumelle de leur identité, niveau Y). Chaque session est journalisée.')) : null,
         h('label', {}, t('Qui peut ouvrir ce service')), mode,
         sv.grants.length ? h('ul', {}, sv.grants.map(g => h('li', {}, h('strong', {}, g.label || g.peer.slice(0, 12)), ` — ${g.expired ? t('expiré') : t('jusqu\'à {0}', when(g.until))} `, h('button', { class: 'ghost', onclick: () => apply({ service: sv.name, revoke: g.peer }, t('Accès retiré')) }, t('Retirer'))))) : h('p', { class: 'muted' }, t(t('Aucun pair nommé.'))),
@@ -76,7 +79,8 @@ export default async function options(root, K) {
     });
     tunnelsCard = h('section', { class: 'card wide' }, h('h2', {}, t('Tunnels et accès des autres Capitaines')),
       h('p', { class: 'muted' }, tun.origin ? t('UPlanet ORIGIN : le SSH est ouvert par défaut aux Capitaines amis (suivi réciproque).') : t('UPlanet ẐEN : le SSH est fermé par défaut. Vous le rouvrez pour un ami le temps qu\'il vous aide, ou pour tous vos Capitaines amis.')),
-      h('p', { class: 'muted' }, t('Le réglage s\'applique tout de suite, y compris aux sessions déjà ouvertes (vérifié chaque minute).')), svc);
+      h('p', { class: 'muted' }, t('Le réglage s\'applique tout de suite, y compris aux sessions déjà ouvertes (vérifié chaque minute).')),
+      absent.length ? h('p', { class: 'muted', role: 'note' }, t('Non détectés : {0}.', absent.map(sv => `${sv.name} (${sv.target})`).join(', '))) : null, svc);
   }
 
   // ── Assistance entre Capitaines amis ──

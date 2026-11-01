@@ -328,10 +328,38 @@ pub struct Admin {
     pub kinds: Arc<KindsControl>,
     /// Politique des tunnels P2P et services qu'elle règle.
     pub tunnels: Option<(Arc<crate::tunnel_policy::TunnelPolicy>, Vec<String>)>,
+    /// Où écoute chaque service offert (`nom`, `hôte:port`) : sert à dire s'il répond (voir [`service_is_up`]).
+    pub targets: Vec<(String, String)>,
     /// Demandes d'assistance entre Capitaines amis (lecture et actions).
     pub assist: Option<AdminFn>,
     /// Base, pour la santé de la file de tâches.
     pub tasks: Option<Arc<Db>>,
+}
+
+/// Un service local répond-il ? Une connexion TCP qui s'établit en 600 ms. Ne dit rien de ce qu'il y a derrière (un port
+/// ouvert n'est pas un modèle chargé) : c'est un « est-ce démarré ? », pas une garantie.
+pub async fn service_is_up(target: &str) -> bool {
+    matches!(tokio::time::timeout(std::time::Duration::from_millis(600), tokio::net::TcpStream::connect(target)).await, Ok(Ok(_)))
+}
+
+/// Ajoute à chaque service de la vue des tunnels où il écoute (`target`) et s'il répond (`up`).
+async fn annotate_services(view: &mut Value, targets: &[(String, String)]) {
+    let Some(services) = view["services"].as_array_mut() else { return };
+    let probes = services.iter().map(|s| {
+        let target = targets.iter().find(|(n, _)| Some(n.as_str()) == s["name"].as_str()).map(|(_, t)| t.clone());
+        async move {
+            let up = match &target {
+                Some(t) => Some(service_is_up(t).await),
+                None => None,
+            };
+            (target, up)
+        }
+    });
+    let results = futures_util::future::join_all(probes).await;
+    for (s, (target, up)) in services.iter_mut().zip(results) {
+        s["target"] = json!(target);
+        s["up"] = json!(up);
+    }
 }
 
 /// Santé de la file `tasks` : par genre de tâche, combien attendent, tournent, ont réussi ou ont été abandonnées, et les
@@ -392,8 +420,16 @@ impl Admin {
                         let (policy, exposed) = me.tunnels.as_ref().ok_or("tunnels P2P non activés sur cette station")?;
                         let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
                         match body {
-                            None => Ok(policy.view(exposed, at).await),
-                            Some(b) => policy.set(&b, exposed, at).await,
+                            None => {
+                                let mut v = policy.view(exposed, at).await;
+                                annotate_services(&mut v, &me.targets).await;
+                                Ok(v)
+                            }
+                            Some(b) => {
+                                let mut v = policy.set(&b, exposed, at).await?;
+                                annotate_services(&mut v, &me.targets).await;
+                                Ok(v)
+                            }
                         }
                     }
                     _ => Err(format!("section inconnue : {section}")),
@@ -405,6 +441,16 @@ impl Admin {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn a_service_is_up_only_when_something_listens() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let open = listener.local_addr().unwrap().to_string();
+        assert!(super::service_is_up(&open).await);
+        drop(listener);
+        assert!(!super::service_is_up(&open).await, "port refermé : ne répond plus");
+        assert!(!super::service_is_up("pas un hôte").await);
+    }
+
     use super::*;
 
     fn map(items: &[(u32, &str)]) -> BTreeMap<u32, String> {

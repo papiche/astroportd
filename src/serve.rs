@@ -720,7 +720,7 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
         chat
     };
     let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_chat(chat).with_people(people.clone()).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
-        .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), assist: Some(assist_admin), tasks: Some(db.clone()) }).handler());
+        .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), targets: service_targets(&a), assist: Some(assist_admin), tasks: Some(db.clone()) }).handler());
     if let Some(f) = thumbs_fn {
         ui = ui.with_face_thumbs(f);
     }
@@ -794,4 +794,15 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
     drop(p2p_guards);
     db.writer().shutdown().await?;
     Ok(())
+}
+
+/// Où écoute chaque service offert au maillage : SSH, ComfyUI et Ollama (sauf `none`), puis ceux de `--p2p-expose`.
+fn service_targets(a: &ServeArgs) -> Vec<(String, String)> {
+    let mut all: Vec<(String, String)> = a.p2p_expose.iter().filter_map(|s| s.split_once('=')).map(|(n, t)| (n.to_owned(), t.to_owned())).collect();
+    for (name, target) in [("ssh", &a.p2p_ssh), ("comfyui", &a.p2p_comfyui), ("ollama", &a.p2p_ollama)] {
+        if target != "none" && !all.iter().any(|(n, _)| n == name) {
+            all.push((name.to_owned(), target.clone()));
+        }
+    }
+    all
 }

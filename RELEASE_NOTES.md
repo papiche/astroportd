@@ -7,6 +7,9 @@ Cette version fait de la **clé de secours** un secret qu'on peut perdre sans da
 - **Crawl N²** : les couples clé × relai se synchronisent **8 à la fois** (`CrawlConfig::concurrency`) au lieu d'un par un ; curseurs, filtres et contrôles d'auteur inchangés.
 - **Documentation** : la garde de flux « provisoire qui refuse tout » (`tunnel_gate.rs`, disparu) est remplacée par la politique des tunnels ; la limite « une station = une constellation » dit maintenant que `astroportd planes` en sert plusieurs ; tableau des commandes complété.
 
+### Options › Tunnels : seuls les services qui répondent ont une carte
+- La station sonde (TCP, 600 ms) l'adresse locale de chaque service offert. Ollama ou ComfyUI absents n'ont plus de carte : une ligne « Non détectés : … » les nomme. SSH reste toujours visible ; un service réglé ou ayant des pairs nommés garde sa carte même arrêté, avec la pastille « ne répond pas ». Un port ouvert ne prouve pas qu'un modèle soit chargé : c'est un « démarré ? », pas une garantie.
+
 ### Clé de secours en 3 parts (remplace la carte complète)
 - Le secret du compte (SALT et PEPPER) est découpé en **3 parts, dont 2 suffisent** (partage de Shamir). **P1** va au membre (QR imprimable `astro-share:v1|…`), **P2** reste sur la station (`<compte>/.ssss/2`, `0600`), **P3** est confiée d'elle-même, chiffrée pour chacun, aux amis qui hébergent la sauvegarde. Une part seule ne révèle rien : un QR volé ou photographié ne donne pas accès au compte.
 - **« J'appelle un ami »** : sur la nouvelle station (`/restore`, ou `astroportd multipass recover -`), on saisit ou scanne P1 et la part que l'ami montre dans *Compte › Sauvegarde privée* (texte et QR). La station rétablie recalcule les trois parts d'origine : le P1 imprimé et le P3 des amis restent valables.

@@ -215,6 +215,7 @@ export default {
 "jusqu'à {0}": "hasta {0}",
 "Accès retiré": "Acceso retirado",
 "Aucun pair nommé.": "Ningún par nombrado.",
+"ne répond pas": "no responde",
 "Laisser un ami m'aider": "Dejar que un amigo me ayude",
 "Réglage par défaut rétabli": "Ajuste predeterminado restablecido",
 "Rétablir le défaut": "Restablecer el valor predeterminado",

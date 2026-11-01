@@ -214,6 +214,7 @@ export default {
 "jusqu'à {0}": "until {0}",
 "Accès retiré": "Access withdrawn",
 "Aucun pair nommé.": "No named peer.",
+"ne répond pas": "not responding",
 "Laisser un ami m'aider": "Let a friend help me",
 "Réglage par défaut rétabli": "Default setting restored",
 "Rétablir le défaut": "Restore the default",
