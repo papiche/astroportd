@@ -39,7 +39,7 @@ export default async function coop(box, K) {
     form.append(...v.sections.map(s => h('fieldset', { class: 'coop-s' }, h('legend', {}, s.title), s.fields.map(field))), warn, h('p', {}, go));
     box.replaceChildren(h('h2', {}, 'Configuration coopérative ', h('small', {}, v.exists ? `modifiée le ${K.when(v.updated_at)}` : 'pas encore publiée')),
       h('p', { class: 'muted' }, `Identité : ${v.did.slice(0, 22)}… · kind 30800, répliqué aux autres stations de la constellation.`), form,
-      v.unmanaged.length ? h('p', { class: 'muted' }, `Clés conservées telles quelles (hors de cet écran) : ${v.unmanaged.join(', ')}.`) : null);
+      ...(v.unmanaged.length ? [h('p', { class: 'muted' }, `Clés conservées telles quelles (hors de cet écran) : ${v.unmanaged.join(', ')}.`)] : []));
     check();
   } catch (e) { box.replaceChildren(h('h2', {}, 'Configuration coopérative'), h('p', { class: 'err', role: 'alert' }, e.message)); }
 }

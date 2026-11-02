@@ -516,10 +516,7 @@ Livré et testé : relai, uCloud chiffré avec manifeste rejouable et miniatures
 - **MULTIPASS** : la création reprend l'essentiel de `make_NOSTRCARD.sh`, mais **pas** le découpage SSSS 2-sur-3 de
   DISCO (remplacé par la **clé de secours** en 3 parts, P1 en QR), l'import de la clé IPNS dans Kubo, l'envoi du zine par
   email, la ZenCard ni la primo-transaction. Retrouver un compte repose donc sur cette carte, remise **une seule fois** ;
-- **un processus `serve` = une constellation** (une `swarm.key`, ou aucune). Raccorder une même station à ORIGIN **et** à
-  des UPlanet privées passe par `astroportd planes` (un seul processus, même identité Y-Level, une base, un dossier de
-  comptes et un port par plan ; assistant `plane-setup` ou Station › Plans). Reste à faire : routage par nom d'hôte sur un
-  port commun, `--plane` sur les autres commandes, sélecteur de plan dans l'en-tête ;
+- **un `serve` = une constellation** : raccorder une même station à ORIGIN **et** à des UPlanet privées passe par `astroportd planes` (un seul processus, même identité Y-Level, un `serve` complet par plan : base, dossier de comptes, réseau P2P privé, port). Routage par nom d'hôte (`--front`), `--plane` sur les commandes et sélecteur de plan dans l'en-tête sont faits ; le **miroir entre plans** (règles de synchronisation, charte) reste à faire ;
 - **macOS** : le binaire est portable (POSIX, `rustix`), la détection du matériel lit `sysctl hw.memsize` et compte la
   mémoire unifiée d'un Mac Apple Silicon comme VRAM, mais **aucune compilation sur macOS n'a encore été éprouvée** : la CI
   macOS et les archives `*-apple-darwin` sont « au mieux » ([docs/MACOS.md](docs/MACOS.md)) ;

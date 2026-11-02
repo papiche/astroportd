@@ -211,3 +211,4 @@ main > .card, main > div:not(.grid):not(.bar) > .card { margin-top: 1rem; }
 #view .nav.prev { left: .4rem; } #view .nav.next { right: .4rem; }
 #view-b { touch-action: pan-y; }
 #view-t { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; justify-content: center; }
+.pl-opt { display: flex; gap: .5rem; align-items: center; font-weight: 400; }

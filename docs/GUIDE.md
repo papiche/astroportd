@@ -155,9 +155,9 @@ astroportd init --mode zen --swarm-key ./swarm.key
 
 **ẐEN** — pour passer d'ORIGIN à ẐEN, la voie habituelle est la certification DRAGON, puis la réception de la `swarm.key`. Informations : le dépôt [Astroport.ONE](https://github.com/papiche/Astroport.ONE) et support@qo-op.com.
 
-> **À savoir.** Une station appartient à **une seule constellation** à la fois (une `swarm.key`, ou aucune). Raccorder une même station à deux constellations en parallèle (ORIGIN et ẐEN) est **prévu**, pas encore disponible : deux réseaux P2P parallèles, la même identité Y-Level, chaque MULTIPASS rattaché à une constellation.
+> **À savoir.** Une commande `astroportd serve` sert **une** constellation (une `swarm.key`, ou aucune). Pour raccorder **la même station** à ORIGIN **et** à une ou plusieurs UPlanet ẐEN, on utilise `astroportd planes` (étape 8 bis-i) : un seul processus, la **même identité Y-Level** (même `IPFSNODEID`), et pour chaque *plan* sa base, son dossier de comptes, son **réseau P2P privé** (sa `swarm.key`) et son port. Chaque MULTIPASS est rattaché à un plan et rien ne passe d'un plan à l'autre sans votre accord.
 
-Il n'y a pas d'assistant web pour choisir sa constellation : ce choix engage une clé secrète, il se fait au terminal.
+Le **premier** choix (ORIGIN ou ẐEN) se fait au terminal avec `astroportd init` : il engage une clé secrète. Ensuite, **ajouter** une UPlanet à une station existante (la fonder, ou la rejoindre avec une `swarm.key` reçue) se fait aussi dans l'interface web, écran *Station › Plans (UPlanet)* (étape 8 bis-i).
 
 <a id="etape-4"></a>
 
@@ -348,6 +348,8 @@ Le même jeton sert de mot de passe pour monter votre cloud en WebDAV (Finder, E
 4. En bas de l'accueil, **Mes chiffres** montre votre solde en Ẑen, votre autonomie, votre empreinte sur les communs, vos fichiers chiffrés, et deux cartes distinctes : **Ẑen Opex** (ce que vous dépensez : loyer) et **Ẑen Capex** (ce que vous possédez : parts de matériel, avec leur amortissement).
 5. La carte **Copie privée** vous demande d'attester, une fois, que vos films et séries sont des copies pour votre usage privé.
 
+![L'Accueil d'un membre : trois gestes (photos, proches, assistant ou smartphone) et la liste « Bien démarrer ».](img/ui-accueil.png)
+
 Sur un téléphone, installez la page comme application (menu du navigateur : *Ajouter à l'écran d'accueil*).
 
 **Style de l'interface.** Dans l'en-tête, le sélecteur propose trois styles : **Aurore** (par défaut : dégradés, icônes, liseré coloré sur les cartes), **Sobre** (sans décor) et **Kraft** (papier chaud, inspiré des pochettes de FaceCloud). Le bouton voisin (◐ ☀ ☾) choisit le mode : automatique (celui de l'appareil), clair ou sombre. Ces choix restent sur l'appareil et ne sont envoyés nulle part.
@@ -366,6 +368,8 @@ Dans l'application web, l'écran **Station** est le **cockpit** : tout ce qu'un 
 4. **Les étages de la station**, chacun avec son voyant : Machine, Station, Constellation, Services et accès, Membres, Économie.
 5. **L'essaim** : une carte par station (Power-Score, distance, en ligne ou vue, services partagés) et le nombre de *Brains* qui offrent Ollama.
 6. La page se met à jour toute seule toutes les 30 secondes. Les écrans détaillés restent à un clic (*Détails techniques*).
+
+![Le cockpit d'une station neuve : verdict, À faire, mise en service, étages et essaim.](img/ui-cockpit.png)
 
 <a id="etape-8"></a>
 
@@ -558,9 +562,15 @@ Un **plan** est une UPlanet vue de cette machine : ORIGIN (sans `swarm.key`) ou 
 - **En ligne de commande** : `astroportd plane-setup list` · `plane-setup add` (pose les questions : fonder une UPlanet neuve — la station crée sa `swarm.key` et vous la montre pour la donner aux autres stations — ou rejoindre avec la clé reçue) · `plane-setup add --name zen1 --found` · `plane-setup add --name zen2 --swarm-key reçue.key` · `plane-setup remove zen2`.
 - **Sur le web** : Station › *Plans (UPlanet)* › *Gérer les plans* (Capitaine) : liste, état (servi / au prochain démarrage), ajout (fonder ou coller la `swarm.key` reçue) et retrait.
 
+![Station › Plans : une station qui sert ORIGIN et une UPlanet privée (zen1) dans un seul processus, et le formulaire pour en ajouter une.](img/ui-plans.png)
+
 Dans les deux cas : ports choisis libres, clé écrite en `0600` sous `~/.zen/game/<plan>/swarm.key` sans jamais écraser une clé existante, **ORIGIN reste dans sa base et son dossier actuels (rien n'est déplacé)**, et **retirer un plan ne supprime aucune donnée**. Les règles du démarrage sont vérifiées dès l'ajout : Kubo n'appartient qu'à ORIGIN, pas deux plans avec la même clé, la même base ou le même port.
 
-**Servir** : `astroportd planes --check` valide `~/.zen/astroportd/planes.json` et prépare les dossiers (liens vers les fichiers du NODE) sans rien lancer ; `astroportd planes` démarre tous les plans, à la place de `serve`. Ajouter un plan demande de relancer cette commande.
+**Servir** : `astroportd planes --check` valide `~/.zen/astroportd/planes.json` et prépare les dossiers (liens vers les fichiers du NODE) sans rien lancer ; `astroportd planes` démarre tous les plans, à la place de `serve` : chaque plan a son propre `serve` (donc son propre nœud P2P, avec sa `swarm.key`) dans le même processus. Ajouter un plan demande de relancer cette commande.
+
+- **Un seul nom, plusieurs plans** : `astroportd planes --front 127.0.0.1:18000` écoute sur un port commun et route **par nom d'hôte** : `zen1.votre-domaine` ouvre le plan `zen1`, le nom nu ouvre ORIGIN (en local : `zen1.localhost`). HTTP en clair : à placer derrière le terminateur TLS (Nginx Proxy Manager).
+- **Choisir le plan d'une commande** : `--plane zen1` (par exemple `astroportd --plane zen1 multipass create alice@exemple.org`, `token`, `doctor`, `pool-status`) remplit la base, les blobs, le dossier de comptes et la clé du plan choisi, sans remplacer ce que vous donnez vous-même. Un plan inconnu est refusé.
+- **Dans l'interface** : quand la station route par nom d'hôte, le Capitaine a un **sélecteur de plan** dans l'en-tête ; l'écran *Station › Plans* dit si la station sert plusieurs plans dans un seul processus.
 
 <a id="etape-8bis-j"></a>
 
@@ -580,7 +590,13 @@ Dans les deux cas : ports choisis libres, clé écrite en `0600` sous `~/.zen/ga
 
 L'écran **Station → Options de la station** change sans redémarrer :
 
+- **Tunnels et accès des autres Capitaines** : pour chaque service offert (SSH, ComfyUI, Ollama, plus ceux de `--p2p-expose`), *qui peut l'ouvrir* — fermé, la liste seulement, les Capitaines amis, ou tout le réseau — et la liste nominative avec une durée (« laisser un ami m'aider »). Un service qui ne répond pas sur la machine n'a pas de carte : une ligne *Non détectés* le nomme, jusqu'à ce qu'il démarre. Un réglage s'applique tout de suite, sessions ouvertes comprises.
+- **Assistance entre Capitaines amis** : demander de l'aide pour un service, pour une durée ; rien ne s'ouvre avant qu'un ami accepte.
+- **File de traitement** : les tâches en attente, en cours ou abandonnées, avec relance.
+
 - **Reconnaissance des visages** : *ONNX local* (modèles `det_10g.onnx` + `w600k_r50.onnx`), *Brain GPU distant* (adresse `http://hôte:port/chemin`, testée avant d'être appliquée) ou *Arrêté* (les photos attendent, aucune tentative n'est consommée). L'écran montre ce qui manque (fonction `onnx` compilée, modèles, `libonnxruntime`). Le choix est conservé ; une option `--face-engine` / `--face-models` sur la ligne de commande l'impose et fige le réglage.
+![Options de la station : assistance entre Capitaines, tunnels et accès (ComfyUI non détecté, SSH réglé sur « Capitaines amis + liste »).](img/ui-options.png)
+
 - **Relai : lecture, écriture, projection par kind.** Lecture : *Tous*, *Auteur et destinataires*, *Auteur et ses Proches*, *Cercle social*, *Personne*. Écriture : *Cercle social*, *Tous (débit limité)*, *Personne*. Projection : l'événement alimente-t-il les tables dérivées (comptes, ledger…) ; il reste stocké et servi. Couches, de la plus faible à la plus forte : défauts du relai, `station.conf`, réglages du Capitaine. Dans `station.conf` :
 
 ```ini

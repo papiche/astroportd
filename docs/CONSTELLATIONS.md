@@ -106,7 +106,7 @@ Les membres peuvent aussi s'inscrire au navigateur sur la page **`/register`** d
 #### Limites
 
 - **Non repris de `make_NOSTRCARD.sh`** : le découpage SSSS 2-sur-3 de DISCO chiffré vers le Capitaine, les QR codes, l'import de la clé IPNS dans Kubo, l'envoi du zine par email, la ZenCard et la primo-transaction. Retrouver un compte repose sur le SALT/PEPPER remis une fois au titulaire (et sur le `nsec`).
-- **Une station = une constellation** (une `swarm.key`, ou aucune). Raccorder une même station à ORIGIN **et** à ẐEN en parallèle est **prévu** : deux réseaux P2P parallèles, la même identité Y-Level, chaque MULTIPASS rattaché à sa constellation. Ce n'est **pas encore disponible**.
+- **Un `astroportd serve` = une constellation** (une `swarm.key`, ou aucune). Raccorder la même station à ORIGIN **et** à des UPlanet ẐEN passe par `astroportd planes` : un seul processus, la même identité Y-Level, un réseau P2P privé, une base, un dossier de comptes et un port **par plan**, chaque MULTIPASS rattaché à son plan (voir le guide, étape 8 bis-i). Routage par nom d'hôte (`--front`) et `--plane` sont disponibles ; le miroir entre plans (règles de synchronisation, charte) ne l'est pas encore.
 
 ---
 

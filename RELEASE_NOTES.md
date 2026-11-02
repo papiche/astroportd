@@ -19,6 +19,10 @@ Cette version donne un **cockpit** au Capitaine (un verdict, ce qui demande une 
 - Nouvel écran d'accueil de l'onglet **Station** : un verdict (✅/🟠/🔴), **ce qui demande une action** (3 au plus, chacune avec son bouton et sa raison en clair), **six étages** avec voyant (Machine, Station, Constellation, Services et accès, Membres, Économie) et l'**essaim** de stations. Rafraîchi toutes les 30 s. Détecte : sous-système en panne, P2P arrêté, station seule, SSH ouvert à tout le réseau, service réglé qui ne répond plus, tâches abandonnées, MULTIPASS presque pleins, comptes verrouillés ou en période de grâce, trésorerie entamée. Les anciens écrans sont à un clic (*Détails techniques*).
 - Budget des écrans à la demande relevé (200 → 216 Ko bruts, 76 → 80 Ko en gzip) ; le cockpit seul fait 4,6 Ko en gzip, sous la limite de 12 Ko par écran. Règles testées par `crates/astro-ui/tests/cockpit_rules.mjs` (CI).
 
+### Corrections
+- **Documentation sur les plans** : « une station = une constellation, raccorder ORIGIN et ẐEN est prévu » n'était plus vrai. `astroportd planes` sert ORIGIN et des UPlanet privées dans un seul processus (même identité Y-Level, un `serve` complet par plan : base, comptes, réseau P2P privé, port), avec routage par nom d'hôte (`--front`), `--plane` sur les commandes et sélecteur de plan ; seul le **miroir entre plans** reste à faire. Guide, README, CONSTELLATIONS, plan de conception et annonce corrigés. Captures d'écran de la vraie interface ajoutées au guide.
+- **Interface** : les écrans *Plans* et *Configuration coopérative* affichaient le texte « null » ; le formulaire d'ajout de plan range maintenant chaque case à cocher devant son libellé.
+
 ### Options › Tunnels : seuls les services qui répondent ont une carte
 - La station sonde (TCP, 600 ms) l'adresse locale de chaque service offert. Ollama ou ComfyUI absents n'ont plus de carte : une ligne « Non détectés : … » les nomme. SSH reste toujours visible ; un service réglé ou ayant des pairs nommés garde sa carte même arrêté, avec la pastille « ne répond pas ». Un port ouvert ne prouve pas qu'un modèle soit chargé : c'est un « démarré ? », pas une garantie.
 

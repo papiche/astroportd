@@ -1,6 +1,6 @@
 # Plan — astroportd sur plusieurs UPlanet à la fois (ORIGIN, ZEN, …)
 
-Écrit le 2026-10-31, **révisé le même jour** après les précisions de Fred. Plan de conception, **rien n'est codé**. Il s'appuie sur le code du dépôt (références `fichier:ligne` ou module) et sur les mesures faites lors de la reprise du uCloud de `fred@qwantic.com`.
+Écrit le 2026-10-31, **révisé le même jour** après les précisions de Fred. Plan de conception ; la section 2 décrit l'état **d'origine** du code. **Statut (2026-11-02)** : phase 6 faite pour l'essentiel — `astroportd planes` (un processus, un `serve` par plan), `plane-setup` et écran web *Plans*, routage par nom d'hôte (`--front`), `--plane` sur les commandes, sélecteur de plan, bassin de blobs commun, `bridge-copy`, `pool-status`, test `tests/planes.rs`. Pas encore faits : charte, rattachements, règles miroir (phases 2 à 5), écran « Passerelles » (phase 7). Il s'appuie sur le code du dépôt (références `fichier:ligne` ou module) et sur les mesures faites lors de la reprise du uCloud de `fred@qwantic.com`.
 
 ## 0. Vision (Fred, 2026-10-31)
 

@@ -17,7 +17,7 @@ export default async function planes(root, K) {
             if (!confirm(t('Retirer le plan « {0} » de la configuration ? Sa base, ses comptes et sa clé restent sur le disque.', p.name))) return;
             try { await K.api('/api/v1/station/planes/remove', { method: 'POST', body: { name: p.name } }); K.toast(t('Plan retiré'), 1); draw(); } catch (e) { K.toast(e.message); }
           } }, t('Retirer'))])),
-      r.restart_needed ? h('p', { class: 'degraded', role: 'status' }, t('Redémarrez « astroportd planes » pour servir : {0}.', r.pending.join(', '))) : null);
+      ...(r.restart_needed ? [h('p', { class: 'degraded', role: 'status' }, t('Redémarrez « astroportd planes » pour servir : {0}.', r.pending.join(', ')))] : []));
   };
 
   // ── Ajouter un plan ──
@@ -34,13 +34,13 @@ export default async function planes(root, K) {
       K.toast(t('Plan « {0} » ajouté', r.name), 1);
       const created = r.created_key ? h('div', {}, h('p', {}, t('Voici la swarm.key de cette UPlanet : donnez-la, par un canal sûr, à chaque station qui doit la rejoindre. Sans elle personne n\'y entre.')),
         h('textarea', { rows: 4, readOnly: true, 'aria-label': 'swarm.key', onfocus: ev2 => ev2.target.select() }, r.created_key)) : null;
-      result.replaceChildren(h('p', {}, t('Écoute HTTP {0} · libp2p {1} · clé enregistrée dans {2}', r.http, r.p2p, r.swarm_key_path)), created);
+      result.replaceChildren(h('p', {}, t('Écoute HTTP {0} · libp2p {1} · clé enregistrée dans {2}', r.http, r.p2p, r.swarm_key_path)), ...(created ? [created] : []));
       name.value = ''; key.value = ''; draw();
     } catch (e) { K.toast(e.message); }
   } },
   h('h3', {}, t('Ajouter un plan')),
   h('p', {}, h('label', {}, t('Nom'), ' ', name), h('small', { class: 'muted' }, ' ' + t('lettres minuscules, chiffres et tirets'))),
-  h('p', {}, found, h('label', { for: 'pl-found' }, ' ' + t('Fonder une UPlanet neuve : la station crée sa clé de réseau privé')), h('br'), join, h('label', { for: 'pl-join' }, ' ' + t('Rejoindre une UPlanet existante : coller la swarm.key reçue d\'un Capitaine'))),
+  h('p', {}, h('label', { class: 'pl-opt' }, found, ' ' + t('Fonder une UPlanet neuve : la station crée sa clé de réseau privé')), h('br'), h('label', { class: 'pl-opt' }, join, ' ' + t('Rejoindre une UPlanet existante : coller la swarm.key reçue d\'un Capitaine'))),
   key, h('p', {}, h('button', {}, t('Ajouter'))));
 
   root.replaceChildren(h('h2', {}, t('Plans (UPlanet)')),

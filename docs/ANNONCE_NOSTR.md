@@ -73,7 +73,7 @@ SSH = IPFS : la même clé publique. Les Capitaines qui se suivent sur Nostr peu
 
 Pas de swarm.key = ORIGIN ; swarm.key présente = ẐEN. Vous pouvez aussi fonder la vôtre : `astroportd swarm-key`.
 
-Votre MULTIPASS se crée directement sur votre station : `astroportd multipass create <email> --captain`, puis les membres sur /register. Une station = une constellation pour l'instant.
+Votre MULTIPASS se crée directement sur votre station : `astroportd multipass create <email> --captain`, puis les membres sur /register. Une station peut servir ORIGIN et des UPlanet ẐEN dans un seul processus (`astroportd planes`).
 ```
 
 **Note 4/4 — Comment essayer**
@@ -86,7 +86,7 @@ astroportd init
 astroportd multipass create vous@exemple.org --captain
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
 
-On crée son MULTIPASS directement sur sa station (les membres via la page /register). Préversion 0.5.0-beta : une station = une constellation pour l'instant. Retours bienvenus : https://github.com/papiche/astroportd/issues
+On crée son MULTIPASS directement sur sa station (les membres via la page /register). Préversion : une station peut servir ORIGIN et des UPlanet ẐEN dans un seul processus (`astroportd planes`). Retours bienvenus : https://github.com/papiche/astroportd/issues
 ```
 
 ---
@@ -163,7 +163,7 @@ https://github.com/papiche/astroportd — retours et contributions bienvenus.
   relais et de clients, auto-hébergement, monnaie libre Ğ1 / Duniter, francophonie.
 - **Hors Nostr** : le fil de releases du dépôt, le dépôt [Astroport.ONE](https://github.com/papiche/Astroport.ONE)
   (lien dans son README), le forum de la monnaie libre.
-- **Étiqueter** l'annonce comme **préversion** et rappeler les limites principales : une station = une constellation (ORIGIN + ẐEN en parallèle est prévu), et une création de MULTIPASS plus simple que celle d'Astroport.ONE (ni ZenCard, ni QR codes, ni SSSS).
+- **Étiqueter** l'annonce comme **préversion** et rappeler les limites principales : les plans multiples (ORIGIN + ẐEN dans un processus) n'ont pas de miroir entre eux, et une création de MULTIPASS plus simple que celle d'Astroport.ONE (ni ZenCard, ni QR codes, ni SSSS).
 
 ## 5. Avant de publier
 

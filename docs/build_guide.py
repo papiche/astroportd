@@ -92,7 +92,7 @@ def render(chunk: str) -> str:
     def fig(m):
         return inline_svg(m.group(2), html.unescape(m.group(1)))
     out = re.sub(r'<p><img src="([^"]*\.svg)" alt="([^"]*)"[^>]*></p>', lambda m: inline_svg(m.group(1), html.unescape(m.group(2))), out)
-    out = re.sub(r'<p><img src="([^"]*)" alt="([^"]*)"[^>]*></p>', lambda m: f'<figure><img src="{m.group(1)}" alt="{m.group(2)}" style="max-width:100%"></figure>', out)
+    out = re.sub(r'<p><img src="([^"]*)" alt="([^"]*)"[^>]*></p>', lambda m: f'<figure><img src="{m.group(1)}" alt="{m.group(2)}" loading="lazy" decoding="async"><figcaption>{m.group(2)}</figcaption></figure>', out)
     # Blocs de code → .code (le script de la page y pose le bouton « Copier »).
     out = re.sub(r"<pre><code(?: class=\"[^\"]*\")?>(.*?)</code></pre>", lambda m: f'<div class="code"><pre><code>{m.group(1)}</code></pre></div>', out, flags=re.S)
     # Citations → boîtes.
@@ -176,6 +176,8 @@ def build():
     head = re.sub(r'<span class="badge">Préversion [^<]*</span>', f'<span class="badge">Préversion {version()}</span>', head)
     tail = old[old.index("</main>"):]
     head = head.replace("width:2.1rem;height:2.1rem;border-radius:50%", "min-width:2.1rem;height:2.1rem;padding:0 .5rem;border-radius:999px")
+    if "figure img{" not in head:
+        head = head.replace("</style>", "figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:10px}\n</style>", 1)
     if ".cols.one" not in head:
         head = head.replace("</style>", "@media (min-width:56rem){.cols.one{grid-template-columns:1fr}}\n</style>", 1)
     if "a{overflow-wrap" not in head:
