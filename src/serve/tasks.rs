@@ -287,7 +287,7 @@ pub(super) fn bro_sweep(p: &Parts<'_>, memory: &Option<Arc<Memory>>, background:
 }
 
 /// Orchestrateur de nuit : 20h12 solaire vrai de la station.
-pub(super) async fn nightly(p: &Parts<'_>, memory: &Option<Arc<Memory>>, backup: &Arc<Backup>, background: &mut Background) -> Result<(), Failure> {
+pub(super) async fn nightly(p: &Parts<'_>, memory: &Option<Arc<Memory>>, backup: &Arc<Backup>, billets: &Option<Arc<astroportd::billet::Billets<RpcPool<SubxtConnector>, astroportd::funds::SquidPrimal>>>, background: &mut Background) -> Result<(), Failure> {
     let Parts { a, db, activity, stop_watch, dav, local, services_peer, node_hex, node_secret, node_publisher, .. } = p;
     if !a.no_nightly {
         let origin = match a.lat.zip(a.lon) {
@@ -332,6 +332,12 @@ pub(super) async fn nightly(p: &Parts<'_>, memory: &Option<Arc<Memory>>, backup:
                         })
                     })
                 };
+                let billets_night: Option<astroportd::solar_cron::Hook> = billets.clone().map(|b| -> astroportd::solar_cron::Hook {
+                    Arc::new(move |_| {
+                        let b = b.clone();
+                        Box::pin(async move { b.sweep_once().await.map(|n| format!("{n} Ğ1Billet(s) expiré(s) renvoyé(s) à leur émetteur")).map_err(|e| e.to_string()) })
+                    })
+                });
                 let snapshot_dir = a.snapshot_dir.clone().unwrap_or_else(|| a.db.parent().map_or_else(|| PathBuf::from("snapshots"), |p| p.join("snapshots")));
                 let nightly = Arc::new(astroportd::solar_cron::Nightly {
                     db: db.clone(),
@@ -339,12 +345,14 @@ pub(super) async fn nightly(p: &Parts<'_>, memory: &Option<Arc<Memory>>, backup:
                     node_hex: node_hex.clone(),
                     node_secret: *node_secret,
                     peer_id: services_peer.clone(),
+                    public_url: a.domains.first().map(|d| format!("https://{d}")),
                     weekly_costs: astro_core::Amount(a.weekly_costs),
                     split: astro_economy::split::SplitConfig::default(),
                     purge_shares: Some(purge_shares),
                     dream,
                     backup: Some(backup_night),
                     integrity: Some(integrity_night),
+                    billets: billets_night,
                     publisher: node_publisher.clone(),
                     activity: Some(activity.clone()),
                     pause: Duration::from_secs(1),

@@ -97,6 +97,8 @@ pub struct Nightly<P: Publisher> {
     pub node_secret: Option<[u8; 32]>,
     /// PeerID de la station (tag `station`).
     pub peer_id: Option<String>,
+    /// Adresse publique de la station (`https://…`, tag `url`) : les autres stations s'en servent pour rediriger vers celle qui héberge un site.
+    pub public_url: Option<String>,
     /// Charges hebdomadaires (PAF) à déduire des recettes pour la clôture.
     pub weekly_costs: Amount,
     /// Réglages de la ventilation 3×1/3.
@@ -109,6 +111,8 @@ pub struct Nightly<P: Publisher> {
     pub backup: Option<Hook>,
     /// Contrôle d'intégrité du stockage (blobs absents ou corrompus).
     pub integrity: Option<Hook>,
+    /// Retour à leur émetteur des Ğ1Billets expirés (option « retour automatique »).
+    pub billets: Option<Hook>,
     /// Publication de l'événement de santé (relai local + relais).
     pub publisher: Option<Arc<P>>,
     /// Journal d'activité.
@@ -181,6 +185,11 @@ impl<P: Publisher> Nightly<P> {
             None => Ok("contrôle d'intégrité inactif".into()),
         };
         report.step("intégrité", r);
+        let r = match &self.billets {
+            Some(h) => h(now).await,
+            None => Ok("Ğ1Billets inactifs".into()),
+        };
+        report.step("billets", r);
         let r = self.close_weeks(now).await;
         report.step("clôture", r);
         let r = self.health(now).await;
@@ -356,6 +365,9 @@ impl<P: Publisher> Nightly<P> {
         ];
         if let Some(p) = &self.peer_id {
             tags.push(vec!["station".to_owned(), p.clone()]);
+        }
+        if let Some(u) = self.public_url.as_ref().filter(|u| u.starts_with("https://") || u.starts_with("http://")) {
+            tags.push(vec!["url".to_owned(), u.trim_end_matches('/').to_owned()]);
         }
         let event = UnsignedEvent { created_at: now, kind: kind::ECONOMIC_HEALTH, tags, content: String::new() }.sign(&secret).map_err(|e| e.to_string())?;
         let id = event.id.clone();

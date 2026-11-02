@@ -1,0 +1,29 @@
+/* Page publique /scan : encaisser un Ğ1Billet. Grosses cibles tactiles, une seule étape à l'écran. */
+.scan { max-width: 34rem; margin: 0 auto; padding: 1rem 16px 3rem; }
+.scan h1 { margin: .4rem 0; }
+.scan .lead { margin: 0 0 1rem; color: var(--muted); }
+.sc-steps { display: flex; gap: .4rem; list-style: none; padding: 0; margin: 0 0 1rem; counter-reset: s; }
+.sc-steps li { flex: 1; text-align: center; padding: .35rem .2rem; border-radius: 999px; background: var(--panel2); color: var(--muted); font-size: .85rem; counter-increment: s; }
+.sc-steps li::before { content: counter(s) ". "; }
+.sc-steps li.on { background: var(--accent); color: #fff; font-weight: 600; }
+.sc-steps li.done { color: var(--ink); }
+.sc-cam { position: relative; border-radius: var(--r); overflow: hidden; background: #000; aspect-ratio: 1 / 1; max-height: 60vh; margin: .6rem 0; }
+.sc-cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sc-frame { position: absolute; inset: 14%; border: 3px solid #fff; border-radius: 14px; box-shadow: 0 0 0 999px rgba(0, 0, 0, .35); pointer-events: none; }
+.sc-cam.hit .sc-frame { border-color: #4be38a; }
+.sc-hint { min-height: 1.4em; margin: .4rem 0; }
+.sc-chips { list-style: none; display: flex; flex-wrap: wrap; gap: .4rem; padding: 0; margin: .4rem 0; }
+.sc-chips li { padding: .3rem .7rem; border-radius: 999px; background: var(--panel2); font-size: .9rem; }
+.sc-chips li.ok { background: color-mix(in srgb, var(--ok) 22%, var(--panel2)); }
+.sc-card { padding: 1rem; border-radius: var(--r); background: var(--panel2); border-left: 6px solid var(--ok); margin: .6rem 0; }
+.sc-card.bad { border-left-color: var(--bad); }
+.sc-card .big { font-size: 2.2rem; font-weight: 700; line-height: 1.1; }
+.sc-card p { margin: .3rem 0 0; }
+.scan .row { display: flex; flex-wrap: wrap; gap: .6rem; margin: .8rem 0; }
+.scan button, .scan .btn { min-height: 2.9rem; padding: 0 1.1rem; font-size: 1rem; }
+.sc-file .btn { display: inline-flex; align-items: center; cursor: pointer; border: 1px solid var(--line, #8886); border-radius: var(--r); }
+.sc-dest { display: flex; gap: .5rem; }
+.sc-dest input { flex: 1; }
+.sc-manual { margin: .6rem 0; }
+.sc-manual input { width: 100%; margin: .4rem 0; }
+@media (prefers-reduced-motion: no-preference) { .sc-cam.hit .sc-frame { transition: border-color .15s; } }

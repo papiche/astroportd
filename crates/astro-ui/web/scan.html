@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0b5fff">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<title>Encaisser un Ğ1Billet</title>
+<link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+<script src="/ui/look.js"></script>
+<link rel="stylesheet" href="/ui/app.css">
+<link rel="stylesheet" href="/ui/scan.css">
+</head>
+<body>
+<a class="skip" href="#main" data-t="skip">Aller au contenu</a>
+<main id="main" class="scan">
+  <h1 data-t="title">Encaisser un Ğ1Billet</h1>
+  <p class="lead" data-t="lead">Scannez le billet, dites où envoyer sa valeur. Pas de compte à créer.</p>
+  <ol id="steps" class="sc-steps" data-tl="steps" aria-label="Étapes"><li data-t="st1">Scanner</li><li data-t="st2">Destination</li><li data-t="st3">Encaisser</li></ol>
+
+  <section id="s1" aria-labelledby="s1-t">
+    <h2 id="s1-t" tabindex="-1" data-t="s1">Scannez le billet</h2>
+    <div class="sc-cam" id="cam" hidden>
+      <video id="video" playsinline muted></video>
+      <div class="sc-frame" aria-hidden="true"></div>
+    </div>
+    <p id="hint" class="sc-hint" role="status" aria-live="polite"></p>
+    <ul id="chips" class="sc-chips" aria-label="Ce qui a été lu"></ul>
+    <div id="card" class="sc-card" hidden></div>
+    <p class="row">
+      <button id="cam-on" type="button" class="primary" data-t="camOn">📷 Ouvrir la caméra</button>
+      <label class="sc-file"><input id="file" type="file" accept="image/*" hidden><span class="btn" data-t="photo">🖼️ Choisir une photo</span></label>
+    </p>
+    <details class="sc-manual"><summary data-t="manual">Saisir le texte à la main</summary>
+      <label for="manual" data-t="manualLbl">Texte lu sous le QR ou adresse du billet</label>
+      <input id="manual" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="200">
+      <button id="manual-go" type="button" data-t="validate">Valider</button>
+    </details>
+    <p class="row"><button id="s1-next" type="button" class="primary" hidden data-t="next">Continuer</button></p>
+  </section>
+
+  <section id="s2" hidden aria-labelledby="s2-t">
+    <h2 id="s2-t" tabindex="-1" data-t="s2">Où envoyer la valeur ?</h2>
+    <p class="muted" data-t="s2p">Le portefeuille d’un compte de cette UPlanet. Son adresse commence par g1… (visible dans Zelkova ou dans « Mon compte »).</p>
+    <label for="dest" data-t="destLbl">Adresse du portefeuille</label>
+    <div class="sc-dest"><input id="dest" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="80" placeholder="g1…"><button id="dest-cam" type="button" data-tl="destCam" aria-label="Scanner l’adresse avec la caméra">📷</button></div>
+    <p class="row"><button id="dest-mine" type="button" hidden></button></p>
+    <details id="login" class="sc-manual" hidden><summary data-t="loginSum">Me connecter avec mon email et mon PASS</summary>
+      <label for="u" data-t="email">Votre adresse email</label>
+      <input id="u" type="email" autocomplete="username" maxlength="254">
+      <label for="p" data-t="pass">Code PASS</label>
+      <input id="p" type="password" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4,6}" maxlength="6">
+      <button id="login-go" type="button" data-t="loginGo">Me connecter</button>
+      <p id="login-e" class="err" role="alert"></p>
+    </details>
+    <p id="dest-state" class="sc-hint" role="status" aria-live="polite"></p>
+    <p class="row"><button id="s2-back" type="button" data-t="back">Retour</button><button id="s2-next" type="button" class="primary" disabled data-t="next">Continuer</button></p>
+  </section>
+
+  <section id="s3" hidden aria-labelledby="s3-t">
+    <h2 id="s3-t" tabindex="-1" data-t="s3">Confirmer</h2>
+    <div id="recap" class="sc-card"></div>
+    <p class="muted" data-t="s3p">Le transfert est définitif et vide entièrement le billet.</p>
+    <p id="err" class="err" role="alert"></p>
+    <p class="row"><button id="s3-back" type="button" data-t="back">Retour</button><button id="go" type="button" class="primary" data-t="go">💰 Encaisser</button></p>
+  </section>
+
+  <section id="done" hidden aria-live="polite">
+    <h2 id="done-t" tabindex="-1"></h2>
+    <p id="done-p"></p>
+    <p class="row"><button id="again" type="button" class="primary" data-t="again">Encaisser un autre billet</button></p>
+  </section>
+</main>
+<script type="module" src="/ui/scan.js"></script>
+</body>
+</html>

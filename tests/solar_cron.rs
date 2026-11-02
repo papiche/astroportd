@@ -45,12 +45,14 @@ async fn nightly(dir: &std::path::Path, db: Arc<Db>, sink: Arc<Sink>, dream: Hoo
         node_hex: pubkey_of(&NODE).unwrap(),
         node_secret: Some(NODE),
         peer_id: Some("12D3KooWstation".into()),
+        public_url: Some("https://station.exemple/".into()),
         weekly_costs: Amount(2_000),
         split: SplitConfig::default(),
         purge_shares: Some(shares),
         dream: Some(dream),
         backup: None,
         integrity: None,
+        billets: None,
         publisher: Some(sink),
         activity: None,
         pause: std::time::Duration::ZERO,
@@ -82,7 +84,7 @@ async fn the_solar_night_runs_every_step_once_per_solar_day() {
 
     let report = n.run_night(monday_night, lon).await;
     assert!(report.all_ok(), "{:?}", report.steps);
-    assert_eq!(report.steps.iter().map(|s| s.name).collect::<Vec<_>>(), ["rtc", "snapshot", "checkpoint", "purge", "rêve", "sauvegarde", "intégrité", "clôture", "santé"]);
+    assert_eq!(report.steps.iter().map(|s| s.name).collect::<Vec<_>>(), ["rtc", "snapshot", "checkpoint", "purge", "rêve", "sauvegarde", "intégrité", "billets", "clôture", "santé"]);
 
     // 3. Snapshot : un fichier SQLite lisible qui contient la loyer et le verrou posé avant le travail.
     let snap = dir.join("snapshots").join(format!("uplanet-{}.db", report.date));
@@ -103,6 +105,7 @@ async fn the_solar_night_runs_every_step_once_per_solar_day() {
     let tag = |name: &str| e.tag_value(name).map(str::to_owned);
     assert_eq!((tag("d").as_deref(), tag("week").as_deref(), tag("health:status").as_deref()), (Some("economic-health"), Some("2026-W44"), Some("healthy")));
     assert_eq!((tag("health:revenue").as_deref(), tag("station").as_deref()), (Some("50.00"), Some("12D3KooWstation")));
+    assert_eq!(tag("url").as_deref(), Some("https://station.exemple"), "la station annonce son adresse publique : les autres s'en servent pour rediriger vers elle");
     assert!(e.verify().is_ok());
     assert_eq!(count(&db, "SELECT COUNT(*) FROM journal WHERE stream = 'nightly'").await, 1);
 

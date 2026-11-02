@@ -1,0 +1,29 @@
+/* Mes Ğ1Billets (chargé avec m-billets.js) : formulaire, planche imprimable A4 paysage, 6 billets en 2 × 3. */
+.bs-form { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: .5rem 1rem; align-items: center; }
+.bs-form input, .bs-form select { max-width: 14rem; }
+.bs-fund { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin: .4rem 0; }
+.bs-list { width: 100%; border-collapse: collapse; }
+.bs-list th, .bs-list td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--panel2); }
+.bs-sheet { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6mm; margin: 1rem 0; }
+.bs-bill { display: grid; grid-template-columns: 26mm 1fr; border: 1px dashed #666; border-radius: 3mm; background: #fff; color: #000; min-height: 60mm; break-inside: avoid; }
+.bs-strip { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2mm; border-right: 1px dashed #666; padding: 2mm; font: 600 7pt sans-serif; text-align: center; }
+.bs-main { padding: 3mm; display: grid; gap: 1.5mm; align-content: space-between; }
+.bs-head { display: flex; justify-content: space-between; font: 8pt sans-serif; }
+.bs-amt { font: 700 20pt sans-serif; }
+.bs-qrs { display: flex; gap: 4mm; align-items: flex-end; }
+.bs-qrs figure { margin: 0; text-align: center; font: 7pt sans-serif; }
+.bs-qr { width: 20mm; height: 20mm; display: block; }
+.bs-qr.big { width: 28mm; height: 28mm; }
+.bs-foot { font: 7pt monospace; }
+@media (max-width: 40rem) { .bs-form { grid-template-columns: 1fr; } .bs-sheet { grid-template-columns: 1fr; } }
+@media print {
+  @page { size: A4 landscape; margin: 8mm; }
+  body > header, body > nav, #toasts, .skip, .bs-warn, .bs-form, h2, section.card:not(.bs-keep) { display: none !important; }
+  main { padding: 0 !important; }
+  .bs-sheet-box, .bs-sheet { display: grid !important; }
+  .bs-sheet { grid-template-columns: repeat(2, 138mm); gap: 4mm; margin: 0; }
+}
+.bs-bill.bs-img { background-size: cover; background-position: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.bs-icon { width: 8mm; height: 8mm; border-radius: 50%; object-fit: cover; margin-right: 2mm; }
+.bs-head { align-items: center; }
+.bs-head strong { margin-right: auto; }
