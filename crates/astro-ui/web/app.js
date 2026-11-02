@@ -191,7 +191,6 @@ every(30000, () => draw().catch(() => {}));
 }
 async function viewStation(root) {
 const draw = async () => {
-const { codeCell, codeSummary } = await import('/ui/m-code.js');
 const [d, z, cs, ec, ac, hd] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()), api('/api/v1/station/constellation'), api('/api/v1/station/economy'), api('/api/v1/station/accounts'), api('/api/v1/station/hosting')]);
 const s = d.station, r = d.relay, p = d.p2p, sub = z.subsystems || {};
 const love = ec.love, sh = ec.shares;
@@ -203,9 +202,8 @@ h('p', { class: 'big' }, String(r.events ?? '—'), h('small', { class: 'muted' 
 h('dl', {}, row('Dernier événement', when(r.last_event_at)), row('Base de données', bytes(r.db_bytes)))),
 h('section', { class: 'card' }, h('h2', {}, 'Sous-systèmes'), h('dl', {}, Object.entries(sub).flatMap(([n, v]) => row(n, [pill(v.status), ' ', v.detail])))),
 h('section', { class: 'card wide' }, h('h2', {}, 'Constellation ', h('small', {}, `${cs.nodes.length} nœud(s)${p.enabled ? ` · ${p.peers} pair(s) connecté(s)` : ''}`)),
-codeSummary(cs.nodes, t),
-table('Nœuds de l\'essaim, du plus puissant au moins puissant', ['Nœud', 'Power-Score', 'Distance', 'Statut', 'Code', 'Services'],
-cs.nodes.map(n => [[h('code', {}, n.node_id ? n.node_id.slice(-8) : '—'), n.self ? ' (ce nœud)' : ''], `${n.power_score} · ${n.tier}`, n.distance_km == null ? '—' : `${n.distance_km} km`, (n.status === 'connected' || n.self) ? pill('ok') : h('span', { class: 'pill disabled' }, t('Non connecté')), codeCell(n.build, t), n.services.join(', ') || '—'])),
+table('Nœuds de l\'essaim, du plus puissant au moins puissant', ['Nœud', 'Power-Score', 'Distance', 'Statut', 'Services'],
+cs.nodes.map(n => [[h('code', {}, n.node_id ? n.node_id.slice(-8) : '—'), n.self ? ' (ce nœud)' : ''], `${n.power_score} · ${n.tier}`, n.distance_km == null ? '—' : `${n.distance_km} km`, (n.status === 'connected' || n.self) ? pill('ok') : h('span', { class: 'pill disabled' }, t('Non connecté')), n.services.join(', ') || '—'])),
 cs.swarm_dir_configured ? null : h('p', { class: 'muted' }, 'Aucun dossier de pairs configuré (--swarm-dir) : seule cette station est listée.')),
 h('section', { class: 'card wide' }, h('h2', {}, 'Régie coopérative 3×1/3 ', h('small', {}, ec.week ? `semaine ${ec.week}` : '')),
 ec.kind === 'split' ? [

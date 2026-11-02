@@ -7,7 +7,6 @@ pub mod account;
 pub mod address_book;
 pub mod agents;
 pub mod assist;
-pub mod build_attest;
 pub mod chat;
 pub mod coop_config;
 pub mod console;

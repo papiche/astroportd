@@ -103,24 +103,12 @@ pub struct StationServices {
     chain_seen: Mutex<Option<(Instant, bool)>>,
     /// Dernier solde lu par compte : affiché quand le nœud est lent, pour ne jamais bloquer une page.
     last_balance: Mutex<std::collections::HashMap<String, BalanceView>>,
-    /// Build exécuté ici (version, empreinte du binaire), renseigné au démarrage une fois haché.
-    build: std::sync::OnceLock<crate::build_attest::BuildInfo>,
 }
 
 impl StationServices {
     /// Assemble le contexte.
     pub fn new(d: StationDeps) -> Self {
-        Self { db: d.db, info: d.info, nostr_dir: d.nostr_dir, chain: d.chain, hardware: d.hardware, p2p: d.p2p, weekly_rent_cents: d.weekly_rent_cents, activity: d.activity, swarm_dir: d.swarm_dir, origin: d.origin, exposed: d.exposed, chain_seen: Mutex::new(None), last_balance: Mutex::new(std::collections::HashMap::new()), build: std::sync::OnceLock::new() }
-    }
-
-    /// Enregistre le build exécuté ici (une seule fois).
-    pub fn set_build(&self, info: crate::build_attest::BuildInfo) {
-        let _ = self.build.set(info);
-    }
-
-    /// Build exécuté ici, s'il a déjà été mesuré.
-    pub fn build(&self) -> Option<&crate::build_attest::BuildInfo> {
-        self.build.get()
+        Self { db: d.db, info: d.info, nostr_dir: d.nostr_dir, chain: d.chain, hardware: d.hardware, p2p: d.p2p, weekly_rent_cents: d.weekly_rent_cents, activity: d.activity, swarm_dir: d.swarm_dir, origin: d.origin, exposed: d.exposed, chain_seen: Mutex::new(None), last_balance: Mutex::new(std::collections::HashMap::new()) }
     }
 
     /// Résultat du dernier appel Duniter (`None` : jamais sollicité).

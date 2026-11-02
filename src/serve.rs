@@ -570,18 +570,6 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
         Arc::new(EventPublisher { relay: relay.clone(), client, relays: a.relays.clone() })
     };
     let node_publisher = station.node_secret.as_ref().map(|_| event_publisher.clone());
-    // Attestation de build : empreinte du binaire, publiée par le NODE pour que les autres stations la comparent à la leur.
-    match tokio::task::spawn_blocking(astroportd::build_attest::BuildInfo::current).await {
-        Ok(Ok(info)) => {
-            println!("Build : {} {} ({})", info.version, &info.sha256[..16], info.target);
-            services.set_build(info.clone());
-            if let Some(secret) = station.node_secret.as_ref() {
-                background.push(tokio::spawn(astroportd::build_attest::run(info, services_peer.clone(), **secret, event_publisher.clone(), stop_watch.clone())));
-            }
-        }
-        Ok(Err(e)) => eprintln!("Build : empreinte du binaire illisible ({e}) : attestation désactivée"),
-        Err(e) => eprintln!("Build : empreinte du binaire non calculée : {e}"),
-    }
     // Envoi de fichiers aux proches et réception de ceux qu'ils envoient depuis d'autres stations (blob rapatrié par le maillage).
     let sharing = Arc::new(astroportd::sharing::Sharing::new(db.clone(), sharing_keys, mesh_outbox.clone(), Some(publisher.clone()), services_peer.clone()));
     {

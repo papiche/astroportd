@@ -13,8 +13,8 @@ writeFileSync(tmp, src);
 const { analyze } = await import(pathToFileURL(tmp));
 
 const me = { self: true, node_id: 'A', tier: 'Brain', power_score: 60 };
-const peer = (build, extra = {}) => ({ node_id: 'B', status: 'connected', tier: 'Standard', power_score: 20, build: { verdict: build }, ...extra });
-const healthy = { health: { status: 'ok', subsystems: { db: { status: 'ok' } } }, cs: { nodes: [me, peer('identical')] }, ec: { kind: 'split', week: 3 }, ac: { accounts: [] }, tun: { services: [] }, tk: { kinds: [] }, dash: { p2p: { enabled: true } } };
+const peer = (extra = {}) => ({ node_id: 'B', status: 'connected', tier: 'Standard', power_score: 20, ...extra });
+const healthy = { health: { status: 'ok', subsystems: { db: { status: 'ok' } } }, cs: { nodes: [me, peer()] }, ec: { kind: 'split', week: 3 }, ac: { accounts: [] }, tun: { services: [] }, tk: { kinds: [] }, dash: { p2p: { enabled: true } } };
 
 // 1. Tout va bien : verdict vert, aucune action.
 let r = analyze(healthy);
@@ -28,13 +28,9 @@ r = analyze({}); assert.equal(r.level, 'ok'); assert.equal(r.todos.length, 0);
 r = analyze({ ...healthy, health: { subsystems: { relay: { status: 'down', detail: 'LMDB' }, db: { status: 'degraded' } } } });
 assert.equal(r.level, 'down'); assert.equal(r.todos[0].level, 'down'); assert.equal(r.floors.station, 'down'); assert.equal(r.verdict, 'Intervention nécessaire');
 
-// 4. Station seule : information, pas d'alerte ; P2P arrêté : à regarder.
+// 4. Station seule : information, pas d'alerte ; P2P arrêté : à regarder. Le code des autres stations n'est pas comparé.
 r = analyze({ ...healthy, cs: { nodes: [me] } }); assert.equal(r.level, 'ok'); assert.equal(r.todos[0].level, 'info'); assert.equal(r.floors.mesh, 'info');
 r = analyze({ ...healthy, dash: { p2p: { enabled: false } } }); assert.equal(r.level, 'degraded'); assert.equal(r.floors.mesh, 'degraded');
-
-// 5. Code différent = à regarder ; autre version = information seulement.
-r = analyze({ ...healthy, cs: { nodes: [me, peer('diverges')] } }); assert.equal(r.level, 'degraded');
-r = analyze({ ...healthy, cs: { nodes: [me, peer('other_version')] } }); assert.equal(r.level, 'ok'); assert.equal(r.todos[0].level, 'info');
 
 // 6. Services : SSH ouvert à tous, service réglé qui ne répond plus. Un service jamais réglé et éteint ne dit rien.
 const svc = (o) => ({ name: 'ollama', mode: 'friends', grants: [], customized: false, up: true, ...o });

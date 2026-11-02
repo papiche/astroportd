@@ -92,7 +92,6 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
     let bus = ActivityBus::new();
     let info = StationInfo { node_hex: hex(&[1; 32]), peer_id: Some("12D3KooWTest".into()), domain: Some("station.test".into()), started: Instant::now() };
     let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: None, chain: None, hardware: Hardware { vram_gb: 24.0, cpu_cores: 16, ram_gb: 64.0 }, p2p: None, weekly_rent_cents: 100, activity: bus.clone(), swarm_dir, origin: Some((45.76, 4.83)), exposed: vec!["comfyui".into(), "ssh".into()] }));
-    services.set_build(astroportd::build_attest::BuildInfo { version: "0.2.2-beta".into(), sha256: "ab".repeat(32), target: "x86_64-linux".into() });
     let client = ollama.map(|url| Arc::new(OllamaClient::new(url, "bge-m3", "llama3.2", Duration::from_secs(5))));
     let memory = client.as_ref().map(|o| Arc::new(MemoryStore::new(db.clone(), o.clone(), o.clone(), Some(bus.clone()))));
     let registrar = Arc::new(astroportd::register::Registrar::new(db.clone(), dir.join("nostr"), "0".repeat(64), Arc::new(|hex| derive_dav_token(SECRET, hex)), astroportd::register::Limits::default()));
@@ -627,15 +626,6 @@ async fn the_captain_screens_show_the_constellation_the_regie_and_the_hosted_acc
     assert_eq!(nexus["services"], json!(["ollama", "comfyui"]));
     assert_eq!(c["nodes"][0]["self"], true);
     assert_eq!(c["nodes"][0]["services"], json!(["comfyui", "ssh"]));
-
-    // Code identique entre stations : l'attestation de chaque pair (kind 30853) est comparée au binaire local.
-    let attest = |station: &str, sha: &str| json!({ "event_id": "e", "created_at": 1, "tags": { "d": "build", "version": "0.2.2-beta", "sha256": sha, "target": "x86_64-linux", "station": station } }).to_string();
-    for (key, station, sha) in [("aa", "12D3KooWnexus", "ab".repeat(32)), ("bb", "12D3KooWrasp", "cd".repeat(32))] {
-        b.db.writer().execute("INSERT INTO kv(scope, key, value, updated_at) VALUES ('station_build', ?1, ?2, 1)", vec![V::Text(key.into()), V::Text(attest(station, &sha))]).await.unwrap();
-    }
-    let (_, c) = b.get("/api/v1/station/constellation", &bob).await;
-    let verdicts: Vec<&str> = c["nodes"].as_array().unwrap().iter().map(|n| n["build"]["verdict"].as_str().unwrap()).collect();
-    assert_eq!(verdicts, ["self", "identical", "diverges"], "{c}");
 
     // Régie : rien tant qu'aucune clôture ; puis une ventilation 3×1/3 et le Love Ledger.
     let (_, e) = b.get("/api/v1/station/economy", &bob).await;

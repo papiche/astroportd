@@ -10,7 +10,7 @@ use crate::projector::Projector;
 use crate::SyncError;
 
 /// Kinds rejoués, dans l'ordre : identités, réseau social, puis virements.
-const PHASES: [&[u32]; 4] = [&[30_800], &[3], &[30_850, 30_853], &[30_852, 30_851, 31_903]];
+const PHASES: [&[u32]; 4] = [&[30_800], &[3], &[30_850], &[30_852, 30_851, 31_903]];
 
 /// Bilan d'un replay.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

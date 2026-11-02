@@ -36,7 +36,7 @@ pub struct Projector;
 
 impl Projector {
     /// Kinds projetés.
-    pub const KINDS: [u32; 7] = [kind::CONTACTS, kind::DID, kind::ECONOMIC_HEALTH, kind::STATION_BUILD, kind::ZEN_ISSUANCE, kind::LEDGER_N2, kind::APP_PARAMS];
+    pub const KINDS: [u32; 6] = [kind::CONTACTS, kind::DID, kind::ECONOMIC_HEALTH, kind::ZEN_ISSUANCE, kind::LEDGER_N2, kind::APP_PARAMS];
 
     /// Requêtes à exécuter dans la transaction d'insertion de `e`. Vide si le kind n'est pas projeté.
     pub fn plan(e: &Event) -> Result<Vec<Statement>, ProjectError> {
@@ -45,7 +45,6 @@ impl Projector {
             kind::DID => did(e),
             kind::LEDGER_N2 => ledger(e),
             kind::ECONOMIC_HEALTH => Ok(economic_health(e)),
-            kind::STATION_BUILD => Ok(station_build(e)),
             kind::ZEN_ISSUANCE => zen_issuance(e),
             kind::APP_PARAMS => Ok(app_params(e)),
             _ => Ok(Vec::new()),
@@ -78,7 +77,6 @@ impl Projector {
             "DELETE FROM identities WHERE hosted = 0",
             "DELETE FROM done WHERE src_event IS NOT NULL",
             "DELETE FROM kv WHERE scope = 'economic_health'",
-            "DELETE FROM kv WHERE scope = 'station_build'",
             "DELETE FROM kv WHERE scope = 'agents'",
             "DELETE FROM kv WHERE scope = 'member_ai'",
             "DELETE FROM key_links",
@@ -452,22 +450,6 @@ fn economic_health(e: &Event) -> Vec<Statement> {
         ));
     }
     out
-}
-
-/// Kind 30853 : attestation de build d'une station (dernière en date par signataire, quel que soit l'ordre d'arrivée).
-/// Une attestation sans version ou sans empreinte SHA-256 valide n'est pas projetée.
-fn station_build(e: &Event) -> Vec<Statement> {
-    let sha = e.tag_value("sha256").unwrap_or_default();
-    if e.tag_value("version").is_none_or(str::is_empty) || sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Vec::new();
-    }
-    let summary = serde_json::json!({ "event_id": e.id, "created_at": e.created_at, "tags": tag_map(e) }).to_string();
-    vec![Statement::new(
-        "INSERT INTO kv(scope, key, value, updated_at) VALUES ('station_build', ?1, ?2, ?3) \
-         ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at \
-         WHERE excluded.updated_at >= kv.updated_at",
-        vec![text(&e.pubkey), Value::Text(summary), int(e.created_at)],
-    )]
 }
 
 /// Kind 30851 : preuve d'émission ẐEN, marqueur d'idempotence `zen_issuance:<auteur>:<d>`.

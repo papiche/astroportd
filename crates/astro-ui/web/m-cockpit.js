@@ -15,9 +15,6 @@ export function analyze({ health, cs, ec, ac, tun, tk, dash }) {
   // Constellation
   if (dash?.p2p && dash.p2p.enabled === false) add('degraded', 'mesh', 'Le maillage P2P est arrêté', 'Sans lui, aucune station ne peut vous joindre ni partager Ollama ou ComfyUI. Démarrez avec --p2p-listen.', 'Voir les plans', '#/planes');
   else if (cs && !others.length) add('info', 'mesh', 'Vous êtes seul dans l\'essaim', 'Aucune autre station n\'est vue : rejoignez une constellation ou indiquez un dossier de pairs (--swarm-dir).', 'Rejoindre', '#/planes');
-  const diverge = others.filter(n => n.build?.verdict === 'diverges').length, version = others.filter(n => n.build?.verdict === 'other_version').length;
-  if (diverge) add('degraded', 'mesh', `${diverge} station(s) ont un code différent du vôtre`, 'Même version mais empreinte différente : à vérifier avant de leur confier quoi que ce soit.', 'Comparer', '#/station');
-  if (version) add('info', 'mesh', `${version} station(s) tournent une autre version`, 'Mettez à jour ensemble pour éviter les écarts de comportement.', 'Voir', '#/station');
   // Services et accès
   for (const sv of tun?.services || []) {
     if (sv.up === false && (sv.customized || sv.grants?.length)) add('degraded', 'services', `${sv.name} est réglé mais ne répond pas`, `Rien n'écoute sur ${sv.target || 'cette machine'} : les amis qui l'utilisent n'y arrivent pas.`, 'Régler', '#/options');

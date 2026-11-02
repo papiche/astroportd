@@ -1274,32 +1274,6 @@ impl<B: BlobStore> Backend for StationUi<B> {
         .map_err(db_err)?;
         let connected: Vec<String> = svc.p2p.as_ref().map(|h| h.connected_peers().iter().map(ToString::to_string).collect()).unwrap_or_default();
         let me = svc.info.peer_id.clone().unwrap_or_default();
-        // Attestations de build reçues (kind 30853), par station (`station` = PeerID) ; la nôtre vient du binaire lui-même.
-        let attested: Vec<(String, String, String, String, i64, String)> = svc
-            .db
-            .readers()
-            .read(|c| {
-                let mut stmt = c.prepare(
-                    "SELECT json_extract(value, '$.tags.station'), json_extract(value, '$.tags.version'), json_extract(value, '$.tags.sha256'), json_extract(value, '$.tags.target'), updated_at, key \
-                     FROM kv WHERE scope = 'station_build' AND json_extract(value, '$.tags.station') IS NOT NULL",
-                )?;
-                let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3).unwrap_or_default(), r.get::<_, i64>(4)?, r.get::<_, String>(5)?)))?.collect::<Result<Vec<_>, _>>()?;
-                Ok(rows)
-            })
-            .await
-            .map_err(db_err)?;
-        let mine = svc.build();
-        let build_of = |node_id: &str, is_self: bool| -> Value {
-            if is_self {
-                return mine.map_or(Value::Null, |b| json!({ "version": b.version, "sha256": b.sha256, "target": b.target, "verdict": "self" }));
-            }
-            let theirs = attested.iter().find(|a| a.0 == node_id);
-            let verdict = match mine {
-                Some(m) => crate::build_attest::compare(m, theirs.map(|a| (a.1.as_str(), a.2.as_str(), a.3.as_str()))),
-                None => crate::build_attest::Verdict::Unknown,
-            };
-            json!({ "version": theirs.map(|a| a.1.clone()), "sha256": theirs.map(|a| a.2.clone()), "target": theirs.map(|a| a.3.clone()), "at": theirs.map(|a| a.4), "signer": theirs.map(|a| a.5.clone()), "verdict": verdict.code() })
-        };
         let describe = |node_id: &str, power: f64, pos: Option<(f64, f64)>, services: Vec<String>, is_self: bool| {
             let distance = match (origin, pos) {
                 (Some(o), Some(p)) => Some((haversine_km(o, p) * 10.0).round() / 10.0),
@@ -1310,7 +1284,6 @@ impl<B: BlobStore> Backend for StationUi<B> {
                 "distance_km": distance, "lat": pos.map(|p| p.0), "lon": pos.map(|p| p.1),
                 "status": if is_self { "local" } else if connected.iter().any(|c| c == node_id) { "connected" } else { "known" },
                 "services": services,
-                "build": build_of(node_id, is_self),
             })
         };
         let mut nodes = vec![describe(&me, svc.hardware.score(), origin, svc.exposed.clone(), true)];

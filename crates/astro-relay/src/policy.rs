@@ -196,7 +196,6 @@ impl Default for Policy {
                 kind::LONG_FORM,
                 kind::DID,
                 kind::ECONOMIC_HEALTH,
-                kind::STATION_BUILD,
                 kind::VISIO_PRESENCE,
                 kind::VISIO_RING,
             ]
