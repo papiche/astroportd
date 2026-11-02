@@ -76,7 +76,7 @@ figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line)
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <p>Il vous faut :</p>
 <ul>
-<li>un ordinateur <strong>Linux</strong> (PC, serveur) ou un <strong>Raspberry Pi</strong> (de préférence 64 bits : Pi 4, Pi 5, Pi Zero 2 W), ou un <strong>Mac</strong> Apple Silicon (bêta : voir <a href="MACOS.md">MACOS.md</a>) ;</li>
+<li>un ordinateur <strong>Linux</strong> (PC, serveur) ou un <strong>Raspberry Pi</strong> (de préférence 64 bits : Pi 4, Pi 5, Pi Zero 2 W), ou un <strong>Mac</strong> Apple Silicon (bêta : voir <a href="MACOS.html">MACOS.md</a>) ;</li>
 <li>une connexion Internet et environ 15 minutes ;</li>
 <li>une <strong>horloge à l'heure</strong> : un Raspberry Pi sans pile démarre en 1970, et astroportd refuse alors de calculer ses échéances ;</li>
 <li>facultatif, pour une station ouverte sur Internet : un nom de domaine et les ports 80 et 443 ouverts ;</li>
@@ -106,7 +106,7 @@ date       # l'année doit être 2026 ou plus
 <div class="code"><pre><code>astroportd --version
 </code></pre></div>
 <p>Si la commande est introuvable, ajoutez <code>~/.local/bin</code> à votre PATH : <code>export PATH=&quot;$HOME/.local/bin:$PATH&quot;</code>.</p>
-<div class="box note"><p><span class="lbl">À savoir</span> L'installeur ne fonctionne que sous <strong>Linux</strong> (Android sous Termux compris, voir la fin du guide). Sur un <strong>Mac</strong>, téléchargez l'archive à la main (colonne Navigateur ci-contre, et <a href="MACOS.md">MACOS.md</a>).</p></div>
+<div class="box note"><p><span class="lbl">À savoir</span> L'installeur ne fonctionne que sous <strong>Linux</strong> (Android sous Termux compris, voir la fin du guide). Sur un <strong>Mac</strong>, téléchargez l'archive à la main (colonne Navigateur ci-contre, et <a href="MACOS.html">MACOS.md</a>).</p></div>
 <p><strong>L'installeur s'adapte à votre machine.</strong> Reconnaître les visages et comprendre le sens des textes <em>dans</em> astroportd (sans service externe) coûte de la mémoire, du disque et du processeur. Avant de télécharger les modèles, l'installeur examine donc votre machine : architecture, nombre de cœurs, mémoire, place libre, <strong>vitesse d'écriture du disque</strong> (carte SD, disque mécanique, SSD, NVMe), carte graphique et présence d'Ollama. Il vous montre ce qu'il a trouvé et <strong>recommande un profil</strong> :</p>
 <div class="tw"><table>
 <thead>
@@ -149,7 +149,7 @@ curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh 
 <li><code>armv7-unknown-linux-gnueabihf</code> : Raspberry Pi 2/3, Pi OS 32 bits ;</li>
 <li><code>x86_64-unknown-linux-musl</code> : binaire statique, sans dépendance ;</li>
 <li><code>aarch64-unknown-linux-musl</code> : binaire statique ARM 64 bits (Android sous Termux, Pi, NAS) ;</li>
-<li><code>aarch64-apple-darwin</code> et <code>x86_64-apple-darwin</code> : <strong>Mac</strong> (Apple Silicon, Intel). <em>Bêta</em> : jamais compilé sur un Mac avant la 0.5.0, voir <a href="MACOS.md">MACOS.md</a>.</li>
+<li><code>aarch64-apple-darwin</code> et <code>x86_64-apple-darwin</code> : <strong>Mac</strong> (Apple Silicon, Intel). <em>Bêta</em> : jamais compilé sur un Mac avant la 0.5.0, voir <a href="MACOS.html">MACOS.md</a>.</li>
 </ul>
 <p>Téléchargez aussi <code>SHA256SUMS</code>. Décompressez l'archive avec votre gestionnaire de fichiers et copiez <code>astroportd</code> dans <code>~/.local/bin</code>. Comparez l'empreinte (ligne de commande : <code>sha256sum archive.tar.gz</code>) avec celle de <code>SHA256SUMS</code>.</p>
 </div>
@@ -1069,7 +1069,7 @@ ssh -p 2222 utilisateur@127.0.0.1
 <li><strong>Le guide en ligne</strong> : <a href="https://github.com/papiche/Astroport.ONE">Astroport.ONE</a> pour le suivi automatique des Capitaines, la ZenCard et les QR codes.</li>
 </ul>
 <hr />
-<p>Pour comprendre en profondeur ORIGIN, ẐEN et Y-Level : <a href="CONSTELLATIONS.md">CONSTELLATIONS.md</a>. Licence AGPL-3.0.</p>
+<p>Pour comprendre en profondeur ORIGIN, ẐEN et Y-Level : <a href="CONSTELLATIONS.html">CONSTELLATIONS.md</a>. Licence AGPL-3.0.</p>
 </div>
 </div>
 </section>
@@ -1099,7 +1099,7 @@ astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blo
 </section>
 </main>
 <footer>
-<p>astroportd est un logiciel libre (AGPL-3.0) de <a href="https://github.com/papiche/astroportd">papiche</a>, cœur de la station <a href="https://github.com/papiche/Astroport.ONE">Astroport.ONE</a>. Version texte de ce guide : <a href="GUIDE.md">GUIDE.md</a> · pour aller plus loin : <a href="CONSTELLATIONS.md">CONSTELLATIONS.md</a>.</p>
+<p>astroportd est un logiciel libre (AGPL-3.0) de <a href="https://github.com/papiche/astroportd">papiche</a>, cœur de la station <a href="https://github.com/papiche/Astroport.ONE">Astroport.ONE</a>. Version texte de ce guide : <a href="index.html">GUIDE.md</a> · pour aller plus loin : <a href="CONSTELLATIONS.html">CONSTELLATIONS.md</a>.</p>
 </footer>
 <script>
 /* Amélioration facultative : bouton « Copier » sur chaque bloc de commande. La page fonctionne sans. */

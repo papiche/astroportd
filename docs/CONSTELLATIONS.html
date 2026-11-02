@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Constellations : ORIGIN, ẐEN, Y-Level et liens entre Capitaines — astroportd</title>
+<style>
+:root{--bg:#ffffff;--ink:#1b1f2a;--mut:#454c61;--pan:#f1f4fb;--line:#c3c9dc;--acc:#2a46c8;--accink:#ffffff;--code:#10131c;--codeink:#e8ebf4;--note:#e7efff;--warn:#fff0e0;--warnb:#8f3b06;--ok:#14663a}
+@media (prefers-color-scheme:dark){:root{--bg:#12151f;--ink:#eef0f8;--mut:#bcc3da;--pan:#1b2030;--line:#3a4260;--acc:#9bb0ff;--accink:#10131c;--code:#0a0c13;--codeink:#e8ebf4;--note:#1d2744;--warn:#3a2414;--warnb:#ffb98a;--ok:#7fdca6}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:1.0625rem/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--acc);text-underline-offset:3px}a:focus-visible,summary:focus-visible,button:focus-visible{outline:3px solid var(--acc);outline-offset:3px;border-radius:4px}
+.skip{position:absolute;left:16px;top:-60px;background:var(--acc);color:var(--accink);padding:10px 14px;border-radius:8px;z-index:9;text-decoration:none}.skip:focus{top:12px}
+header.top,main,footer{max-width:68rem;margin:0 auto;padding:0 16px}
+header.top{padding-top:28px;padding-bottom:8px}
+h1{font-size:clamp(1.7rem,5vw,2.6rem);line-height:1.15;margin:.2em 0}
+.lead{font-size:1.2rem;color:var(--mut);max-width:46rem}
+.badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 12px;font-size:.9rem;color:var(--mut)}
+nav.toc{background:var(--pan);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:22px 0}
+nav.toc h2{font-size:1rem;margin:0 0 6px}nav.toc ol{margin:0;padding-left:1.3em;columns:2 16rem}nav.toc li{margin:2px 0}
+section{margin:44px 0;padding-top:8px;border-top:1px solid var(--line)}
+h2{font-size:clamp(1.35rem,3.6vw,1.8rem);line-height:1.25;margin:.6em 0 .4em}
+.num{display:inline-grid;place-items:center;min-width:2.1rem;height:2.1rem;padding:0 .5rem;border-radius:999px;background:var(--acc);color:var(--accink);font-weight:700;font-size:1.05rem;margin-right:.35em;vertical-align:.08em}
+h3{font-size:1.05rem;margin:0 0 .5em;color:var(--acc)}
+figure{margin:18px auto;max-width:34rem}figure svg{display:block;max-width:100%;height:auto}figcaption{font-size:.92rem;color:var(--mut);text-align:center;margin-top:6px}
+.cols{display:grid;gap:16px;grid-template-columns:1fr;margin-top:14px}
+@media (min-width:56rem){.cols{grid-template-columns:1fr 1fr}}
+.col{background:var(--pan);border:1px solid var(--line);border-radius:14px;padding:14px 16px;min-width:0}
+.col>*:last-child{margin-bottom:0}
+.col ul,.col ol{padding-left:1.25em}
+.div,.code{position:relative}
+pre{margin:.6em 0;background:var(--code);color:var(--codeink);border-radius:10px;padding:12px 5.2rem 12px 14px;overflow-x:auto;font-size:.92rem;line-height:1.5;-webkit-overflow-scrolling:touch}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
+p code,li code{background:rgba(127,127,160,.18);padding:1px 6px;border-radius:5px;overflow-wrap:anywhere}
+.copy{position:absolute;top:10px;right:8px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:3px 10px;font:inherit;font-size:.82rem;cursor:pointer}
+.box{border-radius:10px;padding:10px 14px;margin:.8em 0;border:1px solid var(--line)}
+.box .lbl{font-weight:700;margin-right:.4em}
+.note{background:var(--note)}.warn{background:var(--warn);border-color:var(--warnb)}.warn .lbl{color:var(--warnb)}
+
+.ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
+.ill .bg{fill:var(--bg)}.ill .pan{fill:var(--pan);stroke:var(--line);stroke-width:1.5}.ill .pan2{fill:var(--pan2);stroke:var(--acc);stroke-width:2}
+.ill .okp{fill:var(--pan);stroke:var(--ok);stroke-width:2.5}.ill .wnp{fill:var(--pan);stroke:var(--warn);stroke-width:2.5}
+.ill .t{fill:var(--ink);font-size:17px;font-weight:700}.ill .s{fill:var(--mut);font-size:14.5px}.ill .a{fill:var(--acc);font-size:15px;font-weight:700}
+.ill .g{fill:var(--ok);font-size:15px;font-weight:700}.ill .w{fill:var(--warn);font-size:15px;font-weight:700}
+.ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
+.ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
+
+footer{padding:28px 16px 48px;color:var(--mut);border-top:1px solid var(--line);margin-top:44px;font-size:.95rem}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{.copy,.skip{display:none}.col{break-inside:avoid}}
+.tw{overflow-x:auto}table{border-collapse:collapse;margin:.8em 0;font-size:.95rem}th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}th{background:var(--pan)}
+a{overflow-wrap:anywhere}
+@media (min-width:56rem){.cols.one{grid-template-columns:1fr}}
+figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:10px}
+</style>
+<style>.pg{max-width:60rem;margin:0 auto;padding:1rem 16px 3rem}</style>
+</head>
+<body>
+<main class="pg">
+<p><a href="index.html">← Retour au guide</a></p>
+<h1>Constellations : ORIGIN, ẐEN, Y-Level et liens entre Capitaines</h1>
+<p>Ce document explique <strong>ce qui se passe sous le capot</strong> quand on démarre une station. Pour le pas-à-pas, voir le <a href="index.html">guide</a> (<a href="index.html">version illustrée</a>).</p>
+<div class="box note"><p><span class="lbl">Comment lire ce document</span> Chaque point est marqué : <strong>astroportd</strong> (implémenté dans ce dépôt et testé) ou <strong>Astroport.ONE</strong> (hérité : fait par les scripts bash du dépôt <a href="https://github.com/papiche/Astroport.ONE">papiche/Astroport.ONE</a>, pas encore réécrit en Rust). Les deux fonctionnent ensemble ; astroportd 0.5.0-beta est une <strong>préversion</strong>.</p></div>
+<figure><svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 530" role="img" aria-labelledby="iat-t iat-d" width="520" height="530">
+<title id="iat-t">Individus, Astroports et territoire</title>
+<desc id="iat-d">Trois niveaux. Des individus, chacun avec un MULTIPASS Nostr, sont hébergés par une station Astroport. Chaque station a pour identité IPFSNODEID, qui est aussi sa clé SSH. Les Capitaines de deux stations se suivent sur Nostr, ce qui ouvre un accès SSH pair à pair entre machines de confiance. Les stations s&#x27;inscrivent dans un territoire, découpé en dalles UMAP de 0,01 degré.</desc>
+<style>
+.ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
+.ill .bg{fill:var(--bg)}.ill .pan{fill:var(--pan);stroke:var(--line);stroke-width:1.5}.ill .pan2{fill:var(--pan2);stroke:var(--acc);stroke-width:2}
+.ill .okp{fill:var(--pan);stroke:var(--ok);stroke-width:2.5}.ill .wnp{fill:var(--pan);stroke:var(--warn);stroke-width:2.5}
+.ill .t{fill:var(--ink);font-size:17px;font-weight:700}.ill .s{fill:var(--mut);font-size:14.5px}.ill .a{fill:var(--acc);font-size:15px;font-weight:700}
+.ill .g{fill:var(--ok);font-size:15px;font-weight:700}.ill .w{fill:var(--warn);font-size:15px;font-weight:700}
+.ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
+.ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
+</style>
+<rect class="bg" width="520" height="530" rx="14"/>
+<text x="260" y="34" class="t m">Individu ↔ Astroport ↔ Territoire</text>
+<text x="16" y="70" class="a">Individus</text>
+<circle class="okp" cx="62" cy="106" r="22"/>
+<text x="62" y="111" class="s m">MP</text>
+<circle class="okp" cx="132" cy="106" r="22"/>
+<text x="132" y="111" class="s m">MP</text>
+<circle class="okp" cx="202" cy="106" r="22"/>
+<text x="202" y="111" class="s m">MP</text>
+<circle class="okp" cx="342" cy="106" r="22"/>
+<text x="342" y="111" class="s m">MP</text>
+<circle class="okp" cx="412" cy="106" r="22"/>
+<text x="412" y="111" class="s m">MP</text>
+<circle class="okp" cx="462" cy="106" r="22"/>
+<text x="462" y="111" class="s m">MP</text>
+<text x="130" y="150" class="s m">MULTIPASS (clé Nostr)</text>
+<text x="380" y="150" class="s m">MULTIPASS (clé Nostr)</text>
+<text x="16" y="196" class="a">Astroports</text>
+<rect class="pan2" x="16" y="208" width="220" height="96" rx="10"/>
+<text x="126.0" y="232" class="t m">Station A · Capitaine</text>
+<text x="126.0" y="253" class="s m">IPFSNODEID = clé SSH</text>
+<text x="126.0" y="272" class="s m">12D3Koo…A</text>
+<rect class="pan2" x="284" y="208" width="220" height="96" rx="10"/>
+<text x="394.0" y="232" class="t m">Station B · Capitaine</text>
+<text x="394.0" y="253" class="s m">IPFSNODEID = clé SSH</text>
+<text x="394.0" y="272" class="s m">12D3Koo…B</text>
+<path class="ln" d="M126 150 L126 208"/>
+<path class="ln" d="M394 150 L394 208"/>
+<path class="ds" d="M236 256 L284 256"/>
+<text x="260" y="330" class="a m">Les Capitaines se suivent sur Nostr</text>
+<text x="260" y="350" class="s m">→ accès SSH P2P (tunnel : astroportd · suivi : Astroport.ONE)</text>
+<text x="16" y="396" class="a">Territoire</text>
+<rect class="okp" x="16" y="408" width="488" height="104" rx="12"/>
+<text x="260" y="440" class="t m">Constellation · UMAP</text>
+<text x="260" y="464" class="s m">dalles de 0,01° (≈ 1 km²), chacune avec son identité</text>
+<text x="260" y="486" class="s m">les stations voisines forment le territoire</text>
+<path class="ln" d="M126 304 L126 408"/>
+<path class="ln" d="M394 304 L394 408"/>
+</svg>
+<figcaption>Individus, Astroports et territoire</figcaption></figure>
+<hr />
+<h2>1. Une constellation, c'est quoi ?</h2>
+<p>Une <strong>constellation</strong> est un ensemble de stations (des « Astroports ») qui se reconnaissent et se parlent, avec trois niveaux :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Niveau</th>
+<th>Ce que c'est</th>
+<th>Identité</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Individu</strong></td>
+<td>une personne, avec son <strong>MULTIPASS</strong></td>
+<td>une clé Nostr, des clés Ğ1</td>
+</tr>
+<tr>
+<td><strong>Astroport</strong></td>
+<td>une station tenue par un <strong>Capitaine</strong></td>
+<td><code>IPFSNODEID</code> (PeerID IPFS <code>12D3Koo…</code>), égale à sa clé SSH grâce à Y-Level</td>
+</tr>
+<tr>
+<td><strong>Territoire</strong></td>
+<td>les stations d'une zone géographique</td>
+<td>des dalles <strong>UMAP</strong> de 0,01° (environ 1 km²), chacune avec sa propre identité Nostr</td>
+</tr>
+</tbody>
+</table></div>
+<p>Ce qui relie ces niveaux : <strong>les clés</strong> (Y-Level), <strong>les suivis Nostr</strong> entre personnes et entre Capitaines, et <strong>le réseau privé</strong> (<code>swarm.key</code>) pour la constellation ẐEN.</p>
+<hr />
+<h2>2. ORIGIN et ẐEN</h2>
+<figure><svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 552" role="img" aria-labelledby="ovz-t ovz-d" width="520" height="552">
+<title id="ovz-t">ORIGIN ou ẐEN : le choix de la constellation</title>
+<desc id="ovz-d">Comparaison de deux constellations. UPlanet ORIGIN : pas de swarm.key, UPLANETNAME vaut 64 zéros, réseau ouvert, 1 Ẑen vaut 0,1 Ğ1, bac à sable pour tous. UPlanet ẐEN : swarm.key présente, UPLANETNAME est la clé partagée, réseau privé chiffré, 1 Ẑen vaut 1 euro, pour les membres certifiés. On passe d&#x27;ORIGIN à ẐEN en recevant une swarm.key d&#x27;un Capitaine ou en fondant sa constellation.</desc>
+<style>
+.ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
+.ill .bg{fill:var(--bg)}.ill .pan{fill:var(--pan);stroke:var(--line);stroke-width:1.5}.ill .pan2{fill:var(--pan2);stroke:var(--acc);stroke-width:2}
+.ill .okp{fill:var(--pan);stroke:var(--ok);stroke-width:2.5}.ill .wnp{fill:var(--pan);stroke:var(--warn);stroke-width:2.5}
+.ill .t{fill:var(--ink);font-size:17px;font-weight:700}.ill .s{fill:var(--mut);font-size:14.5px}.ill .a{fill:var(--acc);font-size:15px;font-weight:700}
+.ill .g{fill:var(--ok);font-size:15px;font-weight:700}.ill .w{fill:var(--warn);font-size:15px;font-weight:700}
+.ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
+.ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
+</style>
+<rect class="bg" width="520" height="552" rx="14"/>
+<text x="260" y="34" class="t m">Deux constellations, deux usages</text>
+<rect class="pan" x="16" y="56" width="234" height="344" rx="12"/>
+<text x="133" y="90" class="t m">UPlanet ORIGIN</text>
+<text x="133" y="112" class="s m">Bac à sable · apprendre</text>
+<text x="32" y="150" class="s">swarm.key</text>
+<text x="32" y="172" class="t">absente</text>
+<text x="32" y="200" class="s">UPLANETNAME</text>
+<text x="32" y="222" class="t">64 zéros</text>
+<text x="32" y="250" class="s">Réseau</text>
+<text x="32" y="272" class="t">ouvert à tous</text>
+<text x="32" y="300" class="s">1 Ẑen vaut</text>
+<text x="32" y="322" class="t">0,1 Ğ1 (jeu)</text>
+<text x="32" y="350" class="s">Pour qui</text>
+<text x="32" y="372" class="t">tout le monde</text>
+<rect class="okp" x="270" y="56" width="234" height="344" rx="12"/>
+<text x="387" y="90" class="t m">UPlanet ẐEN</text>
+<text x="387" y="112" class="s m">Production · coopérative</text>
+<text x="286" y="150" class="s">swarm.key</text>
+<text x="286" y="172" class="t">présente</text>
+<text x="286" y="200" class="s">UPLANETNAME</text>
+<text x="286" y="222" class="t">la clé partagée</text>
+<text x="286" y="250" class="s">Réseau</text>
+<text x="286" y="272" class="t">privé, chiffré</text>
+<text x="286" y="300" class="s">1 Ẑen vaut</text>
+<text x="286" y="322" class="t">1 € (réel)</text>
+<text x="286" y="350" class="s">Pour qui</text>
+<text x="286" y="372" class="t">membres certifiés</text>
+<rect class="pan2" x="16" y="440" width="488" height="94" rx="12"/>
+<text x="260" y="470" class="t m">Le passage d&#x27;ORIGIN à ẐEN</text>
+<text x="260" y="494" class="s m">se fait en recevant la swarm.key d&#x27;un Capitaine</text>
+<text x="260" y="514" class="s m">(certification DRAGON) — ou en fondant la vôtre</text>
+<path class="ar" d="M135 440 L135 406"/>
+<path class="hd" d="M135 400 L127 414 L143 414 Z"/>
+<path class="ar" d="M385 406 L385 440"/>
+<path class="hd" d="M385 446 L377 432 L393 432 Z"/>
+</svg>
+<figcaption>ORIGIN ou ẐEN</figcaption></figure>
+<div class="tw"><table>
+<thead>
+<tr>
+<th></th>
+<th><strong>UPlanet ORIGIN</strong></th>
+<th><strong>UPlanet ẐEN</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Vocation</td>
+<td>Bac à sable : apprendre, essayer</td>
+<td>Production : économie coopérative</td>
+</tr>
+<tr>
+<td><code>swarm.key</code></td>
+<td><strong>absente</strong></td>
+<td><strong>présente</strong></td>
+</tr>
+<tr>
+<td><code>UPLANETNAME</code></td>
+<td>64 zéros (<code>000…0</code>)</td>
+<td>la clé partagée (dernière ligne de <code>swarm.key</code>)</td>
+</tr>
+<tr>
+<td>Réseau P2P</td>
+<td><strong>ouvert</strong></td>
+<td><strong>privé</strong>, chiffré par la clé pré-partagée</td>
+</tr>
+<tr>
+<td>1 Ẑen vaut</td>
+<td>0,1 Ğ1 (monnaie de jeu)</td>
+<td>1 € dans la coopérative UPlanet ẐEN</td>
+</tr>
+<tr>
+<td>Qui y entre</td>
+<td>tout le monde</td>
+<td>les membres qui ont reçu la clé</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>La règle de détection est mécanique</strong> : pas de <code>swarm.key</code> → ORIGIN ; <code>swarm.key</code> présente → ẐEN.</p>
+<ul>
+<li><em>astroportd</em> : <code>serve --swarm-key FICHIER</code> active le réseau privé libp2p (clé pré-partagée) ; sans cette option le démarrage affiche « réseau ouvert » (<code>src/serve.rs</code>). <code>astroportd init --mode origin|zen</code> prépare la station dans ce sens.</li>
+<li><em>Astroport.ONE</em> : <code>tools/my.sh</code> définit <code>UPLANETNAME</code> comme la dernière ligne de <code>~/.ipfs/swarm.key</code>, ou 64 zéros s'il n'y en a pas.</li>
+</ul>
+<h3>Pourquoi <code>UPLANETNAME</code> compte</h3>
+<p>Les nouveaux MULTIPASS utilisent la formule de clés dite <strong>isolated</strong> : <code>(SALT, PEPPER_&lt;sel&gt;)</code> où <code>sel = sha256(UPLANETNAME)[:16]</code> (<em>astroportd</em> : <code>astro-core</code>, <code>KeyFormula::Isolated</code>). Une même personne obtient donc des clés <strong>différentes</strong> dans ORIGIN et dans une constellation ẐEN, et dans deux constellations ẐEN différentes. Conséquences pratiques :</p>
+<ul>
+<li><strong>sauvegardez votre <code>swarm.key</code></strong> ; la perdre ou en changer, c'est changer de monde ;</li>
+<li>les clés de la <strong>station elle-même</strong> (NODE) ne dépendent pas de <code>UPLANETNAME</code> : elles viennent de Y-Level (§4) et sont identiques d'une constellation à l'autre.</li>
+</ul>
+<h3>Passer d'ORIGIN à ẐEN</h3>
+<p>La voie « officielle » est la <strong>certification DRAGON</strong> (une formation à la cybersécurité et à la cryptographie) : un Capitaine de la constellation ẐEN vous remet alors sa <code>swarm.key</code>. Candidature : support@qo-op.com, objet « Candidature Capitaine DRAGON ». Ce parcours de formation est celui d'<em>Astroport.ONE</em> (voir son README).</p>
+<hr />
+<h2>3. Démarrer une constellation</h2>
+<h3>3.1 Rejoindre ORIGIN</h3>
+<div class="code"><pre><code>astroportd init --mode origin
+astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
+</code></pre></div>
+<p>Rien de secret à fournir. Votre station est visible des autres stations ORIGIN. Pour avoir un compte, créez-le sur votre station : <code>astroportd multipass create &lt;email&gt; --captain</code> (voir §3.4). <a href="https://qo-op.com">qo-op.com</a> reste une option (une station ORIGIN publique), pas une obligation.</p>
+<h3>3.2 Rejoindre une constellation ẐEN existante</h3>
+<div class="code"><pre><code>chmod 600 swarm.key        # la clé reçue d'un Capitaine
+astroportd init --mode zen --swarm-key ./swarm.key
+astroportd serve ... --swarm-key ./swarm.key
+</code></pre></div>
+<p>Toutes les stations d'une même constellation doivent avoir <strong>exactement la même</strong> clé. Si une station ne voit pas les autres, c'est la première chose à vérifier (<code>astroportd doctor</code>).</p>
+<h3>3.3 Fonder sa propre constellation</h3>
+<div class="code"><pre><code>astroportd swarm-key &gt; swarm.key    # génère une clé de réseau privé (32 octets aléatoires)
+chmod 600 swarm.key
+</code></pre></div>
+<p>Le fichier est au format <code>/key/swarm/psk/1.0.0/</code> · <code>/base16/</code> · 64 caractères hexadécimaux, le format des réseaux privés IPFS/libp2p (<code>astro_p2p::generate_swarm_key</code>). Copiez-le ensuite sur <strong>chaque</strong> station par un canal sûr, puis <code>astroportd init --mode zen --swarm-key ./swarm.key</code>.</p>
+<div class="box note"><p>Une constellation que vous fondez est un <strong>réseau privé dont vous fixez les règles</strong>. L'économie « 1 Ẑen = 1 € » est celle de la coopérative UPlanet ẐEN (financement via OpenCollective, comptabilité des trois tiers) ; elle ne s'applique pas automatiquement à votre réseau.</p></div>
+<h3>3.4 Créer les MULTIPASS sur sa station</h3>
+<figure><svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 640" role="img" aria-labelledby="mpc-t mpc-d" width="520" height="640">
+<title id="mpc-t">Création d&#x27;un MULTIPASS : de l&#x27;email aux clés</title>
+<desc id="mpc-d">L&#x27;email du titulaire sert d&#x27;identifiant. Un SALT et un PEPPER aléatoires de 24 caractères sont tirés. Le PEPPER est isolé par constellation grâce au sel dérivé de UPLANETNAME, qui vaut 64 zéros en ORIGIN ou la clé partagée en ẐEN. Un étirement scrypt donne une graine ed25519, d&#x27;où viennent la clé Nostr, la clé Ğ1 et l&#x27;identité IPNS. Une autre constellation donne d&#x27;autres clés pour le même SALT et PEPPER. La carte d&#x27;identité, avec SALT, PEPPER, nsec, code PASS et jeton, n&#x27;est affichée qu&#x27;une seule fois.</desc>
+<style>
+.ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
+.ill .bg{fill:var(--bg)}.ill .pan{fill:var(--pan);stroke:var(--line);stroke-width:1.5}.ill .pan2{fill:var(--pan2);stroke:var(--acc);stroke-width:2}
+.ill .okp{fill:var(--pan);stroke:var(--ok);stroke-width:2.5}.ill .wnp{fill:var(--pan);stroke:var(--warn);stroke-width:2.5}
+.ill .t{fill:var(--ink);font-size:17px;font-weight:700}.ill .s{fill:var(--mut);font-size:14.5px}.ill .a{fill:var(--acc);font-size:15px;font-weight:700}
+.ill .g{fill:var(--ok);font-size:15px;font-weight:700}.ill .w{fill:var(--warn);font-size:15px;font-weight:700}
+.ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
+.ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
+</style>
+<rect class="bg" width="520" height="640" rx="14"/>
+<text x="260" y="34" class="t m">Créer un MULTIPASS : de l&#x27;email aux clés</text>
+<rect class="pan" x="20" y="52" width="480" height="58" rx="10"/>
+<text x="260.0" y="76" class="t m">1 · Votre email</text>
+<text x="260.0" y="97" class="s m">astroportd multipass create &lt;email&gt;</text>
+<path class="ar" d="M260 110 L260 142"/>
+<path class="hd" d="M260 142 L256.1 133.9 L263.9 133.9 Z"/>
+<text x="274" y="132" class="a">tirage aléatoire</text>
+<rect class="pan" x="20" y="142" width="480" height="58" rx="10"/>
+<text x="260.0" y="166" class="t m">2 · SALT + PEPPER</text>
+<text x="260.0" y="187" class="s m">24 caractères alphanumériques chacun</text>
+<path class="ar" d="M260 200 L260 232"/>
+<path class="hd" d="M260 232 L256.1 223.9 L263.9 223.9 Z"/>
+<text x="274" y="222" class="a">sel de la constellation</text>
+<rect class="pan2" x="20" y="232" width="480" height="66" rx="10"/>
+<text x="260.0" y="256" class="t m">3 · PEPPER isolé par constellation</text>
+<text x="260.0" y="277" class="s m">(SALT, PEPPER_&lt;sha256(UPLANETNAME)[:16]&gt;)</text>
+<text x="260.0" y="296" class="s m">ORIGIN : 64 zéros · ẐEN : votre swarm.key</text>
+<path class="ar" d="M260 298 L260 330"/>
+<path class="hd" d="M260 330 L256.1 321.9 L263.9 321.9 Z"/>
+<text x="274" y="320" class="a">scrypt</text>
+<rect class="pan2" x="20" y="330" width="480" height="50" rx="10"/>
+<text x="260.0" y="361.0" class="t m">4 · Une graine ed25519</text>
+<path class="ln" d="M260 380 L260 396 M90 396 L430 396"/>
+<path class="ar" d="M90 396 L90 410"/>
+<rect class="okp" x="20" y="410" width="140" height="62" rx="10"/>
+<text x="90.0" y="434" class="t m">Nostr</text>
+<text x="90.0" y="455" class="s m">sha256 de la graine</text>
+<path class="ar" d="M260 396 L260 410"/>
+<rect class="okp" x="190" y="410" width="140" height="62" rx="10"/>
+<text x="260.0" y="434" class="t m">Ğ1</text>
+<text x="260.0" y="455" class="s m">même graine</text>
+<path class="ar" d="M430 396 L430 410"/>
+<rect class="okp" x="360" y="410" width="140" height="62" rx="10"/>
+<text x="430.0" y="434" class="t m">IPNS</text>
+<text x="430.0" y="455" class="s m">même graine</text>
+<text x="260" y="500" class="w m">Autre constellation = autres clés pour le même SALT/PEPPER</text>
+<rect class="wnp" x="20" y="516" width="480" height="104" rx="12"/>
+<text x="260" y="544" class="t m">La carte à noter UNE seule fois</text>
+<text x="260" y="568" class="s m">SALT · PEPPER · nsec · code PASS · jeton web</text>
+<text x="260" y="590" class="s m">c&#x27;est ce qui permet de retrouver le compte</text>
+<text x="260" y="610" class="s m">(carte téléchargeable en .txt sur /register)</text>
+</svg>
+<figcaption>Création d&#x27;un MULTIPASS</figcaption></figure>
+<p><em>astroportd</em> crée les MULTIPASS lui-même (reprise de <code>make_NOSTRCARD.sh</code> d'<em>Astroport.ONE</em>) :</p>
+<div class="code"><pre><code>astroportd multipass create capitaine@exemple.org --captain   # le PREMIER compte = le Capitaine de la station
+astroportd multipass create ami@exemple.org                   # les suivants suivent automatiquement le Capitaine
+astroportd multipass list
+</code></pre></div>
+<p>Les membres peuvent aussi s'inscrire au navigateur sur la page <strong><code>/register</code></strong> de la station (inscription <strong>ouverte par défaut</strong> ; <code>--max-accounts</code>, <code>--register-per-hour</code>, <code>--no-register</code> pour la régler ou la fermer). Les secrets (SALT, PEPPER, nsec, code PASS, jeton web) ne sont affichés <strong>qu'une seule fois</strong>.</p>
+<p><strong>Une constellation par compte.</strong> Le SALT et le PEPPER sont tirés au hasard (24 caractères). Les crédentiels passés à scrypt sont <code>(SALT, PEPPER_&lt;sha256(UPLANETNAME)[:16]&gt;)</code> : la clé Nostr (sha256 de la graine), la clé Ğ1 et l'identité IPNS en découlent. Le <strong>même</strong> couple SALT/PEPPER donne donc <strong>d'autres clés</strong> dans une autre constellation (vérifié contre le <code>keygen</code> d'Astroport.ONE). Un MULTIPASS est rattaché à <strong>une</strong> constellation : ORIGIN s'il n'y a pas de <code>swarm.key</code>, sinon ẐEN.</p>
+<p><strong>Ce qui est écrit</strong> : <code>~/.zen/game/nostr/&lt;email&gt;/</code> (<code>.secret.nostr</code>, <code>.secret.dunikey</code>, <code>.keyformula</code>, <code>.pass</code>, <code>.multipass.json</code>, en <code>0600</code>, plus <code>HEX</code>, <code>NPUB</code>, <code>G1PUBNOSTR</code>, <code>LANG</code>, <code>NOSTRNS</code>) et trois événements signés par le compte : profil (kind 0), suivi du Capitaine (kind 3), DID W3C (kind 30800).</p>
+<h4>Limites</h4>
+<ul>
+<li><strong>Non repris de <code>make_NOSTRCARD.sh</code></strong> : le découpage SSSS 2-sur-3 de DISCO chiffré vers le Capitaine, les QR codes, l'import de la clé IPNS dans Kubo, l'envoi du zine par email, la ZenCard et la primo-transaction. Retrouver un compte repose sur le SALT/PEPPER remis une fois au titulaire (et sur le <code>nsec</code>).</li>
+<li><strong>Un <code>astroportd serve</code> = une constellation</strong> (une <code>swarm.key</code>, ou aucune). Raccorder la même station à ORIGIN <strong>et</strong> à des UPlanet ẐEN passe par <code>astroportd planes</code> : un seul processus, la même identité Y-Level, un réseau P2P privé, une base, un dossier de comptes et un port <strong>par plan</strong>, chaque MULTIPASS rattaché à son plan (voir le guide, étape 8 bis-i). Routage par nom d'hôte (<code>--front</code>) et <code>--plane</code> sont disponibles ; le miroir entre plans (règles de synchronisation, charte) ne l'est pas encore.</li>
+</ul>
+<hr />
+<h2>4. Y-Level : une clé, quatre identités</h2>
+<figure><svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 590" role="img" aria-labelledby="ylv-t ylv-d" width="520" height="590">
+<title id="ylv-t">Schéma Y-Level : de la clé SSH à quatre identités</title>
+<desc id="ylv-d">Votre clé SSH ed25519 est hachée en sha512, ce qui donne un SALT et un PEPPER. Un étirement scrypt en tire une graine ed25519 unique. De cette graine viennent quatre identités : une clé SSH jumelle, le PeerID IPFS de la station, le portefeuille Ğ1 et l&#x27;identité Nostr. L&#x27;ancienne clé SSH est conservée dans origin.key.</desc>
+<style>
+.ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
+.ill .bg{fill:var(--bg)}.ill .pan{fill:var(--pan);stroke:var(--line);stroke-width:1.5}.ill .pan2{fill:var(--pan2);stroke:var(--acc);stroke-width:2}
+.ill .okp{fill:var(--pan);stroke:var(--ok);stroke-width:2.5}.ill .wnp{fill:var(--pan);stroke:var(--warn);stroke-width:2.5}
+.ill .t{fill:var(--ink);font-size:17px;font-weight:700}.ill .s{fill:var(--mut);font-size:14.5px}.ill .a{fill:var(--acc);font-size:15px;font-weight:700}
+.ill .g{fill:var(--ok);font-size:15px;font-weight:700}.ill .w{fill:var(--warn);font-size:15px;font-weight:700}
+.ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
+.ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
+</style>
+<rect class="bg" width="520" height="590" rx="14"/>
+<text x="260" y="34" class="t m">Le rituel Y-Level : une clé, quatre identités</text>
+<rect class="pan" x="20" y="56" width="480" height="62" rx="10"/>
+<text x="260.0" y="80" class="t m">1 · Votre clé SSH ed25519</text>
+<text x="260.0" y="101" class="s m">le fichier ~/.ssh/id_ed25519</text>
+<path class="ar" d="M260 118 L260 160"/>
+<path class="hd" d="M260 160 L256.1 151.9 L263.9 151.9 Z"/>
+<text x="274" y="144" class="a">empreinte sha512 du fichier</text>
+<rect class="pan" x="20" y="160" width="480" height="62" rx="10"/>
+<text x="260.0" y="184" class="t m">2 · SALT + PEPPER</text>
+<text x="260.0" y="205" class="s m">deux fois 64 caractères hexadécimaux</text>
+<path class="ar" d="M260 222 L260 264"/>
+<path class="hd" d="M260 264 L256.1 255.9 L263.9 255.9 Z"/>
+<text x="274" y="248" class="a">étirement scrypt (N = 4096)</text>
+<rect class="pan2" x="20" y="264" width="480" height="62" rx="10"/>
+<text x="260.0" y="288" class="t m">3 · Une seule graine ed25519</text>
+<text x="260.0" y="309" class="s m">la même racine pour tout ce qui suit</text>
+<rect class="okp" x="20" y="376" width="230" height="66" rx="10"/>
+<text x="135.0" y="400" class="t m">Clé SSH jumelle</text>
+<text x="135.0" y="421" class="s m">accès à la machine</text>
+<rect class="okp" x="270" y="376" width="230" height="66" rx="10"/>
+<text x="385.0" y="400" class="t m">PeerID IPFS</text>
+<text x="385.0" y="421" class="s m">12D3Koo… = IPFSNODEID</text>
+<rect class="okp" x="20" y="456" width="230" height="66" rx="10"/>
+<text x="135.0" y="480" class="t m">Portefeuille Ğ1</text>
+<text x="135.0" y="501" class="s m">même clé publique</text>
+<rect class="okp" x="270" y="456" width="230" height="66" rx="10"/>
+<text x="385.0" y="480" class="t m">Identité Nostr</text>
+<text x="385.0" y="501" class="s m">npub, graine hachée (sha256)</text>
+<path class="ln" d="M260 326 L260 352 M135 352 L385 352"/>
+<path class="ar" d="M135 352 L135 376 M385 352 L385 376"/>
+<path class="ln" d="M135 442 L135 456 M385 442 L385 456"/>
+<text x="260" y="548" class="s m">Ancienne clé SSH conservée : ~/.ssh/origin.key</text>
+<text x="260" y="570" class="g m">SSH = IPFS = Ğ1 : la même clé publique, vérifiable</text>
+</svg>
+<figcaption>Y-Level</figcaption></figure>
+<p>Y-Level est le « rituel de fusion » entre le Capitaine, sa machine et le réseau. Au lieu d'avoir une clé SSH d'un côté et une identité IPFS de l'autre, <strong>les deux sont la même clé ed25519</strong>.</p>
+<h3>La chaîne de dérivation</h3>
+<div class="code"><pre><code>~/.ssh/id_ed25519
+   └─ sha512 du fichier ─→ SECRET1 (64 premiers caractères hex) + SECRET2 (64 suivants)
+        └─ scrypt (SALT = SECRET1, PEPPER = SECRET2, N = 4096, r = 16, p = 1) ─→ graine ed25519 de 32 octets
+             ├─ clé SSH « jumelle »   (cette même clé ed25519, au format OpenSSH)
+             ├─ PeerID IPFS           (12D3Koo… = IPFSNODEID, multihash de la clé publique)
+             ├─ clé publique Ğ1       (base58 de la même clé publique)
+             └─ clé Nostr             (clé privée = sha256 de la graine)
+</code></pre></div>
+<p>Les paramètres scrypt sont ceux de Duniter. La partie « graine → identités » est dans <code>astro-core</code> (<code>kdf.rs</code>), validée par des vecteurs de test produits par <code>tools/keygen</code> d'Astroport.ONE ; le rituel complet est la reprise de <code>Astroport.ONE/tools/Ylevel.sh</code>.</p>
+<p>L'ancienne clé SSH n'est <strong>pas détruite</strong> : elle est rangée en <code>~/.ssh/origin.key</code> et <code>origin.pub</code>.</p>
+<h3>Vérifier le lien</h3>
+<div class="code"><pre><code>astroportd ylevel            # affiche SSH ↔ PeerID IPFS ↔ Ğ1 ↔ Nostr
+astroportd ylevel --verify   # code de sortie 1 si la clé SSH ne correspond pas à l'identité de la station
+</code></pre></div>
+<p>La preuve est arithmétique : la clé publique SSH <code>ssh-ed25519 AAAA…</code> contient les 32 octets de la clé publique ed25519 ; le PeerID <code>12D3Koo…</code> est l'encodage de ces <strong>mêmes</strong> 32 octets. L'outil <code>Astroport.ONE/tools/ssh_to_g1ipfs.py</code> fait la conversion dans les deux sens. Le champ <code>SSHPUB</code> du <code>12345.json</code> d'une station publie cette preuve.</p>
+<h3>À savoir avant de lancer Y-Level</h3>
+<ul>
+<li>Votre <strong>clé SSH publique change</strong>. Mettez la nouvelle à jour partout où l'ancienne est enregistrée.</li>
+<li><code>--no-ssh</code> : n'y touche pas (le lien SSH ↔ IPFS n'est alors pas établi).</li>
+<li><code>--kubo-config</code> : aligne aussi l'identité d'un démon IPFS Kubo local.</li>
+</ul>
+<hr />
+<h2>5. Les Capitaines qui se suivent : individus ↔ Astroport ↔ territoire</h2>
+<p>C'est ce qui relie les constellations entre elles, sans annuaire central.</p>
+<ol>
+<li><strong>Y-Level</strong> donne à chaque station une identité unique, vérifiable : <code>IPFSNODEID</code> = clé SSH.</li>
+<li>Chaque station publie ses rapports économiques (événement Nostr <strong>kind 30850</strong>).</li>
+<li>Un Capitaine <strong>suit</strong> les autres Capitaines qu'il découvre dans ces événements. <em>(Astroport.ONE : <code>DRAGON_p2p_ssh.sh</code> ; règles décrites dans <code>AUTOfollow.rules.md</code> : le Capitaine suit ses passagers, les passagers suivent leur Capitaine, les Capitaines d'un même essaim se suivent.)</em></li>
+<li>Comme la clé SSH d'un Capitaine <strong>se déduit de son <code>IPFSNODEID</code></strong>, ce suivi suffit à savoir quelles clés SSH sont celles de machines de confiance : accès SSH pair à pair, pour le support technique mutuel. <em>(Astroport.ONE.)</em></li>
+<li>Le <strong>transport</strong> de cet accès est celui d'astroportd : un tunnel libp2p <code>/x/&lt;service&gt;-&lt;PeerID&gt;</code> entre les deux stations, sans port ouvert sur la box de l'hôte, avec une garde par flux et un watchdog (<em>astroportd</em> : <code>astro-p2p</code>, <code>src/serve.rs</code>).</li>
+</ol>
+<h3>Ce qu'astroportd fait aujourd'hui</h3>
+<div class="code"><pre><code># L'hôte expose son SSH dans le maillage :
+astroportd serve ... --p2p-listen /ip4/0.0.0.0/tcp/4101 --p2p-expose ssh=127.0.0.1:22 --swarm-key ./swarm.key
+
+# L'autre Capitaine le joint depuis un port local :
+astroportd serve ... --p2p-forward 127.0.0.1:2222=&lt;PeerID de l'hôte&gt;/ssh
+ssh -p 2222 utilisateur@127.0.0.1
+</code></pre></div>
+<ul>
+<li>Tout service exposé (<code>ssh</code>, <code>comfyui</code>, <code>ollama</code> par défaut, plus ceux de <code>--p2p-expose</code>) passe par une garde de flux : la <strong>politique de tunnels du Capitaine</strong> (<code>src/tunnel_policy.rs</code>, Options › Tunnels), mode par service <code>off</code> · <code>listed</code> · <code>friends</code> · <code>swarm</code>. Le SSH est fermé par défaut en ẐEN. Le partage d'un Brain GPU entre Capitaines relève de l'entraide, pas d'un paiement.</li>
+<li><code>astroportd route &lt;service&gt;</code> choisit le meilleur nœud de l'essaim (Power-Score, distance, tirage).</li>
+</ul>
+<h3>Ce qu'astroportd ne fait pas encore</h3>
+<ul>
+<li><strong>Le suivi automatique</strong> des Capitaines (kind 30850 → suivre) et la <strong>mise à jour automatique</strong> de <code>authorized_keys</code> restent dans <em>Astroport.ONE</em>.</li>
+<li>Le tunnel transporte des octets : <strong>c'est <code>sshd</code> qui autorise</strong>. Ne l'ouvrez en réseau <strong>ORIGIN (ouvert à tous)</strong> que si <code>PasswordAuthentication no</code> et que les clés autorisées sont celles que vous avez choisies.</li>
+</ul>
+<hr />
+<h2>6. FaceCloud et partages N¹ / N² (aperçu)</h2>
+<figure><svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 580" role="img" aria-labelledby="fcs-t fcs-d" width="520" height="580">
+<title id="fcs-t">Parcours FaceCloud : photos, visages, albums, partage</title>
+<desc id="fcs-d">Cinq étapes. Les photos sont déposées dans l&#x27;uCloud et chiffrées. Les visages sont détectés et comparés, avec un seuil de 0,82 pour une reconnaissance et une suggestion entre 0,55 et 0,82. Vous nommez et validez dans l&#x27;album. Le partage automatique concerne les amis N1 réciproques, par copie locale ou message chiffré vers leur station. Pour tous les autres, un lien secret dont la clé reste dans le fragment de l&#x27;adresse.</desc>
+<style>
+.ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
+.ill .bg{fill:var(--bg)}.ill .pan{fill:var(--pan);stroke:var(--line);stroke-width:1.5}.ill .pan2{fill:var(--pan2);stroke:var(--acc);stroke-width:2}
+.ill .okp{fill:var(--pan);stroke:var(--ok);stroke-width:2.5}.ill .wnp{fill:var(--pan);stroke:var(--warn);stroke-width:2.5}
+.ill .t{fill:var(--ink);font-size:17px;font-weight:700}.ill .s{fill:var(--mut);font-size:14.5px}.ill .a{fill:var(--acc);font-size:15px;font-weight:700}
+.ill .g{fill:var(--ok);font-size:15px;font-weight:700}.ill .w{fill:var(--warn);font-size:15px;font-weight:700}
+.ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
+.ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
+</style>
+<rect class="bg" width="520" height="580" rx="14"/>
+<text x="260" y="34" class="t m">FaceCloud : de la photo au partage</text>
+<rect class="pan" x="16" y="56" width="488" height="78" rx="10"/>
+<text x="260.0" y="80" class="t m">1 · Vos photos</text>
+<text x="260.0" y="101" class="s m">déposées dans votre uCloud (WebDAV)</text>
+<text x="260.0" y="120" class="s m">chiffrées avant de quitter l&#x27;appareil</text>
+<path class="ar" d="M260 134 L260 164"/>
+<path class="hd" d="M260 164 L256.1 155.9 L263.9 155.9 Z"/>
+<rect class="pan" x="16" y="164" width="488" height="78" rx="10"/>
+<text x="260.0" y="188" class="t m">2 · Les visages</text>
+<text x="260.0" y="209" class="s m">détectés et comparés (cosinus)</text>
+<text x="260.0" y="228" class="s m">≥ 0,82 reconnu · 0,55–0,82 « est-ce X ? »</text>
+<path class="ar" d="M260 242 L260 272"/>
+<path class="hd" d="M260 272 L256.1 263.9 L263.9 263.9 Z"/>
+<rect class="pan" x="16" y="272" width="488" height="78" rx="10"/>
+<text x="260.0" y="296" class="t m">3 · L&#x27;album</text>
+<text x="260.0" y="317" class="s m">vous nommez, vous validez</text>
+<text x="260.0" y="336" class="s m">les inconnus restent « Inconnu_… »</text>
+<path class="ar" d="M260 350 L260 380"/>
+<path class="hd" d="M260 380 L256.1 371.9 L263.9 371.9 Z"/>
+<rect class="okp" x="16" y="380" width="488" height="78" rx="10"/>
+<text x="260.0" y="404" class="t m">4 · Amis N¹ (réciproques)</text>
+<text x="260.0" y="425" class="s m">copie dans /Partages/De_&lt;nom&gt;/</text>
+<text x="260.0" y="444" class="s m">ou message chiffré vers l&#x27;autre station</text>
+<path class="ar" d="M260 458 L260 488"/>
+<path class="hd" d="M260 488 L256.1 479.9 L263.9 479.9 Z"/>
+<rect class="wnp" x="16" y="488" width="488" height="78" rx="10"/>
+<text x="260.0" y="512" class="t m">5 · Lien secret</text>
+<text x="260.0" y="533" class="s m">/s/&lt;slug&gt;#clé · 1 h à 30 jours</text>
+<text x="260.0" y="552" class="s m">la clé ne quitte jamais le navigateur</text>
+</svg>
+<figcaption>FaceCloud</figcaption></figure>
+<ul>
+<li><strong>N¹</strong> : les personnes que vous suivez <em>et</em> qui vous suivent (amis réciproques). <strong>N²</strong> : les amis de vos amis.</li>
+<li>FaceCloud <strong>partage automatiquement</strong> les photos d'un ami reconnu avec cet ami s'il est du cercle N¹ réciproque : copie dans <code>/Partages/De_&lt;nom&gt;/</code> s'il est hébergé sur la même station, sinon message de fichier chiffré (NIP-17 emballé en NIP-59) vers sa station (<em>astroportd</em> : <code>astro-facecloud</code>, <code>pipeline.rs</code>).</li>
+<li>Pour le reste du monde, un <strong>lien secret</strong> <code>/s/&lt;slug&gt;#clé</code> : la clé est dans le fragment de l'adresse, que le navigateur n'envoie jamais au serveur (<em>astroportd</em> : <code>astro-dav</code>, <code>share.rs</code>).</li>
+<li>Les <strong>vidéos</strong> (copie privée) ne sont livrées qu'à l'auteur et à son N¹, jamais à tout le cercle N².</li>
+<li>Le relai Nostr réserve ses contenus privés au cercle N¹/N² authentifié (NIP-42).</li>
+</ul>
+<p>La reconnaissance faciale passe par un service HTTP (<code>--face-engine</code>) ou par une inférence locale (<code>--face-models</code>, voir le guide) ; aucun modèle n'est embarqué dans le binaire.</p>
+<h3>Synchronisation N¹/N² et réplication</h3>
+<p>Une station en marche tire en tâche de fond (<code>--crawl-every</code>, 900 s par défaut ; <code>--no-crawl</code> pour la couper) les profils et événements publics de ses membres, de leurs amis (N¹) et des amis de leurs amis (N²), depuis les relais des autres stations de la constellation. Ces relais se joignent <strong>par le maillage P2P</strong> (le tunnel <code>/x/strfry-&lt;PeerID&gt;</code>, le même que celui de DRAGON) : aucun port public n'est nécessaire. Quand un pair annonce aussi une adresse publique (<code>myRELAY</code> dans son <code>12345.json</code>), elle ne sert que de <strong>repli</strong> après un échec de connexion, et l'écran « Réplication » dit par quelle voie chaque station a été jointe.</p>
+<p>L'écran <strong>Réplication</strong> de l'interface montre, pour vos derniers événements et vos derniers fichiers, <strong>où</strong> ils existent aussi (quelles stations) et <strong>par qui</strong> (vos proches, vos proches de proches, ou d'autres stations). Une station qui ne répond pas est marquée « injoignable », jamais comptée comme « 0 copie ». La mesure des fichiers demande <code>--kubo</code> (recherche des fournisseurs d'un CID).</p>
+<hr />
+<h2>7. Résumé : qui fait quoi</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Fonction</th>
+<th style="text-align:center">astroportd 0.5.2-beta</th>
+<th style="text-align:center">Astroport.ONE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Rituel Y-Level (SSH → IPFS → Ğ1 → Nostr)</td>
+<td style="text-align:center">✔ <code>init</code>, <code>ylevel</code></td>
+<td style="text-align:center">✔ <code>Ylevel.sh</code></td>
+</tr>
+<tr>
+<td>Réseau privé <code>swarm.key</code> (ẐEN), réseau ouvert (ORIGIN)</td>
+<td style="text-align:center">✔</td>
+<td style="text-align:center">✔</td>
+</tr>
+<tr>
+<td>Tunnels P2P entre stations (dont SSH)</td>
+<td style="text-align:center">✔</td>
+<td style="text-align:center">✔ <code>DRAGON_p2p_ssh.sh</code></td>
+</tr>
+<tr>
+<td>Suivi automatique entre Capitaines (kind 30850)</td>
+<td style="text-align:center">—</td>
+<td style="text-align:center">✔</td>
+</tr>
+<tr>
+<td>Création d'un MULTIPASS</td>
+<td style="text-align:center">✔ <code>multipass create</code>, page <code>/register</code> (version allégée)</td>
+<td style="text-align:center">✔ <code>make_NOSTRCARD.sh</code> (complet : SSSS, QR, zine, ZenCard)</td>
+</tr>
+<tr>
+<td>uCloud chiffré, FaceCloud, liens secrets</td>
+<td style="text-align:center">✔</td>
+<td style="text-align:center">✔ (version bash/Python)</td>
+</tr>
+<tr>
+<td>Relai Nostr avec pare-feu social N¹/N²</td>
+<td style="text-align:center">✔ intégré</td>
+<td style="text-align:center">✔ strfry + filtres NIP-101</td>
+</tr>
+<tr>
+<td>Économie Ẑen (3×1/3, Love Ledger)</td>
+<td style="text-align:center">✔</td>
+<td style="text-align:center">✔</td>
+</tr>
+</tbody>
+</table></div>
+
+<p><a href="index.html">← Retour au guide</a></p>
+</main>
+</body>
+</html>

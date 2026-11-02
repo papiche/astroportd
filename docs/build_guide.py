@@ -192,10 +192,35 @@ def build():
     return new_guide, index
 
 
+# Documents annexes publiés en HTML (GitHub Pages sert les .md bruts) : même feuille de style que le guide.
+PAGES = ["CONSTELLATIONS", "MACOS"]
+LINKED = {**{f"{n}.md": f"{n}.html" for n in PAGES}, "GUIDE.md": "index.html"}
+
+
+def link_md(out: str) -> str:
+    """Les liens vers un document publié en HTML pointent sur sa version HTML."""
+    return re.sub(r'href="([A-Za-z_]+\.md)(#[^"]*)?"', lambda m: f'href="{LINKED.get(m.group(1), m.group(1))}{m.group(2) or ""}"', out)
+
+
+def build_page(name: str) -> str:
+    text = (DOCS / f"{name}.md").read_text(encoding="utf-8")
+    old = INDEX.read_text(encoding="utf-8")
+    style = old[old.index("<style>"): old.index("</style>") + len("</style>")]
+    style += "\n<style>.pg{max-width:60rem;margin:0 auto;padding:1rem 16px 3rem}</style>"
+    m = re.match(r"#\s+(.*)", text)
+    title = m.group(1).strip() if m else name
+    body = render(re.sub(r"^#\s+.*\n", "", text, count=1))
+    back = '<p><a href="index.html">← Retour au guide</a></p>'
+    return link_md(f'<!doctype html>\n<html lang="fr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>{html.escape(strip_tags(title))} — astroportd</title>\n{style}\n</head>\n<body>\n<main class="pg">\n{back}\n<h1>{md.renderInline(title)}</h1>\n{body}\n{back}\n</main>\n</body>\n</html>\n')
+
+
 def main():
     new_guide, index = build()
+    index = link_md(index)
+    pages = {n: build_page(n) for n in PAGES}
     if "--check" in sys.argv:
-        stale = [n for n, p, v in (("GUIDE.md", GUIDE, new_guide), ("index.html", INDEX, index)) if p.read_text(encoding="utf-8") != v]
+        targets = [("GUIDE.md", GUIDE, new_guide), ("index.html", INDEX, index)] + [(f"{n}.html", DOCS / f"{n}.html", v) for n, v in pages.items()]
+        stale = [n for n, p, v in targets if not p.exists() or p.read_text(encoding="utf-8") != v]
         if stale:
             print("périmé : " + ", ".join(stale) + " — relancez python3 docs/build_guide.py", file=sys.stderr)
             sys.exit(1)
@@ -203,6 +228,8 @@ def main():
         return
     GUIDE.write_text(new_guide, encoding="utf-8")
     INDEX.write_text(index, encoding="utf-8")
+    for n, v in pages.items():
+        (DOCS / f"{n}.html").write_text(v, encoding="utf-8")
     print(f"docs/index.html et le sommaire de GUIDE.md reconstruits ({len(parse_sections(new_guide))} sections, version {version()})")
 
 

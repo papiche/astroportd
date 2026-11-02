@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>astroportd sur macOS — astroportd</title>
+<style>
+:root{--bg:#ffffff;--ink:#1b1f2a;--mut:#454c61;--pan:#f1f4fb;--line:#c3c9dc;--acc:#2a46c8;--accink:#ffffff;--code:#10131c;--codeink:#e8ebf4;--note:#e7efff;--warn:#fff0e0;--warnb:#8f3b06;--ok:#14663a}
+@media (prefers-color-scheme:dark){:root{--bg:#12151f;--ink:#eef0f8;--mut:#bcc3da;--pan:#1b2030;--line:#3a4260;--acc:#9bb0ff;--accink:#10131c;--code:#0a0c13;--codeink:#e8ebf4;--note:#1d2744;--warn:#3a2414;--warnb:#ffb98a;--ok:#7fdca6}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:1.0625rem/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--acc);text-underline-offset:3px}a:focus-visible,summary:focus-visible,button:focus-visible{outline:3px solid var(--acc);outline-offset:3px;border-radius:4px}
+.skip{position:absolute;left:16px;top:-60px;background:var(--acc);color:var(--accink);padding:10px 14px;border-radius:8px;z-index:9;text-decoration:none}.skip:focus{top:12px}
+header.top,main,footer{max-width:68rem;margin:0 auto;padding:0 16px}
+header.top{padding-top:28px;padding-bottom:8px}
+h1{font-size:clamp(1.7rem,5vw,2.6rem);line-height:1.15;margin:.2em 0}
+.lead{font-size:1.2rem;color:var(--mut);max-width:46rem}
+.badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 12px;font-size:.9rem;color:var(--mut)}
+nav.toc{background:var(--pan);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:22px 0}
+nav.toc h2{font-size:1rem;margin:0 0 6px}nav.toc ol{margin:0;padding-left:1.3em;columns:2 16rem}nav.toc li{margin:2px 0}
+section{margin:44px 0;padding-top:8px;border-top:1px solid var(--line)}
+h2{font-size:clamp(1.35rem,3.6vw,1.8rem);line-height:1.25;margin:.6em 0 .4em}
+.num{display:inline-grid;place-items:center;min-width:2.1rem;height:2.1rem;padding:0 .5rem;border-radius:999px;background:var(--acc);color:var(--accink);font-weight:700;font-size:1.05rem;margin-right:.35em;vertical-align:.08em}
+h3{font-size:1.05rem;margin:0 0 .5em;color:var(--acc)}
+figure{margin:18px auto;max-width:34rem}figure svg{display:block;max-width:100%;height:auto}figcaption{font-size:.92rem;color:var(--mut);text-align:center;margin-top:6px}
+.cols{display:grid;gap:16px;grid-template-columns:1fr;margin-top:14px}
+@media (min-width:56rem){.cols{grid-template-columns:1fr 1fr}}
+.col{background:var(--pan);border:1px solid var(--line);border-radius:14px;padding:14px 16px;min-width:0}
+.col>*:last-child{margin-bottom:0}
+.col ul,.col ol{padding-left:1.25em}
+.div,.code{position:relative}
+pre{margin:.6em 0;background:var(--code);color:var(--codeink);border-radius:10px;padding:12px 5.2rem 12px 14px;overflow-x:auto;font-size:.92rem;line-height:1.5;-webkit-overflow-scrolling:touch}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
+p code,li code{background:rgba(127,127,160,.18);padding:1px 6px;border-radius:5px;overflow-wrap:anywhere}
+.copy{position:absolute;top:10px;right:8px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:3px 10px;font:inherit;font-size:.82rem;cursor:pointer}
+.box{border-radius:10px;padding:10px 14px;margin:.8em 0;border:1px solid var(--line)}
+.box .lbl{font-weight:700;margin-right:.4em}
+.note{background:var(--note)}.warn{background:var(--warn);border-color:var(--warnb)}.warn .lbl{color:var(--warnb)}
+
+.ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
+.ill .bg{fill:var(--bg)}.ill .pan{fill:var(--pan);stroke:var(--line);stroke-width:1.5}.ill .pan2{fill:var(--pan2);stroke:var(--acc);stroke-width:2}
+.ill .okp{fill:var(--pan);stroke:var(--ok);stroke-width:2.5}.ill .wnp{fill:var(--pan);stroke:var(--warn);stroke-width:2.5}
+.ill .t{fill:var(--ink);font-size:17px;font-weight:700}.ill .s{fill:var(--mut);font-size:14.5px}.ill .a{fill:var(--acc);font-size:15px;font-weight:700}
+.ill .g{fill:var(--ok);font-size:15px;font-weight:700}.ill .w{fill:var(--warn);font-size:15px;font-weight:700}
+.ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
+.ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
+
+footer{padding:28px 16px 48px;color:var(--mut);border-top:1px solid var(--line);margin-top:44px;font-size:.95rem}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{.copy,.skip{display:none}.col{break-inside:avoid}}
+.tw{overflow-x:auto}table{border-collapse:collapse;margin:.8em 0;font-size:.95rem}th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}th{background:var(--pan)}
+a{overflow-wrap:anywhere}
+@media (min-width:56rem){.cols.one{grid-template-columns:1fr}}
+figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:10px}
+</style>
+<style>.pg{max-width:60rem;margin:0 auto;padding:1rem 16px 3rem}</style>
+</head>
+<body>
+<main class="pg">
+<p><a href="index.html">← Retour au guide</a></p>
+<h1>astroportd sur macOS</h1>
+<div class="box note"><p><span class="lbl">Statut : bêta</span> Le code est portable (POSIX, <code>rustix</code>, aucun <code>/proc</code> obligatoire) et la détection du matériel
+connaît macOS, mais <strong>aucune compilation sur un Mac n'avait été éprouvée</strong> quand ce document a été écrit. La CI macOS
+(<code>.github/workflows/ci.yml</code>, tâche <code>macos</code>) et les archives <code>*-apple-darwin</code> sont « au mieux » : si elles échouent,
+ouvrez un ticket avec la sortie de <code>cargo build</code>.</p></div>
+<h2>Pourquoi un Mac</h2>
+<p>Un Mac Apple Silicon (M1 à M4) partage sa <strong>mémoire unifiée</strong> entre le processeur et le GPU (Metal) : 16 à 32 Go y
+servent de VRAM à Ollama et à ComfyUI. C'est un bon <strong>Brain GPU</strong> pour une constellation.</p>
+<h2>Ce que fait la station</h2>
+<ul>
+<li><strong>Power-Score</strong> : la RAM vient de <code>sysctl -n hw.memsize</code> (pas de <code>/proc/meminfo</code>). Sur Apple Silicon sans carte NVIDIA,
+la VRAM est comptée comme <strong>66 % de la mémoire unifiée</strong> (le système garde le reste) ; un Mac de 16 Go vaut donc
+10 Go de VRAM, soit un Power-Score de <code>10×4 + cœurs×2 + 16×0,5</code>. <code>ASTRO_VRAM_GB=&lt;Go&gt;</code> remplace cette estimation.
+Ce 66 % est un choix prudent, <strong>non mesuré</strong> : réglez <code>ASTRO_VRAM_GB</code> d'après ce que vos modèles occupent vraiment.</li>
+<li><strong>Mac Intel</strong> : pas de mémoire unifiée, VRAM à 0 sauf <code>ASTRO_VRAM_GB</code>.</li>
+<li><strong>Reconnaissance des visages locale</strong> : <code>libonnxruntime.dylib</code> est cherchée dans <code>ORT_DYLIB_PATH</code>, puis
+<code>~/.zen/astroportd/lib</code>, <code>/opt/homebrew/lib</code>, <code>/usr/local/lib</code>.</li>
+</ul>
+<h2>Installer</h2>
+<div class="code"><pre><code>xcode-select --install                    # compilateur C (SQLite, libwebp sont compilés depuis leurs sources)
+brew install rustup ffmpeg pkg-config     # ffmpeg : pipeline média ; puis `rustup default stable`
+cargo build --release --features onnx     # ou sans --features onnx : Brain HTTP seulement
+./target/release/astroportd init          # rituel Y-Level, choix ORIGIN / ẐEN
+</code></pre></div>
+<p><code>./build-all.sh --targets aarch64-apple-darwin</code> produit l'archive <code>dist/astroportd-&lt;version&gt;-aarch64-apple-darwin.tar.gz</code>.</p>
+<p>Pour l'inférence faciale locale : <code>brew install onnxruntime</code> puis, si besoin,
+<code>export ORT_DYLIB_PATH=/opt/homebrew/lib/libonnxruntime.dylib</code>, et <code>astroportd face-check</code>.</p>
+<h2>Partager Ollama et ComfyUI</h2>
+<div class="code"><pre><code>brew install ollama &amp;&amp; ollama serve &amp;          # Ollama sur Metal, port 11434
+# ComfyUI : installation PyTorch/MPS, port 8188
+./target/release/astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs \
+    --p2p-listen /ip4/0.0.0.0/tcp/4101
+</code></pre></div>
+<p>Ollama (<code>127.0.0.1:11434</code>), ComfyUI (<code>127.0.0.1:8188</code>) et SSH (<code>127.0.0.1:22</code>) sont offerts au maillage <strong>par défaut</strong>
+mais <strong>fermés</strong> : le Capitaine choisit qui les ouvre dans <em>Options › Tunnels</em> (voir le GUIDE, étape tunnels). Sur macOS,
+activez <em>Réglages Système › Partage › Session à distance</em> pour que le SSH existe.</p>
+<h2>Démarrer au login (launchd)</h2>
+<p><code>~/Library/LaunchAgents/org.uplanet.astroportd.plist</code> (remplacez <code>VOTRE_USER</code>) :</p>
+<div class="code"><pre><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;!DOCTYPE plist PUBLIC &quot;-//Apple//DTD PLIST 1.0//EN&quot; &quot;http://www.apple.com/DTDs/PropertyList-1.0.dtd&quot;&gt;
+&lt;plist version=&quot;1.0&quot;&gt;&lt;dict&gt;
+  &lt;key&gt;Label&lt;/key&gt;&lt;string&gt;org.uplanet.astroportd&lt;/string&gt;
+  &lt;key&gt;ProgramArguments&lt;/key&gt;&lt;array&gt;
+    &lt;string&gt;/Users/VOTRE_USER/astroportd/target/release/astroportd&lt;/string&gt;&lt;string&gt;serve&lt;/string&gt;
+    &lt;string&gt;--db&lt;/string&gt;&lt;string&gt;/Users/VOTRE_USER/.zen/astroportd/uplanet.db&lt;/string&gt;
+    &lt;string&gt;--blobs&lt;/string&gt;&lt;string&gt;/Users/VOTRE_USER/.zen/astroportd/blobs&lt;/string&gt;
+    &lt;string&gt;--p2p-listen&lt;/string&gt;&lt;string&gt;/ip4/0.0.0.0/tcp/4101&lt;/string&gt;
+  &lt;/array&gt;
+  &lt;key&gt;RunAtLoad&lt;/key&gt;&lt;true/&gt;&lt;key&gt;KeepAlive&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;StandardOutPath&lt;/key&gt;&lt;string&gt;/Users/VOTRE_USER/.zen/astroportd/astroportd.log&lt;/string&gt;
+  &lt;key&gt;StandardErrorPath&lt;/key&gt;&lt;string&gt;/Users/VOTRE_USER/.zen/astroportd/astroportd.log&lt;/string&gt;
+&lt;/dict&gt;&lt;/plist&gt;
+</code></pre></div>
+<p><code>launchctl load ~/Library/LaunchAgents/org.uplanet.astroportd.plist</code>. Pour que le Mac ne s'endorme pas :
+<code>sudo pmset -a sleep 0</code> (ou <em>Réglages Système › Batterie / Économie d'énergie</em>). <code>astroportd init --systemd</code> n'écrit
+que l'unité Linux.</p>
+<h2>Limites connues</h2>
+<ul>
+<li>Aucune compilation macOS éprouvée à ce jour (voir l'état de la CI).</li>
+<li><code>init --systemd</code> ne s'applique pas ; pas d'unité <code>launchd</code> générée.</li>
+<li>Pas de Brain GPU « automatique » : le Power-Score est une estimation, pas une mesure de Metal.</li>
+</ul>
+
+<p><a href="index.html">← Retour au guide</a></p>
+</main>
+</body>
+</html>
