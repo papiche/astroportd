@@ -35,6 +35,8 @@ export default async function home(root, K) {
       s.left ? h('section', { class: 'card' }, h('h2', {}, t('Bien démarrer'), h('small', { class: 'muted' }, ` · ${s.list.length - s.left}/${s.list.length}`)),
         h('progress', { max: s.list.length, value: s.list.length - s.left, 'aria-label': t('Étapes terminées') }),
         h('ul', { class: 'hm-steps' }, s.list.map(x => h('li', { class: x.done ? 'done' : '' }, h('span', { 'aria-hidden': 'true' }, x.done ? '✅' : '⬜'), h('div', {}, x.done ? h('span', {}, t(x.title)) : h('a', { href: x.href }, h('strong', {}, t(x.title))), x.done ? null : h('p', { class: 'muted' }, t(x.why))))))) : null,
+      me.billet_issuer ? h('p', { class: 'muted' }, h('a', { href: '#/billets' }, t('Mes Ğ1Billets : créer et suivre des billets papier'))) : null,
+      h('p', { class: 'muted' }, h('a', { href: '#/constellation' }, t('Ma UPlanet : portefeuilles de la coopérative, charte et économie en mouvement'))),
       h('p', { class: 'muted' }, h('a', { href: '#/chiffres' }, t('Mes chiffres : solde, loyer, espace utilisé')))].filter(Boolean));
   };
   const link = h('link', { rel: 'stylesheet', href: '/ui/m-home.css' }); document.head.append(link); K.cleanup(() => link.remove());

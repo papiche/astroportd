@@ -50,7 +50,7 @@ pub fn embedded_bytes() -> usize {
 /// Fichiers chargés à la demande : la page d'inscription (`register.*`, pour les seuls nouveaux venus) et les écrans
 /// lourds (`m-*.js` / `m-*.css`, tri des visages, réplication) n'entrent pas dans le budget de la coque ; ils ont le leur.
 fn is_lazy(path: &str) -> bool {
-    path.starts_with("look.") || path.starts_with("register.") || path.starts_with("restore.") || path.starts_with("invite.") || path.starts_with("claim.") || path.starts_with("m-") || path.starts_with("console.") || path.starts_with("xterm")
+    path.starts_with("look.") || path.starts_with("register.") || path.starts_with("restore.") || path.starts_with("invite.") || path.starts_with("claim.") || path.starts_with("scan") || path.starts_with("jsqr.") || path.starts_with("m-") || path.starts_with("console.") || path.starts_with("xterm")
 }
 
 /// Fichiers de la coque de l'application (tout sauf les fichiers chargés à la demande).
@@ -244,9 +244,16 @@ async fn claim_page(headers: HeaderMap) -> Response {
     r
 }
 
+/// Page où l'on vérifie et encaisse un Ğ1Billet (`/scan`, avec ou sans `?g1pub=`). Jamais indexée.
+async fn scan_page(headers: HeaderMap) -> Response {
+    let mut r = asset("scan.html", &headers);
+    r.headers_mut().insert(header::HeaderName::from_static("x-robots-tag"), HeaderValue::from_static("noindex, nofollow, noarchive"));
+    r
+}
+
 /// Routes `/ui/{fichier}`, `/register` (inscription d'un MULTIPASS), `/restore` (rétablir son compte) et `/i/{jeton}` (invitation à recevoir des photos).
 pub fn static_router() -> Router {
-    Router::new().route("/ui/{*path}", get(static_file)).route("/register", get(register_page)).route("/restore", get(restore_page)).route("/i/{token}", get(invite_page)).route("/claim", get(claim_page))
+    Router::new().route("/ui/{*path}", get(static_file)).route("/register", get(register_page)).route("/restore", get(restore_page)).route("/i/{token}", get(invite_page)).route("/claim", get(claim_page)).route("/scan", get(scan_page))
 }
 
 #[cfg(test)]
@@ -303,6 +310,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_scan_page_is_public_not_indexed_and_loads_the_qr_reader_on_demand() {
+        let (s, html, h) = call(Some("text/html"), false, "/scan").await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(html.contains("/ui/scan.js") && html.contains("id=\"video\""));
+        assert!(!html.contains("jsqr"), "le décodeur n'est pas chargé d'avance");
+        assert!(h["x-robots-tag"].to_str().unwrap().contains("noindex"));
+        let (_, js, _) = call(None, false, "/ui/scan.js").await;
+        assert!(js.contains("BarcodeDetector") && js.contains("/ui/jsqr.min.js"));
+        assert_eq!(call(None, false, "/ui/jsqr.min.js").await.0, StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn the_pwa_files_are_served_with_the_right_types_and_scope() {
         let (s, body, h) = call(None, false, "/ui/manifest.webmanifest").await;
         assert_eq!((s, h[header::CONTENT_TYPE].to_str().unwrap()), (StatusCode::OK, "application/manifest+json"));
@@ -333,11 +352,21 @@ mod tests {
         let (mraw, mgz) = module_bytes();
         eprintln!("écrans à la demande : {mraw} o bruts, {mgz} o en gzip");
         // Le cumul des écrans (qu'un visiteur ne télécharge qu'à la demande) est borné, et chaque écran garde sa propre limite.
-        assert!(mraw > 0 && mraw < 224 * 1024 && mgz < 86 * 1024, "écrans à la demande : {mraw} o bruts (budget 224 Ko), {mgz} o en gzip (budget 86 Ko, 80 Ko avant l'accueil des membres, 76 Ko avant le cockpit du Capitaine ; 64 Ko avant le carnet d'adresses, 56 Ko avant la carte et le fil du temps ; 128 Ko et 48 Ko avant les écrans Sources et Ranger)");
+        assert!(mraw > 0 && mraw < 280 * 1024 && mgz < 108 * 1024, "écrans à la demande : {mraw} o bruts (budget 280 Ko, 260 Ko avant le site public, 240 Ko avant les Ğ1Billets, 224 Ko avant la vision de la constellation), {mgz} o en gzip (budget 108 Ko, 100 Ko avant le site public, 92 Ko avant les Ğ1Billets, 86 Ko avant la vision de la constellation, 80 Ko avant l'accueil des membres, 76 Ko avant le cockpit du Capitaine ; 64 Ko avant le carnet d'adresses, 56 Ko avant la carte et le fil du temps ; 128 Ko et 48 Ko avant les écrans Sources et Ranger)");
         for (name, f) in module_files().filter(|(p, _)| !p.starts_with("m-lang-")) {
             let gz = compressed(&name, Encoding::Gzip, &f.data).len();
             assert!(gz < 12 * 1024, "{name} : {gz} o en gzip, au-delà des 12 Ko par écran");
         }
+        // Page publique /scan : sa feuille, ses règles et son script, plus le décodeur de QR (chargé seulement si le navigateur n'a pas
+        // BarcodeDetector). Hors budget de la coque : un visiteur ne les télécharge qu'en venant encaisser un billet.
+        let scan = |pred: fn(&str) -> bool| Assets::iter().filter(|p| pred(p)).filter_map(|p| Assets::get(&p).map(|f| (p.into_owned(), f))).fold((0, 0), |(r, g), (p, f)| (r + f.data.len(), g + compressed(&p, Encoding::Gzip, &f.data).len()));
+        // Un visiteur ne télécharge qu'une langue : on compte la page (français compris) plus la plus lourde des autres.
+        let (page_raw, page_gz) = scan(|p| p.starts_with("scan") && !p.starts_with("scan-lang-"));
+        let lang = ["scan-lang-en.js", "scan-lang-es.js"].map(|n| Assets::get(n).map_or((0, 0), |f| (f.data.len(), compressed(n, Encoding::Gzip, &f.data).len())));
+        let (page_raw, page_gz) = (page_raw + lang.iter().map(|l| l.0).max().unwrap_or(0), page_gz + lang.iter().map(|l| l.1).max().unwrap_or(0));
+        let (qr_raw, qr_gz) = scan(|p| p.starts_with("jsqr."));
+        assert!(page_raw > 0 && page_raw < 34 * 1024 && page_gz < 13 * 1024, "page /scan : {page_raw} o bruts (budget 34 Ko), {page_gz} o en gzip (budget 13 Ko)");
+        assert!(qr_raw > 0 && qr_raw < 135 * 1024 && qr_gz < 50 * 1024, "décodeur QR : {qr_raw} o bruts (budget 135 Ko), {qr_gz} o en gzip (budget 50 Ko)");
         assert!(br <= gz && gz < size / 2, "la compression doit diviser par plus de deux : brut {size}, gzip {gz}, br {br}");
     }
 

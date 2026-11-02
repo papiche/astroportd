@@ -3,7 +3,7 @@
 use super::*;
 
 /// Ajoute à `ui` les fonctions qui s'appuient sur la base, le publieur d'événements, le partage et la sauvegarde.
-pub(super) fn wire<B: astro_dav::BlobStore>(mut ui: StationUi<B>, db: &Arc<Db>, event_publisher: &Arc<EventPublisher>, uplanet_name: &str, sharing: &Arc<astroportd::sharing::Sharing<astroportd::mesh_outbox::MeshOutbox>>, backup: &Arc<Backup>) -> StationUi<B> {
+pub(super) fn wire<B: astro_dav::BlobStore>(mut ui: StationUi<B>, db: &Arc<Db>, event_publisher: &Arc<EventPublisher>, uplanet_name: &str, sharing: &Arc<astroportd::sharing::Sharing<astroportd::mesh_outbox::MeshOutbox>>, backup: &Arc<Backup>, constellation: &Arc<astroportd::constellation::Constellation<RpcPool<SubxtConnector>>>) -> StationUi<B> {
     let (for_coop_get, for_coop_set) = (db.clone(), (db.clone(), event_publisher.clone()));
     let coop_name = uplanet_name.to_owned();
     let coop_name2 = uplanet_name.to_owned();
@@ -19,6 +19,23 @@ pub(super) fn wire<B: astro_dav::BlobStore>(mut ui: StationUi<B>, db: &Arc<Db>, 
         Box::pin(async move { astroportd::coop_config::save(&db, &publisher, &name, &patch).await })
     });
     ui = ui.with_coop(coop_get, coop_set);
+    let view = constellation.clone();
+    let accept = constellation.clone();
+    ui = ui.with_constellation(
+        Arc::new(move |viewer, ledger| {
+            let c = view.clone();
+            Box::pin(async move {
+                match ledger {
+                    None => c.overview(&viewer).await,
+                    Some((since, limit)) => c.ledger(since, limit).await,
+                }
+            })
+        }),
+        Arc::new(move |captain, sha256| {
+            let a = accept.clone();
+            Box::pin(async move { a.accept_charter(&captain, &sha256).await })
+        }),
+    );
     if let Some(home) = std::env::var_os("HOME") {
         ui = ui.with_planes_home(PathBuf::from(home));
     }

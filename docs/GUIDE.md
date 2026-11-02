@@ -1,8 +1,8 @@
 # Guide pas à pas : démarrer sa station astroportd
 
-> Version texte du [guide illustré](index.html). Préversion **0.5.2-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
+> Version texte du [guide illustré](index.html). Préversion **0.5.3-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
 
-**Sommaire** : [0. Avant de commencer](#etape-0) · [1. Installer astroportd](#etape-1) · [2. Activer Y-Level](#etape-2) · [3. Choisir sa constellation](#etape-3) · [4. Démarrer la station](#etape-4) · [5. Créer mon MULTIPASS](#etape-5) · [6. Vérifier que tout va bien](#etape-6) · [7. Entrer dans l'interface web](#etape-7) · [7 bis. Le cockpit du Capitaine](#etape-7b) · [8. FaceCloud](#etape-8) · [8 bis. Contacts, agenda (CardDAV, CalDAV) et Mon compte](#etape-8b) · [8 bis-b. Mon coffre de mots de passe (KeePass)](#etape-8bis-b) · [8 bis-c. Reprendre son uCloud d'Astroport.ONE](#etape-8bis-c) · [8 bis-d. Remplir son uCloud depuis un autre serveur (Nextcloud, ownCloud…)](#etape-8bis-d) · [8 bis-e. Ranger son uCloud par type](#etape-8bis-e) · [8 bis-f. Un jeton par appareil (téléphones, tablettes, ordinateurs)](#etape-8bis-f) · [8 bis-g. Hébergement facturé, compte technique et règlement hebdomadaire](#etape-8bis-g) · [8 bis-h. Plusieurs astroportd sur une machine (ORIGIN + ZEN*)](#etape-8bis-h) · [8 bis-i. Plusieurs UPlanet dans un seul processus](#etape-8bis-i) · [8 bis-j. Messages privés et une personne dans plusieurs UPlanet](#etape-8bis-j) · [8 ter. Options du Capitaine](#etape-8c) · [8 quater. Inviter quelqu'un à recevoir des photos](#etape-8quater) · [8 quinquies. Sans email, connexion par PASS, signature déléguée](#etape-8quinquies) · [9. Relier sa station aux autres Capitaines](#etape-9) · [9 bis. Une adresse pour chaque station et chaque MULTIPASS (DNSLink)](#etape-9b) · [10. En cas de problème](#etape-10) · [Sur un smartphone](#sur-un-smartphone)
+**Sommaire** : [0. Avant de commencer](#etape-0) · [1. Installer astroportd](#etape-1) · [2. Activer Y-Level](#etape-2) · [3. Choisir sa constellation](#etape-3) · [4. Démarrer la station](#etape-4) · [5. Créer mon MULTIPASS](#etape-5) · [6. Vérifier que tout va bien](#etape-6) · [7. Entrer dans l'interface web](#etape-7) · [7 bis. Le cockpit du Capitaine](#etape-7b) · [8. FaceCloud](#etape-8) · [8 bis. Contacts, agenda (CardDAV, CalDAV) et Mon compte](#etape-8b) · [8 bis-b. Mon coffre de mots de passe (KeePass)](#etape-8bis-b) · [8 bis-c. Reprendre son uCloud d'Astroport.ONE](#etape-8bis-c) · [8 bis-d. Remplir son uCloud depuis un autre serveur (Nextcloud, ownCloud…)](#etape-8bis-d) · [8 bis-e. Ranger son uCloud par type](#etape-8bis-e) · [8 bis-f. Un jeton par appareil (téléphones, tablettes, ordinateurs)](#etape-8bis-f) · [8 bis-g. Hébergement facturé, compte technique et règlement hebdomadaire](#etape-8bis-g) · [8 bis-h. Plusieurs astroportd sur une machine (ORIGIN + ZEN*)](#etape-8bis-h) · [8 bis-i. Plusieurs UPlanet dans un seul processus](#etape-8bis-i) · [8 bis-j. Messages privés et une personne dans plusieurs UPlanet](#etape-8bis-j) · [8 bis-k. Ma UPlanet](#etape-8c) · [8 bis-l. Ğ1Billet](#etape-8bis-l) · [8 bis-m. Mon site public](#etape-8bis-m) · [8 ter. Options du Capitaine](#etape-8ter) · [8 quater. Inviter quelqu'un à recevoir des photos](#etape-8quater) · [8 quinquies. Sans email, connexion par PASS, signature déléguée](#etape-8quinquies) · [9. Relier sa station aux autres Capitaines](#etape-9) · [9 bis. Une adresse pour chaque station et chaque MULTIPASS (DNSLink)](#etape-9b) · [10. En cas de problème](#etape-10) · [Sur un smartphone](#sur-un-smartphone)
 
 <a id="etape-0"></a>
 
@@ -33,7 +33,7 @@ date       # l'année doit être 2026 ou plus
 
 Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.
 
-> **À savoir.** astroportd est en **préversion 0.5.2-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
+> **À savoir.** astroportd est en **préversion 0.5.3-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
 
 Vous aurez aussi besoin d'un compte **MULTIPASS** (votre identité Nostr) : astroportd le crée pour vous à l'étape 5.
 
@@ -49,7 +49,7 @@ Le plus simple : l'installeur. Il choisit le bon fichier pour votre machine et *
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 ```
 
-Options utiles : `--version v0.5.2-beta`, `--static` (binaire statique, x86_64 et aarch64), `--prefix DIR`, `--no-init`, `--yes`. Ensuite :
+Options utiles : `--version v0.5.3-beta`, `--static` (binaire statique, x86_64 et aarch64), `--prefix DIR`, `--no-init`, `--yes`. Ensuite :
 
 ```bash
 astroportd --version
@@ -618,6 +618,97 @@ Dans les deux cas : ports choisis libres, clé écrite en `0600` sous `~/.zen/ga
 `GET /api/v1/me/links` liste vos clés ; `POST /api/v1/me/links` annonce vos comptes des autres plans (public, sur demande, à faire dans chaque UPlanet). La fiche d'un contact (`GET /api/v1/book/card`) rend `keys` ; le chat regroupe les clés liées en une conversation et écrit dans l'UPlanet commune.
 
 <a id="etape-8c"></a>
+
+## Étape 8 bis-k — Ma UPlanet : nom, charte, portefeuilles et économie en mouvement
+
+Chaque UPlanet a un **nom**, une **charte** et un **argent commun visible de tous ses membres**. L'écran **Ma UPlanet** (`#/constellation`, lien en bas de l'Accueil) réunit trois choses.
+
+- **Les portefeuilles de la coopérative** : `UPLANETNAME_G1` (le portefeuille maître) et ceux que la transaction primale marque (`UPLANETNAME`, `SOCIETY`, `TREASURY`, `RND`, `ASSETS`, `IMPOT`, `INTRUSION`, `CAPITAL`, `AMORTISSEMENT`, l'hébergement et le NODE). Pour chacun : l'adresse Ğ1, le solde en Ğ1 et en Ẑen, et l'état de sa transaction primale. **Tous les membres** les voient. Les soldes sont lus sur la chaîne Ğ1 : sans nœud Duniter, l'écran le dit.
+- **L'économie en mouvement** : une carte animée en SVG, sans bibliothèque. Chaque virement est une **impulsion** qui court dans un **tuyau** entre deux portefeuilles ; la taille d'un portefeuille suit son solde. Le bouton **Rejouer** déroule toute l'histoire en trente secondes (vitesses ×1, ×4, ×16), le curseur permet de se placer à une date. Les comptes des membres sont regroupés en un seul point « membres », tout autre compte en « extérieur » : aucune adresse personnelle n'apparaît.
+- **Les Ğ1Billets en circulation** : créés, en circulation (et leur valeur en Ẑen), encaissés, renvoyés à l'émetteur, expirés non renvoyés. Les billets forment le point « billets » de la carte animée (cadre en haut à gauche) : leur création, leur encaissement et leur retour y apparaissent comme des impulsions entre `UPLANETNAME_G1`, « billets » et « membres ».
+- **La charte** : un texte court, versionné, publié dans la configuration coopérative et donc **signé par la clé de la coopérative**. Tant que le Capitaine n'en a pas publié une, la charte type ([CHARTE_UPLANET.md](CHARTE_UPLANET.md), tirée du [Manuel des membres](UPLANET_ManuelDesMembresEtDesContributeurs.md)) est proposée. **Chaque Capitaine signe** la version courante : un bouton « Je signe cette charte » publie un événement Nostr public (kind 31903, `d = charter-accept`) portant l'empreinte SHA-256 du texte, signé de sa clé. L'écran liste les Capitaines que la station connaît et dit qui a signé la version courante ; une nouvelle version de la charte a une autre empreinte et demande une nouvelle signature (on ne peut signer qu'une version que l'on a sous les yeux).
+
+**L'historique vient de l'indexeur.** Le nœud Duniter ne garde pas l'historique d'un portefeuille : la station le copie depuis un indexeur squid (`--squid-url`, ou découverte automatique), toutes les 15 minutes, dans la table `coop_ledger`. Sans indexeur, ou tant qu'il n'a pas répondu, la carte affiche **« historique partiel »** et seuls les soldes d'aujourd'hui sont connus.
+
+**Le Capitaine** nomme l'UPlanet et publie la charte dans **Configuration coopérative** (section « Nom et charte de l'UPlanet » : `UPLANET_NAME`, `CHARTER_VERSION`, `CHARTER_TEXT`, 6000 caractères au plus).
+
+```bash
+curl -s -H "Authorization: Basic …" https://ma-station/api/v1/constellation          # portefeuilles, charte, état de l'historique
+curl -s -H "Authorization: Basic …" "https://ma-station/api/v1/constellation/ledger?since=1700000000&limit=5000"
+curl -s -X POST -H "Authorization: Basic …" -d '{"sha256":"<empreinte de la charte>"}' https://ma-station/api/v1/constellation/charter/accept   # Capitaine
+```
+
+> **À savoir.** Seuls les **Capitaines** signent la charte ; l'acceptation par chaque membre à l'inscription n'est pas faite. La liste ne montre que les Capitaines que votre station connaît : les signatures d'une autre station n'arrivent que si leurs événements sont répliqués jusqu'à vous (maillage N¹/N²). Le rendu animé est vérifié par un test de la disposition et des soldes rejoués, pas encore sur un grand nombre de virements réels.
+
+## Étape 8 bis-l — Ğ1Billet : vérifier la valeur d'un billet papier et l'encaisser
+
+Un **Ğ1Billet** est un billet papier dont la valeur est portée par une clé Ğ1 jetable. Son secret est découpé en trois parts dont deux suffisent : un **QR en clair**, un **QR sous le pli**, et une troisième part qui n'est pas imprimée. Les billets déjà imprimés par UPassport restent valables : le découpage est le même.
+
+**Pour le porteur**, la page publique **`/scan`** (aucun compte à créer) tient en trois étapes :
+
+1. **Scanner** : la caméra s'ouvre toute seule ; on lit le QR en clair puis le QR sous le pli, **dans n'importe quel ordre**. La station retrouve laquelle est laquelle. Un lien `/scan?g1pub=…` (le QR « vérifier » du billet) affiche déjà la valeur, l'authenticité et la date de fin. Sans caméra : « Choisir une photo » du QR, ou saisie du texte.
+2. **Destination** : l'adresse `g1…` d'un compte de l'UPlanet, à coller ou à scanner. Si ce navigateur a une session ouverte sur la station, un bouton **« Mon compte (email) »** remplit l'adresse du portefeuille Ğ1 de votre MULTIPASS d'un geste (sans session, on colle ou on scanne l'adresse). La station vérifie tout de suite que ce portefeuille est reconnu par l'UPlanet.
+3. **Encaisser** : un récapitulatif, puis un bouton. La valeur est visible en Ẑen et en Ğ1.
+
+La lecture utilise `BarcodeDetector` quand le navigateur l'a (Chrome, Android) ; sinon un décodeur (jsQR, Apache-2.0, environ 46 Ko compressés) n'est chargé qu'à ce moment-là. Il est hors du budget de l'application : seule la page `/scan` y touche.
+
+**Ce que fait la station** (inchangé par rapport à UPassport) : le billet est **vidé vers `UPLANETNAME_G1`**, qui **renvoie `solde − 1 Ğ1`** au destinataire (ce 1 Ğ1 est le dépôt d'activation que `UPLANETNAME_G1` avait avancé : le porteur reçoit exactement la valeur du billet). Avant tout virement, deux contrôles : le billet est bien **de cette UPlanet** (son premier virement reçu vient de `UPLANETNAME_G1`) et le destinataire l'est aussi. Sans indexeur Ğ1 (`--squid-url`) l'origine ne peut pas être lue : l'encaissement est refusé, par prudence.
+
+- **Reprise.** L'état du billet est écrit **avant** chaque virement. Si le transfert final échoue après le vidage, les fonds restent sur `UPLANETNAME_G1`, le porteur est prévenu (« en cours »), le Capitaine reçoit une alerte et la station **réessaie toutes les 5 minutes**. Un vidage dont l'issue est inconnue n'est jamais rejoué.
+- **Validité.** Un billet peut porter une date de fin, écrite dans un événement signé par la clé de la coopérative (kind 31903, `d = billet:<adresse>`, tag `u` en secondes Unix). Passée cette date, le porteur ne l'encaisse plus. Seule la clé de la coopérative fait foi.
+- **Limites de débit** : 40 lectures par minute et 6 encaissements par 10 minutes et par adresse.
+
+```bash
+curl -s "https://ma-station/api/v1/billet/check?g1pub=g1…"                    # valeur, origine, validité
+curl -s "https://ma-station/api/v1/billet/destination?g1pub=g1…"             # destinataire reconnu ?
+curl -s -d '{"parts":["<64 hex>","<64 hex>"]}' https://ma-station/api/v1/billet/identify
+```
+
+### Créer des billets (Capitaine et MULTIPASS autorisés)
+
+Le **Capitaine** choisit les MULTIPASS qui peuvent créer des Ğ1Billets **dans la même action que le quota et le prix en ẑ par semaine** : le bouton « Hébergement » d'un compte (écran Station) ouvre un **panneau dans la page** (pas de fenêtre de saisie) avec le quota, le prix et la case « Peut créer des Ğ1Billets ». Un 🎫 le rappelle dans la liste. L'option **« Mes Ğ1Billets »** apparaît alors dans l'interface de ce MULTIPASS (lien en bas de l'Accueil) ; le Capitaine y a toujours accès.
+
+L'écran propose : le **nombre de billets** (1 à 6 par planche), la **valeur de chacun en ẑ**, une **durée de validité** (sans limite, 7 jours, 3 mois, 1 an) et l'option **« retour automatique »**. Puis, en deux temps :
+
+1. **Créer la planche** : la station tire une clé jetable par billet et affiche une **planche A4 paysage de 6 billets** (2 × 3) : le QR **sous le pli** (bande de gauche), le QR **en clair**, le QR **« vérifier »** (lien `/scan?g1pub=…`), la valeur, l'adresse et la date de fin. Les parts ne s'affichent **qu'une seule fois** : on imprime tout de suite (`Imprimer la planche`).
+2. **Financer** chaque billet (ou « Tout financer ») : 1 Ğ1 d'activation avancé par `UPLANETNAME_G1`, puis la valeur, du **portefeuille de l'émetteur**. Chaque billet a son propre appel : un échec n'en touche pas un autre, et on peut rappeler sans rien payer deux fois. Seul l'émetteur d'un billet peut le financer (sinon n'importe qui ferait avancer des Ğ1 gratuits par la coopérative). Un virement refusé pour cause de nonce (« Invalid Transaction (1010) ») est réessayé.
+
+**Retour automatique.** Si l'option est choisie, la station garde **P2 et P3, chiffrées pour son NODE seul** (dans le témoin, événement kind 31903 `d = billet:<adresse>` signé par la coopérative, tags `p` émetteur, `a` valeur, `u` date de fin, `r` retour). À la date de fin, si le billet n'a pas été encaissé, le porteur est refusé et la station renvoie la valeur au portefeuille de l'émetteur (par le même circuit), **une fois par jour, à 20h12 solaire** (étape « billets » de la nuit ; sans l'orchestrateur de nuit, rien n'est renvoyé). Sans l'option, la station ne garde **aucune part** : elle ne peut pas toucher au billet. Avec elle, la station garde le billet **en dépôt** jusqu'à l'échéance ; sur ORIGIN (clés publiques) ce dépôt n'est protégé que par la clé du NODE.
+
+Ces billets servent aussi à **remplir le compte d'un MULTIPASS** : le porteur donne son adresse `g1…` comme destination.
+
+**Fond et icône.** Chaque billet prend pour **fond le bandeau (`banner`)** et pour **icône l'image (`picture`)** du profil Nostr (kind 0) de l'émetteur, voilés pour garder les QR lisibles. Dans **Mon compte › Profil**, on envoie une image depuis l'appareil (réduite dans le navigateur puis réencodée par la station, qui la sert publiquement à `/api/v1/profile/<clé>/<picture|banner>.jpg` et republie le profil) ou on colle une adresse `https://`. Une image d'un site tiers est lue par la station (taille limitée, adresses privées refusées) et intégrée au billet ; si elle est illisible, le billet est créé sans fond.
+
+> **À savoir.** Pas de verso personnalisé comme dans UPassport. La mise en page a été vérifiée en code et sur la vraie chaîne Ğ1 (création, financement, retour automatique), pas sur du papier imprimé. Le retour automatique se fait à 20h12 : un billet expiré à 9 h revient le soir même.
+
+## Étape 8 bis-m — Mon site public : le dossier /Public de l'uCloud
+
+Chaque membre a un **site web** : tout ce qui se trouve dans le dossier **`/Public`** de son uCloud est servi **en clair, sans mot de passe**. C'est le geste de publication, et il est simple : **déplacer un fichier dans `/Public` le publie, l'en sortir le retire**. On peut aussi y construire un vrai site (pages HTML, CSS, images, sous-dossiers) depuis n'importe quel client WebDAV (celui de la section « Mon compte », avec le même identifiant).
+
+- **Adresse.** `https://<station>/site/<nom>/`, où `<nom>` est le nom de l'adresse DNSLink du MULTIPASS (`alice.martin@exemple.org` → `martin.alice.exemple.org`). Quand la zone DNS de la coopérative est renseignée (`OVH_ZONE`), la station reconnaît aussi `https://<nom>.<zone>/` : il suffit d'un enregistrement DNS (un joker `*.<zone>`) et d'un certificat vers la station.
+- **Page d'accueil.** `index.html` de `/Public` ; sans lui, la station affiche une page par défaut (nom, présentation, image et bandeau du profil, liste des fichiers).
+- **Exemple.** Dans **Mon compte › Mon site public**, « Créer un site d'exemple » dépose `index.html`, `style.css` et `LISEZMOI.txt` dans `/Public` (sans jamais écraser une page d'accueil existante). L'écran montre aussi un exemple de page à copier :
+
+```html
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Ma page</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <h1>Bonjour</h1>
+  <p><a href="photos/vacances.jpg">Mes vacances</a></p>
+</body>
+</html>
+```
+
+- **Chiffrement.** Les fichiers restent chiffrés au repos comme tout l'uCloud ; la station ne les déchiffre qu'à la demande, et seulement pour ce dossier. Un fichier hors de `/Public` n'est jamais lisible par cette adresse, quel que soit le chemin demandé (`..`, fichiers cachés `.nom` refusés).
+- **Isolation.** Le code d'une page (scripts compris) est celui de son auteur : chaque réponse porte une politique `sandbox` (origine opaque, sans `allow-same-origin`), `nosniff` et `no-referrer`. Une page publique n'atteint ni la session ni l'API de la station.
+
+- **Publier depuis l'explorateur.** Dans **uCloud › Dossiers**, cochez des fichiers ou dossiers puis **« Publier »** : un panneau (dans la page) dit ce qui va devenir public et demande confirmation, puis la station les **déplace** dans `/Public` (rien n'est copié ; un nom déjà pris n'est jamais écrasé). Dans `/Public`, le même bouton devient **« Retirer de Public »** : les éléments vont dans `/Retirés de Public`, visibles de vous seul. Le coffre n'est jamais publié.
+- **Image de profil depuis /Public.** Dans **Mon compte › Profil**, « Choisir dans mes fichiers publics » affiche les images de `/Public` ; un clic en fait l'image ou le bandeau du profil (la station la relit elle-même, aucun autre dossier n'est accepté). Le bandeau sert aussi de fond aux Ğ1Billets.
+- **Visites.** La carte « Mon site public » compte les pages vues (aujourd'hui, 7 et 90 jours, pages les plus vues). Seule une **page** (HTML ou liste de dossier) compte, pas une image ni une feuille de style. Le compteur ne garde **aucune adresse IP ni identifiant de visiteur** : un compte, un jour, une page, un nombre ; 90 jours de mémoire, 200 pages distinctes par jour au plus.
+- **Plusieurs stations derrière le même DNS.** Un enregistrement DNS en tourniquet (`*.<zone>` vers plusieurs stations) fonctionne : une station qui reçoit `https://<nom>.<zone>/` (ou `/site/<nom>/`) pour un membre qu'elle n'héberge pas le **redirige** (307) vers la station qui l'héberge, à l'adresse `…/site/<nom>/…`. Elle la trouve par la station d'accueil du DID du membre (`home_station`) et l'adresse publique que chaque station annonce dans son résumé de santé nocturne (tag `url` du kind 30850, répliqué par la constellation). Une station neuve est donc connue au plus tard le lendemain de sa première nuit ; sans adresse connue, la page répond 404 plutôt que de deviner.
+
+> **À savoir.** C'est la version HTTP. La publication sur IPFS et l'IPNS du MULTIPASS n'est **pas** prévue : l'adresse DNSLink n'affiche pas ce site, c'est l'adresse `<nom>.<zone>` (ou `/site/<nom>/`) qui le sert.
 
 ## Étape 8 ter — Options du Capitaine : moteur FaceID et règles du relai
 

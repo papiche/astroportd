@@ -653,3 +653,35 @@ CREATE INDEX IF NOT EXISTS dav_tokens_hash ON dav_tokens(owner_hex, token_sha256
 CREATE INDEX IF NOT EXISTS faces_ucloud_path ON faces(owner_hex, ucloud_path);
 CREATE INDEX IF NOT EXISTS faces_source_path ON faces(owner_hex, source_path);
 CREATE INDEX IF NOT EXISTS tasks_facecloud_path ON tasks(json_extract(payload, '$.path')) WHERE kind = 'facecloud';
+
+-- Virements des portefeuilles de la coopérative, lus auprès de l'indexeur Ğ1 (squid) : l'historique d'un portefeuille n'est pas
+-- dans le nœud. CACHE reconstructible (la chaîne reste la vérité) ; alimente la carte animée de la constellation.
+CREATE TABLE IF NOT EXISTS coop_ledger (
+  id      TEXT PRIMARY KEY,   -- identifiant du virement chez l'indexeur
+  block   INTEGER NOT NULL,
+  at      INTEGER NOT NULL,   -- secondes Unix du bloc
+  from_id TEXT,
+  to_id   TEXT,
+  cents   INTEGER NOT NULL    -- centimes de Ğ1
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS coop_ledger_at ON coop_ledger(at, block);
+
+-- Images de profil publiées par la station pour ses comptes (kind 0 : `picture` et `banner`). ÉTAT LOCAL : le profil Nostr garde
+-- l'adresse, l'image elle-même (JPEG réduit) n'est pas rejouable. Publique par nature : un profil Nostr l'est.
+CREATE TABLE IF NOT EXISTS profile_images (
+  hex        TEXT NOT NULL,
+  kind       TEXT NOT NULL CHECK (kind IN ('picture','banner')),
+  data       BLOB NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (hex, kind)
+) STRICT, WITHOUT ROWID;
+
+-- Visites du site public d'un compte (`/Public`) : un compteur par jour et par page, **sans adresse IP ni identifiant de visiteur**. ÉTAT LOCAL,
+-- gardé 90 jours (purgé à l'écriture), au plus 200 pages distinctes par site et par jour (le reste est compté dans « (autres) »).
+CREATE TABLE IF NOT EXISTS site_visits (
+  hex  TEXT NOT NULL,
+  day  INTEGER NOT NULL,       -- jours depuis 1970 (UTC)
+  path TEXT NOT NULL,
+  hits INTEGER NOT NULL,
+  PRIMARY KEY (hex, day, path)
+) STRICT, WITHOUT ROWID;

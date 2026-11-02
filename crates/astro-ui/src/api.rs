@@ -532,7 +532,31 @@ pub trait Backend: Send + Sync + 'static {
     fn account(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("Mon compte n'est pas disponible sur cette station")) }
     }
-    /// Modifie le profil (`name`, `about`, `picture`, `lang`).
+    /// Site public du compte (dossier `/Public`) : nom, adresses, état.
+    fn account_site(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("site public non disponible sur cette station")) }
+    }
+    /// Publie (`publish`) ou retire du public des fichiers de l'uCloud : un déplacement vers `/Public` ou hors de `/Public`.
+    fn public_move(&self, _who: &Principal, _paths: Vec<String>, _publish: bool) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("site public non disponible sur cette station")) }
+    }
+    /// Images du dossier public du compte (pour choisir une image de profil).
+    fn public_images(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("site public non disponible sur cette station")) }
+    }
+    /// Dépose le site d'exemple dans `/Public` (`force` : écrase la page d'accueil existante).
+    fn account_site_example(&self, _who: &Principal, _force: bool) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("site public non disponible sur cette station")) }
+    }
+    /// Reçoit l'image de profil du compte : `{ kind: "picture" | "banner", data: base64, origin? }`.
+    fn account_image(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("images de profil non disponibles sur cette station")) }
+    }
+    /// Image de profil publique d'un compte (JPEG), si la station en garde une.
+    fn profile_image(&self, _hex: &str, _kind: &str) -> impl Future<Output = Option<Vec<u8>>> + Send {
+        async { None }
+    }
+    /// Modifie le profil (`name`, `about`, `picture`, `banner`, `lang`).
     fn account_profile(&self, _who: &Principal, _patch: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("Mon compte n'est pas disponible sur cette station")) }
     }
@@ -583,6 +607,40 @@ pub trait Backend: Send + Sync + 'static {
     /// Modifie la configuration coopérative : `{ clé: valeur | null }` (Capitaine).
     fn coop_config_set(&self, _who: &Principal, _patch: std::collections::BTreeMap<String, Option<String>>) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("configuration coopérative non disponible sur cette station")) }
+    }
+    /// Vision de la constellation, pour tout membre : `None` = portefeuilles, soldes, nom, charte et état de l'historique ;
+    /// `Some((depuis, au plus))` = historique des virements de la coopérative pour la carte animée.
+    fn cooperative_view(&self, _who: &Principal, _ledger: Option<(u64, usize)>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("vision de la constellation non disponible sur cette station")) }
+    }
+    /// Le Capitaine signe la charte d'empreinte `sha256` (la version courante) : `{ version, sha256, at }`.
+    fn charter_accept(&self, _who: &Principal, _sha256: &str) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("acceptation de la charte non disponible sur cette station")) }
+    }
+    /// Le compte peut-il créer des Ğ1Billets ? (le Capitaine, ou un MULTIPASS qu'il a autorisé)
+    fn billet_issuer(&self, _who: &Principal) -> impl Future<Output = bool> + Send {
+        async { false }
+    }
+    /// Autorise (ou retire) un MULTIPASS hébergé à créer des Ğ1Billets (Capitaine).
+    fn account_billet_issuer(&self, _who: &Principal, _hex: String, _allowed: bool) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("Ğ1Billets non disponibles sur cette station")) }
+    }
+    /// Crée des Ğ1Billets (émetteurs autorisés) : `{ count, amount_zen, valid_days?, return_to_issuer?, origin? }`.
+    fn billet_issue(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("Ğ1Billets non disponibles sur cette station")) }
+    }
+    /// Finance un billet créé par l'appelant : `{ g1pub }`.
+    fn billet_fund(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("Ğ1Billets non disponibles sur cette station")) }
+    }
+    /// Les billets créés par l'appelant, avec leur état.
+    fn billet_issued(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("Ğ1Billets non disponibles sur cette station")) }
+    }
+    /// Ğ1Billet (public : le billet est un titre au porteur) : `op` = `check` (adresse), `identify` (deux parts), `destination` ou
+    /// `redeem` ; `ip` : limite de débit. L'erreur est rangée par nature : refus, trop de demandes, service incomplet…
+    fn billet(&self, _ip: Option<std::net::IpAddr>, _op: &'static str, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("Ğ1Billets non disponibles sur cette station")) }
     }
     /// Proches réciproques du compte (double suivi) : `{ friends: [{ hex, label, hosted }] }`.
     fn friends(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
@@ -765,6 +823,12 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/contacts/link", post(contacts_link::<B>))
         .route("/api/v1/account", get(account::<B>))
         .route("/api/v1/account/profile", post(account_profile::<B>))
+        .route("/api/v1/account/image", post(account_image::<B>))
+        .route("/api/v1/account/site", get(account_site::<B>))
+        .route("/api/v1/account/site/example", post(account_site_example::<B>))
+        .route("/api/v1/public/move", post(public_move::<B>))
+        .route("/api/v1/public/images", get(public_images::<B>))
+        .route("/api/v1/profile/{hex}/{file}", get(profile_image::<B>))
         .route("/api/v1/account/token", post(account_token_rotate::<B>))
         .route("/api/v1/account/unlock", post(account_unlock::<B>))
         .route("/api/v1/account/sign", post(account_sign::<B>))
@@ -773,6 +837,16 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/station/admin/{section}", get(admin_get::<B>).post(admin_set::<B>))
         .route("/api/v1/station/console", get(console_ws::<B>))
         .route("/api/v1/station/coop", get(coop_get::<B>).post(coop_set::<B>))
+        .route("/api/v1/constellation", get(constellation_get::<B>))
+        .route("/api/v1/constellation/ledger", get(constellation_ledger::<B>))
+        .route("/api/v1/constellation/charter/accept", post(charter_accept::<B>))
+        .route("/api/v1/billet/check", get(billet_check::<B>))
+        .route("/api/v1/billet/destination", get(billet_destination::<B>))
+        .route("/api/v1/billet/identify", post(billet_identify::<B>))
+        .route("/api/v1/billet/redeem", post(billet_redeem::<B>))
+        .route("/api/v1/billet/issue", post(billet_issue::<B>))
+        .route("/api/v1/billet/fund", post(billet_fund::<B>))
+        .route("/api/v1/billet/issued", get(billet_issued::<B>))
         .route("/api/v1/friends", get(friends::<B>))
         .route("/api/v1/ucloud/send", post(ucloud_send::<B>))
         .route("/api/v1/backup", get(backup_status::<B>).post(backup_set::<B>))
@@ -851,7 +925,7 @@ async fn health<B: Backend>(State(st): State<Arc<UiState<B>>>) -> Response {
 }
 
 async fn me<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
-    private(Json(json!({ "hex": p.hex, "email": p.email, "captain": p.captain, "ai": st.backend.ai_declared(&p).await })).into_response())
+    private(Json(json!({ "hex": p.hex, "email": p.email, "captain": p.captain, "ai": st.backend.ai_declared(&p).await, "billet_issuer": st.backend.billet_issuer(&p).await })).into_response())
 }
 
 #[derive(Deserialize)]
@@ -1359,12 +1433,24 @@ struct HostingBody {
     quota_bytes: Option<u64>,
     /// ẑ par semaine ; absent ou `null` : pas de prix propre (prix par défaut).
     weekly_zen: Option<u64>,
+    /// Autorise (`true`) ou retire (`false`) la création de Ğ1Billets ; absent : inchangé.
+    #[serde(default)]
+    billet_issuer: Option<bool>,
 }
 
 async fn account_hosting<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(hex): Path<String>, Json(body): Json<HostingBody>) -> Response {
     match who(&st, &headers, &method, &uri).await {
         Ok(p) => match captain_only(&p) {
-            Ok(()) if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) => reply(st.backend.account_hosting(&p, hex.to_ascii_lowercase(), body.quota_bytes, body.weekly_zen).await),
+            Ok(()) if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) => {
+                let hex = hex.to_ascii_lowercase();
+                // Une seule action du Capitaine règle l'hébergement et le droit de créer des Ğ1Billets.
+                if let Some(allowed) = body.billet_issuer {
+                    if let Err(e) = st.backend.account_billet_issuer(&p, hex.clone(), allowed).await {
+                        return reply(Err(e));
+                    }
+                }
+                reply(st.backend.account_hosting(&p, hex, body.quota_bytes, body.weekly_zen).await)
+            }
             Ok(()) => reply(Err(ApiError::bad_request("clé de compte invalide (64 hexadécimaux)"))),
             Err(r) => r,
         },
@@ -1569,6 +1655,82 @@ async fn coop_get<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Cap
     reply(st.backend.coop_config(&p).await)
 }
 
+async fn constellation_get<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.cooperative_view(&p, None).await)
+}
+
+#[derive(serde::Deserialize)]
+struct LedgerQuery {
+    since: Option<u64>,
+    limit: Option<usize>,
+}
+
+async fn constellation_ledger<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<LedgerQuery>) -> Response {
+    reply(st.backend.cooperative_view(&p, Some((q.since.unwrap_or(0), q.limit.unwrap_or(5000).clamp(1, 20_000)))).await)
+}
+
+fn client_ip(req: &axum::extract::Request) -> Option<std::net::IpAddr> {
+    req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|c| c.0.ip())
+}
+
+#[derive(serde::Deserialize)]
+struct BilletQuery {
+    g1pub: String,
+}
+
+/// Lectures publiques d'un billet (valeur, origine, validité) et d'un destinataire. Jamais mises en cache.
+async fn billet_check<B: Backend>(State(st): State<Arc<UiState<B>>>, Query(q): Query<BilletQuery>, req: axum::extract::Request) -> Response {
+    no_store(reply(st.backend.billet(client_ip(&req), "check", serde_json::json!({ "g1pub": q.g1pub })).await))
+}
+
+async fn billet_destination<B: Backend>(State(st): State<Arc<UiState<B>>>, Query(q): Query<BilletQuery>, req: axum::extract::Request) -> Response {
+    no_store(reply(st.backend.billet(client_ip(&req), "destination", serde_json::json!({ "g1pub": q.g1pub })).await))
+}
+
+/// Deux parts : reconnaître le billet sans y toucher.
+async fn billet_identify<B: Backend>(State(st): State<Arc<UiState<B>>>, req: axum::extract::Request) -> Response {
+    billet_post(st, "identify", req).await
+}
+
+/// Encaisse : deux parts et un destinataire. Les parts ne transitent qu'ici, en HTTPS, et ne sont jamais journalisées.
+async fn billet_redeem<B: Backend>(State(st): State<Arc<UiState<B>>>, req: axum::extract::Request) -> Response {
+    billet_post(st, "redeem", req).await
+}
+
+/// Création de billets : réservée aux émetteurs que le Capitaine a choisis. Les parts ne sont rendues qu'ici, une fois : `no-store`.
+async fn billet_issue<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    no_store(reply(st.backend.billet_issue(&p, body).await))
+}
+
+async fn billet_fund<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    no_store(reply(st.backend.billet_fund(&p, body).await))
+}
+
+async fn billet_issued<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    no_store(reply(st.backend.billet_issued(&p).await))
+}
+
+async fn billet_post<B: Backend>(st: Arc<UiState<B>>, op: &'static str, req: axum::extract::Request) -> Response {
+    let ip = client_ip(&req);
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), 1024).await else { return reply(Err(ApiError::bad_request("requête trop grande"))) };
+    let Ok(body) = serde_json::from_slice::<Value>(&bytes) else { return reply(Err(ApiError::bad_request("JSON attendu"))) };
+    no_store(reply(st.backend.billet(ip, op, body).await))
+}
+
+fn no_store(mut r: Response) -> Response {
+    r.headers_mut().insert(axum::http::header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store"));
+    r
+}
+
+#[derive(serde::Deserialize)]
+struct CharterBody {
+    sha256: String,
+}
+
+async fn charter_accept<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Json(body): Json<CharterBody>) -> Response {
+    reply(st.backend.charter_accept(&p, &body.sha256).await)
+}
+
 async fn contacts<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
     reply(st.backend.contacts(&p).await)
 }
@@ -1601,6 +1763,50 @@ async fn contacts_link<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p):
 
 async fn account<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
     reply(st.backend.account(&p).await)
+}
+
+async fn account_site<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.account_site(&p).await)
+}
+
+#[derive(Deserialize)]
+struct PublicMoveBody {
+    paths: Vec<String>,
+    publish: bool,
+}
+
+async fn public_move<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<PublicMoveBody>) -> Response {
+    reply(st.backend.public_move(&p, body.paths, body.publish).await)
+}
+
+async fn public_images<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.public_images(&p).await)
+}
+
+#[derive(Deserialize, Default)]
+struct SiteExampleBody {
+    #[serde(default)]
+    force: bool,
+}
+
+async fn account_site_example<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, body: Option<Json<SiteExampleBody>>) -> Response {
+    reply(st.backend.account_site_example(&p, body.map(|b| b.0.force).unwrap_or(false)).await)
+}
+
+async fn account_image<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    reply(st.backend.account_image(&p, body).await)
+}
+
+/// Image de profil : publique (un profil Nostr l'est), servie telle qu'elle a été réencodée, mise en cache une heure.
+async fn profile_image<B: Backend>(State(st): State<Arc<UiState<B>>>, Path((hex, file)): Path<(String, String)>) -> Response {
+    let kind = file.strip_suffix(".jpg").unwrap_or("");
+    if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return reply(Err(ApiError::not_found("image inconnue")));
+    }
+    match st.backend.profile_image(&hex.to_ascii_lowercase(), kind).await {
+        Some(bytes) => (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "image/jpeg"), (axum::http::header::CACHE_CONTROL, "public, max-age=3600"), (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff")], bytes).into_response(),
+        None => reply(Err(ApiError::not_found("image inconnue"))),
+    }
 }
 
 async fn account_profile<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {

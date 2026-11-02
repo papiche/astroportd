@@ -213,11 +213,12 @@ h('dl', {}, row('Surplus réparti', `${zen(ec.allocation.surplus_cents)} Ẑ`), 
 : h('p', { class: 'degraded' }, ec.kind === 'drawdown' ? `Semaine ${ec.week} : trésorerie entamée (${zen(ec.gap_cents)} Ẑ).` : `Semaine ${ec.week} : bénévolat actif, apport du Capitaine de ${zen(ec.gap_cents)} Ẑ.`),
 h('h3', {}, 'Love Ledger'), h('p', {}, h('strong', {}, `${zen(love.total_cents)} Ẑ`), ` donnés sur ${love.weeks} semaine(s)`),
 love.recent.length ? h('ul', { class: 'muted' }, love.recent.map(x => h('li', {}, `${day(x.at)} : ${zen(x.amount_cents)} Ẑ${x.detail?.week ? ` (semaine ${x.detail.week})` : ''}`))) : null),
+h('section', { class: 'card wide', id: 'hosting-edit', hidden: '' }),
 h('section', { class: 'card wide' }, h('h2', {}, 'Comptes hébergés ', h('small', {}, `${ac.accounts.length}`)),
-h('p', { class: 'muted' }, `${t('Palier par défaut des MULTIPASS')} : ${hd.default_quota_bytes == null ? t('quota de leur formule') : bytes(hd.default_quota_bytes)} · ${price(hd.default_weekly_zen)} `, h('button', { class: 'ghost', onclick: () => hostingDefaults(hd) }, 'Modifier')),
+h('p', { class: 'muted' }, `${t('Palier par défaut des MULTIPASS')} : ${hd.default_quota_bytes == null ? t('quota de leur formule') : bytes(hd.default_quota_bytes)} · ${price(hd.default_weekly_zen)} `, h('button', { class: 'ghost', onclick: () => hosting(null, hd) }, 'Modifier')),
 ac.accounts.length ? table('MULTIPASS et ZenCards de la station', ['Compte', 'Cycle de vie', 'Disque', 'Hébergement', 'Fichiers', 'Secours'],
 ac.accounts.map(a => [a.email || a.hex.slice(0, 12), [pill(tone(a.status)), ' ', LIFE[a.status] || a.status || 'inconnu', a.grace_ends_at ? ` (jusqu'au ${day(a.grace_ends_at)})` : ''],
-[h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: a.quota_bytes ? Math.min(a.used_bytes / a.quota_bytes, 1) : 0, 'aria-label': 'Disque' }), ` ${bytes(a.used_bytes)} / ${a.unlimited ? t('illimité') : bytes(a.quota_bytes)}`], a.unlimited ? '—' : `${price(a.weekly_zen)}${a.fee?.status === 'grace_period' ? ` · ${t('période de grâce')}` : a.fee?.status === 'suspended' ? ` · ${t('suspendu')}` : ''}`, String(a.files),
+[h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: a.quota_bytes ? Math.min(a.used_bytes / a.quota_bytes, 1) : 0, 'aria-label': 'Disque' }), ` ${bytes(a.used_bytes)} / ${a.unlimited ? t('illimité') : bytes(a.quota_bytes)}`], a.unlimited ? '—' : `${price(a.weekly_zen)}${a.billet_issuer ? ' 🎫' : ''}${a.fee?.status === 'grace_period' ? ` · ${t('période de grâce')}` : a.fee?.status === 'suspended' ? ` · ${t('suspendu')}` : ''}`, String(a.files),
 [h('button', { class: 'ghost', onclick: () => token(a) }, 'Jeton de secours'), a.unlimited ? null : [' ', h('button', { class: 'ghost', onclick: () => hosting(a) }, 'Hébergement')], a.pass_locked_until ? [' ', h('button', { onclick: async () => { await api(`/api/v1/station/accounts/${a.hex}/unlock-pass`, { method: 'POST' }); toast('PASS déverrouillé', 1); draw(); } }, 'Déverrouiller le PASS')] : null]]))
 : h('p', { class: 'muted' }, 'Aucun compte hébergé.')),
 h('section', { class: 'card wide' }, h('h2', {}, 'Configuration coopérative'), h('p', { class: 'muted' }, 'Paramètres partagés par toute la constellation (OpenCollective, Mailjet, règle 3×1/3…). Les secrets sont chiffrés et ne s\'affichent jamais.'), h('button', { onclick: () => { location.hash = '#/coop'; } }, 'Modifier la configuration')),
@@ -240,29 +241,8 @@ box.replaceChildren(h('p', { class: 'muted' }, `Compte ${r.login}. À transmettr
 } catch (e) { box.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }
 }
 const price = z => z > 0 ? `${z} ẑ / ${t('semaine')}` : t('gratuit');
-// Réglage d'un compte : quota (Go) puis prix hebdomadaire (ẑ) ; une réponse vide retire le réglage propre au compte.
-async function hosting(a) {
-const who = a.email || a.hex.slice(0, 12);
-const q = prompt(t('Quota de {0}, en Go (vide : palier par défaut)', who), a.own_quota_bytes ? Math.round(a.own_quota_bytes / 2 ** 30) : '');
-if (q === null) return;
-const z = prompt(t('Prix de {0}, en ẑ par semaine (0 : gratuit ; vide : prix par défaut)', who), a.own_weekly_zen == null ? '' : a.own_weekly_zen);
-if (z === null) return;
-const gb = q.trim() === '' ? null : Number(q.replace(',', '.')), zen = z.trim() === '' ? null : Number(z.replace(',', '.'));
-if (gb !== null && !(gb >= 0 && Number.isFinite(gb))) return toast('Nombre de Go attendu');
-if (zen !== null && !(Number.isInteger(zen) && zen >= 0)) return toast('Nombre entier de ẑ attendu');
-try { await api(`/api/v1/station/accounts/${a.hex}/hosting`, { method: 'POST', body: { quota_bytes: gb === null ? null : Math.round(gb * 2 ** 30), weekly_zen: zen } }); toast('Hébergement enregistré', 1); location.reload(); } catch (e) { toast(e.message); }
-}
-// Palier par défaut des MULTIPASS sans réglage propre.
-async function hostingDefaults(hd) {
-const q = prompt(t('Quota par défaut des MULTIPASS, en Go (vide : celui de leur formule)'), hd.default_quota_bytes ? Math.round(hd.default_quota_bytes / 2 ** 30) : '');
-if (q === null) return;
-const z = prompt(t('Prix par défaut, en ẑ par semaine (vide ou 0 : gratuit)'), hd.default_weekly_zen || '');
-if (z === null) return;
-const gb = q.trim() === '' ? null : Number(q.replace(',', '.')), zen = z.trim() === '' ? null : Number(z.replace(',', '.'));
-if (gb !== null && !(gb >= 0 && Number.isFinite(gb))) return toast('Nombre de Go attendu');
-if (zen !== null && !(Number.isInteger(zen) && zen >= 0)) return toast('Nombre entier de ẑ attendu');
-try { await api('/api/v1/station/hosting', { method: 'POST', body: { quota_bytes: gb === null ? null : Math.round(gb * 2 ** 30), weekly_zen: zen } }); toast('Palier enregistré', 1); location.reload(); } catch (e) { toast(e.message); }
-}
+// Réglage de l'hébergement d'un compte (ou du palier par défaut) : un panneau dans la page (m-hosting.js), sans fenêtre de saisie.
+async function hosting(a, hd) { const box = $('#hosting-edit'); box.hidden = false; (await import('/ui/m-hosting.js')).default(box, K, a, hd); box.scrollIntoView?.({ behavior: 'smooth' }); }
 async function viewCloud(root, q) {
 const path = q.get('p') || '/', mode = q.get('m'), album = mode === 'album', sources = mode === 'sources', organize = mode === 'organize';
 const go = (p, m) => { location.hash = '#/cloud?' + new URLSearchParams({ p, ...(m && { m }) }); };
@@ -287,7 +267,7 @@ return load();
 }
 const r = await api('/api/v1/ucloud/list?path=' + encodeURIComponent(path));
 dav = r.dav || dav;
-const sel = new Set(), btn = h('button', { disabled: true, onclick: () => share([...sel]) }, 'Partager la sélection'), send = h('button', { disabled: true, class: 'ghost', onclick: () => import('/ui/m-send.js').then(m => m.default([...sel], K)) }, 'Envoyer à des proches');
+const sel = new Set(), btn = h('button', { disabled: true, onclick: () => share([...sel]) }, 'Partager la sélection'), send = h('button', { disabled: true, class: 'ghost', onclick: () => import('/ui/m-send.js').then(m => m.default([...sel], K)) }, 'Envoyer à des proches'), pubBox = h('div', { class: 'card', hidden: '' }), pub = h('button', { disabled: true, class: 'ghost', onclick: () => { pubBox.hidden = false; import('/ui/m-publish.js').then(m => m.default(pubBox, [...sel], K, path, () => go(path))); } }, path.startsWith('/Public') ? 'Retirer de Public' : 'Publier');
 const parts = path.split('/').filter(Boolean), crumbs = h('span', { class: 'crumbs' }, h('a', { href: '#/cloud' }, 'uCloud'));
 parts.forEach((n, i) => crumbs.append(' / ', h('a', { href: '#/cloud?p=' + encodeURIComponent('/' + parts.slice(0, i + 1).join('/')) }, n)));
 const media = r.entries.filter(x => x.type === 'file' && kindOf(x.mime) !== 'file');
@@ -295,11 +275,11 @@ const li = x => {
 const dir = x.type === 'dir', k = kindOf(x.mime);
 const act = dir ? () => go(x.path) : k !== 'file' ? () => open(media, media.indexOf(x)) : async () => { const u = await blobUrl(x.path); h('a', { href: u, download: x.name }).click(); };
 return h('li', {},
-h('input', { type: 'checkbox', 'aria-label': 'Sélectionner ' + x.name, onchange: ev => { ev.target.checked ? sel.add(x.path) : sel.delete(x.path); btn.disabled = send.disabled = !sel.size; } }),
+h('input', { type: 'checkbox', 'aria-label': 'Sélectionner ' + x.name, onchange: ev => { ev.target.checked ? sel.add(x.path) : sel.delete(x.path); btn.disabled = send.disabled = pub.disabled = !sel.size; } }),
 h('span', { 'aria-hidden': 'true' }, dir ? '📁' : k === 'image' ? '🖼' : k === 'video' ? '🎬' : '📄'),
 h('button', { class: 'link', onclick: act }, x.name), h('span', { class: 'muted' }, dir ? '' : bytes(x.size)), h('span', { class: 'muted' }, when(x.mtime)));
 };
-root.replaceChildren(tabs, h('div', { class: 'bar' }, crumbs, h('span', { class: 'sp' }), send, btn),
+root.replaceChildren(tabs, h('div', { class: 'bar' }, crumbs, h('span', { class: 'sp' }), pub, send, btn), pubBox,
 r.entries.length ? h('ul', { class: 'files' }, r.entries.map(li)) : h('p', { class: 'muted' }, 'Dossier vide.'));
 }
 // Tuiles de photos ajoutées à `grid` ; `list` est la liste que la visionneuse parcourt (flèches, Début, Fin).
@@ -371,7 +351,8 @@ tr(document.body); new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEa
 // Écrans lourds chargés à la demande (hors budget de la coque) : ils reçoivent la boîte à outils ci-dessous.
 const K = { t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, tiles, every, enc, del, picker, mark, photos, dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n), feed, listeners };
 const lazyView = f => async (root, q) => (await import('/ui/' + f)).default(root, K, q);
-const views = { home: lazyView('m-home.js'), stats: viewHome, station: viewStation, cloud: viewCloud, account: lazyView('m-account.js'), contacts: lazyView('m-contacts.js'), chat: lazyView('m-chat.js'), people: lazyView('m-people.js'), replication: lazyView('m-replication.js'), library: lazyView('m-library.js'), coop: lazyView('m-coop.js'), cockpit: lazyView('m-cockpit.js'), options: lazyView('m-options.js'), planes: lazyView('m-planes.js'), bro: lazyView('m-bro.js') };
+const views = { stats: viewHome, station: viewStation, cloud: viewCloud };
+for (const n of ['home', 'account', 'contacts', 'chat', 'people', 'replication', 'library', 'coop', 'constellation', 'billets', 'cockpit', 'options', 'planes', 'bro']) views[n] = lazyView(`m-${n}.js`);
 let me = null;
 async function route() {
 cleanups.forEach(c => c()); cleanups = [];
@@ -386,7 +367,7 @@ document.querySelector('nav a[data-r=bro]').hidden = !me.ai; // BRO n'existe que
 if (!me.ai && location.hash.startsWith('#/bro')) { toast(t('Déclarez une IA (Ollama ou clé d\'API) dans Mon compte pour utiliser BRO')); location.hash = '#/account'; return; }
 if (me.captain) planeSwitch();
 document.querySelector('nav a[data-r=station]').hidden = !me.captain; document.querySelector('nav a[data-r=station]').href = '#/cockpit'; // l'écran Capitaine n'existe pas pour un MULTIPASS
-const name = p.startsWith('/chiffres') ? 'stats' : ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts', 'chat'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/planes') && me.captain ? 'planes' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/cockpit') && me.captain ? 'cockpit' : p.startsWith('/station') && me.captain ? 'station' : 'home');
+const name = p.startsWith('/chiffres') ? 'stats' : ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts', 'chat', 'constellation', 'billets'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/planes') && me.captain ? 'planes' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/cockpit') && me.captain ? 'cockpit' : p.startsWith('/station') && me.captain ? 'station' : 'home');
 document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (name === 'coop' || name === 'options' || name === 'planes' || name === 'cockpit' ? 'station' : name === 'stats' ? 'home' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
 await views[name](main, new URLSearchParams(qs || ''));
 $('#out').hidden = false;

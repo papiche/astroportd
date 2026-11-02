@@ -196,7 +196,7 @@ def build():
 
 
 # Documents annexes publiés en HTML (GitHub Pages sert les .md bruts) : même feuille de style que le guide.
-PAGES = ["CONSTELLATIONS", "MACOS"]
+PAGES = ["CONSTELLATIONS", "MACOS", "CHARTE_UPLANET", "UPLANET_ManuelDesMembresEtDesContributeurs"]
 LINKED = {**{f"{n}.md": f"{n}.html" for n in PAGES}, "GUIDE.md": "index.html"}
 
 

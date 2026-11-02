@@ -1,3 +1,30 @@
+## astroportd 0.5.3-beta
+
+Cette version donne à chaque UPlanet un **nom, une charte et un argent commun visible**, ajoute les **Ğ1Billets** (vérifier, encaisser, créer), un **site public** par membre et plusieurs outils pour le Capitaine.
+
+
+### Ğ1Billet : vérifier et encaisser (page publique `/scan`)
+- Page **`/scan`** sans compte : scanner le billet à la caméra (`BarcodeDetector`, ou jsQR chargé à la demande), dire où envoyer la valeur, encaisser. Les deux QR se lisent **dans n'importe quel ordre**. Routes publiques `GET /api/v1/billet/check`, `/destination` et `POST /identify`, `/redeem` (limites de débit par adresse, réponses `no-store`).
+- Circuit legacy conservé : billet → `UPLANETNAME_G1` → destinataire (`solde − 1 Ğ1`), billet et destinataire vérifiés « de cette UPlanet » par le primal. Découpage Shamir compatible avec `billet_gen.sh` (vecteur de test tiré de l'algorithme). État écrit avant chaque virement, reprise toutes les 5 min d'un transfert final échoué, alerte au Capitaine.
+- Date de fin d'un billet (événement kind 31903 `d = billet:<adresse>` signé par la coopérative) : passée, le porteur ne l'encaisse plus.
+- Budget : la page `/scan` et le décodeur QR ont chacun le leur, hors de la coque de l'application.
+- **Création de billets** : écran « Mes Ğ1Billets » pour le Capitaine et les MULTIPASS qu'il autorise (dans la même action que le quota et le prix en ẑ/semaine). Planche A4 paysage de 6 billets, valeur en ẑ, durée de validité, financement billet par billet (activation du maître puis portefeuille de l'émetteur, nonce réessayé). Option **retour automatique** : P2 et P3 gardées chiffrées pour le NODE dans le témoin ; à la date de fin la valeur revient à l'émetteur. `/scan` traduit en fr/en/es.
+- Réglage de l'hébergement dans un **panneau de la page** (plus de fenêtres de saisie) : quota, prix en ẑ/semaine et droit de créer des Ğ1Billets. Retour automatique des billets expirés **une fois par jour à 20h12** (étape « billets » de la nuit) ; la reprise d'un encaissement à terminer reste toutes les 5 minutes.
+- **Images de profil** : envoi d'une image ou d'un **bandeau** depuis Mon compte (réduit, réencodé, servi par la station, kind 0 `picture`/`banner`) ; ils deviennent l'icône et le fond des Ğ1Billets.
+- **Ma UPlanet** : suivi des Ğ1Billets (créés, en circulation et valeur, encaissés, renvoyés, expirés) et point « billets » sur la carte animée.
+- **Site public** : le dossier `/Public` de l'uCloud est servi en clair, sans authentification, à `/site/<nom>/` et à `https://<nom>.<zone>/` (mêmes noms que les adresses DNSLink). Publier = déplacer un fichier dans `/Public`. Page par défaut (profil + fichiers), site d'exemple en un clic dans Mon compte, politique `sandbox` sur chaque réponse, `..` et fichiers cachés refusés.
+- Site public : bouton **Publier / Retirer de Public** dans l'explorateur (déplacement avec confirmation dans la page), **image de profil choisie dans /Public**, **compteur de visites** sans adresse ni identifiant de visiteur, et **redirection vers la station qui héberge** un site quand le DNS (tourniquet) mène à une autre (adresse annoncée par chaque station dans son résumé de santé, tag `url`).
+- `/scan` : connexion par email et PASS (iPhone dont l'application installée a sa propre session) pour le raccourci « Mon compte ».
+- Essais réels sur la Ğ1 en ORIGIN : `tests/billet_live.rs` (ignoré, `ASTRO_LIVE_G1`).
+
+### Ma UPlanet : portefeuilles, charte et carte animée
+- Écran **Ma UPlanet** (`#/constellation`) visible de tous les membres : portefeuilles de la coopérative (`UPLANETNAME_G1` et ceux de la transaction primale) avec soldes Ğ1/Ẑen et état primal, charte signée par la coopérative, et **carte animée en SVG** (impulsions dans des tuyaux, mode « rejouer » l'historique). Routes `GET /api/v1/constellation` et `/api/v1/constellation/ledger`.
+- L'historique des virements est lu chez l'indexeur squid (table `coop_ledger`, toutes les 15 min) ; sans indexeur : « historique partiel ». Aucune adresse de membre n'est rendue.
+- **Acceptation de la charte par les Capitaines** : événement Nostr public kind 31903 `d = charter-accept` (empreinte SHA-256 du texte, version, clé de la coopérative), signé de la clé du Capitaine ; une nouvelle version demande une nouvelle signature. Route `POST /api/v1/constellation/charter/accept` (Capitaine).
+- Configuration coopérative : nouvelle section « Nom et charte de l'UPlanet » (`UPLANET_NAME`, `CHARTER_VERSION`, `CHARTER_TEXT`) ; charte type `docs/CHARTE_UPLANET.md`.
+- Budget de l'interface : écrans à la demande portés à 240 Ko bruts / 92 Ko gzip.
+- Guide : CONSTELLATIONS, MACOS, la charte et le manuel sont publiés en HTML.
+
 ## astroportd 0.5.2-beta
 
 Cette version fait calculer les **vecteurs de la mémoire de BRO dans la station**, sans Ollama, et rend l'installeur **adaptatif**.

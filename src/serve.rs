@@ -435,6 +435,7 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
 
     // Services.
     let keys: Arc<dyn KeySource> = Arc::new(FileKeySource::new(&secrets_dir));
+    let ui_keys = keys.clone();
     let media_keys = keys.clone();
     let publisher = ManifestPublisher::spawn(db.clone(), blobs.clone(), keys.clone(), Duration::from_secs(a.debounce_secs));
     let circle = Arc::new(DbCircle::new());
@@ -566,6 +567,8 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
     };
     let chain = (!a.no_duniter && !rpc_urls.is_empty()).then(|| Arc::new(RpcPool::new(SubxtConnector, PoolConfig { urls: rpc_urls, cooldown: Duration::from_secs(60), reconnect_delay: Duration::from_secs(2) })));
     let funds_chain = chain.clone();
+    let ui_chain = chain.clone();
+    let billet_chain = chain.clone();
     let peer_id = p2p_handle.as_ref().map(|h| h.peer_id().to_string()).or_else(|| station.discovered.as_ref().map(|d| d.node.peer_id.clone()));
     let services_peer = peer_id.clone();
     let info = StationInfo { node_hex: node_hex.clone(), peer_id, domain: a.domains.first().cloned(), started: std::time::Instant::now() };
@@ -675,7 +678,23 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
     background.push(tokio::spawn(Arc::new(UploadWorker::new(dav.clone(), activity.clone(), notify)).run(Duration::from_secs(10), stop_watch.clone())));
     println!("BRO : traitement des #upload actif (dépôt dans /Uploads)");
     tasks::bro_sweep(&parts, &memory, &mut background);
-    tasks::nightly(&parts, &memory, &backup, &mut background).await?;
+    let ui_wallets = Arc::new(astroportd::coop_wallets::Wallets::new(uplanet_name.to_string(), db.clone()));
+    // Ğ1Billets : vérifier la valeur d'un billet papier et la transférer vers un compte de l'UPlanet (page publique /scan).
+    let billets = billet_chain.map(|chain| {
+        let primal = (!squid_urls.is_empty()).then(|| Arc::new(astroportd::funds::SquidPrimal::new(squid_urls.clone())));
+        let svc = astroportd::billet::Billets::new(db.clone(), chain, ui_wallets.clone(), primal, uplanet_name.to_string(), activity.clone());
+        // Créer des billets exige les comptes (le portefeuille de l'émetteur finance), la clé du NODE (elle chiffre les parts gardées
+        // pour le retour automatique) et de quoi publier le témoin.
+        Arc::new(match (&station.nostr_dir, &station.node_secret) {
+            (Some(dir), Some(secret)) => svc.with_issuing(astroportd::billet::Issuing { accounts_dir: dir.clone(), node_secret: zeroize::Zeroizing::new(**secret), public_base: a.domains.first().map(|d| format!("https://{d}")), publish: publish_fn(&event_publisher) }),
+            _ => svc,
+        })
+    });
+    if let Some(b) = &billets {
+        background.push(tokio::spawn(b.clone().run(stop_watch.clone())));
+        println!("Ğ1Billets : vérification et encaissement actifs → /scan{}", if squid_urls.is_empty() { " (sans indexeur Ğ1 --squid-url : l'origine du billet et le destinataire ne peuvent pas être vérifiés, l'encaissement est refusé)" } else { "" });
+    }
+    tasks::nightly(&parts, &memory, &backup, &billets, &mut background).await?;
     // Dépôt de films et de séries : attestation de copie privée depuis l'interface (kind 31903 signé du titulaire).
     let ffmpeg_found = tokio::process::Command::new("ffmpeg").arg("-version").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().await.is_ok_and(|s| s.success());
     let media_pipeline = Arc::new(astroportd::media::MediaPipeline {
@@ -758,6 +777,13 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
         println!("chat : conversations privées 1 à 1 (NIP-17), réception toutes les 3 s");
         chat
     };
+    let charter_accept = Arc::new(astroportd::charter_accept::CharterAccept::new(db.clone(), ui_keys, publish_fn(&event_publisher), uplanet_name.to_string()));
+    let constellation = astroportd::constellation::Constellation::new(db.clone(), ui_chain, ui_wallets.clone(), uplanet_name.to_string(), squid_urls.clone()).with_acceptances(charter_accept.clone());
+    let constellation = Arc::new(match &billets {
+        Some(b) => constellation.with_billets(b.clone()),
+        None => constellation,
+    });
+    background.push(tokio::spawn(constellation.clone().run(stop_watch.clone())));
     let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_chat(chat).with_people(people.clone()).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
         .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), targets: service_targets(&a), dnslink: Some(dnslink.clone()), assist: Some(assist_admin), tasks: Some(db.clone()) }).handler());
     if let Some(f) = thumbs_fn {
@@ -766,7 +792,15 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
     if let Some(f) = pending_fn {
         ui = ui.with_pending_shares(f);
     }
-    let ui = Arc::new(ui::wire(ui, &db, &event_publisher, &uplanet_name, &sharing, &backup));
+    if let Some(b) = billets {
+        ui = ui.with_billet(Arc::new(move |ip, op, body| {
+            let b = b.clone();
+            Box::pin(async move { b.handle(ip, op, &body).await })
+        }));
+    }
+    let site = Arc::new(astroportd::public_site::Site::new(dav.clone(), uplanet_name.to_string()));
+    ui = ui.with_site(site.clone());
+    let ui = Arc::new(ui::wire(ui, &db, &event_publisher, &uplanet_name, &sharing, &backup, &constellation));
 
     // Reverse proxy : les routes gardées exigent un compte de la station (Basic ou NIP-98).
     let gate: Gate = {
@@ -787,12 +821,15 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
     let mut app = astro_dav::router(dav.clone())
         .merge(relay.clone().router())
         .merge(astro_ui::web::static_router())
+        .merge(site.clone().router())
         .merge(astro_ui::api::router(ui, activity.clone(), public_origin));
     if !routes.is_empty() {
         app = app.merge(proxy_router(routes, Duration::from_secs(120)));
     }
     // `/` : application web pour un navigateur, NIP-11 et WebSocket pour les clients Nostr.
     let app = app.layer(axum::middleware::from_fn(astro_ui::web::negotiate));
+    // Un nom d'hôte `<nom>.<zone>` reçoit le site public de ce compte (couche la plus externe : elle passe avant tout le reste).
+    let app = app.layer(axum::middleware::from_fn_with_state(site, astroportd::public_site::host_layer));
 
     // Écoute : HTTPS automatique avec un domaine, sinon HTTP en clair.
     let frontend = if a.domains.is_empty() {

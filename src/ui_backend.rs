@@ -42,6 +42,10 @@ pub struct StationUi<B: BlobStore> {
     friends_fn: Option<FriendsFn>,
     backup: Option<BackupFns>,
     coop: Option<(CoopGetFn, CoopSetFn)>,
+    constellation: Option<ConstellationFn>,
+    charter: Option<CharterFn>,
+    billet: Option<BilletFn>,
+    site: Option<Arc<crate::public_site::Site<B>>>,
     admin: Option<AdminFn>,
     console: Option<Arc<crate::console::Consoles>>,
     account: Option<Arc<crate::account::AccountService>>,
@@ -72,6 +76,15 @@ pub type ThumbFn = Arc<dyn Fn(String, Vec<i64>, u32) -> std::pin::Pin<Box<dyn st
 pub type CoopGetFn = Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
 /// Écriture de la configuration coopérative : `{ clé: valeur | null }` ; rend la vue mise à jour.
 pub type CoopSetFn = Arc<dyn Fn(std::collections::BTreeMap<String, Option<String>>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
+
+/// Vision de la constellation pour le compte `viewer` : `None` = portefeuilles et charte, `Some((depuis, au plus))` = historique des virements.
+pub type ConstellationFn = Arc<dyn Fn(String, Option<(u64, usize)>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
+
+/// Acceptation de la charte : `(Capitaine, empreinte)` ; rend `{ version, sha256, at }`.
+pub type CharterFn = Arc<dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
+
+/// Ğ1Billet : `(adresse du client, opération, corps)`.
+pub type BilletFn = Arc<dyn Fn(Option<std::net::IpAddr>, &'static str, Value) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, crate::billet::BilletError>> + Send>> + Send + Sync>;
 
 /// Réglages d'administration : `(section, None)` lit, `(section, Some(corps))` modifie ; rend la vue de la section.
 /// Une erreur est un message destiné au Capitaine (« section inconnue » = 404).
@@ -104,7 +117,7 @@ pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Fu
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None, chat: None, people: None }
+        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, site: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None, chat: None, people: None }
     }
 
     /// Annuaire des clés d'une même personne dans plusieurs UPlanet.
@@ -214,6 +227,32 @@ impl<B: BlobStore> StationUi<B> {
     /// Active l'écran de configuration coopérative du Capitaine.
     pub fn with_coop(mut self, get: CoopGetFn, set: CoopSetFn) -> Self {
         self.coop = Some((get, set));
+        self
+    }
+
+    /// Active la vision de la constellation (portefeuilles, historique, charte) pour tous les membres.
+    pub fn with_constellation(mut self, f: ConstellationFn, charter: CharterFn) -> Self {
+        self.constellation = Some(f);
+        self.charter = Some(charter);
+        self
+    }
+
+    /// Appel d'une opération de billet au nom d'un compte authentifié.
+    async fn billet_call(&self, op: &'static str, who: &Principal, body: Value) -> Result<Value, ApiError> {
+        let f = self.billet.as_ref().ok_or_else(|| ApiError::unavailable("Ğ1Billets non activés sur cette station"))?;
+        f(None, op, who_body(who, body)).await.map_err(billet_api_error)
+    }
+
+    /// Active le site public (dossier `/Public`) : l'écran Mon compte en donne les adresses et dépose un site d'exemple.
+    #[must_use]
+    pub fn with_site(mut self, site: Arc<crate::public_site::Site<B>>) -> Self {
+        self.site = Some(site);
+        self
+    }
+
+    /// Active la vérification et l'encaissement des Ğ1Billets (page publique `/scan`).
+    pub fn with_billet(mut self, f: BilletFn) -> Self {
+        self.billet = Some(f);
         self
     }
 
@@ -1141,6 +1180,57 @@ impl<B: BlobStore> Backend for StationUi<B> {
         self.account_service()?.view(&who.hex).await.map_err(account_error)
     }
 
+    async fn account_site(&self, who: &Principal) -> Result<Value, ApiError> {
+        let site = self.site.as_ref().ok_or_else(|| ApiError::unavailable("site public non activé sur cette station"))?;
+        let email = who.email.as_deref().ok_or_else(|| ApiError::bad_request("ce compte n'a pas d'adresse : pas de site public"))?;
+        Ok(site.info(&who.hex, email).await)
+    }
+
+    async fn account_site_example(&self, who: &Principal, force: bool) -> Result<Value, ApiError> {
+        let site = self.site.as_ref().ok_or_else(|| ApiError::unavailable("site public non activé sur cette station"))?;
+        let written = site.install_example(&who.hex, force).await.map_err(|e| if e.contains("existe déjà") { ApiError::conflict(e) } else { ApiError::internal(e) })?;
+        Ok(json!({ "written": written }))
+    }
+
+    async fn public_move(&self, who: &Principal, paths: Vec<String>, publish: bool) -> Result<Value, ApiError> {
+        let site = self.site.as_ref().ok_or_else(|| ApiError::unavailable("site public non activé sur cette station"))?;
+        if paths.is_empty() {
+            return Err(ApiError::bad_request("aucun fichier choisi"));
+        }
+        let out = site.set_public(&who.hex, &paths, publish).await;
+        let n = out["moved"].as_array().map_or(0, Vec::len);
+        if n > 0 {
+            self.services.activity.publish_to(astro_core::Audience::Owner(who.hex.clone()), "system", "public", format!("{n} élément(s) {} Public", if publish { "publié(s) dans" } else { "retiré(s) de" }), None);
+        }
+        Ok(out)
+    }
+
+    async fn public_images(&self, who: &Principal) -> Result<Value, ApiError> {
+        let site = self.site.as_ref().ok_or_else(|| ApiError::unavailable("site public non activé sur cette station"))?;
+        Ok(site.images(&who.hex).await)
+    }
+
+    async fn account_image(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
+        use base64::Engine as _;
+        let svc = self.account_service()?;
+        let kind = body["kind"].as_str().unwrap_or("");
+        // Une image déjà publiée dans /Public : la station la lit elle-même (aucun autre dossier de l'uCloud n'est accepté).
+        let from_public;
+        let data = match body["public_path"].as_str() {
+            Some(path) => {
+                let site = self.site.as_ref().ok_or_else(|| ApiError::unavailable("site public non activé sur cette station"))?;
+                from_public = base64::engine::general_purpose::STANDARD.encode(site.read_public(&who.hex, path).await.map_err(ApiError::bad_request)?);
+                from_public.as_str()
+            }
+            None => body["data"].as_str().unwrap_or(""),
+        };
+        svc.set_image(&who.hex, kind, data, body["origin"].as_str()).await.map_err(account_error)
+    }
+
+    async fn profile_image(&self, hex: &str, kind: &str) -> Option<Vec<u8>> {
+        crate::profile_image::load(&self.services.db, hex, crate::profile_image::Kind::parse(kind)?).await
+    }
+
     async fn account_profile(&self, who: &Principal, patch: Value) -> Result<Value, ApiError> {
         self.account_service()?.update_profile(&who.hex, &patch).await.map_err(account_error)
     }
@@ -1202,6 +1292,51 @@ impl<B: BlobStore> Backend for StationUi<B> {
         self.services.activity.publish_to(astro_core::Audience::Captain, "system", "ui:coop", format!("configuration coopérative modifiée : {}", keys.join(", ")), None);
         let _ = who;
         Ok(view)
+    }
+
+    async fn cooperative_view(&self, who: &Principal, ledger: Option<(u64, usize)>) -> Result<Value, ApiError> {
+        let f = self.constellation.as_ref().ok_or_else(|| ApiError::unavailable("vision de la constellation non activée"))?;
+        f(who.hex.clone(), ledger).await.map_err(|e| {
+            eprintln!("interface : constellation : {e}");
+            ApiError::internal("constellation indisponible")
+        })
+    }
+
+    async fn charter_accept(&self, who: &Principal, sha256: &str) -> Result<Value, ApiError> {
+        let f = self.charter.as_ref().ok_or_else(|| ApiError::unavailable("acceptation de la charte non activée"))?;
+        let out = f(who.hex.clone(), sha256.to_owned()).await.map_err(ApiError::bad_request)?;
+        self.services.activity.publish_to(astro_core::Audience::Captain, "system", "ui:charter", format!("charte {} acceptée par {}", out["version"].as_str().unwrap_or("?"), who.email.as_deref().unwrap_or("le Capitaine")), None);
+        Ok(out)
+    }
+
+    async fn billet(&self, ip: Option<std::net::IpAddr>, op: &'static str, body: Value) -> Result<Value, ApiError> {
+        let f = self.billet.as_ref().ok_or_else(|| ApiError::unavailable("Ğ1Billets non activés sur cette station"))?;
+        f(ip, op, body).await.map_err(billet_api_error)
+    }
+
+    async fn billet_issuer(&self, who: &Principal) -> bool {
+        match &self.billet {
+            Some(f) => f(None, "is_issuer", who_body(who, Value::Null)).await.map(|v| v["issuer"] == true).unwrap_or(false),
+            None => false,
+        }
+    }
+
+    async fn account_billet_issuer(&self, who: &Principal, hex: String, allowed: bool) -> Result<Value, ApiError> {
+        let r = self.billet_call("set_issuer", who, json!({ "hex": hex, "allowed": allowed })).await?;
+        self.services.activity.publish_to(astro_core::Audience::Captain, "quota", "billet", format!("Création de Ğ1Billets {} pour {}", if allowed { "autorisée" } else { "retirée" }, hex.get(..8).unwrap_or(&hex)), None);
+        Ok(r)
+    }
+
+    async fn billet_issue(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
+        self.billet_call("issue", who, body).await
+    }
+
+    async fn billet_fund(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
+        self.billet_call("fund", who, body).await
+    }
+
+    async fn billet_issued(&self, who: &Principal) -> Result<Value, ApiError> {
+        self.billet_call("issued", who, Value::Null).await
     }
 
     async fn friends(&self, who: &Principal) -> Result<Value, ApiError> {
@@ -1377,8 +1512,9 @@ impl<B: BlobStore> Backend for StationUi<B> {
                 })
                 .await
                 .map_err(db_err)?;
+            let issuer: bool = self.services.db.readers().read({ let h = hex.clone(); move |c| Ok(rusqlite::OptionalExtension::optional(c.query_row("SELECT 1 FROM kv WHERE scope = 'billet_issuer' AND key = ?1", [&h], |_| Ok(())))?.is_some()) }).await.unwrap_or(false);
             out.push(json!({
-                "own_quota_bytes": own_quota, "own_weekly_zen": own_price, "weekly_zen": price, "fee": fee,
+                "billet_issuer": issuer, "own_quota_bytes": own_quota, "own_weekly_zen": own_price, "weekly_zen": price, "fee": fee,
                 "pass_locked_until": pass_locked_until,
                 "hex": hex, "role": role, "email": email, "contract": contract, "status": status, "tracked": !life.is_null(),
                 "last_ok_at": life["last_ok_at"], "status_since": life["status_since"], "grace_ends_at": grace_ends,
@@ -1674,6 +1810,31 @@ fn account_error(e: crate::account::AccountError) -> ApiError {
 
 fn admin_error(message: String) -> ApiError {
     if message.starts_with("section inconnue") { ApiError::not_found(message) } else { ApiError::bad_request(message) }
+}
+
+/// Corps d'un appel de billet qui engage l'identité du compte : `_who` est posé ici, jamais lu du client.
+fn who_body(who: &Principal, body: Value) -> Value {
+    let mut map = match body {
+        Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    };
+    map.insert("_who".into(), json!({ "hex": who.hex, "email": who.email, "captain": who.captain }));
+    Value::Object(map)
+}
+
+fn billet_api_error(e: crate::billet::BilletError) -> ApiError {
+    use crate::billet::BilletError as E;
+    match e {
+        E::Invalid(c, m) => ApiError::bad_request(m).with_code(c),
+        E::Refused(c, m) => ApiError::forbidden(m).with_code(c),
+        E::Limited(c, m) => ApiError::too_many(m).with_code(c),
+        E::Unavailable(c, m) => ApiError::unavailable(m).with_code(c),
+        // Défaillance de la chaîne : le message dit ce qui est arrivé au billet, il ne contient aucun secret.
+        E::Failed(c, m) => {
+            eprintln!("interface : billet : {m}");
+            ApiError::unavailable(m).with_code(c)
+        }
+    }
 }
 
 fn ai_error(e: crate::member_ai::AiError) -> ApiError {
