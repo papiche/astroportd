@@ -30,8 +30,10 @@ jobs:
         run: cargo clippy -p astroportd -p astro-facecloud --all-targets --features onnx --locked -- -D warnings
       - name: Tests
         run: cargo test --workspace --locked
-      - name: Règles du cockpit du Capitaine (JavaScript pur, sans navigateur)
-        run: node crates/astro-ui/tests/cockpit_rules.mjs
+      - name: Règles du cockpit et de l'accueil (JavaScript pur, sans navigateur)
+        run: |
+          node crates/astro-ui/tests/cockpit_rules.mjs
+          node crates/astro-ui/tests/home_steps.mjs
       - name: Scripts shell
         run: |
           sudo apt-get install -y --no-install-recommends shellcheck

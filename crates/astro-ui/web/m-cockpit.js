@@ -65,12 +65,12 @@ export default async function cockpit(root, K) {
         h('p', {}, `${TIER[n.tier] || ''} ${n.tier} · ${n.power_score}`, n.distance_km == null ? '' : ` · ${n.distance_km} km`), net.length ? h('p', {}, net.map(s => h('span', { class: 'ck-chip' }, s))) : h('p', { class: 'muted' }, t('aucun service partagé')));
     };
     const brains = a.nodes.filter(n => n.tier === 'Brain' && n.services?.includes('ollama')).length;
-    root.replaceChildren(
+    root.replaceChildren(...[
       h('section', { class: 'card ck-hero ' + a.level, 'aria-live': 'polite' }, h('span', { class: 'ck-big', 'aria-hidden': 'true' }, { ok: '✅', degraded: '🟠', down: '🔴' }[a.level]), h('div', {}, h('h2', {}, t(a.verdict)), h('p', { class: 'muted' }, a.todos.length ? t('Voici par quoi commencer :') : t('Rien ne demande votre attention. La page se met à jour toute seule.')))),
       a.todos.length ? h('section', { class: 'card' }, h('h2', {}, t('À faire')), h('ul', { class: 'ck-list' }, a.todos.slice(0, 3).map(todo)), a.todos.length > 3 ? h('details', {}, h('summary', {}, t('Voir les {0} autres', a.todos.length - 3)), h('ul', { class: 'ck-list' }, a.todos.slice(3).map(todo))) : null) : null,
       h('h2', { class: 'ck-h' }, t('Les étages de la station')), h('div', { class: 'grid' }, floors),
       h('h2', { class: 'ck-h' }, t('L\'essaim'), h('small', { class: 'muted' }, brains ? ` · ${brains} ${t('Brain(s) offrent Ollama')}` : '')), h('div', { class: 'grid' }, a.nodes.map(node)),
-      h('p', { class: 'muted' }, h('a', { href: '#/station' }, t('Détails techniques')), ' · ', h('a', { href: '#/options' }, t('Tunnels et accès')), ' · ', h('a', { href: '#/coop' }, t('Configuration coopérative'))));
+      h('p', { class: 'muted' }, h('a', { href: '#/station' }, t('Détails techniques')), ' · ', h('a', { href: '#/options' }, t('Tunnels et accès')), ' · ', h('a', { href: '#/coop' }, t('Configuration coopérative')))].filter(Boolean));
   };
   K.cleanup(() => link.remove());
   await draw();

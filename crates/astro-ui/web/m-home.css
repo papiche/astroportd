@@ -1,0 +1,12 @@
+/* Accueil d'un membre (chargé avec m-home.js). */
+.hm-hero h2 { font-size: 1.6rem; margin: 0 0 .2rem; }
+.hm-cap { margin: .6rem 0; }
+.hm-tiles { grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); }
+.hm-tile { display: flex; flex-direction: column; gap: .3rem; text-decoration: none; color: inherit; }
+.hm-tile:hover, .hm-tile:focus-visible { border-color: var(--accent); }
+.hm-tile strong { font-size: 1.15rem; }
+.hm-ico { font-size: 2.2rem; line-height: 1; }
+.hm-steps { list-style: none; margin: .6rem 0 0; padding: 0; display: grid; gap: .5rem; }
+.hm-steps li { display: flex; gap: .6rem; align-items: flex-start; }
+.hm-steps li.done { color: var(--muted); }
+.hm-steps p { margin: .1rem 0 0; }

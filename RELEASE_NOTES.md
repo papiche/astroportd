@@ -7,6 +7,10 @@ Cette version fait de la **clé de secours** un secret qu'on peut perdre sans da
 - **Crawl N²** : les couples clé × relai se synchronisent **8 à la fois** (`CrawlConfig::concurrency`) au lieu d'un par un ; curseurs, filtres et contrôles d'auteur inchangés.
 - **Documentation** : la garde de flux « provisoire qui refuse tout » (`tunnel_gate.rs`, disparu) est remplacée par la politique des tunnels ; la limite « une station = une constellation » dit maintenant que `astroportd planes` en sert plusieurs ; tableau des commandes complété.
 
+### Accueil des membres
+- L'onglet **Accueil** (ex-« Tableau de bord ») devient simple : **trois gestes** (Mes photos, Mes proches, Mon assistant), une liste **Bien démarrer** cochée d'après l'état réel (premières photos, un visage reconnu, un proche, sauvegarde chez un ami acceptée, assistant branché) qui disparaît une fois terminée, et une alerte **seulement** si l'espace dépasse 90 %. Le Capitaine y trouve un lien vers son cockpit. Solde, autonomie, loyer, Opex/Capex et copie privée sont à un clic : **Mes chiffres** (`#/chiffres`), inchangés.
+- Règles testées par `crates/astro-ui/tests/home_steps.mjs` (CI). Correction : un écran qui recevait une section vide affichait le texte « null » (cockpit calme).
+
 ### Comparaison du code entre stations : retirée
 - La colonne « Code » de la carte Constellation, l'avertissement correspondant et l'**attestation de build** (kind 30853, `src/build_attest.rs`) sont supprimés : le verdict (identique, empreinte différente, autre version) informait trop peu pour justifier un événement signé toutes les 6 h par station. Une station ne publie plus ni ne projette ce kind ; les événements 30853 déjà présents sur les relais sont simplement ignorés.
 
