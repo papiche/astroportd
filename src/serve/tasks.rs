@@ -269,7 +269,7 @@ pub(super) fn funds(p: &Parts<'_>, funds_chain: Option<Arc<RpcPool<SubxtConnecto
 pub(super) fn bro_sweep(p: &Parts<'_>, memory: &Option<Arc<Memory>>, background: &mut Background) {
     let (a, stop_watch) = (p.a, &p.stop_watch);
     if let Some(m) = &memory {
-        println!("BRO : mémoire sémantique active (Ollama, {}) ; cycle RÊVE à {} souvenirs", a.embed_model, astro_bro::REVE_THRESHOLD);
+        println!("BRO : mémoire sémantique active (vecteurs : {}) ; cycle RÊVE à {} souvenirs", m.embedder().label(&a.embed_model), astro_bro::REVE_THRESHOLD);
         let (m, mut stop) = (m.clone(), stop_watch.clone());
         background.push(tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(30 * 60));

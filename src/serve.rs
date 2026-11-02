@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use astro_bro::bus::{CommandBus, Reply};
-use astro_bro::{MemoryStore, OllamaClient};
+use astro_bro::{AnyEmbedder, MemoryStore, OllamaClient};
 use astro_core::ActivityBus;
 use astro_crypto::{FileKeySource, KeySource};
 use astro_duniter::{PoolConfig, RpcPool, SubxtConnector};
@@ -42,7 +42,7 @@ type Failure = Box<dyn std::error::Error>;
 /// WebDAV de la station : blobs locaux, maillage P2P en repli.
 type Dav = DavState<P2pBlobStore<AutoBlobStore>>;
 /// Mémoire sémantique de BRO (Ollama pour les embeddings et pour les résumés).
-type Memory = MemoryStore<OllamaClient, OllamaClient>;
+type Memory = MemoryStore<AnyEmbedder, OllamaClient>;
 /// Sauvegarde privée chez un ami.
 type Backup = astroportd::private_backup::PrivateBackup<astroportd::mesh_outbox::MeshOutbox, P2pBlobStore<AutoBlobStore>>;
 
@@ -154,7 +154,16 @@ pub struct ServeArgs {
     /// API d'Ollama (`http://127.0.0.1:11434`) : active la mémoire sémantique de BRO (1024D) et le cycle RÊVE.
     #[arg(long)]
     ollama: Option<String>,
-    /// Modèle d'embedding de la mémoire de BRO (1024 dimensions).
+    /// Dossier des embeddings **locaux** de BRO (`bge-m3-int8.onnx` et `bge-m3-tokenizer.json`) : les vecteurs de la mémoire
+    /// sont calculés dans le processus, sans Ollama (binaire compilé avec `--features onnx`). Sans option, les emplacements
+    /// habituels sont essayés ; Ollama reste utilisé pour les résumés RÊVE et en l'absence des fichiers.
+    #[arg(long)]
+    embed_models: Option<PathBuf>,
+    /// Fils de calcul des embeddings locaux (0 = au choix d'ONNX Runtime, soit tous les cœurs : sur une petite machine,
+    /// laissez de la place au relai avec `astroportd init --embed-threads N`).
+    #[arg(long, default_value_t = 0)]
+    embed_threads: usize,
+    /// Modèle d'embedding de la mémoire de BRO quand Ollama les calcule (1024 dimensions).
     #[arg(long, default_value = "bge-m3")]
     embed_model: String,
     /// Modèle de résumé du cycle RÊVE.
@@ -225,6 +234,44 @@ pub struct ServeArgs {
     /// Période de lecture des messages privés adressés à la station (bus de commandes de BRO), en secondes.
     #[arg(long, default_value_t = 5)]
     bus_poll_secs: u64,
+}
+
+/// Moteur d'embedding de la mémoire de BRO : `bge-m3` local (ONNX Runtime) si ses fichiers sont là, sinon Ollama.
+///
+/// `--embed-models` **impose** le local : un dossier incomplet, une bibliothèque introuvable ou un binaire sans `onnx` est une
+/// erreur. Sans l'option, des fichiers trouvés aux emplacements habituels mais inutilisables ne font pas tomber la station :
+/// le problème est dit sur la sortie d'erreur et Ollama calcule les vecteurs (jamais un repli muet).
+fn local_embedder(a: &ServeArgs, ollama: &Arc<OllamaClient>) -> Result<AnyEmbedder, Box<dyn std::error::Error>> {
+    #[cfg(feature = "onnx")]
+    {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let data = a.db.parent().map(PathBuf::from);
+        let forced = a.embed_models.is_some();
+        let dir = match &a.embed_models {
+            Some(d) => Some(d.clone()),
+            None => astro_bro::onnx::find_models(data.as_deref(), home.as_deref()),
+        };
+        if let Some(dir) = dir {
+            let lib = astro_facecloud::onnx::find_library(std::env::var("ORT_DYLIB_PATH").ok().as_deref(), home.as_deref());
+            let loaded = match &lib {
+                Some(l) => astro_bro::onnx::OrtEmbedder::load(&dir, Some(l), a.embed_threads).map_err(|e| e.to_string()),
+                None => Err("libonnxruntime introuvable (ORT_DYLIB_PATH, ou pip install onnxruntime)".to_owned()),
+            };
+            match loaded {
+                Ok(engine) => {
+                    println!("embeddings de BRO : bge-m3 local, ONNX Runtime ({})", dir.display());
+                    return Ok(AnyEmbedder::Local(engine));
+                }
+                Err(e) if forced => return Err(format!("embeddings locaux ({}) : {e}", dir.display()).into()),
+                Err(e) => eprintln!("embeddings locaux inutilisables ({}) : {e} — Ollama calcule les vecteurs (`astroportd embed-check` dit quoi corriger)", dir.display()),
+            }
+        }
+    }
+    #[cfg(not(feature = "onnx"))]
+    if a.embed_models.is_some() {
+        return Err("--embed-models demande la fonction `onnx` : cargo build --release --features onnx".into());
+    }
+    Ok(AnyEmbedder::Ollama(ollama.clone()))
 }
 
 /// Nom du plan servi par cette base et plans voisins de la station (`planes.json`, ORIGIN seul à défaut).
@@ -492,7 +539,8 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
 
     // BRO LifeOS : mémoire sémantique (Ollama), services de la station, bus de commandes par messages privés.
     let ollama = a.ollama.as_deref().map(|url| Arc::new(OllamaClient::new(url, &a.embed_model, &a.chat_model, Duration::from_secs(60))));
-    let memory = ollama.as_ref().map(|o| Arc::new(MemoryStore::new(db.clone(), o.clone(), o.clone(), Some(activity.clone()))));
+    let embedder = ollama.as_ref().map(|o| local_embedder(&a, o)).transpose()?;
+    let memory = ollama.as_ref().zip(embedder).map(|(o, e)| Arc::new(MemoryStore::new(db.clone(), Arc::new(e), o.clone(), Some(activity.clone()))));
     let hardware = tokio::task::spawn_blocking(Hardware::detect).await?;
     // Constellation = secret partagé de la swarm.key (ẐEN) ou 64 zéros (ORIGIN).
     let uplanet_name = match &a.swarm_key {

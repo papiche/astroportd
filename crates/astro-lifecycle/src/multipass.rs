@@ -10,11 +10,11 @@
 //!   `NPUB`, `LANG`, `NOSTRNS`, `.pass`, `.multipass.json` (0600 pour tout ce qui est secret) ;
 //! - refus d'un email déjà inscrit ou d'une clé Nostr déjà prise par un autre compte.
 //!
-//! Non repris (annoncé, pas simulé) : le découpage SSSS 2‑sur‑3 de DISCO chiffré vers le Capitaine et UPlanet, l'import de la
-//! clé IPNS dans kubo et l'envoi du zine par email. À la place, la récupération d'un compte repose sur la **carte secrète**
-//! ([`SecretCard`] : `SALT`/`PEPPER`, formule et empreinte de la constellation, imprimable en QR) remise au titulaire, qui
-//! rétablit le même compte sur n'importe quelle station de la même UPlanet ([`recover`]) ; ses amis lui renvoient alors ses
-//! sauvegardes d'eux-mêmes (`crate::private_backup` côté démon).
+//! Non repris (annoncé, pas simulé) : le découpage SSSS du DISCO chiffré vers le Capitaine et UPlanet, l'import de la clé IPNS
+//! dans kubo et l'envoi du zine par email. À la place, la récupération d'un compte repose sur la **clé de secours en trois parts**
+//! (`crate::share`, 2 sur 3 : P1 au titulaire en QR, P2 gardée par la station, P3 chez les amis qui hébergent la sauvegarde),
+//! qui rétablit le même compte sur n'importe quelle station de la même UPlanet ([`recover`]) ; l'ancienne [`SecretCard`] complète
+//! reste acceptée, et les amis lui renvoient alors ses sauvegardes d'eux-mêmes (`crate::private_backup` côté démon).
 
 use std::path::{Path, PathBuf};
 

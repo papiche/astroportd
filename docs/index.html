@@ -61,7 +61,7 @@ figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line)
 <body>
 <a class="skip" href="#contenu">Aller au contenu</a>
 <header class="top">
-<p><span class="badge">Préversion 0.5.1-beta</span> <span class="badge">AGPL-3.0</span></p>
+<p><span class="badge">Préversion 0.5.2-beta</span> <span class="badge">AGPL-3.0</span></p>
 <h1>Démarrer sa station <span style="white-space:nowrap">astroportd</span>, pas à pas</h1>
 <p class="lead">Un cloud personnel chiffré, vos photos qui retrouvent les visages, le partage entre amis — sur une machine qui est la vôtre. Chaque étape se fait au <strong>terminal</strong> ou, quand c'est possible, au <strong>navigateur</strong>.</p>
 <nav class="toc" aria-labelledby="toc-t"><h2 id="toc-t">Les étapes</h2><ol style="list-style:none;padding-left:0"><li><a href="#etape-0">0. Avant de commencer</a></li><li><a href="#etape-1">1. Installer astroportd</a></li><li><a href="#etape-2">2. Activer Y-Level : une clé, quatre identités</a></li><li><a href="#etape-3">3. Choisir sa constellation : ORIGIN ou ẐEN</a></li><li><a href="#etape-4">4. Démarrer la station</a></li><li><a href="#etape-5">5. Créer mon MULTIPASS</a></li><li><a href="#etape-6">6. Vérifier que tout va bien</a></li><li><a href="#etape-7">7. Entrer dans l'interface web</a></li><li><a href="#etape-7b">7 bis. Le cockpit du Capitaine</a></li><li><a href="#etape-8">8. FaceCloud : retrouver et partager vos photos entre amis</a></li><li><a href="#etape-8b">8 bis. Contacts, agenda (CardDAV, CalDAV) et Mon compte</a></li><li><a href="#etape-8bis-b">8 bis-b. Mon coffre de mots de passe (KeePass)</a></li><li><a href="#etape-8bis-c">8 bis-c. Reprendre son uCloud d'Astroport.ONE</a></li><li><a href="#etape-8bis-d">8 bis-d. Remplir son uCloud depuis un autre serveur (Nextcloud, ownCloud…)</a></li><li><a href="#etape-8bis-e">8 bis-e. Ranger son uCloud par type</a></li><li><a href="#etape-8bis-f">8 bis-f. Un jeton par appareil (téléphones, tablettes, ordinateurs)</a></li><li><a href="#etape-8bis-g">8 bis-g. Hébergement facturé, compte technique et règlement hebdomadaire</a></li><li><a href="#etape-8bis-h">8 bis-h. Plusieurs astroportd sur une machine (ORIGIN + ZEN*) : un seul bassin de blobs</a></li><li><a href="#etape-8bis-i">8 bis-i. Plusieurs UPlanet dans un seul processus : assistant et astroportd planes</a></li><li><a href="#etape-8bis-j">8 bis-j. Messages privés et une personne dans plusieurs UPlanet</a></li><li><a href="#etape-8c">8 ter. Options du Capitaine : moteur FaceID et règles du relai</a></li><li><a href="#etape-8quater">8 quater. Inviter quelqu'un à recevoir des photos</a></li><li><a href="#etape-8quinquies">8 quinquies. Sans email, connexion par PASS, signature déléguée</a></li><li><a href="#etape-9">9. Relier sa station aux autres Capitaines</a></li><li><a href="#etape-9b">9 bis. Une adresse pour chaque station et chaque MULTIPASS (DNSLink)</a></li><li><a href="#etape-10">10. En cas de problème</a></li><li><a href="#sur-un-smartphone">Sur un smartphone</a></li></ol></nav>
@@ -80,7 +80,7 @@ figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line)
 <li>une connexion Internet et environ 15 minutes ;</li>
 <li>une <strong>horloge à l'heure</strong> : un Raspberry Pi sans pile démarre en 1970, et astroportd refuse alors de calculer ses échéances ;</li>
 <li>facultatif, pour une station ouverte sur Internet : un nom de domaine et les ports 80 et 443 ouverts ;</li>
-<li>facultatif : un service d'inférence faciale (pour FaceCloud) et <code>ffmpeg</code> (pour les films et séries).</li>
+<li>facultatif : de quoi reconnaître les visages (pour FaceCloud : un service d'inférence, ou les modèles locaux que l'installeur peut mettre en place) et <code>ffmpeg</code> (pour les films et séries).</li>
 </ul>
 <p>Deux commandes pour vérifier votre machine :</p>
 <div class="code"><pre><code>uname -m   # x86_64, aarch64 ou armv7l
@@ -89,7 +89,7 @@ date       # l'année doit être 2026 ou plus
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p>Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.</p>
-<div class="box note"><p><span class="lbl">À savoir</span> astroportd est en <strong>préversion 0.5.1-beta</strong> : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.</p></div>
+<div class="box note"><p><span class="lbl">À savoir</span> astroportd est en <strong>préversion 0.5.2-beta</strong> : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.</p></div>
 <p>Vous aurez aussi besoin d'un compte <strong>MULTIPASS</strong> (votre identité Nostr) : astroportd le crée pour vous à l'étape 5.</p>
 </div>
 </div>
@@ -102,10 +102,44 @@ date       # l'année doit être 2026 ou plus
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <div class="code"><pre><code>curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 </code></pre></div>
-<p>Options utiles : <code>--version v0.5.1-beta</code>, <code>--static</code> (binaire statique, x86_64), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>. Ensuite :</p>
+<p>Options utiles : <code>--version v0.5.2-beta</code>, <code>--static</code> (binaire statique, x86_64 et aarch64), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>. Ensuite :</p>
 <div class="code"><pre><code>astroportd --version
 </code></pre></div>
 <p>Si la commande est introuvable, ajoutez <code>~/.local/bin</code> à votre PATH : <code>export PATH=&quot;$HOME/.local/bin:$PATH&quot;</code>.</p>
+<div class="box note"><p><span class="lbl">À savoir</span> L'installeur ne fonctionne que sous <strong>Linux</strong> (Android sous Termux compris, voir la fin du guide). Sur un <strong>Mac</strong>, téléchargez l'archive à la main (colonne Navigateur ci-contre, et <a href="MACOS.md">MACOS.md</a>).</p></div>
+<p><strong>L'installeur s'adapte à votre machine.</strong> Reconnaître les visages et comprendre le sens des textes <em>dans</em> astroportd (sans service externe) coûte de la mémoire, du disque et du processeur. Avant de télécharger les modèles, l'installeur examine donc votre machine : architecture, nombre de cœurs, mémoire, place libre, <strong>vitesse d'écriture du disque</strong> (carte SD, disque mécanique, SSD, NVMe), carte graphique et présence d'Ollama. Il vous montre ce qu'il a trouvé et <strong>recommande un profil</strong> :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Profil</th>
+<th>Ce qui tourne sur la machine</th>
+<th>Pour qui</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>léger</strong></td>
+<td>Rien en local : visages et mémoire passent par une autre machine (Brain GPU, Ollama)</td>
+<td>Machine juste en mémoire (moins de 2 Go), en place ou en disque : Pi Zero, Pi 2/3, binaire statique</td>
+</tr>
+<tr>
+<td><strong>standard</strong></td>
+<td>Visages en local (≈ 190 Mo) et, si la machine a assez de mémoire (≈ 4 Go : au moins 3,5 Go utilisables) et de disque (≥ 2,5 Go libres), <strong>embeddings locaux</strong> (≈ 560 Mo) ; la moitié des cœurs au plus</td>
+<td>Raspberry Pi 4/5 (4 Go et plus), mini-PC, NAS correct</td>
+</tr>
+<tr>
+<td><strong>confort</strong></td>
+<td>Tout en local, tous les cœurs</td>
+<td>PC ou serveur : 8 Go de mémoire (7 Go utilisables) et 6 cœurs ou plus</td>
+</tr>
+</tbody>
+</table></div>
+<p>Au terminal, l'installeur propose la recommandation et vous laisse en choisir une autre ; avec <code>--yes</code>, il applique la recommandation. Il vous prévient quand la machine est juste (disque très lent, carte SD, pas d'accélération int8) mais il obéit si vous insistez.</p>
+<div class="code"><pre><code>curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash -s -- --check-hardware    # diagnostic seul, rien n'est installé
+curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash -s -- --profile standard   # impose un profil : leger, standard ou confort
+curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash -s -- --no-embed           # pas d'embeddings locaux (ni leur téléchargement de 560 Mo)
+</code></pre></div>
+<p>Chaque modèle est vérifié par SHA-256 avant d'être gardé ; un fichier incorrect est refusé. Les fils de calcul retenus sont inscrits dans <code>station.conf</code> et dans la commande de démarrage (<code>--face-threads</code>, <code>--embed-threads</code>) : un second <code>astroportd init</code> les conserve.</p>
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p>Ouvrez la page des versions : <a href="https://github.com/papiche/astroportd/releases">https://github.com/papiche/astroportd/releases</a>. Téléchargez l'archive qui correspond à votre machine :</p>
@@ -394,7 +428,7 @@ astroportd multipass list
 </code></pre></div>
 <p>Options : <code>--lang fr|en|es</code>, <code>--relay ws://…</code> (publier les événements de naissance sur un relai), <code>--home DIR</code>, <code>--game-dir DIR</code>, <code>--db FICHIER</code>.</p>
 <p>Ce que la création écrit : un dossier <code>~/.zen/game/nostr/&lt;email&gt;/</code> (<code>.secret.nostr</code>, <code>.secret.dunikey</code>, <code>.keyformula</code>, <code>.pass</code>, <code>.multipass.json</code> en <code>0600</code>, plus <code>HEX</code>, <code>NPUB</code>, <code>G1PUBNOSTR</code>, <code>LANG</code>, <code>NOSTRNS</code>) et trois événements signés par le compte : son <strong>profil</strong> (kind 0), le <strong>suivi du Capitaine</strong> (kind 3) et son <strong>DID</strong> (kind 30800).</p>
-<div class="box note"><p><span class="lbl">À savoir</span> <strong>Limites.</strong> La création reprend l'essentiel de <code>make_NOSTRCARD.sh</code> d'Astroport.ONE, mais pas : le découpage SSSS 2-sur-3 de DISCO chiffré vers le Capitaine, les QR codes, l'import de la clé IPNS dans Kubo, l'envoi du zine par email, la ZenCard et la primo-transaction. Retrouver un compte repose sur le SALT/PEPPER remis une fois au titulaire (et sur le <code>nsec</code>).</p></div>
+<div class="box note"><p><span class="lbl">À savoir</span> <strong>Limites.</strong> La création reprend l'essentiel de <code>make_NOSTRCARD.sh</code> d'Astroport.ONE, mais pas : l'import de la clé IPNS dans Kubo, l'envoi du zine par email, la ZenCard ni la primo-transaction du compte. Le découpage SSSS du DISCO envoyé chiffré au Capitaine n'est pas repris tel quel : il est remplacé par la <strong>clé de secours en trois parts</strong> (voir plus bas), avec son QR (<code>astroportd multipass card &lt;email&gt; --svg</code>). Retrouver un compte repose donc sur cette clé de secours ; le SALT/PEPPER et le <code>nsec</code> ne sont affichés qu'une fois à la création (ils restent dans le dossier du compte et dans <code>--json</code>).</p></div>
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p>Les <strong>membres</strong> s'inscrivent depuis le navigateur (le Capitaine se crée au terminal, ci-contre). La station doit tourner (étape 4).</p>
@@ -621,6 +655,14 @@ astroportd serve ... --face-models ~/modeles/buffalo_l     # contient det_10g.on
 </code></pre></div>
 <p>Pour savoir ce qui manque, lancez <code>astroportd face-check</code> : il vérifie la fonction compilée, les modèles, la bibliothèque et le chargement. Si les deux modèles sont dans <code>~/.zen/astroportd/models</code> (ou <code>~/.insightface/models/buffalo_l</code>) et la bibliothèque aux emplacements habituels (dont le <code>onnxruntime</code> d'un venv pip), <code>serve</code> active l'inférence locale <strong>tout seul</strong>, sans option.</p>
 <p>Les deux modèles ne sont <strong>pas</strong> fournis avec astroportd : ce sont ceux du paquet InsightFace <code>buffalo_l</code>. Leurs poids sont publiés pour la <strong>recherche non commerciale</strong> : vérifiez la licence avant tout usage commercial, ou utilisez des modèles compatibles dont la licence vous convient (mêmes noms de fichiers, mêmes entrées et sorties). Mesure sur un PC de bureau (build de développement, 2 fils) : environ 0,5 s par photo ; le binaire optimisé est nettement plus rapide.</p>
+<p><strong>Mémoire et recherche : des embeddings calculés dans la station (facultatif).</strong> La mémoire de BRO et la recherche par le sens transforment chaque texte en un vecteur de 1024 nombres (modèle <code>bge-m3</code>). Par défaut, c'est Ollama qui les calcule (<code>--ollama http://…</code>). Une station peut aussi les calculer <strong>elle-même</strong>, sans Ollama, avec la version quantifiée en entiers 8 bits (int8) de <code>bge-m3</code>, par le même ONNX Runtime que les visages :</p>
+<div class="code"><pre><code>astroportd embed-check                                     # fonction compilée, fichiers, bibliothèque, chargement, essai
+astroportd serve ... --ollama http://127.0.0.1:11434       # les vecteurs sont calculés en local si les fichiers sont là
+astroportd serve ... --embed-models ~/modeles/bge-m3       # ou impose le dossier (erreur claire s'il est incomplet)
+astroportd serve ... --embed-threads 2                     # limite les fils de calcul (0 = tous les cœurs)
+</code></pre></div>
+<p>Les deux fichiers sont <code>bge-m3-int8.onnx</code> (≈ 540 Mo) et <code>bge-m3-tokenizer.json</code> (≈ 16 Mo), dans <code>~/.zen/astroportd/models</code> : l'installeur les met en place (profils <em>standard</em> et <em>confort</em>), vérifiés par SHA-256. Ils viennent de <code>Xenova/bge-m3</code> (licence MIT). Sans option, <code>serve</code> les utilise <strong>tout seul</strong> quand ils sont présents (et que <code>libonnxruntime</code> est trouvée) ; sinon Ollama reste le moteur, et si les fichiers sont là mais inutilisables, la station le dit à l'écran avant de se rabattre sur Ollama. Ce sont les mêmes 1024 dimensions que celles d'Ollama, et le calcul reproduit exactement celui d'<code>onnxruntime</code> sur ce même fichier (cosinus 1,000). <strong>Attention</strong> : le fichier est <em>quantifié</em> (int8) alors qu'Ollama sert une autre version du modèle ; leurs vecteurs sont très proches mais <strong>non identiques</strong>, et cet écart n'a pas été mesuré. Sur une mémoire déjà indexée par Ollama, gardez le même moteur ou ré-indexez avant de changer.</p>
+<p>Ordres de grandeur sur un PC de bureau à 12 cœurs : chargement ≈ 2 s au démarrage, environ 20 ms pour une phrase courte et 170 ms pour 200 jetons (≈ 150 mots), <strong>≈ 1,3 Go de mémoire au pic</strong>. Ollama reste nécessaire pour les <strong>résumés</strong> du cycle RÊVE ; seuls les vecteurs sont calculés en local. Le binaire statique (musl) n'a pas cette fonction.</p>
 <p>L'écran <strong>Personnes</strong> (« table de tri ») montre les visages sur une table lumineuse : chaque pastille est un visage, les visages inconnus qui se ressemblent sont regroupés en grappes, et on les <strong>glisse</strong> sur la pochette d'une personne (ou au lasso, ou avec la barre d'actions au clavier). Les vignettes sont recadrées par la station ; les empreintes ne quittent jamais la station.</p>
 <p>Déposez vos photos par WebDAV, par exemple avec <code>curl</code> :</p>
 <div class="code"><pre><code>curl -u vous@exemple.org:JETON -T photo.jpg https://votre-domaine/dav/Photos/photo.jpg
@@ -855,7 +897,7 @@ kind.7     = read=circle write=circle project=on
 <p><strong>Accepter avec son compte (même station).</strong> Si le visiteur est déjà connecté à la station, la page propose d'abord « Bonjour Léa, ajouter ces N fichiers à votre compte ? » : un clic (<code>POST /api/v1/invite/&lt;jeton&gt;/accept</code>) accepte, <strong>sans formulaire et sans nouveau compte</strong>. L'identité est prouvée par la <strong>session</strong>, jamais par une adresse saisie. Le double suivi, le rangement des photos, la liaison de la fiche et la prévenance de l'expéditeur sont les mêmes qu'à la création d'un compte ; l'expéditeur ne peut pas accepter son propre lien. « Utiliser un autre compte » rouvre le formulaire d'inscription. La session de l'application est conservée dans le <code>localStorage</code> du navigateur (elle survit à la fermeture de la PWA ; <em>Déconnexion</em> l'efface) : c'est ce qui permet à la page d'invitation, ouverte dans un autre onglet, de la reconnaître.</p>
 <p><strong>Envoi du lien.</strong> La station n'envoie <strong>jamais</strong> de courrier : le lien se transmet par la messagerie de l'expéditeur. Après <em>Inviter</em>, les boutons <strong>Email</strong> (<code>mailto:</code> prérempli avec l'adresse de la fiche), <strong>SMS</strong>, <strong>WhatsApp</strong> et <strong>Partager</strong> (menu du téléphone) ouvrent son application avec le message prêt.</p>
 <p><strong>Erreurs à code stable.</strong> Toute erreur d'invitation porte <code>{ &quot;error&quot;: &quot;…&quot;, &quot;code&quot;: &quot;invite_used&quot; | &quot;invite_expired&quot; | &quot;invite_revoked&quot; | &quot;email_taken&quot; | &quot;rate_limited&quot; | &quot;registration_closed&quot; | … }</code> ; la page traduit d'après le code (français, anglais, espagnol), jamais d'après le texte.</p>
-<p><strong>Limites actuelles.</strong> « Accepter avec mon compte » ne fonctionne que pour un compte hébergé sur <strong>cette</strong> station : une personne inscrite sur une autre station n'est pas encore redirigée vers la sienne (acceptation entre stations à faire). Une session ouverte par une extension Nostr (NIP-07) n'est pas reconnue par la page : seule la session par identifiant et jeton ou PASS l'est. Les codes d'erreur ne couvrent pas encore tous les écrans de l'application, seulement les invitations et le PASS. Je n'ai pas testé avec un vrai téléphone.</p>
+<p><strong>Limites actuelles.</strong> « Accepter avec mon compte » ne fonctionne que pour un compte hébergé sur <strong>cette</strong> station : une personne inscrite sur une autre station n'est pas encore redirigée vers la sienne (acceptation entre stations à faire). Une session ouverte par une extension Nostr (NIP-07) n'est pas reconnue par la page : seule la session par identifiant et jeton ou PASS l'est. Les codes d'erreur ne couvrent pas encore tous les écrans de l'application, seulement les invitations et le PASS. Ce parcours n'a pas été essayé sur un vrai téléphone.</p>
 <h3>Compte sur une autre station</h3>
 <p>Sur la page du lien, <strong>« Mon compte est sur une autre station »</strong> : la personne saisit l'adresse de sa station et y est envoyée (<code>/claim</code>). Le jeton voyage dans le <strong>fragment</strong> de l'adresse (<code>#origin=…&amp;token=…</code>), que le navigateur n'envoie à aucun serveur ; la page le retire de l'adresse dès qu'elle l'a lu. Elle demande le PASS s'il n'y a pas de session dans ce navigateur (la session obtenue reste en mémoire), puis nomme la station d'origine et le compte qui recevra, et attend un clic.</p>
 <p>Ensuite c'est <strong>la station du destinataire</strong> qui travaille, sans que le navigateur parle à l'autre station (pas de CORS) :</p>
@@ -1010,6 +1052,8 @@ ssh -p 2222 utilisateur@127.0.0.1
 <li><strong><code>doctor</code> signale un secret lisible par d'autres</strong> : <code>chmod 600 ~/.zen/game/secret.*</code> (et <code>chmod 600</code> sur la base).</li>
 <li><strong><code>ylevel --verify</code> échoue</strong> : la clé SSH a été remplacée après Y-Level (ou une autre machine l'a écrasée). Relancez <code>astroportd init</code>, ou restaurez <code>~/.ssh/id_ed25519</code> depuis vos sauvegardes.</li>
 <li><strong>La reconnaissance de visages ne démarre pas</strong> : vérifiez <code>--face-engine</code> ou <code>--face-models</code> (voir étape 8). Avec <code>--face-models</code>, le binaire doit avoir été compilé avec <code>--features onnx</code>, <code>ORT_DYLIB_PATH</code> doit désigner <code>libonnxruntime.so</code> et le dossier doit contenir <code>det_10g.onnx</code> et <code>w600k_r50.onnx</code>.</li>
+<li><strong>Les embeddings locaux ne démarrent pas</strong> : lancez <code>astroportd embed-check</code>, il dit ce qui manque (fonction <code>onnx</code> compilée, <code>bge-m3-int8.onnx</code> et <code>bge-m3-tokenizer.json</code> dans <code>~/.zen/astroportd/models</code>, <code>libonnxruntime</code>). Sans option, des fichiers inutilisables font dire pourquoi à la station, qui se rabat alors sur Ollama ; avec <code>--embed-models</code>, un dossier incomplet ou une bibliothèque introuvable est une <strong>erreur</strong> et la station ne démarre pas. Sur une petite machine, le démarrage charge ≈ 560 Mo de modèle : si la mémoire manque, relancez l'installeur avec <code>--check-hardware</code> et choisissez le profil <em>léger</em> ou <code>--no-embed</code>.</li>
+<li><strong>L'installeur recommande « léger » alors que je veux tout en local</strong> : il a vu un manque de mémoire, de place ou un disque très lent (chaque raison est affichée). Forcez avec <code>--profile standard</code> ou <code>--profile confort</code> si vous assumez la lenteur, ou changez de disque (un SSD USB ou NVMe vaut mieux qu'une carte SD).</li>
 <li><strong>Un virement Ğ1 n'apparaît pas en Ẑen</strong> : l'écoute des virements compte un virement comme Ẑen seulement s'il vient de cette UPlanet (contrôle « primal »). Les nœuds Duniter et les indexeurs squid sont <strong>découverts automatiquement</strong> au démarrage (amorces, pairs, fichier réseau officiel, annonces on-chain ; sondés puis triés par latence ; cache d'une heure) : <code>--duniter-rpc</code> et <code>--squid-url</code> ne servent qu'à les imposer, <code>--no-duniter</code> à ne pas joindre la Ğ1. Si aucun indexeur ne répond, l'origine reste « non vérifiée » et le titulaire est prévenu sans que le montant soit compté.</li>
 <li><strong>Photos : GPS et date de prise de vue.</strong> À la réception d'une photo, la station lit son EXIF (position GPS, date de prise de vue) avant que la miniature n'en efface les métadonnées, et les note dans l'uCloud (jamais d'écrasement d'une valeur déjà saisie ; une position « 0, 0 » ou hors du globe est ignorée). L'<strong>orientation</strong> EXIF est appliquée partout : la détection des visages, leurs vignettes et la visionneuse partagent le même repère. Les photos reçues <strong>avant</strong> cette version ne sont pas rattrapées.</li>
 <li><strong>La station ne voit pas les autres</strong> : en ẐEN, toutes les stations doivent avoir <strong>exactement la même</strong> <code>swarm.key</code>.</li>
@@ -1039,7 +1083,7 @@ ssh -p 2222 utilisateur@127.0.0.1
 </ul>
 <p><strong>2. astroportd directement sur le téléphone (Android seulement, expérimental).</strong> Le binaire statique ARM 64 bits (<code>aarch64-unknown-linux-musl</code>) tourne sous <a href="https://f-droid.org/packages/com.termux/">Termux</a> (installez-le depuis F-Droid, pas depuis le Play Store). L'installeur le choisit tout seul :</p>
 <div class="code"><pre><code>pkg install curl openssh            # ssh-keygen sert au rituel Y-Level
-curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash   # bash, pas sh : l'installeur en a besoin
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs \
   --game-dir ~/.zen/game --http-listen 127.0.0.1:18080
 </code></pre></div>
@@ -1048,7 +1092,7 @@ astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blo
 <ul>
 <li><strong>DNS</strong> : un binaire statique musl lit <code>/etc/resolv.conf</code>, que Android n'a pas. Si la station n'arrive pas à joindre un nom d'hôte (nœuds Duniter, pairs), lancez-la dans <code>termux-chroot</code> (paquet <code>proot</code>), qui fournit ce fichier.</li>
 <li><strong>Veille</strong> : Android coupe les applications en arrière-plan. Lancez <code>termux-wake-lock</code> et retirez Termux de l'optimisation de batterie, sans quoi la station s'endort.</li>
-<li><strong>Reconnaissance de visages locale</strong> : elle demande <code>libonnxruntime</code> (glibc), indisponible pour un binaire statique. Pointez <code>--face-engine</code> vers le service d'une autre station.</li>
+<li><strong>Reconnaissance de visages et embeddings locaux</strong> : ils demandent <code>libonnxruntime</code> (glibc), indisponible pour un binaire statique. Pointez <code>--face-engine</code> vers le service d'une autre station, et <code>--ollama</code> vers une machine qui héberge Ollama pour les vecteurs de la mémoire.</li>
 <li><strong>Réseau</strong> : un téléphone est derrière un NAT d'opérateur ; pour être joignable par ses pairs, utilisez <code>--p2p-use-relay</code> avec une station qui sert de relais. iOS n'est pas supporté.</li>
 </ul>
 

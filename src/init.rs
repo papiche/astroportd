@@ -65,6 +65,12 @@ pub struct InitArgs {
     /// `~/.ipfs/config` de kubo à aligner sur le PeerID de la station (sauvegarde `config.bkp`).
     #[arg(long)]
     kubo_config: Option<PathBuf>,
+    /// Fils de calcul de la reconnaissance de visages locale, inscrits dans la commande de démarrage (0 = au choix d'ONNX Runtime).
+    #[arg(long, default_value_t = 0)]
+    face_threads: usize,
+    /// Fils de calcul des embeddings locaux de BRO (bge-m3), inscrits dans la commande de démarrage (0 = au choix d'ONNX Runtime).
+    #[arg(long, default_value_t = 0)]
+    embed_threads: usize,
     /// Écrit l'unité systemd utilisateur `~/.config/systemd/user/astroportd.service`.
     #[arg(long)]
     systemd: bool,
@@ -297,6 +303,9 @@ pub fn init(a: InitArgs) -> Res {
             if la.is_empty() || lo.is_empty() { None } else { Some((parse_coord(&la, "latitude", 90.0)?, parse_coord(&lo, "longitude", 180.0)?)) }
         }
     };
+    // Fils de calcul de l'inférence locale : l'option l'emporte, sinon ce que le précédent `init` avait retenu (0 = au choix d'ONNX Runtime).
+    let threads = |arg: usize, key: &str| if arg > 0 { arg } else { prev(key).parse().unwrap_or(0) };
+    let (face_threads, embed_threads) = (threads(a.face_threads, "face_threads"), threads(a.embed_threads, "embed_threads"));
     let email = a.email.clone().unwrap_or_else(|| ask.ask("Email du Capitaine (facultatif)", &prev("captain_email")));
 
     // Web : domaine + certificat. Ports 80/443 libres → astroportd gère lui-même HTTPS (ACME) ; pris (NPM…) → il reste local.
@@ -315,7 +324,7 @@ pub fn init(a: InitArgs) -> Res {
         std::fs::create_dir_all(&dir)?;
     }
     let conf = format!(
-        "# astroportd — station.conf (écrit par `astroportd init`, relisible et modifiable)\nmode = {}\nuplanetname = {uplanetname}\nipfsnodeid = {}\ncaptain_email = {email}\ndomain = {domain}\nlat = {}\nlon = {}\n",
+        "# astroportd — station.conf (écrit par `astroportd init`, relisible et modifiable)\nmode = {}\nuplanetname = {uplanetname}\nipfsnodeid = {}\ncaptain_email = {email}\ndomain = {domain}\nlat = {}\nlon = {}\nface_threads = {face_threads}\nembed_threads = {embed_threads}\n",
         if mode == Mode::Zen { "zen" } else { "origin" },
         report.peer_id,
         coords.map_or(String::new(), |c| c.0.to_string()),
@@ -347,6 +356,12 @@ pub fn init(a: InitArgs) -> Res {
     }
     if let Some((la, lo)) = coords {
         serve.push(format!("--lat {la} --lon {lo}"));
+    }
+    if face_threads > 0 {
+        serve.push(format!("--face-threads {face_threads}"));
+    }
+    if embed_threads > 0 {
+        serve.push(format!("--embed-threads {embed_threads}"));
     }
     let serve = serve.join(" ");
     if a.systemd {

@@ -6,8 +6,12 @@
 #
 # Ce script : détecte votre machine, télécharge l'archive de la release GitHub, VÉRIFIE son empreinte SHA-256
 # (il s'arrête si elle ne correspond pas : aucun repli silencieux), installe le binaire, prépare la reconnaissance
-# de visages locale (libonnxruntime + modèles, chacun vérifié par SHA-256), signale les ports déjà pris, puis propose
-# de lancer `astroportd init`. Il ne demande jamais les droits administrateur.
+# de visages et d'embeddings locaux (libonnxruntime + modèles, chacun vérifié par SHA-256), signale les ports déjà pris,
+# puis propose de lancer `astroportd init`. Il ne demande jamais les droits administrateur.
+#
+# Avant d'installer les modèles, il examine la machine (architecture, cœurs, mémoire, place et vitesse du disque, GPU,
+# Ollama) et recommande un profil — léger, standard ou confort — que vous pouvez accepter ou changer.
+# `install.sh --check-hardware` affiche ce diagnostic sans rien installer.
 
 set -euo pipefail
 
@@ -18,7 +22,10 @@ VERSION="latest"
 STATIC=0
 YES=0
 RUN_INIT=1
-FACE=1
+NO_FACE=0
+EMBED=auto       # auto : selon la machine ; yes : impose ; no : refuse
+PROFILE=auto     # auto | leger | standard | confort
+CHECK_ONLY=0
 MODE=""
 EMAIL=""
 DOMAIN=""
@@ -32,7 +39,10 @@ Usage : install.sh [options]
   --version vX.Y.Z   version à installer (défaut : la dernière release)
   --prefix DIR       dossier d'installation ; le binaire va dans DIR/bin (défaut : ~/.local)
   --static           binaire statique musl (sans dépendance à la glibc) — x86_64 et aarch64 ; choisi tout seul sous Android (Termux)
-  --no-face          n'installe ni libonnxruntime ni les modèles de visages (le reste est inchangé)
+  --profile P        auto (défaut), leger, standard ou confort : ce qui tourne sur cette machine (voir ci-dessous)
+  --no-face          n'installe pas les modèles de visages
+  --embed / --no-embed   impose ou refuse les embeddings locaux de BRO (bge-m3, ≈ 560 Mo), quelle que soit la machine
+  --check-hardware   affiche le diagnostic de la machine et le profil recommandé, sans rien installer
   --no-init          n'appelle pas `astroportd init` à la fin
   --yes, -y          mode non interactif : accepte les réponses par défaut
   --mode origin|zen  constellation à rejoindre (transmis à `astroportd init`)
@@ -40,6 +50,11 @@ Usage : install.sh [options]
   --domain NOM       domaine public : HTTPS Let's Encrypt géré par astroportd si les ports 80/443 sont libres
                      (s'ils sont pris par Nginx Proxy Manager, astroportd reste local sur 127.0.0.1:8090)
   --help, -h         cette aide
+
+Profils (recommandés d'après votre machine, que l'assistant détecte et vous montre) :
+  leger      rien en local : visages et mémoire passent par une autre machine (Brain GPU, Ollama) — Pi Zero, vieux Pi, NAS
+  standard   visages locaux (≈ 190 Mo) et, si la machine a assez de mémoire et de disque, embeddings locaux ; fils limités
+  confort    visages et embeddings locaux, tous les cœurs — PC ou serveur avec 8 Go de mémoire et 6 cœurs ou plus
 
 Architectures : x86_64 (PC, serveur), aarch64 (Raspberry Pi 4/5, Pi Zero 2 W en 64 bits),
 armv7l (Raspberry Pi 2/3, Pi OS 32 bits). Linux uniquement.
@@ -56,7 +71,11 @@ while [ $# -gt 0 ]; do
     --prefix)  shift; PREFIX="${1:?--prefix attend un dossier}" ;;
     --static)  STATIC=1 ;;
     --no-init) RUN_INIT=0 ;;
-    --no-face) FACE=0 ;;
+    --no-face) NO_FACE=1 ;;
+    --embed)    EMBED=yes ;;
+    --no-embed) EMBED=no ;;
+    --profile)  shift; PROFILE="${1:?--profile attend auto, leger, standard ou confort}" ;;
+    --check-hardware) CHECK_ONLY=1 ;;
     --yes|-y)  YES=1 ;;
     --mode)    shift; MODE="${1:?--mode attend origin ou zen}" ;;
     --domain)  shift; DOMAIN="${1:?--domain attend un nom de domaine}" ;;
@@ -68,6 +87,11 @@ while [ $# -gt 0 ]; do
 done
 
 case "$MODE" in ""|origin|zen) ;; *) die "--mode doit valoir origin ou zen (reçu : $MODE)" ;; esac
+case "$PROFILE" in
+  light|léger) PROFILE=leger ;;
+  comfort) PROFILE=confort ;;
+esac
+case "$PROFILE" in auto|leger|standard|confort) ;; *) die "--profile doit valoir auto, leger, standard ou confort (reçu : $PROFILE)" ;; esac
 
 # --- Système et architecture ------------------------------------------------------------------------------------
 [ "$(uname -s)" = "Linux" ] || die "astroportd ne tourne que sous Linux (système détecté : $(uname -s))."
@@ -108,6 +132,180 @@ if [ "$now" -lt 1767225600 ]; then
   warn "L'horloge de cette machine est antérieure à 2026 ($(date -u '+%Y-%m-%d')). astroportd refuse de calculer ses"
   warn "échéances avec une heure fausse. Réglez l'heure (sudo timedatectl set-ntp true) avant de le démarrer."
 fi
+
+# --- Votre machine : détection et recommandation -----------------------------------------------------------------
+# Le calcul local coûte de la mémoire (≈ 0,5 Go pour les visages, ≈ 1,3 Go au pic pour bge-m3), du disque (≈ 190 Mo et
+# ≈ 560 Mo) et du processeur. L'assistant mesure ce que la machine offre et recommande ce qui tient confortablement.
+DATA="${HOME}/.zen/astroportd"
+MODELS="${DATA}/models"
+
+meminfo_mb() { awk -v k="$1:" '$1 == k { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || true; }
+
+nearest_dir() { local d="$1"; while [ ! -d "$d" ] && [ "$d" != "/" ]; do d="$(dirname "$d")"; done; printf '%s' "$d"; }
+
+# nvme | ssd | hdd | sd (carte SD/eMMC) | inconnu
+disk_kind() {
+  local src base rota
+  src="$(df -P "$1" 2>/dev/null | awk 'NR==2 {print $1}')"
+  case "$src" in /dev/*) ;; *) printf 'inconnu'; return 0 ;; esac
+  base="$(lsblk -no pkname "$src" 2>/dev/null | head -n 1 || true)"
+  [ -n "$base" ] || base="${src#/dev/}"
+  case "$base" in mmcblk*) printf 'sd'; return 0 ;; nvme*) printf 'nvme'; return 0 ;; esac
+  rota="$(cat "/sys/block/${base}/queue/rotational" 2>/dev/null || true)"
+  case "$rota" in 1) printf 'hdd' ;; 0) printf 'ssd' ;; *) printf 'inconnu' ;; esac
+}
+
+# Mo/s en écriture synchronisée de 256 Mo dans le dossier donné ; vide si la mesure est impossible.
+disk_write_mbps() {
+  local f out num unit
+  f="$(mktemp -p "$1" .astroportd-disktest.XXXXXX 2>/dev/null)" || return 0
+  out="$(LC_ALL=C dd if=/dev/zero of="$f" bs=1M count=256 conv=fdatasync 2>&1 | tail -n 1 || true)"
+  rm -f "$f"
+  num="$(printf '%s' "$out" | awk '{print $(NF-1)}')"; unit="$(printf '%s' "$out" | awk '{print $NF}')"
+  case "$unit" in
+    GB/s) awk -v n="$num" 'BEGIN { printf "%d", n * 1000 }' ;;
+    MB/s) awk -v n="$num" 'BEGIN { printf "%d", n }' ;;
+    kB/s) awk -v n="$num" 'BEGIN { printf "%d", n / 1000 }' ;;
+  esac
+}
+
+detect_hardware() {
+  HW_CORES="$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
+  HW_RAM_MB="$(meminfo_mb MemTotal)"; HW_RAM_MB="${HW_RAM_MB:-0}"
+  HW_SWAP_MB="$(meminfo_mb SwapTotal)"; HW_SWAP_MB="${HW_SWAP_MB:-0}"
+  HW_CPU="$(sed -n 's/^model name[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null | head -n 1 || true)"
+  [ -n "$HW_CPU" ] || HW_CPU="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
+  [ -n "$HW_CPU" ] || HW_CPU="$machine"
+  # int8 rapide : AVX2 (x86) ou produit scalaire NEON « dotprod » (ARM 64 bits). Sans, bge-m3 reste utilisable mais plusieurs fois plus lent.
+  HW_INT8_FAST=0
+  case "$machine" in
+    x86_64|amd64) grep -qw avx2 /proc/cpuinfo 2>/dev/null && HW_INT8_FAST=1 ;;
+    aarch64|arm64) grep -qw asimddp /proc/cpuinfo 2>/dev/null && HW_INT8_FAST=1 ;;
+  esac
+  local dir; dir="$(nearest_dir "$DATA")"
+  HW_DISK_DIR="$dir"
+  HW_DISK_FREE_MB="$(df -Pm "$dir" 2>/dev/null | awk 'NR==2 {print $4}')"; HW_DISK_FREE_MB="${HW_DISK_FREE_MB:-0}"
+  HW_DISK_KIND="$(disk_kind "$dir")"
+  HW_DISK_MBPS=""
+  if [ "${ASTRO_SKIP_DISKTEST:-0}" != 1 ] && [ "$HW_DISK_FREE_MB" -ge 600 ]; then HW_DISK_MBPS="$(disk_write_mbps "$dir")"; fi
+  HW_GPU=""
+  command -v nvidia-smi >/dev/null 2>&1 && HW_GPU="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 || true)"
+  HW_OLLAMA=0
+  if curl -fsS -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then HW_OLLAMA=1; fi
+  # Surcharges pour essayer d'autres machines (tests) : ASTRO_HW_CORES, _RAM_MB, _SWAP_MB, _DISK_FREE_MB, _DISK_KIND, _DISK_MBPS, _INT8_FAST.
+  HW_CORES="${ASTRO_HW_CORES:-$HW_CORES}"; HW_RAM_MB="${ASTRO_HW_RAM_MB:-$HW_RAM_MB}"; HW_SWAP_MB="${ASTRO_HW_SWAP_MB:-$HW_SWAP_MB}"
+  HW_DISK_FREE_MB="${ASTRO_HW_DISK_FREE_MB:-$HW_DISK_FREE_MB}"; HW_DISK_KIND="${ASTRO_HW_DISK_KIND:-$HW_DISK_KIND}"
+  HW_DISK_MBPS="${ASTRO_HW_DISK_MBPS-$HW_DISK_MBPS}"; HW_INT8_FAST="${ASTRO_HW_INT8_FAST:-$HW_INT8_FAST}"
+  return 0
+}
+
+pname() { case "$1" in leger) printf "léger" ;; confort) printf "confort" ;; *) printf "%s" "$1" ;; esac; }
+
+fmt_mb() { awk -v m="$1" 'BEGIN { if (m >= 1024) printf "%.1f Go", m / 1024; else printf "%d Mo", m }' | tr . ,; }
+
+# Remplit REC_FACE, REC_EMBED (1 = la machine tient), REC_PROFILE, REC_THREADS et REC_NOTES (ce qui limite ou mérite attention).
+recommend() {
+  REC_NOTES=(); REC_FACE=1; REC_EMBED=1
+  case "$TARGET" in
+    *-musl) REC_FACE=0; REC_EMBED=0; REC_NOTES+=("binaire statique (musl) : pas d'ONNX Runtime, donc ni visages ni embeddings locaux (--face-engine et --ollama vers une autre machine)") ;;
+  esac
+  if [ "$HW_RAM_MB" -le 0 ]; then
+    REC_FACE=0; REC_EMBED=0; REC_NOTES+=("mémoire non détectée : profil léger par prudence")
+  else
+    if [ "$HW_RAM_MB" -lt 1800 ]; then REC_FACE=0; REC_NOTES+=("mémoire $(fmt_mb "$HW_RAM_MB") : il en faut ≈ 2 Go pour les visages locaux"); fi
+    if [ "$HW_RAM_MB" -lt 3500 ]; then REC_EMBED=0; REC_NOTES+=("mémoire $(fmt_mb "$HW_RAM_MB") : bge-m3 monte à ≈ 1,3 Go, il en faut ≈ 4 Go pour le garder avec le reste"); fi
+  fi
+  if [ "$HW_DISK_FREE_MB" -lt 1000 ]; then REC_FACE=0; REC_NOTES+=("disque : $(fmt_mb "$HW_DISK_FREE_MB") libres, les modèles de visages demandent ≈ 1 Go de marge"); fi
+  if [ "$HW_DISK_FREE_MB" -lt 2500 ]; then REC_EMBED=0; REC_NOTES+=("disque : $(fmt_mb "$HW_DISK_FREE_MB") libres, bge-m3 (≈ 560 Mo) demande ≈ 2,5 Go de marge"); fi
+  if [ "$HW_CORES" -lt 2 ]; then REC_EMBED=0; REC_NOTES+=("un seul cœur : les embeddings locaux gêneraient le relai"); fi
+  if [ -n "$HW_DISK_MBPS" ] && [ "$HW_DISK_MBPS" -lt 15 ]; then
+    REC_EMBED=0; REC_NOTES+=("disque très lent (≈ ${HW_DISK_MBPS} Mo/s en écriture) : charger bge-m3 prendrait plus d'une minute à chaque démarrage")
+  elif [ -n "$HW_DISK_MBPS" ] && [ "$HW_DISK_MBPS" -lt 40 ]; then
+    REC_NOTES+=("disque lent (≈ ${HW_DISK_MBPS} Mo/s) : le démarrage chargera bge-m3 en ≈ $((560 / HW_DISK_MBPS)) s au moins")
+  fi
+  case "$HW_DISK_KIND" in
+    sd) REC_NOTES+=("carte SD/eMMC : lente et usée par les écritures ; un SSD USB ou NVMe est bien préférable pour la base et les blobs") ;;
+    hdd) REC_NOTES+=("disque mécanique : démarrage et recherche plus lents qu'avec un SSD") ;;
+  esac
+  [ "$REC_EMBED" = 1 ] && [ "$HW_INT8_FAST" = 0 ] && REC_NOTES+=("pas d'AVX2 / dotprod : les calculs int8 de bge-m3 seront plusieurs fois plus lents (quelques secondes par texte long)")
+  if [ "$REC_FACE" = 0 ]; then REC_PROFILE=leger
+  elif [ "$REC_EMBED" = 0 ]; then REC_PROFILE=standard
+  elif [ "$HW_RAM_MB" -ge 7000 ] && [ "$HW_CORES" -ge 6 ]; then REC_PROFILE=confort
+  else REC_PROFILE=standard
+  fi
+  threads_for "$REC_PROFILE"
+}
+
+# Fils de calcul par modèle : « confort » laisse ONNX Runtime prendre tous les cœurs (0) ; sinon on en garde la moitié pour le relai.
+threads_for() {
+  REC_THREADS=0
+  [ "$1" = confort ] && return 0
+  if [ "$HW_CORES" -le 2 ]; then REC_THREADS=1; elif [ "$HW_CORES" -le 4 ]; then REC_THREADS=2; else REC_THREADS=$((HW_CORES / 2)); fi
+}
+
+show_hardware() {
+  say ""; say "▶ Votre machine"
+  say "  Architecture : ${machine} (binaire ${TARGET})"
+  say "  Processeur   : ${HW_CORES} cœur(s) — ${HW_CPU}$([ "$HW_INT8_FAST" = 1 ] && printf ' (calcul int8 rapide)')"
+  say "  Mémoire      : $(fmt_mb "$HW_RAM_MB") (swap $(fmt_mb "$HW_SWAP_MB"))"
+  say "  Disque       : $(fmt_mb "$HW_DISK_FREE_MB") libres dans ${HW_DISK_DIR} — ${HW_DISK_KIND}$([ -n "$HW_DISK_MBPS" ] && printf ', écriture ≈ %s Mo/s' "$HW_DISK_MBPS")"
+  say "  GPU          : ${HW_GPU:-aucun NVIDIA détecté}$([ -n "$HW_GPU" ] && printf ' (inutile pour visages et embeddings : le CPU suffit)')"
+  say "  Ollama       : $([ "$HW_OLLAMA" = 1 ] && printf 'joint sur 127.0.0.1:11434' || printf 'absent en local (résumés RÊVE : --ollama vers une machine qui l'\''héberge)')"
+}
+
+show_recommendation() {
+  say ""; say "▶ Recommandation : profil « $(pname "$REC_PROFILE") »"
+  say "  $([ "$REC_FACE" = 1 ] && printf '✔' || printf '✘') visages locaux (≈ 190 Mo de modèles)"
+  say "  $([ "$REC_EMBED" = 1 ] && printf '✔' || printf '✘') embeddings locaux de BRO : bge-m3 int8 (≈ 560 Mo), recherche et mémoire sans Ollama pour les vecteurs"
+  [ "$REC_PROFILE" = leger ] || [ "$REC_THREADS" = 0 ] || say "  ↳ ${REC_THREADS} fil(s) de calcul par modèle, pour laisser de la place au relai et à l'interface"
+  local i; for i in "${!REC_NOTES[@]}"; do say "  ⚠ ${REC_NOTES[$i]}"; done
+}
+
+# Profil retenu : --profile, sinon la recommandation, que l'on propose de changer au terminal. Remplit WANT_FACE, WANT_EMBED, WANT_THREADS.
+choose_profile() {
+  local chosen="$PROFILE"
+  if [ "$chosen" = auto ]; then
+    chosen="$REC_PROFILE"
+    if [ "$YES" = 0 ] && [ -r /dev/tty ]; then
+      {
+        say ""
+        say "  1) léger     rien en local : visages et mémoire passent par une autre machine (Brain GPU, Ollama)"
+        say "  2) standard  visages locaux, et embeddings locaux si la machine les porte ; fils de calcul limités"
+        say "  3) confort   visages et embeddings locaux, tous les cœurs"
+        local def=2; [ "$REC_PROFILE" = leger ] && def=1; [ "$REC_PROFILE" = confort ] && def=3
+        printf '  Votre choix [%s, entrée = recommandé] : ' "$def"
+      } > /dev/tty
+      local a; read -r a < /dev/tty || a=""
+      case "${a:-$def}" in 1) chosen=leger ;; 2) chosen=standard ;; 3) chosen=confort ;; *) warn "réponse inconnue (« $a ») : profil recommandé conservé" ;; esac
+    fi
+  fi
+  WANT_FACE=0; WANT_EMBED=0
+  case "$chosen" in
+    standard) WANT_FACE=1; WANT_EMBED="$REC_EMBED" ;;
+    confort)  WANT_FACE=1; WANT_EMBED=1 ;;
+  esac
+  case "$chosen" in
+    standard|confort)
+      [ "$REC_FACE" = 1 ] || warn "profil « $(pname "$chosen") » demandé alors que la machine est juste pour les visages locaux : à vos risques."
+      [ "$chosen" = confort ] && [ "$REC_EMBED" = 0 ] && warn "profil « confort » demandé alors que la machine est juste pour bge-m3 : à vos risques." ;;
+  esac
+  [ "$NO_FACE" = 1 ] && WANT_FACE=0
+  case "$EMBED" in yes) WANT_EMBED=1 ;; no) WANT_EMBED=0 ;; esac
+  case "$TARGET" in *-musl) WANT_FACE=0; WANT_EMBED=0 ;; esac
+  threads_for "$chosen"; WANT_THREADS="$REC_THREADS"
+  PROFILE_CHOSEN="$chosen"
+}
+
+detect_hardware
+recommend
+show_hardware
+show_recommendation
+if [ "$CHECK_ONLY" = 1 ]; then
+  say ""; say "Diagnostic seul (--check-hardware) : rien n'a été installé."
+  exit 0
+fi
+choose_profile
+say ""; say "▶ Profil retenu : $(pname "$PROFILE_CHOSEN") (visages locaux : $([ "$WANT_FACE" = 1 ] && printf oui || printf non), embeddings locaux : $([ "$WANT_EMBED" = 1 ] && printf oui || printf non))"
 
 # --- Téléchargement ---------------------------------------------------------------------------------------------
 if [ "$VERSION" = "latest" ]; then
@@ -154,11 +352,9 @@ install -m 0755 "${tmp}/${NAME}/${BIN}" "${PREFIX}/bin/${BIN}"
 say "  ✔ installé : ${PREFIX}/bin/${BIN}"
 "${PREFIX}/bin/${BIN}" --version 2>/dev/null || warn "le binaire installé ne répond pas à --version (architecture incompatible ?)"
 
-# --- Reconnaissance de visages locale (SCRFD + ArcFace) ---------------------------------------------------------
-# Binaire glibc = compilé avec `onnx`. Il lui faut libonnxruntime (extraite d'une roue pip) et deux modèles, que l'on
-# cherche d'abord sur IPFS (UPlanet) puis sur le web. Rien n'est jamais accepté sans SHA-256 correct.
-DATA="${HOME}/.zen/astroportd"
-MODELS="${DATA}/models"
+# --- Modèles locaux : visages (SCRFD + ArcFace) et embeddings de BRO (bge-m3) --------------------------------------
+# Binaire glibc = compilé avec `onnx`. Il lui faut libonnxruntime (extraite d'une roue pip) et les modèles. Rien n'est
+# jamais accepté sans SHA-256 correct. Visages : IPFS (UPlanet) puis web ; bge-m3 : Hugging Face, révision figée.
 # Les deux modèles du paquet InsightFace buffalo_l : nom | SHA-256 | CID IPFS (v1)
 MODEL_FILES=(
   "det_10g.onnx|5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91|bafybeid76moctrw6jgyiv7uvcllidn6ihig22fo4mgu65iv7nlgzzf7zzm"
@@ -243,13 +439,52 @@ install_models() {
   [ "$missing" = 0 ] || fetch_models_from_web || { warn "modèles non installés : placez det_10g.onnx et w600k_r50.onnx dans ${MODELS}"; return 1; }
 }
 
-case "$TARGET" in
-  *-musl) FACE=0; say "  (binaire statique : pas de reconnaissance de visages locale — utilisez --face-engine http://…)" ;;
-esac
-if [ "$FACE" = 1 ]; then
-  say ""; say "▶ Reconnaissance de visages locale"
-  command -v nvidia-smi >/dev/null 2>&1 && say "  GPU NVIDIA détecté ($(nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1)) : le CPU suffit pour ce traitement, le GPU n'est pas utilisé."
-  { install_ort && install_models; } || warn "reconnaissance de visages locale incomplète : voir « astroportd face-check » (ou serve --face-engine http://…)"
+
+# bge-m3 int8 (Xenova/bge-m3, licence MIT), révision figée : nom installé | chemin dans le dépôt | SHA-256 | taille en Mo
+BGE_REV="4de13258303883538bd53b696b452bf8099f0858"
+BGE_BASE="${ASTRO_BGE_BASE_URL:-https://huggingface.co/Xenova/bge-m3/resolve/${BGE_REV}}"
+BGE_FILES=(
+  "bge-m3-int8.onnx|onnx/model_int8.onnx|a206e10e995aa2a833924bcd725ba5dd6c3425cd34bac3cf2b5677cd2a1c51d6|542"
+  "bge-m3-tokenizer.json|tokenizer.json|6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790|17"
+)
+
+# Télécharge un fichier (reprise possible) et ne le garde que si son SHA-256 est correct.
+fetch_checked() { # nom chemin sha taille_mo
+  local name="$1" path="$2" sha="$3" size="$4" dest="${MODELS}/$1" part="${MODELS}/$1.part" try
+  if [ -f "$dest" ] && [ "$(sha256sum "$dest" | cut -d' ' -f1)" = "$sha" ]; then say "  ✔ $name déjà présent"; return 0; fi
+  mkdir -p "$MODELS"
+  local free; free="$(df -Pm "$MODELS" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [ "${free:-0}" -lt $((size * 2 + 200)) ]; then warn "$name : place insuffisante dans ${MODELS} ($(fmt_mb "${free:-0}") libres, $((size * 2 + 200)) Mo demandés)"; return 1; fi
+  local prog=(-sS); [ -t 2 ] && prog=(-#)
+  for try in 1 2; do
+    say "  $name : téléchargement (${size} Mo)…"
+    curl -fL "${prog[@]}" --proto '=https' --tlsv1.2 -C - -o "$part" "${BGE_BASE}/${path}" || { rm -f "$part"; continue; }
+    if [ "$(sha256sum "$part" | cut -d' ' -f1)" = "$sha" ]; then mv "$part" "$dest"; say "  ✔ $name vérifié (SHA-256)"; return 0; fi
+    rm -f "$part"; warn "$name : SHA-256 incorrect (essai ${try}/2)"
+  done
+  return 1
+}
+
+install_embed_models() {
+  local m n p sha size
+  for m in "${BGE_FILES[@]}"; do
+    IFS='|' read -r n p sha size <<< "$m"
+    fetch_checked "$n" "$p" "$sha" "$size" || { warn "embeddings locaux non installés : placez ${n} dans ${MODELS} (Xenova/bge-m3, ${p})"; return 1; }
+  done
+}
+
+# Seulement ce que le profil retenu demande.
+if [ "$WANT_FACE" = 1 ] || [ "$WANT_EMBED" = 1 ]; then
+  say ""; say "▶ Modèles locaux"
+  if install_ort; then
+    if [ "$WANT_FACE" = 1 ]; then install_models || warn "reconnaissance de visages locale incomplète : voir « astroportd face-check » (ou serve --face-engine http://…)"; fi
+    if [ "$WANT_EMBED" = 1 ]; then install_embed_models || warn "embeddings locaux incomplets : voir « astroportd embed-check » (ou serve --ollama http://… pour les vecteurs)"; fi
+  else
+    warn "ONNX Runtime absent : ni visages ni embeddings locaux (voir « astroportd face-check » / « embed-check »)"
+  fi
+  if [ "$WANT_EMBED" = 1 ] && [ -f "${MODELS}/bge-m3-int8.onnx" ]; then
+    "${PREFIX}/bin/${BIN}" embed-check || warn "essai des embeddings locaux en échec : voir le message ci-dessus"
+  fi
 fi
 
 # --- Ports déjà occupés (cause fréquente de « Address already in use ») ------------------------------------------
@@ -277,6 +512,11 @@ init_args=()
 [ -n "$MODE" ] && init_args+=(--mode "$MODE")
 [ -n "$EMAIL" ] && init_args+=(--email "$EMAIL")
 [ -n "$DOMAIN" ] && init_args+=(--domain "$DOMAIN")
+# Fils de calcul choisis d'après la machine (0 = tous les cœurs : on n'écrit rien).
+if [ "$WANT_THREADS" -gt 0 ]; then
+  [ "$WANT_FACE" = 1 ] && init_args+=(--face-threads "$WANT_THREADS")
+  [ "$WANT_EMBED" = 1 ] && init_args+=(--embed-threads "$WANT_THREADS")
+fi
 
 if [ "$YES" = 1 ]; then
   init_args+=(--yes)

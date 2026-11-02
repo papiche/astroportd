@@ -53,6 +53,12 @@ enum Command {
         #[arg(long)]
         models: Option<PathBuf>,
     },
+    /// Vérifie les embeddings locaux de BRO (bge-m3 int8 par ONNX Runtime) : fonction compilée, fichiers, bibliothèque, chargement, essai.
+    EmbedCheck {
+        /// Dossier de `bge-m3-int8.onnx` et `bge-m3-tokenizer.json` (défaut : les emplacements habituels).
+        #[arg(long)]
+        models: Option<PathBuf>,
+    },
     /// Génère une clé de réseau privé `swarm.key` pour une constellation (à copier sur chaque station).
     SwarmKey,
     /// Reprend le uCloud d'Astroport.ONE d'un compte (`~/.zen/game/nostr/<email>/.ucloud`) : mêmes blobs chiffrés, mêmes clés,
@@ -760,6 +766,7 @@ async fn run(cli: Cli) -> Result<(), Failure> {
             Ok(())
         }
         Command::FaceCheck { models } => face_check(models),
+        Command::EmbedCheck { models } => embed_check(models),
         Command::Replay { db, page_size, from, hosted, rounds, blobs, secrets, game_dir } => {
             let db = Arc::new(Db::open(&db, 2)?);
             if let Some(relay) = from {
@@ -1464,4 +1471,55 @@ fn face_check(_: Option<PathBuf>) -> Result<(), Failure> {
     println!("  ✘ ce binaire est compilé sans la fonction `onnx` → cargo build --release --features onnx");
     println!("    (ou utilisez un service d'inférence : serve --face-engine http://…)");
     Err("l'inférence locale n'est pas disponible dans ce binaire".into())
+}
+
+/// `astroportd embed-check` : dit ce qui manque pour calculer les embeddings de BRO dans le processus, puis en fait un essai.
+#[cfg(feature = "onnx")]
+fn embed_check(models: Option<PathBuf>) -> Result<(), Failure> {
+    use astro_bro::onnx;
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let data = home.as_ref().map(|h| h.join(".zen/astroportd"));
+    println!("Embeddings locaux de BRO (bge-m3 int8, ONNX Runtime)");
+    println!("  ✔ fonction `onnx` compilée dans ce binaire");
+    let dir = models.or_else(|| onnx::find_models(data.as_deref(), home.as_deref()));
+    let dir = match dir {
+        Some(d) if onnx::has_models(&d) => {
+            println!("  ✔ fichiers : {}", d.display());
+            Some(d)
+        }
+        Some(d) => {
+            println!("  ✘ {} ou {} absent de {}", onnx::MODEL_FILE, onnx::TOKENIZER_FILE, d.display());
+            None
+        }
+        None => {
+            println!("  ✘ fichiers introuvables ({} et {} attendus)", onnx::MODEL_FILE, onnx::TOKENIZER_FILE);
+            for d in onnx::default_model_dirs(data.as_deref(), home.as_deref()) {
+                println!("      cherché : {}", d.display());
+            }
+            println!("      → `install.sh` les installe (vérifiés par SHA-256), ou passez --embed-models DIR (Xenova/bge-m3 : onnx/model_int8.onnx + tokenizer.json)");
+            None
+        }
+    };
+    let lib = astro_facecloud::onnx::find_library(std::env::var("ORT_DYLIB_PATH").ok().as_deref(), home.as_deref());
+    match &lib {
+        Some(l) => println!("  ✔ bibliothèque ONNX Runtime : {}", l.display()),
+        None => println!("  ✘ libonnxruntime.so introuvable → installez-la (pip install onnxruntime, ou le paquet de votre distribution) ou définissez ORT_DYLIB_PATH"),
+    }
+    let (Some(d), Some(l)) = (dir, lib) else { return Err("les embeddings locaux ne sont pas prêts (voir ci-dessus)".into()) };
+    let started = std::time::Instant::now();
+    let engine = onnx::OrtEmbedder::load(&d, Some(&l), 0)?;
+    let loaded = started.elapsed().as_secs_f32();
+    let started = std::time::Instant::now();
+    let v = engine.embed_blocking("pain au levain du dimanche")?;
+    println!("  ✔ chargé en {loaded:.1} s, premier vecteur ({} dimensions) en {:.0} ms", v.len(), started.elapsed().as_secs_f32() * 1000.0);
+    println!("    `astroportd serve --ollama …` les utilise tout seul (sans --embed-model), ou --embed-models {}", d.display());
+    Ok(())
+}
+
+#[cfg(not(feature = "onnx"))]
+fn embed_check(_: Option<PathBuf>) -> Result<(), Failure> {
+    println!("Embeddings locaux de BRO (bge-m3 int8, ONNX Runtime)");
+    println!("  ✘ ce binaire est compilé sans la fonction `onnx` → cargo build --release --features onnx");
+    println!("    (ou laissez Ollama calculer les vecteurs : serve --ollama http://… --embed-model bge-m3)");
+    Err("les embeddings locaux ne sont pas disponibles dans ce binaire".into())
 }

@@ -1,3 +1,18 @@
+## astroportd 0.5.2-beta
+
+Cette version fait calculer les **vecteurs de la mémoire de BRO dans la station**, sans Ollama, et rend l'installeur **adaptatif**.
+
+### Embeddings locaux (bge-m3 int8)
+- Avec la fonctionnalité `onnx`, `serve` calcule les embeddings de la mémoire avec `bge-m3` quantifié (ONNX Runtime chargé à l'exécution, tokeniseur `tokenizers`), 1024 dimensions, pooling CLS. Les deux fichiers (`bge-m3-int8.onnx`, `bge-m3-tokenizer.json`) sont découverts dans `~/.zen/astroportd/models/` ; options `--embed-models DIR` et `--embed-threads N`. Sans eux, ou sans `libonnxruntime`, la station se replie visiblement sur Ollama (erreur franche si `--embed-models` est donné).
+- Nouvelle commande `astroportd embed-check` : vérifie la fonctionnalité, les fichiers, la bibliothèque, charge le modèle et chronomètre une phrase.
+- Les vecteurs locaux sont proches de ceux d'Ollama sans leur être identiques (écart non mesuré) : réindexer, ou garder un seul moteur. Ollama reste requis pour les résumés RÊVE.
+
+### Installeur adaptatif
+- `install.sh` détecte l'architecture, les cœurs, la RAM, l'espace libre, le type et la vitesse du disque, le GPU et Ollama, puis propose un profil **léger / standard / confort** (`--check-hardware`, `--profile`, `--embed/--no-embed`). `init` mémorise `face_threads` et `embed_threads` dans `station.conf`.
+
+### Guide
+- Relecture complète : étape 8 « Mémoire et recherche », section installeur, notes Termux (`| bash`) et Mac, encadré « Limites » de l'étape 5 recalé sur le code (clé de secours en trois parts et QR existent ; restent absents : import IPNS dans Kubo, zine par email, ZenCard, primo-transaction du compte), chiffres corrigés.
+
 ## astroportd 0.5.1-beta
 
 Cette version donne un **cockpit** au Capitaine (un verdict, ce qui demande une action, six étages, l'essaim), une **mise en service guidée**, un **accueil simple** pour les membres (avec la synchronisation du smartphone en avant quand il n'y a pas d'assistant), des **adresses DNSLink** pour la station et chaque MULTIPASS, et une comparaison de code entre stations **retirée**.

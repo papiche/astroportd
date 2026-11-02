@@ -6,6 +6,7 @@
 //!   plus récents), purge atomique ;
 //! - [`guard`] : ce qui ne doit **jamais** entrer en mémoire (clés, mots de passe, IBAN…) ;
 //! - [`ollama`] : embeddings et résumés par Ollama (HTTP), derrière les traits [`Embedder`] et [`Summarizer`] ;
+//! - `onnx` (fonction `onnx`) : embeddings locaux `bge-m3` int8 par ONNX Runtime, sans Ollama ;
 //! - [`publisher`] : le trait [`Publisher`], publication d'un événement signé ;
 //! - [`bus`] : bus de commandes par messages privés NIP-59 adressés à la station (solde, statut, documents).
 //!
@@ -18,13 +19,15 @@ pub mod bus;
 pub mod guard;
 pub mod memory;
 pub mod ollama;
+#[cfg(feature = "onnx")]
+pub mod onnx;
 pub mod publisher;
 pub mod reve;
 #[cfg(test)]
 mod testkit;
 
 pub use memory::{Memory, MemoryStore, Meta, Recalled, Remembered, Slot};
-pub use ollama::{Embedder, HashingEmbedder, OllamaClient, Summarizer};
+pub use ollama::{AnyEmbedder, Embedder, HashingEmbedder, OllamaClient, Summarizer};
 pub use publisher::Publisher;
 pub use reve::{DreamReport, REVE_KEEP, REVE_THRESHOLD};
 

@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use astro_bro::{MemoryStore, OllamaClient};
+use astro_bro::{AnyEmbedder, MemoryStore, OllamaClient};
 use astro_core::ActivityBus;
 use astro_crypto::{KeySource, StaticKeySource};
 use astro_dav::auth::derive_dav_token;
@@ -93,7 +93,7 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
     let info = StationInfo { node_hex: hex(&[1; 32]), peer_id: Some("12D3KooWTest".into()), domain: Some("station.test".into()), started: Instant::now() };
     let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: None, chain: None, hardware: Hardware { vram_gb: 24.0, cpu_cores: 16, ram_gb: 64.0 }, p2p: None, weekly_rent_cents: 100, activity: bus.clone(), swarm_dir, origin: Some((45.76, 4.83)), exposed: vec!["comfyui".into(), "ssh".into()] }));
     let client = ollama.map(|url| Arc::new(OllamaClient::new(url, "bge-m3", "llama3.2", Duration::from_secs(5))));
-    let memory = client.as_ref().map(|o| Arc::new(MemoryStore::new(db.clone(), o.clone(), o.clone(), Some(bus.clone()))));
+    let memory = client.as_ref().map(|o| Arc::new(MemoryStore::new(db.clone(), Arc::new(AnyEmbedder::Ollama(o.clone())), o.clone(), Some(bus.clone()))));
     let registrar = Arc::new(astroportd::register::Registrar::new(db.clone(), dir.join("nostr"), "0".repeat(64), Arc::new(|hex| derive_dav_token(SECRET, hex)), astroportd::register::Limits::default()));
     let links = Arc::new(astroportd::identity_links::IdentityLinks::new(db.clone(), dav.clone(), None, None));
     // Les invitations signent avec la clé du compte : celle d'Alice est rangée comme le fait la station (`.secret.nostr`).

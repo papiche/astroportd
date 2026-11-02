@@ -205,6 +205,11 @@ pub fn season(ts: u64) -> &'static str {
 }
 
 impl<E: Embedder, S: Summarizer> MemoryStore<E, S> {
+    /// Le moteur d'embedding de cette mémoire.
+    pub fn embedder(&self) -> &E {
+        &self.embedder
+    }
+
     /// Mémoire sur `db`.
     pub fn new(db: Arc<Db>, embedder: Arc<E>, summarizer: Arc<S>, activity: Option<ActivityBus>) -> Self {
         Self { db, embedder, summarizer, activity, dreaming: Mutex::new(HashSet::new()) }

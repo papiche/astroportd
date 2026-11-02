@@ -22,9 +22,15 @@ hyper.workspace = true
 hyper-util.workspace = true
 http-body-util.workspace = true
 bytes.workspace = true
+ort = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[features]
+# Embeddings locaux (bge-m3 int8) par ONNX Runtime chargé à l'exécution, sans Ollama : voir `OrtEmbedder`.
+onnx = ["dep:ort", "dep:tokenizers"]
 
 [lints]
 workspace = true

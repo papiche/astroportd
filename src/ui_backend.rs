@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use astro_bro::bus;
-use astro_bro::{MemoryStore, Meta, OllamaClient, Slot};
+use astro_bro::{AnyEmbedder, MemoryStore, Meta, OllamaClient, Slot};
 use astro_core::Amount;
 use astro_dav::{BlobStore, DavState};
 use astro_p2p::routing::{Candidate, haversine_km};
@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use crate::station::StationServices;
 
 /// Mémoire de BRO telle que câblée par le démon.
-pub type BroMemory = MemoryStore<OllamaClient, OllamaClient>;
+pub type BroMemory = MemoryStore<AnyEmbedder, OllamaClient>;
 
 /// Semaines d'autonomie à pleine jauge.
 const GAUGE_WEEKS: f64 = 12.0;

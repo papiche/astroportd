@@ -4,6 +4,7 @@
 //! tout échec remonte (`BroError::Model`) — jamais un vecteur vide qui passerait pour un résultat normal.
 
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -20,12 +21,45 @@ use crate::BroError;
 /// Dimension des embeddings de la mémoire (`bge-m3`).
 pub const EMBED_DIM: usize = 1024;
 /// Nombre maximal de caractères envoyés à un embedding.
-const MAX_INPUT_CHARS: usize = 12_000;
+pub(crate) const MAX_INPUT_CHARS: usize = 12_000;
 
 /// Transforme un texte en vecteur de [`EMBED_DIM`] dimensions.
 pub trait Embedder: Send + Sync + 'static {
     /// Vecteur de `text`.
     fn embed(&self, text: &str) -> impl Future<Output = Result<Vec<f32>, BroError>> + Send;
+}
+
+/// Moteur d'embedding de la station : Ollama (HTTP) ou, binaire compilé avec `onnx`, le moteur local `bge-m3` int8.
+///
+/// Même dimension, mais le modèle local est quantifié (int8) : ses vecteurs sont proches de ceux d'Ollama sans leur être identiques
+/// (écart non mesuré) ; changer de moteur sur une mémoire déjà indexée demande de ré-indexer.
+pub enum AnyEmbedder {
+    /// `/api/embed` d'Ollama.
+    Ollama(Arc<OllamaClient>),
+    /// Inférence dans le processus (ONNX Runtime).
+    #[cfg(feature = "onnx")]
+    Local(crate::onnx::OrtEmbedder),
+}
+
+impl AnyEmbedder {
+    /// Qui calcule les vecteurs, pour le journal de démarrage (`ollama_model` : modèle demandé à Ollama).
+    pub fn label(&self, ollama_model: &str) -> String {
+        match self {
+            Self::Ollama(_) => format!("Ollama, {ollama_model}"),
+            #[cfg(feature = "onnx")]
+            Self::Local(_) => "bge-m3 local, ONNX Runtime".to_owned(),
+        }
+    }
+}
+
+impl Embedder for AnyEmbedder {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, BroError> {
+        match self {
+            Self::Ollama(o) => o.embed(text).await,
+            #[cfg(feature = "onnx")]
+            Self::Local(l) => l.embed(text).await,
+        }
+    }
 }
 
 /// Résume un bloc de souvenirs (cycle RÊVE).

@@ -1,6 +1,6 @@
 [package]
 name = "astroportd"
-version = "0.5.1-beta"
+version = "0.5.2-beta"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -53,7 +53,7 @@ rustix.workspace = true
 
 [features]
 # Moteur FaceID local (SCRFD + ArcFace) par ONNX Runtime : `astroportd serve --face-models DIR`. Désactivé par défaut.
-onnx = ["astro-facecloud/onnx"]
+onnx = ["astro-facecloud/onnx", "astro-bro/onnx"]
 
 [dev-dependencies]
 rcgen.workspace = true
@@ -86,7 +86,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.1-beta"
+version = "0.5.2-beta"
 edition = "2024"
 rust-version = "1.85"
 license = "AGPL-3.0-only"
@@ -168,6 +168,8 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 kamadak-exif = "0.6"
 # ONNX Runtime chargé À L'EXÉCUTION (libonnxruntime.so) : aucune bibliothèque téléchargée à la compilation, la compilation croisée reste simple.
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "load-dynamic"] }
+# Tokeniseur Hugging Face (lit `tokenizer.json`) pour l'embedding local de BRO (bge-m3) ; `onig` = expressions régulières compilées depuis les sources C.
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 webp = { version = "0.3", default-features = false }
 wasmtime = { version = "36", default-features = false, features = ["runtime", "cranelift", "std", "wat"] }
 regex = { version = "1", default-features = false, features = ["std", "unicode-case", "unicode-perl", "perf"] }
