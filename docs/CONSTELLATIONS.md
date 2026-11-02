@@ -202,7 +202,7 @@ L'écran **Réplication** de l'interface montre, pour vos derniers événements 
 
 ## 7. Résumé : qui fait quoi
 
-| Fonction | astroportd 0.5.0-beta | Astroport.ONE |
+| Fonction | astroportd 0.5.1-beta | Astroport.ONE |
 |---|:---:|:---:|
 | Rituel Y-Level (SSH → IPFS → Ğ1 → Nostr) | ✔ `init`, `ylevel` | ✔ `Ylevel.sh` |
 | Réseau privé `swarm.key` (ẐEN), réseau ouvert (ORIGIN) | ✔ | ✔ |

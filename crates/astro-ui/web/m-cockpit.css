@@ -25,3 +25,7 @@
 .ck-st.off { color: var(--muted); }
 .ck-chip { display: inline-block; margin: 0 .3rem .2rem 0; padding: .05rem .6rem; border-radius: 1rem; background: var(--panel2); font-size: .78rem; }
 @media (max-width: 36rem) { .ck-todo { flex-direction: column; align-items: flex-start; } }
+.ck-steps { list-style: none; margin: .6rem 0 0; padding: 0; display: grid; gap: .5rem; }
+.ck-steps li { display: flex; gap: .6rem; align-items: flex-start; }
+.ck-steps li.done { color: var(--muted); }
+.ck-steps p { margin: .1rem 0 0; }

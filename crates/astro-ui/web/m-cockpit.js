@@ -43,13 +43,27 @@ export function analyze({ health, cs, ec, ac, tun, tk, dash, dns }) {
   return { level, verdict, todos, floors, me, others, nodes };
 }
 
+// « Mettre la station en service » : ce qu'un Capitaine fait la première semaine, coché d'après l'état réel.
+export function setup({ dash, cs, ac, dns }) {
+  const list = [
+    { done: !!dash?.station?.domain, title: 'Donner un nom de domaine à la station', why: 'Pour que vos membres l\'ouvrent en HTTPS depuis leur téléphone : astroportd init --domain votre.domaine', href: '#/station' },
+    { done: dash?.p2p?.enabled === true, title: 'Rejoindre le maillage P2P', why: 'Sans lui, aucune autre station ne peut vous joindre (--p2p-listen).', href: '#/planes' },
+    { done: (cs?.nodes || []).some(n => !n.self), title: 'Voir d\'autres stations', why: 'Rejoignez une constellation ou indiquez un dossier de pairs.', href: '#/planes' },
+    { done: dns?.configured === true, title: 'Activer les adresses de la coopérative', why: 'La station et chaque MULTIPASS obtiennent leur adresse : renseignez les clés OVH.', href: '#/coop' },
+    { done: (ac?.accounts || []).length > 1, title: 'Inviter votre premier membre', why: 'Un MULTIPASS s\'inscrit sur /register ; la station héberge ses fichiers chiffrés.', href: '#/station' },
+  ];
+  return { list, left: list.filter(s => !s.done).length };
+}
+
 const TIER = { Light: '🌿', Standard: '⚡', Brain: '🔥' };
 export default async function cockpit(root, K) {
   const { h, t } = K, api = p => K.api(p), soft = p => K.api(p).catch(() => null);
   const link = h('link', { rel: 'stylesheet', href: '/ui/m-cockpit.css' }); document.head.append(link);
   const draw = async () => {
     const [dash, health, cs, ec, ac, tun, tk, dns] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()).catch(() => null), soft('/api/v1/station/constellation'), soft('/api/v1/station/economy'), soft('/api/v1/station/accounts'), soft('/api/v1/station/admin/tunnels'), soft('/api/v1/station/admin/tasks'), soft('/api/v1/station/admin/dnslink')]);
-    const a = analyze({ health, cs, ec, ac, tun, tk, dash, dns }), st = dash.station;
+    const a = analyze({ health, cs, ec, ac, tun, tk, dash, dns }), st = dash.station, su = setup({ dash, cs, ac, dns });
+    // Tant que la mise en service n'est pas finie, ses étapes disent déjà les informations (station seule, adresses) : pas de doublon.
+    const todos = su.left ? a.todos.filter(x => x.level !== 'info') : a.todos;
     const todo = x => h('li', { class: 'ck-todo ' + x.level }, h('div', {}, h('strong', {}, t(x.title)), h('p', { class: 'muted' }, t(x.why))), h('a', { class: 'ck-btn', href: x.href }, t(x.label)));
     const floors = FLOORS.map(([k, icon, name, href]) => {
       const lv = a.floors[k], line = {
@@ -69,8 +83,11 @@ export default async function cockpit(root, K) {
     };
     const brains = a.nodes.filter(n => n.tier === 'Brain' && n.services?.includes('ollama')).length;
     root.replaceChildren(...[
-      h('section', { class: 'card ck-hero ' + a.level, 'aria-live': 'polite' }, h('span', { class: 'ck-big', 'aria-hidden': 'true' }, { ok: '✅', degraded: '🟠', down: '🔴' }[a.level]), h('div', {}, h('h2', {}, t(a.verdict)), h('p', { class: 'muted' }, a.todos.length ? t('Voici par quoi commencer :') : t('Rien ne demande votre attention. La page se met à jour toute seule.')))),
-      a.todos.length ? h('section', { class: 'card' }, h('h2', {}, t('À faire')), h('ul', { class: 'ck-list' }, a.todos.slice(0, 3).map(todo)), a.todos.length > 3 ? h('details', {}, h('summary', {}, t('Voir les {0} autres', a.todos.length - 3)), h('ul', { class: 'ck-list' }, a.todos.slice(3).map(todo))) : null) : null,
+      h('section', { class: 'card ck-hero ' + a.level, 'aria-live': 'polite' }, h('span', { class: 'ck-big', 'aria-hidden': 'true' }, { ok: '✅', degraded: '🟠', down: '🔴' }[a.level]), h('div', {}, h('h2', {}, t(a.verdict)), h('p', { class: 'muted' }, todos.length ? t('Voici par quoi commencer :') : t('Rien ne demande votre attention. La page se met à jour toute seule.')))),
+      todos.length ? h('section', { class: 'card' }, h('h2', {}, t('À faire')), h('ul', { class: 'ck-list' }, todos.slice(0, 3).map(todo)), todos.length > 3 ? h('details', {}, h('summary', {}, t('Voir les {0} autres', todos.length - 3)), h('ul', { class: 'ck-list' }, todos.slice(3).map(todo))) : null) : null,
+      su.left ? h('section', { class: 'card' }, h('h2', {}, t('Mettre la station en service'), h('small', { class: 'muted' }, ` · ${su.list.length - su.left}/${su.list.length}`)),
+        h('progress', { max: su.list.length, value: su.list.length - su.left, 'aria-label': t('Étapes terminées') }),
+        h('ul', { class: 'ck-steps' }, su.list.map(x => h('li', { class: x.done ? 'done' : '' }, h('span', { 'aria-hidden': 'true' }, x.done ? '✅' : '⬜'), h('div', {}, x.done ? t(x.title) : h('a', { href: x.href }, h('strong', {}, t(x.title))), x.done ? null : h('p', { class: 'muted' }, t(x.why))))))) : null,
       h('h2', { class: 'ck-h' }, t('Les étages de la station')), h('div', { class: 'grid' }, floors),
       h('h2', { class: 'ck-h' }, t('L\'essaim'), h('small', { class: 'muted' }, brains ? ` · ${brains} ${t('Brain(s) offrent Ollama')}` : '')), h('div', { class: 'grid' }, a.nodes.map(node)),
       dns?.configured ? h('section', { class: 'card' }, h('h2', {}, t('Adresses de la coopérative')),

@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../web/m-cockpit.js'), 'utf8');
 const tmp = join(mkdtempSync(join(tmpdir(), 'cockpit-')), 'm-cockpit.mjs');
 writeFileSync(tmp, src);
-const { analyze } = await import(pathToFileURL(tmp));
+const { analyze, setup } = await import(pathToFileURL(tmp));
 
 const me = { self: true, node_id: 'A', tier: 'Brain', power_score: 60 };
 const peer = (extra = {}) => ({ node_id: 'B', status: 'connected', tier: 'Standard', power_score: 20, ...extra });
@@ -55,4 +55,10 @@ r = analyze({ ...healthy, ec: { kind: 'drawdown', week: 9 } }); assert.equal(r.f
 // 9. Ordre : les pannes d'abord, puis « à regarder », puis les informations.
 r = analyze({ ...healthy, cs: { nodes: [me] }, health: { subsystems: { db: { status: 'down' } } }, tk: { kinds: [{ failed: 1 }] } });
 assert.deepEqual(r.todos.map(x => x.level), ['down', 'degraded', 'info']);
+// 10. Mise en service : station neuve = 5 étapes à faire ; tout fait = rien à proposer ; sources absentes = pas d'exception.
+let s = setup({ dash: { station: {}, p2p: { enabled: false } }, cs: { nodes: [me] }, ac: { accounts: [{}] }, dns: { configured: false } });
+assert.equal(s.list.length, 5); assert.equal(s.left, 5);
+s = setup({ dash: { station: { domain: 'x.org' }, p2p: { enabled: true } }, cs: { nodes: [me, peer()] }, ac: { accounts: [{}, {}] }, dns: { configured: true } });
+assert.equal(s.left, 0);
+assert.equal(setup({}).left, 5);
 console.log('cockpit : règles OK');

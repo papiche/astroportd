@@ -17,6 +17,7 @@ export function steps({ dash, faces, friends, backup, me, devices }) {
 export default async function home(root, K) {
   const { h, t } = K, soft = p => K.api(p).catch(() => null);
   const draw = async () => {
+    const health = await fetch('/health').then(r => r.json()).catch(() => null);
     const [me, dash, faces, friends, backup, fp, devices] = await Promise.all([K.api('/api/v1/me'), K.api('/api/v1/dashboard'), soft('/api/v1/faces'), soft('/api/v1/friends'), soft('/api/v1/backup'), soft('/api/v1/me/footprint'), soft('/api/v1/devices')]);
     const s = steps({ dash, faces, friends, backup, me, devices }), nFriends = (friends?.friends || []).length, nDevices = (devices?.devices || []).length;
     const disk = fp?.disk, full = disk && !disk.unlimited && disk.quota_bytes && disk.used_bytes / disk.quota_bytes >= .9;
@@ -25,7 +26,7 @@ export default async function home(root, K) {
     root.replaceChildren(...[
       h('section', { class: 'hm-hero' }, h('h2', {}, first ? t('Bonjour {0}', first) : t('Bonjour')), h('p', { class: 'muted' }, s.files ? t('{0} fichier(s) chiffré(s) sur votre station, à vous seul.', s.files) : t('Votre espace est prêt. Commencez par y déposer quelques photos.'))),
       full ? h('p', { class: 'degraded', role: 'status' }, t('Votre espace est presque plein ({0} %).', Math.round(100 * disk.used_bytes / disk.quota_bytes)), ' ', h('a', { href: '#/chiffres' }, t('Voir mon espace'))) : null,
-      me.captain ? h('p', { class: 'hm-cap' }, '⚓ ', t('Vous êtes Capitaine.'), ' ', h('a', { href: '#/cockpit' }, t('Ouvrir le cockpit de la station'))) : null,
+      me.captain ? h('a', { class: 'card hm-cap', href: '#/cockpit' }, h('span', { class: 'hm-ico', 'aria-hidden': 'true' }, '⚓'), h('div', {}, h('strong', {}, t('Votre station')), h('p', { class: 'muted' }, health?.status === 'ok' ? t('✅ Tout fonctionne. Ouvrir le cockpit.') : health ? t('🟠 Quelque chose demande votre attention : ouvrir le cockpit.') : t('État inconnu : ouvrir le cockpit.')))) : null,
       h('div', { class: 'grid hm-tiles' },
         tile('📸', 'Mes photos', s.files ? t('{0} fichier(s)', s.files) : t('Envoyer des photos'), s.files ? '#/library' : '#/cloud'),
         tile('👥', 'Mes proches', nFriends ? t('{0} ami(s)', nFriends) : t('Retrouver vos proches'), '#/people'),

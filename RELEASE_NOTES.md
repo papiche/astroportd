@@ -1,11 +1,9 @@
-## astroportd 0.5.0-beta
+## astroportd 0.5.1-beta
 
-Cette version fait de la **clé de secours** un secret qu'on peut perdre sans danger, et ajoute l'**agenda** : « Agenda » du téléphone se synchronise avec la station, comme « Contacts ».
+Cette version donne un **cockpit** au Capitaine (un verdict, ce qui demande une action, six étages, l'essaim), une **mise en service guidée**, un **accueil simple** pour les membres (avec la synchronisation du smartphone en avant quand il n'y a pas d'assistant), des **adresses DNSLink** pour la station et chaque MULTIPASS, et une comparaison de code entre stations **retirée**.
 
-### macOS (bêta), crawl plus rapide, documentation recalée
-- **macOS** : la station détecte la RAM par `sysctl hw.memsize` et compte la **mémoire unifiée** d'un Mac Apple Silicon comme VRAM (66 %, `ASTRO_VRAM_GB` pour corriger) : un Mac peut être un Brain GPU ; la bibliothèque ONNX Runtime `.dylib` est reconnue (Homebrew compris) ; le nom de la machine se lit aussi par `hostname`. Nouveau : [docs/MACOS.md](docs/MACOS.md), CI macOS et archives `aarch64-apple-darwin` / `x86_64-apple-darwin`, toutes **au mieux** (jamais compilées sur un Mac avant cette version).
-- **Crawl N²** : les couples clé × relai se synchronisent **8 à la fois** (`CrawlConfig::concurrency`) au lieu d'un par un ; curseurs, filtres et contrôles d'auteur inchangés.
-- **Documentation** : la garde de flux « provisoire qui refuse tout » (`tunnel_gate.rs`, disparu) est remplacée par la politique des tunnels ; la limite « une station = une constellation » dit maintenant que `astroportd planes` en sert plusieurs ; tableau des commandes complété.
+### Mise en service du Capitaine
+- Le cockpit propose, tant qu'elle n'est pas finie, une liste **« Mettre la station en service »** cochée d'après l'état réel : nom de domaine, maillage P2P, autres stations vues, adresses de la coopérative, premier membre invité. Pendant ce temps, les informations qu'elle redit ne sont pas répétées dans « À faire ». L'accueil du Capitaine affiche en tête une carte **⚓ Votre station** (état en un mot, lien vers le cockpit).
 
 ### Adresses de la coopérative (DNSLink OVH)
 - La station **s'inscrit en tant qu'Astroport** et inscrit **chaque MULTIPASS hébergé** (Capitaine compris) dans la zone DNS OVH de la coopérative : `_dnslink.<nom>.<zone>` → `/ipns/<espace>`. Compatible avec `ovh.me.sh` d'Astroport.ONE (mêmes noms, mêmes cibles, TTL 0) : les deux outils se relaient sans doublon. Identifiants lus dans la configuration coopérative. Passage 90 s après le démarrage puis toutes les 15 min, **seulement pour ce qui a changé** ; aucune suppression ; échec dans le bilan, alerte unique au Capitaine ; carte *Adresses de la coopérative* dans le cockpit (« Enregistrer maintenant »). Nouvelle dépendance : `sha1`.
@@ -23,6 +21,15 @@ Cette version fait de la **clé de secours** un secret qu'on peut perdre sans da
 
 ### Options › Tunnels : seuls les services qui répondent ont une carte
 - La station sonde (TCP, 600 ms) l'adresse locale de chaque service offert. Ollama ou ComfyUI absents n'ont plus de carte : une ligne « Non détectés : … » les nomme. SSH reste toujours visible ; un service réglé ou ayant des pairs nommés garde sa carte même arrêté, avec la pastille « ne répond pas ». Un port ouvert ne prouve pas qu'un modèle soit chargé : c'est un « démarré ? », pas une garantie.
+
+## astroportd 0.5.0-beta
+
+Cette version fait de la **clé de secours** un secret qu'on peut perdre sans danger, et ajoute l'**agenda** : « Agenda » du téléphone se synchronise avec la station, comme « Contacts ».
+
+### macOS (bêta), crawl plus rapide, documentation recalée
+- **macOS** : la station détecte la RAM par `sysctl hw.memsize` et compte la **mémoire unifiée** d'un Mac Apple Silicon comme VRAM (66 %, `ASTRO_VRAM_GB` pour corriger) : un Mac peut être un Brain GPU ; la bibliothèque ONNX Runtime `.dylib` est reconnue (Homebrew compris) ; le nom de la machine se lit aussi par `hostname`. Nouveau : [docs/MACOS.md](docs/MACOS.md), CI macOS et archives `aarch64-apple-darwin` / `x86_64-apple-darwin`, toutes **au mieux** (jamais compilées sur un Mac avant cette version).
+- **Crawl N²** : les couples clé × relai se synchronisent **8 à la fois** (`CrawlConfig::concurrency`) au lieu d'un par un ; curseurs, filtres et contrôles d'auteur inchangés.
+- **Documentation** : la garde de flux « provisoire qui refuse tout » (`tunnel_gate.rs`, disparu) est remplacée par la politique des tunnels ; la limite « une station = une constellation » dit maintenant que `astroportd planes` en sert plusieurs ; tableau des commandes complété.
 
 ### Clé de secours en 3 parts (remplace la carte complète)
 - Le secret du compte (SALT et PEPPER) est découpé en **3 parts, dont 2 suffisent** (partage de Shamir). **P1** va au membre (QR imprimable `astro-share:v1|…`), **P2** reste sur la station (`<compte>/.ssss/2`, `0600`), **P3** est confiée d'elle-même, chiffrée pour chacun, aux amis qui hébergent la sauvegarde. Une part seule ne révèle rien : un QR volé ou photographié ne donne pas accès au compte.
