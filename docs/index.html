@@ -284,7 +284,7 @@ astroportd ylevel --verify   # code de sortie 1 si ça ne correspond pas
 </svg>
 <figcaption>ORIGIN (réseau ouvert, bac à sable) et ẐEN (réseau privé, production).</figcaption></figure>
 
-<div class="cols one">
+<div class="cols">
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <p><strong>Parcours A — Démarrer une constellation ORIGIN</strong> (le plus simple pour commencer)</p>
 <div class="code"><pre><code>astroportd init --mode origin
@@ -297,18 +297,13 @@ astroportd init --mode zen --swarm-key ./swarm.key
 </code></pre></div>
 <p><strong>Parcours C — Fonder SA constellation ẐEN</strong></p>
 <div class="code"><pre><code>astroportd swarm-key &gt; swarm.key
-chmod 600 swarm.key</code></pre></div>
-</div>
-</div>
-<h1>Copiez ensuite swarm.key sur chaque station, par un canal sûr (scp, clé USB) :</h1>
-<p>astroportd init --mode zen --swarm-key ./swarm.key</p>
-<div class="code"><pre><code>
-&gt; ⚠️ **Attention.** Sauvegardez `swarm.key` : la perdre, ou en changer, change le nom de la constellation (`UPLANETNAME`) et donc la dérivation des clés des futurs MULTIPASS. Ne la publiez jamais.
-
-&gt; **À savoir.** Fonder sa constellation crée un **réseau privé** dont vous fixez les règles. La valeur « 1 Ẑen = 1 € » est celle de la coopérative UPlanet ẐEN ; elle ne s'applique pas toute seule à une constellation que vous créez.
+chmod 600 swarm.key
+# Copiez ensuite swarm.key sur chaque station, par un canal sûr (scp, clé USB) :
+astroportd init --mode zen --swarm-key ./swarm.key
 </code></pre></div>
-
-<div class="cols one">
+<div class="box warn"><p><span class="lbl">Attention</span> Sauvegardez <code>swarm.key</code> : la perdre, ou en changer, change le nom de la constellation (<code>UPLANETNAME</code>) et donc la dérivation des clés des futurs MULTIPASS. Ne la publiez jamais.</p></div>
+<div class="box note"><p><span class="lbl">À savoir</span> Fonder sa constellation crée un <strong>réseau privé</strong> dont vous fixez les règles. La valeur « 1 Ẑen = 1 € » est celle de la coopérative UPlanet ẐEN ; elle ne s'applique pas toute seule à une constellation que vous créez.</p></div>
+</div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p><strong>ORIGIN</strong> — <a href="https://qo-op.com">qo-op.com</a> reste une <strong>option</strong> : c'est une station ORIGIN publique où l'on peut s'inscrire. Ce n'est pas une obligation : sur votre propre station, vous créez vos MULTIPASS vous-même (étape 5).</p>
 <p><strong>ẐEN</strong> — pour passer d'ORIGIN à ẐEN, la voie habituelle est la certification DRAGON, puis la réception de la <code>swarm.key</code>. Informations : le dépôt <a href="https://github.com/papiche/Astroport.ONE">Astroport.ONE</a> et support@qo-op.com.</p>
@@ -321,18 +316,14 @@ chmod 600 swarm.key</code></pre></div>
 <h2 id="h-4"><span class="num" aria-hidden="true">4</span> Démarrer la station</h2>
 <p><code>init</code> a préparé le dossier de la station (<code>~/.zen/astroportd</code> : la base <code>uplanet.db</code>, les fichiers chiffrés <code>blobs</code>, les sauvegardes <code>snapshots</code>) et vous a affiché la commande suivante. Voici les deux façons de démarrer.</p>
 
-<div class="cols one">
+<div class="cols">
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <p><strong>Essai local</strong> (HTTP simple, sur votre machine seulement) :</p>
-<div class="code"><pre><code>astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs</code></pre></div>
-</div>
-</div>
-<h1>→ http://127.0.0.1:18080</h1>
-<div class="code"><pre><code>
-**Station publique** (HTTPS automatique, réseau P2P, 20h12 solaire) — ajoutez vos coordonnées, elles règlent l'entretien de nuit sur le soleil :
-
-```bash
-astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs \
+<div class="code"><pre><code>astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
+# → http://127.0.0.1:18080
+</code></pre></div>
+<p><strong>Station publique</strong> (HTTPS automatique, réseau P2P, 20h12 solaire) — ajoutez vos coordonnées, elles règlent l'entretien de nuit sur le soleil :</p>
+<div class="code"><pre><code>astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs \
   --domain station.exemple.org --acme-email moi@exemple.org \
   --p2p-listen /ip4/0.0.0.0/tcp/4101 \
   --lat 45.76 --lon 4.84
@@ -345,8 +336,7 @@ systemctl --user enable --now astroportd
 loginctl enable-linger &quot;$USER&quot;   # démarrer au boot sans session ouverte
 journalctl --user -u astroportd -f   # suivre les journaux
 </code></pre></div>
-
-<div class="cols one">
+</div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p>Rien à cliquer pour démarrer : c'est le terminal qui lance le programme. Quand il tourne, ouvrez <a href="http://127.0.0.1:18080">http://127.0.0.1:18080</a> (essai local) ou <code>https://votre-domaine/</code>.</p>
 <p>Sur une <strong>même adresse</strong>, un navigateur reçoit l'application, et un client Nostr reçoit le relai de la station.</p>
@@ -461,20 +451,16 @@ astroportd multipass list
 </ol>
 <p>Vous êtes prévenu dans votre messagerie BRO quand c'est fait. Si rien n'est retrouvé en 3 jours, le compte repart à neuf (vos amis et contacts restent les vôtres) et le Capitaine est alerté.</p>
 
-<div class="cols one">
+<div class="cols">
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <div class="code"><pre><code>astroportd multipass card alice@exemple.org            # réaffiche la part 1 (celle du membre) d'un compte hébergé ici
 astroportd multipass card alice@exemple.org --svg &gt; carte.svg   # …en QR à imprimer
-astroportd multipass card alice@exemple.org --part 3    # la part que gardent les amis</code></pre></div>
-</div>
-</div>
-<h1>Sur la NOUVELLE station (les deux parts, une par ligne, lues sur l'entrée standard : un argument se lirait dans <code>ps</code>) :</h1>
-<p>astroportd multipass recover - --relay wss://relais.ami.example &lt; parts.txt</p>
-<div class="code"><pre><code>
-`--relay` (répétable) rapatrie tout de suite les événements du compte ; sans lui, le démon (`astroportd serve`) s'en charge au prochain crawl. Un **nouveau code PASS** est généré et affiché une fois : l'ancien est tiré au hasard et n'est pas récupérable.
+astroportd multipass card alice@exemple.org --part 3    # la part que gardent les amis
+# Sur la NOUVELLE station (les deux parts, une par ligne, lues sur l'entrée standard : un argument se lirait dans `ps`) :
+astroportd multipass recover - --relay wss://relais.ami.example &lt; parts.txt
 </code></pre></div>
-
-<div class="cols one">
+<p><code>--relay</code> (répétable) rapatrie tout de suite les événements du compte ; sans lui, le démon (<code>astroportd serve</code>) s'en charge au prochain crawl. Un <strong>nouveau code PASS</strong> est généré et affiché une fois : l'ancien est tiré au hasard et n'est pas récupérable.</p>
+</div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p>Ouvrez <code>https://votre-nouvelle-station/restore</code>, <strong>scannez le QR</strong> (si votre navigateur sait le lire) ou <strong>collez la carte</strong>, puis <strong>« Rétablir mon compte »</strong>. Notez le nouveau PASS, puis <strong>« Ouvrir mon espace »</strong>.</p>
 <div class="box note"><p><span class="lbl">À savoir</span> La station refuse la carte d'une autre constellation, et toute carte dont les secrets ne redonnent pas la clé annoncée (faute de frappe). <strong>Ne modifiez rien tant que la restauration n'est pas terminée</strong> : tant qu'elle dure, la station ne publie pas de manifeste (un manifeste vide remplacerait celui que vos amis détiennent).</p>

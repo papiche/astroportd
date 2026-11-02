@@ -126,8 +126,11 @@ def split_columns(body: str):
             while i < len(lines) and lines[i].strip() in (CLI_H, WEB_H):
                 key = "cli" if lines[i].strip() == CLI_H else "web"
                 i += 1
-                chunk = []
-                while i < len(lines) and not lines[i].startswith("#"):
+                chunk, fenced = [], False
+                # Un `#` en tête de ligne n'est un titre que hors d'un bloc de code (commentaire shell).
+                while i < len(lines) and (fenced or not lines[i].startswith("#")):
+                    if lines[i].lstrip().startswith("```"):
+                        fenced = not fenced
                     chunk.append(lines[i])
                     i += 1
                 cols[key] = "\n".join(chunk)
