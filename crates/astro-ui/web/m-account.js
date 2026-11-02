@@ -6,6 +6,7 @@ const LANG = { fr: 'Français', en: 'English', es: 'Español' }, ROLE = { multip
 export default async function account(root, K) {
   const { h, t } = K, api = (p, body) => K.api('/api/v1/account' + p, body ? { method: 'POST', body } : undefined);
   root.replaceChildren(h('p', { class: 'muted' }, 'Chargement…'));
+  const css = h('link', { rel: 'stylesheet', href: '/ui/m-account.css' }); document.head.append(css); K.cleanup(() => css.remove());
   const a = await api('');
   const copy = (text, what) => h('button', { class: 'ghost', type: 'button', onclick: () => navigator.clipboard?.writeText(text).then(() => K.toast(t('{0} copié', what), 1), e => K.toast(e.message)) }, 'Copier');
   const code = v => h('code', {}, v || '—');
@@ -18,14 +19,45 @@ export default async function account(root, K) {
     h('dt', {}, 'Station d\'accueil'), h('dd', {}, code(a.home_station)),
     h('dt', {}, 'Relais annoncés (NIP-65)'), h('dd', {}, a.relays.length ? a.relays.map(r => h('div', {}, code(r.url), ` ${r.read && r.write ? '' : r.read ? '(lecture)' : '(écriture)'}`)) : h('span', { class: 'muted' }, 'aucun'))));
 
+
+  // Téléverser une image de profil : réduite ici (cadre de l'image ou du bandeau) puis envoyée en JPEG ; la station la range, la publie
+  // à son adresse et met le profil (kind 0) à jour. L'aperçu ne s'affiche que pour une image de cette station (CSP).
+  const FRAME = { picture: [320, 320], banner: [1200, 400] };
+  const imageTools = (kind, input) => {
+    const file = h('input', { type: 'file', accept: 'image/*', hidden: '' }), msg = h('span', { class: 'muted', role: 'status' });
+    const pick = h('button', { type: 'button', class: 'ghost', onclick: () => file.click() }, t('Choisir une image sur cet appareil'));
+    file.onchange = async () => {
+      const f = file.files[0]; file.value = '';
+      if (!f) return;
+      pick.disabled = true; msg.textContent = t('Envoi…');
+      try {
+        const [w, hh] = FRAME[kind], bmp = await createImageBitmap(f), k = Math.max(w / bmp.width, hh / bmp.height), c = h('canvas', { width: w, height: hh });
+        c.getContext('2d').drawImage(bmp, (w - bmp.width * k) / 2, (hh - bmp.height * k) / 2, bmp.width * k, bmp.height * k);
+        const blob = await new Promise(ok => c.toBlob(ok, 'image/jpeg', .85)), data = await new Promise(ok => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.readAsDataURL(blob); });
+        await api('/image', { kind, data, origin: location.origin }); K.toast(t('Image enregistrée'), 1); account(root, K);
+      } catch (e) { msg.textContent = ''; K.toast(e.message); pick.disabled = false; }
+    };
+    // Choisir une image déjà publiée dans /Public : la station la relit elle-même (aucun autre dossier n'est accepté).
+    const grid = h('div', { class: 'ac-grid' });
+    const pickPublic = h('button', { type: 'button', class: 'ghost', onclick: async () => {
+      let r; try { r = await K.api('/api/v1/public/images'); } catch (e) { return K.toast(e.message); }
+      grid.replaceChildren(...(r.images.length ? r.images.slice(0, 24).map(im => h('button', { type: 'button', class: 'ac-thumb', title: im.name, onclick: async () => {
+        try { await api('/image', { kind, public_path: im.path, origin: location.origin }); K.toast(t('Image enregistrée'), 1); account(root, K); } catch (e) { K.toast(e.message); }
+      } }, h('img', { src: `/site/${site.name}/${im.rel.split('/').map(encodeURIComponent).join('/')}`, alt: im.name, loading: 'lazy' }))) : [h('p', { class: 'muted' }, t('Aucune image dans Public : déplacez-en une avec « Publier » dans l’uCloud.'))]));
+    } }, t('Choisir dans mes fichiers publics'));
+    let own = false; try { own = input.value && new URL(input.value).origin === location.origin; } catch { /* pas une adresse */ }
+    return h('div', {}, h('p', { class: 'row' }, pick, ' ', site ? pickPublic : null, file, ' ', msg), grid, own ? h('img', { src: input.value, alt: '', class: kind === 'banner' ? 'ac-banner' : 'ac-pic' }) : null);
+  };
+
   // ── Profil et langue ──
-  const f = { name: h('input', { id: 'ac-name', value: a.profile.name || '', maxlength: 64 }), about: h('textarea', { id: 'ac-about', rows: 3, maxlength: 500 }, a.profile.about || ''), picture: h('input', { id: 'ac-pic', value: a.profile.picture || '', placeholder: 'https://…', maxlength: 256 }),
+  const f = { name: h('input', { id: 'ac-name', value: a.profile.name || '', maxlength: 64 }), about: h('textarea', { id: 'ac-about', rows: 3, maxlength: 500 }, a.profile.about || ''), banner: h('input', { id: 'ac-ban', value: a.profile.banner || '', placeholder: 'https://…', maxlength: 256 }), picture: h('input', { id: 'ac-pic', value: a.profile.picture || '', placeholder: 'https://…', maxlength: 256 }),
     lang: h('select', { id: 'ac-lang' }, a.langs.map(l => h('option', { value: l, selected: l === K.lang }, LANG[l] || l))) };
   const save = h('button', { onclick: async ev => {
     const patch = {};
     if (f.name.value.trim() !== (a.profile.name || '')) patch.name = f.name.value.trim();
     if (f.about.value.trim() !== (a.profile.about || '')) patch.about = f.about.value.trim();
     if (f.picture.value.trim() !== (a.profile.picture || '')) patch.picture = f.picture.value.trim();
+    if (f.banner.value.trim() !== (a.profile.banner || '')) patch.banner = f.banner.value.trim();
     const langChanged = f.lang.value !== K.lang;
     if (langChanged) patch.lang = f.lang.value;
     if (!Object.keys(patch).length) return K.toast(t('Aucune modification'));
@@ -34,8 +66,25 @@ export default async function account(root, K) {
   } }, 'Enregistrer');
   const profile = h('section', { class: 'card' }, h('h2', {}, 'Profil'),
     h('p', { class: 'muted' }, 'Publié sur le relai (kind 0) : vos Proches le voient.'),
-    h('label', { for: 'ac-name' }, 'Nom affiché'), f.name, h('label', { for: 'ac-about' }, 'Présentation'), f.about, h('label', { for: 'ac-pic' }, 'Image (https)'), f.picture,
+    h('label', { for: 'ac-name' }, 'Nom affiché'), f.name, h('label', { for: 'ac-about' }, 'Présentation'), f.about, h('label', { for: 'ac-pic' }, 'Image (https)'), f.picture, imageTools('picture', f.picture), h('label', { for: 'ac-ban' }, t('Bandeau (https) : fond de vos Ğ1Billets et de votre profil')), f.banner, imageTools('banner', f.banner),
     h('label', { for: 'ac-lang' }, 'Langue de l\'interface'), f.lang, h('p', {}, save));
+
+
+  // ── Mon site public : le dossier /Public de l'uCloud, servi en clair à tous (modèle : déplacer un fichier dans /Public le publie) ──
+  const site = await K.api('/api/v1/account/site').catch(() => null);
+  const sitebox = site && h('section', { class: 'card' }, h('h2', {}, t('Mon site public')),
+    h('p', { class: 'muted' }, t('Tout ce que vous mettez dans le dossier Public de votre uCloud est public : lisible par tout le monde, sans mot de passe. Déplacez-y un fichier pour le publier, sortez-le pour le retirer. Vous pouvez y construire un site (pages HTML, images, CSS) avec votre client WebDAV.')),
+    h('dl', { class: 'stack' },
+      h('dt', {}, t('Adresse de votre site')), h('dd', {}, h('a', { href: site.path_url, target: '_blank', rel: 'noopener' }, location.origin + site.path_url), ' ', copy(location.origin + site.path_url, t('Adresse'))),
+      site.host_url ? [h('dt', {}, t('Adresse par nom (DNS)')), h('dd', {}, h('a', { href: site.host_url, target: '_blank', rel: 'noopener' }, site.host_url), ' ', copy(site.host_url, t('Adresse')))] : null,
+      h('dt', {}, t('Page d’accueil')), h('dd', {}, site.has_index ? t('index.html de votre dossier Public') : t('page par défaut (votre profil et la liste des fichiers)')),
+      h('dt', {}, t('Fichiers publiés')), h('dd', {}, String(site.files)),
+      site.visits ? [h('dt', {}, t('Visites')), h('dd', {}, `${t('aujourd’hui')} ${site.visits.today} · 7 ${t('jours')} ${site.visits.week} · 90 ${t('jours')} ${site.visits.days90}`,
+        site.visits.top.length ? h('ul', { class: 'muted' }, site.visits.top.map(x => h('li', {}, `${x.path} : ${x.hits}`))) : null)] : null,
+      h('dt', {}, 'WebDAV'), h('dd', {}, code(a.dav.url), ' ', t('dossier'), ' ', code('/Public'))),
+    site.has_index ? null : h('p', {}, h('button', { type: 'button', onclick: async ev => { ev.target.disabled = true; try { await K.api('/api/v1/account/site/example', { method: 'POST', body: {} }); K.toast(t('Site d’exemple créé dans Public'), 1); account(root, K); } catch (e) { K.toast(e.message); ev.target.disabled = false; } } }, t('Créer un site d’exemple'))),
+    h('details', {}, h('summary', {}, t('Exemple de page (index.html)')), h('pre', {}, '<!doctype html>\n<html lang="fr">\n<head>\n  <meta charset="utf-8">\n  <title>Ma page</title>\n  <link rel="stylesheet" href="style.css">\n</head>\n<body>\n  <h1>Bonjour</h1>\n  <p><a href="photos/vacances.jpg">Mes vacances</a></p>\n</body>\n</html>')),
+    h('p', { class: 'muted' }, t('Vos fichiers restent chiffrés sur la station : elle ne les déchiffre que pour ce dossier. Les scripts d’une page tournent isolés de la station. Les visites sont comptées par jour et par page, sans garder aucune adresse ni identité de visiteur.')));
 
   // ── Intelligence artificielle : un Ollama ou une clé d'API déclarés ici font apparaître BRO ──
   const ai = h('section', { class: 'card' }, h('h2', {}, t('Intelligence artificielle')),
@@ -178,5 +227,5 @@ export default async function account(root, K) {
   const title = a.profile.name || a.email || 'Mon compte';
   const hero = h('div', { class: 'hero' }, h('div', { class: 'avatar', 'aria-hidden': 'true' }, [...title][0].toUpperCase()),
     h('div', { class: 'who' }, h('h2', {}, title), a.email && a.email !== title ? h('div', { class: 'sub' }, a.email) : null, h('span', { class: 'pill' }, ROLE[a.role] || a.role), a.guest ? h('span', { class: 'pill' }, 'Invité') : null));
-  root.replaceChildren(...[hero, guest, h('div', { class: 'grid' }, idCard, profile, ai, planes, dav, devices, backup, keys)].filter(Boolean));
+  root.replaceChildren(...[hero, guest, h('div', { class: 'grid' }, idCard, profile, sitebox, ai, planes, dav, devices, backup, keys)].filter(Boolean));
 }

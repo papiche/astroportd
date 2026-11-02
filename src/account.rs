@@ -147,9 +147,12 @@ impl AccountService {
         let epoch = astro_dav::auth::token_epoch(&self.db, hex).await;
         let login = email.clone().unwrap_or_else(|| hex.to_owned());
         let has_dunikey = email.as_deref().is_some_and(|e| self.dir_of(e).join(".secret.dunikey").is_file());
+        // Portefeuille Ğ1 du MULTIPASS (la clé Duniter de son dossier) : l'adresse où l'on envoie de la valeur (/scan, Ğ1Billets).
+        // Ce n'est pas `g1pub`, la clé Ğ1 dérivée de la clé Nostr.
+        let wallet = email.as_deref().and_then(|e| std::fs::read_to_string(self.dir_of(e).join(".secret.dunikey")).ok()).and_then(|t| astro_lifecycle::dunikey::Dunikey::parse(&t).ok()).map(|d| astro_duniter::Ed25519Signer::from_seed(*d.ed25519_seed()).account().ss58());
         Ok(json!({
-            "hex": hex, "npub": npub.or_else(|| npub_of(hex)), "email": email, "role": role, "g1pub": g1, "home_station": home, "lang": lang, "langs": LANGS,
-            "profile": { "name": profile["name"], "about": profile["about"], "picture": profile["picture"] },
+            "hex": hex, "npub": npub.or_else(|| npub_of(hex)), "email": email, "role": role, "wallet": wallet, "g1pub": g1, "home_station": home, "lang": lang, "langs": LANGS,
+            "profile": { "name": profile["name"], "about": profile["about"], "picture": profile["picture"], "banner": profile["banner"] },
             "dav": { "url": format!("{}/dav", self.public_base.as_deref().unwrap_or("").trim_end_matches('/')), "login": login },
             "guest": self.is_guest(hex).await, "token_generation": epoch, "keys_exportable": has_dunikey || email.is_some(), "has_g1_key": has_dunikey, "relays": relays,
         }))
@@ -323,12 +326,31 @@ impl AccountService {
         serde_json::to_value(&event).map_err(internal)
     }
 
-    /// Met à jour le profil : `{ name?, about?, picture?, lang? }` ; signe et publie un nouveau kind 0 (les autres champs sont gardés).
+    /// Reçoit l'image `kind` (`picture` ou `banner`) du compte : `data` en base64 (le navigateur l'a déjà réduite), relue et réencodée ici,
+    /// rangée par la station, puis le profil (kind 0) est republié avec son adresse publique. `origin` : adresse de la station vue
+    /// par le navigateur, si la station n'en connaît pas d'autre.
+    pub async fn set_image(&self, hex: &str, kind: &str, data: &str, origin: Option<&str>) -> Result<Value, AccountError> {
+        use base64::Engine as _;
+        let kind = crate::profile_image::Kind::parse(kind).ok_or_else(|| AccountError::Invalid("image : « picture » ou « banner » attendu".into()))?;
+        if data.len() > crate::profile_image::MAX_INPUT * 4 / 3 + 16 {
+            return Err(AccountError::Invalid("image trop lourde (4 Mo au plus)".into()));
+        }
+        let raw = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|_| AccountError::Invalid("image : base64 attendu".into()))?;
+        let jpeg = crate::profile_image::normalize(&raw, kind).map_err(AccountError::Invalid)?;
+        let base = self.public_base.clone().filter(|b| b.starts_with("https://")).or_else(|| origin.filter(|o| o.starts_with("https://") && !o[8..].contains(['/', ' ', '?', '#'])).map(str::to_owned)).ok_or_else(|| AccountError::Invalid("adresse publique de la station inconnue (https:// requis)".into()))?;
+        let at = now();
+        crate::profile_image::store(&self.db, hex, kind, jpeg, at).await.map_err(internal)?;
+        let url = crate::profile_image::url_for(&base, hex, kind, at);
+        self.update_profile(hex, &json!({ kind.name(): url })).await
+    }
+
+    /// Met à jour le profil : `{ name?, about?, picture?, banner?, lang? }` ; signe et publie un nouveau kind 0 (les autres champs sont gardés).
     pub async fn update_profile(&self, hex: &str, patch: &Value) -> Result<Value, AccountError> {
         let (_, email, ..) = self.row(hex).await?;
         let name = clean("nom", &patch["name"], 64)?;
         let about = clean("présentation", &patch["about"], 500)?;
         let picture = clean("image", &patch["picture"], 256)?;
+        let banner = clean("bandeau", &patch["banner"], 256)?;
         let website = clean("site web", &patch["website"], 256)?;
         let (nip05, lud16) = (clean("NIP-05", &patch["nip05"], 100)?, clean("adresse Lightning", &patch["lud16"], 100)?);
         if website.as_deref().is_some_and(|w| !w.is_empty() && !w.starts_with("https://")) {
@@ -342,24 +364,26 @@ impl AccountService {
         if name.as_deref() == Some("") {
             return Err(AccountError::Invalid("nom : ne peut pas être vide".into()));
         }
-        if picture.as_deref().is_some_and(|p| !p.is_empty() && !p.starts_with("https://")) {
-            return Err(AccountError::Invalid("image : adresse https:// attendue".into()));
+        for (label, v) in [("image", &picture), ("bandeau", &banner)] {
+            if v.as_deref().is_some_and(|p| !p.is_empty() && !p.starts_with("https://")) {
+                return Err(AccountError::Invalid(format!("{label} : adresse https:// attendue")));
+            }
         }
         let lang = match &patch["lang"] {
             Value::Null => None,
             Value::String(l) if LANGS.contains(&l.as_str()) => Some(l.clone()),
             _ => return Err(AccountError::Invalid(format!("langue : {} attendue", LANGS.join(", ")))),
         };
-        if name.is_none() && about.is_none() && picture.is_none() && website.is_none() && nip05.is_none() && lud16.is_none() && lang.is_none() {
+        if name.is_none() && about.is_none() && picture.is_none() && banner.is_none() && website.is_none() && nip05.is_none() && lud16.is_none() && lang.is_none() {
             return Err(AccountError::Invalid("rien à modifier".into()));
         }
-        if name.is_some() || about.is_some() || picture.is_some() || website.is_some() || nip05.is_some() || lud16.is_some() {
+        if name.is_some() || about.is_some() || picture.is_some() || banner.is_some() || website.is_some() || nip05.is_some() || lud16.is_some() {
             let secret = self.keys.secret(hex).ok_or_else(|| internal("clé du compte introuvable sur cette station"))?;
             let (mut content, tags, previous) = match self.last_event(hex, kind::METADATA).await {
                 Some((c, t, at)) => (serde_json::from_str::<Value>(&c).unwrap_or_else(|_| json!({})), serde_json::from_str::<Vec<Vec<String>>>(&t).unwrap_or_default(), at),
                 None => (json!({}), Vec::new(), 0),
             };
-            for (key, value) in [("name", name), ("about", about), ("picture", picture), ("website", website), ("nip05", nip05), ("lud16", lud16)] {
+            for (key, value) in [("name", name), ("about", about), ("picture", picture), ("banner", banner), ("website", website), ("nip05", nip05), ("lud16", lud16)] {
                 match value {
                     Some(v) if v.is_empty() => {
                         content.as_object_mut().map(|o| o.remove(key));
@@ -471,6 +495,38 @@ mod tests {
             assert!(matches!(svc.update_profile(&hex, &bad).await, Err(AccountError::Invalid(_))), "{bad}");
         }
         assert!(matches!(svc.update_profile(&"cd".repeat(32), &json!({ "name": "X" })).await, Err(AccountError::NotFound)));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn a_profile_image_is_reencoded_stored_and_published_as_a_station_address() {
+        use base64::Engine as _;
+        let (dir, svc, hex, sent) = setup("image").await;
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(1500, 700, |x, y| image::Rgb([(x % 255) as u8, (y % 255) as u8, 3]))).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+        let v = svc.set_image(&hex, "banner", &b64, None).await.unwrap();
+        let url = v["profile"]["banner"].as_str().unwrap();
+        assert!(url.starts_with(&format!("https://station.example/api/v1/profile/{hex}/banner.jpg?v=")), "{url}");
+        let kept = crate::profile_image::load(&svc.db, &hex, crate::profile_image::Kind::Banner).await.unwrap();
+        assert_eq!(image::load_from_memory(&kept).unwrap().width(), 1200, "réduite à la taille du bandeau");
+        let ev = sent.lock().unwrap().last().unwrap().clone();
+        assert!(ev.kind == 0 && ev.verify().is_ok() && ev.content.contains("\"banner\""));
+        for (kind, data) in [("avatar", b64.as_str()), ("banner", "pas du base64 !"), ("banner", "aGVsbG8=")] {
+            assert!(matches!(svc.set_image(&hex, kind, data, None).await, Err(AccountError::Invalid(_))), "{kind} {data}");
+        }
+        assert!(matches!(svc.update_profile(&hex, &json!({ "banner": "http://x/y.jpg" })).await, Err(AccountError::Invalid(_))), "https seulement");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn the_account_view_gives_the_duniter_wallet_address_for_the_scan_shortcut() {
+        let (dir, svc, hex, _) = setup("wallet").await;
+        assert!(svc.view(&hex).await.unwrap()["wallet"].is_null(), "dunikey illisible : pas d'adresse inventée");
+        std::fs::write(dir.join("nostr/ana@example.org/.secret.dunikey"), astro_lifecycle::dunikey::render(&[0x61; 32])).unwrap();
+        let v = svc.view(&hex).await.unwrap();
+        assert_eq!(v["wallet"].as_str(), Some(astro_duniter::Ed25519Signer::from_seed([0x61; 32]).account().ss58().as_str()));
+        assert!(!v.to_string().contains("sec:"), "aucun secret dans la vue");
         let _ = std::fs::remove_dir_all(dir);
     }
 
