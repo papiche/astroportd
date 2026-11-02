@@ -1,0 +1,27 @@
+/* Cockpit du Capitaine (chargé avec m-cockpit.js). */
+.ck-hero { display: flex; gap: 1rem; align-items: center; border-left: 6px solid var(--ok); }
+.ck-hero.degraded { border-left-color: var(--warn); }
+.ck-hero.down { border-left-color: var(--bad); }
+.ck-hero h2 { font-size: 1.5rem; margin: 0; }
+.ck-big { font-size: 2.4rem; line-height: 1; }
+.ck-h { margin: 1.4rem 0 .6rem; font-size: 1rem; }
+.ck-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+.ck-todo { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: .6rem .8rem; border-radius: var(--r); border-left: 4px solid var(--muted); background: var(--panel2); }
+.ck-todo.degraded { border-left-color: var(--warn); }
+.ck-todo.down { border-left-color: var(--bad); }
+.ck-todo p { margin: .15rem 0 0; }
+.ck-btn { flex: none; padding: .35rem .9rem; border-radius: 1rem; background: var(--accent); color: var(--on-accent); font-weight: 600; text-decoration: none; }
+.ck-floor { display: flex; gap: .8rem; align-items: center; text-decoration: none; color: inherit; }
+.ck-floor:hover, .ck-floor:focus-visible { border-color: var(--accent); }
+.ck-floor p { margin: .1rem 0 0; }
+.ck-ico { font-size: 1.6rem; }
+.ck-dot { margin-left: auto; width: .85rem; height: .85rem; border-radius: 50%; background: var(--ok); flex: none; }
+.ck-floor.degraded .ck-dot { background: var(--warn); }
+.ck-floor.down .ck-dot { background: var(--bad); }
+.ck-floor.info .ck-dot { background: var(--accent); }
+.ck-node.self { border-color: var(--accent); }
+.ck-node p { margin: .25rem 0 0; }
+.ck-st { font-size: .75rem; font-weight: 600; color: var(--ok); }
+.ck-st.off { color: var(--muted); }
+.ck-chip { display: inline-block; margin: 0 .3rem .2rem 0; padding: .05rem .6rem; border-radius: 1rem; background: var(--panel2); font-size: .78rem; }
+@media (max-width: 36rem) { .ck-todo { flex-direction: column; align-items: flex-start; } }

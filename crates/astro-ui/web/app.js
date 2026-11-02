@@ -373,7 +373,7 @@ tr(document.body); new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEa
 // Écrans lourds chargés à la demande (hors budget de la coque) : ils reçoivent la boîte à outils ci-dessous.
 const K = { t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, tiles, every, enc, del, picker, mark, photos, dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n), feed, listeners };
 const lazyView = f => async (root, q) => (await import('/ui/' + f)).default(root, K, q);
-const views = { home: viewHome, station: viewStation, cloud: viewCloud, account: lazyView('m-account.js'), contacts: lazyView('m-contacts.js'), chat: lazyView('m-chat.js'), people: lazyView('m-people.js'), replication: lazyView('m-replication.js'), library: lazyView('m-library.js'), coop: lazyView('m-coop.js'), options: lazyView('m-options.js'), planes: lazyView('m-planes.js'), bro: lazyView('m-bro.js') };
+const views = { home: viewHome, station: viewStation, cloud: viewCloud, account: lazyView('m-account.js'), contacts: lazyView('m-contacts.js'), chat: lazyView('m-chat.js'), people: lazyView('m-people.js'), replication: lazyView('m-replication.js'), library: lazyView('m-library.js'), coop: lazyView('m-coop.js'), cockpit: lazyView('m-cockpit.js'), options: lazyView('m-options.js'), planes: lazyView('m-planes.js'), bro: lazyView('m-bro.js') };
 let me = null;
 async function route() {
 cleanups.forEach(c => c()); cleanups = [];
@@ -387,9 +387,9 @@ if (!me) { me = await api('/api/v1/me'); import('/ui/m-nostr.js').then(m => m.de
 document.querySelector('nav a[data-r=bro]').hidden = !me.ai; // BRO n'existe que pour un MULTIPASS qui a déclaré une IA (Mon compte)
 if (!me.ai && location.hash.startsWith('#/bro')) { toast(t('Déclarez une IA (Ollama ou clé d\'API) dans Mon compte pour utiliser BRO')); location.hash = '#/account'; return; }
 if (me.captain) planeSwitch();
-document.querySelector('nav a[data-r=station]').hidden = !me.captain; // l'écran Capitaine n'existe pas pour un MULTIPASS
-const name = ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts', 'chat'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/planes') && me.captain ? 'planes' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/station') && me.captain ? 'station' : 'home');
-document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (name === 'coop' || name === 'options' || name === 'planes' ? 'station' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
+document.querySelector('nav a[data-r=station]').hidden = !me.captain; document.querySelector('nav a[data-r=station]').href = '#/cockpit'; // l'écran Capitaine n'existe pas pour un MULTIPASS
+const name = ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts', 'chat'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/planes') && me.captain ? 'planes' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/cockpit') && me.captain ? 'cockpit' : p.startsWith('/station') && me.captain ? 'station' : 'home');
+document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (name === 'coop' || name === 'options' || name === 'planes' || name === 'cockpit' ? 'station' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
 await views[name](main, new URLSearchParams(qs || ''));
 $('#out').hidden = false;
 startLive(); refreshBadge();
