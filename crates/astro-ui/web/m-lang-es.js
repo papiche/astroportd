@@ -13,6 +13,8 @@ export default {
 "Envoyer vos premières photos": "Sube tus primeras fotos",
 "Reconnaître un visage": "Reconocer un rostro",
 "Retrouver un proche": "Encontrar a un allegado",
+"Synchroniser votre smartphone": "Sincroniza tu smartphone",
+"Mon smartphone": "Mi smartphone",
 "Brancher un assistant": "Conectar un asistente",
 "Station": "Estación",
 "Personnes": "Personas",

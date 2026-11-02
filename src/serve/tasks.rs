@@ -49,6 +49,27 @@ pub(super) fn ssh_sync(p: &Parts<'_>, tunnel_policy: &Arc<TunnelPolicy>, backgro
     }
 }
 
+/// Adresses DNSLink de la coopérative : un premier passage 90 s après le démarrage (les comptes sont chargés, le réseau est
+/// là), puis toutes les 15 minutes. Seul ce qui a changé touche l'API OVH ; sans identifiants, le passage ne fait rien.
+pub(super) fn dnslink_sync(p: &Parts<'_>, dnslink: &Arc<astroportd::dnslink::Dnslink>, background: &mut Background) {
+    let (service, mut stop) = (dnslink.clone(), p.stop_watch.clone());
+    background.push(tokio::spawn(async move {
+        let mut wait = Duration::from_secs(90);
+        loop {
+            tokio::select! {
+                () = tokio::time::sleep(wait) => {}
+                changed = stop.changed() => {
+                    if changed.is_err() || *stop.borrow() {
+                        return;
+                    }
+                }
+            }
+            service.sync().await;
+            wait = Duration::from_secs(900);
+        }
+    }));
+}
+
 /// Rattrapage du GPS et de la date de prise de vue des photos reçues avant que la station ne les lise : 25 fichiers par
 /// compte et par passage, chacun lu une seule fois ; le rythme s'accélère tant qu'il en reste.
 pub(super) fn exif_backfill(p: &Parts<'_>, background: &mut Background) {

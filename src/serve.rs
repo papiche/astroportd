@@ -616,6 +616,9 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
         node_publisher: node_publisher.clone(),
     };
     tasks::ssh_sync(&parts, &tunnel_policy, &mut background);
+    // Adresses de la coopérative : la station et chaque MULTIPASS hébergé pointent vers leur espace IPNS (DNSLink OVH).
+    let dnslink = Arc::new(astroportd::dnslink::Dnslink::new(db.clone(), uplanet_name.clone(), services_peer.clone(), astroportd::init::hostname(), activity.clone()));
+    tasks::dnslink_sync(&parts, &dnslink, &mut background);
     background.push(tokio::spawn(backup.clone().run(Duration::from_secs(60), stop_watch.clone())));
     tasks::exif_backfill(&parts, &mut background);
     // Documents demandés par `#upload` : rapatriés, chiffrés et déposés dans /Uploads (le demandeur est prévenu).
@@ -708,7 +711,7 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
         chat
     };
     let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_chat(chat).with_people(people.clone()).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
-        .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), targets: service_targets(&a), assist: Some(assist_admin), tasks: Some(db.clone()) }).handler());
+        .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), targets: service_targets(&a), dnslink: Some(dnslink.clone()), assist: Some(assist_admin), tasks: Some(db.clone()) }).handler());
     if let Some(f) = thumbs_fn {
         ui = ui.with_face_thumbs(f);
     }

@@ -32,6 +32,11 @@ assert.equal(r.level, 'down'); assert.equal(r.todos[0].level, 'down'); assert.eq
 r = analyze({ ...healthy, cs: { nodes: [me] } }); assert.equal(r.level, 'ok'); assert.equal(r.todos[0].level, 'info'); assert.equal(r.floors.mesh, 'info');
 r = analyze({ ...healthy, dash: { p2p: { enabled: false } } }); assert.equal(r.level, 'degraded'); assert.equal(r.floors.mesh, 'degraded');
 
+// 5. Adresses de la coopérative : non activées = information ; en échec = à regarder ; jamais lancées = rien.
+r = analyze({ ...healthy, dns: { configured: false } }); assert.equal(r.level, 'ok'); assert.equal(r.todos[0].level, 'info');
+r = analyze({ ...healthy, dns: { configured: true, failed: 2, errors: ['x : OVH : refusé'] } }); assert.equal(r.level, 'degraded'); assert.equal(r.floors.mesh, 'degraded');
+r = analyze({ ...healthy, dns: { configured: null } }); assert.equal(r.todos.length, 0);
+
 // 6. Services : SSH ouvert à tous, service réglé qui ne répond plus. Un service jamais réglé et éteint ne dit rien.
 const svc = (o) => ({ name: 'ollama', mode: 'friends', grants: [], customized: false, up: true, ...o });
 r = analyze({ ...healthy, tun: { services: [svc({ name: 'ssh', mode: 'swarm' })] } }); assert.equal(r.floors.services, 'degraded');

@@ -13,10 +13,12 @@ const { steps } = await import(pathToFileURL(tmp));
 
 // Compte neuf : rien de fait, tout est à proposer.
 let r = steps({ dash: { sovereignty: { encrypted_files: 0 } }, faces: { enabled: true, people: [] }, friends: { friends: [] }, backup: { mine: null }, me: { ai: false } });
-assert.equal(r.list.length, 5); assert.equal(r.left, 5); assert.equal(r.files, 0);
+assert.equal(r.list.length, 6); assert.equal(r.left, 6); assert.equal(r.files, 0);
+// Sans assistant, l'étape smartphone vient tout de suite après les photos (quitter Google et Apple).
+assert.equal(r.list[1].title, 'Synchroniser votre smartphone');
 
 // Tout fait : plus rien à proposer.
-r = steps({ dash: { sovereignty: { encrypted_files: 12 } }, faces: { enabled: true, people: [{}] }, friends: { friends: [{ hex: 'a' }] }, backup: { mine: { status: 'accepted' } }, me: { ai: true } });
+r = steps({ dash: { sovereignty: { encrypted_files: 12 } }, faces: { enabled: true, people: [{}] }, friends: { friends: [{ hex: 'a' }] }, backup: { mine: { status: 'accepted' } }, me: { ai: true }, devices: { devices: [{}] } });
 assert.equal(r.left, 0); assert.equal(r.files, 12);
 
 // Sauvegarde seulement demandée (pas acceptée) : pas cochée.
@@ -25,8 +27,8 @@ assert.equal(r.list.find(s => s.title.startsWith('Mettre')).done, false);
 
 // Reconnaissance des visages absente de la station : l'étape n'existe pas.
 r = steps({ dash: {}, faces: { enabled: false }, friends: {}, backup: null, me: {} });
-assert.equal(r.list.length, 4); assert.ok(!r.list.some(s => s.title.includes('visage')));
+assert.equal(r.list.length, 5); assert.ok(!r.list.some(s => s.title.includes('visage')));
 
 // Appels qui échouent (null) : jamais d'exception.
-r = steps({}); assert.equal(r.list.length, 4); assert.equal(r.left, 4);
+r = steps({}); assert.equal(r.list.length, 5); assert.equal(r.left, 5);
 console.log('accueil : étapes OK');

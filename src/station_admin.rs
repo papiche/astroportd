@@ -330,6 +330,8 @@ pub struct Admin {
     pub tunnels: Option<(Arc<crate::tunnel_policy::TunnelPolicy>, Vec<String>)>,
     /// Où écoute chaque service offert (`nom`, `hôte:port`) : sert à dire s'il répond (voir [`service_is_up`]).
     pub targets: Vec<(String, String)>,
+    /// Adresses DNSLink de la coopérative (station et MULTIPASS) : bilan et passage à la demande.
+    pub dnslink: Option<Arc<crate::dnslink::Dnslink>>,
     /// Demandes d'assistance entre Capitaines amis (lecture et actions).
     pub assist: Option<AdminFn>,
     /// Base, pour la santé de la file de tâches.
@@ -414,6 +416,14 @@ impl Admin {
                             None => tasks_view(db).await,
                             Some(b) if b["action"] == "retry" => tasks_retry(db, b["kind"].as_str().filter(|k| !k.is_empty())).await,
                             Some(_) => Err("action attendue : retry".to_owned()),
+                        }
+                    }
+                    ("dnslink", body) => {
+                        let d = me.dnslink.as_ref().ok_or("adresses de la coopérative non activées sur cette station")?;
+                        match body {
+                            None => Ok(d.status().await.unwrap_or_else(|| json!({ "configured": null }))),
+                            Some(b) if b["action"] == "sync" => Ok(d.sync().await),
+                            Some(_) => Err("action attendue : sync".to_owned()),
                         }
                     }
                     ("tunnels", body) => {

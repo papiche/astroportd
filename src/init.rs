@@ -111,7 +111,8 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-fn hostname() -> String {
+/// Nom de la machine (`/etc/hostname`, `HOSTNAME`, puis la commande `hostname`) ; `station` à défaut.
+pub fn hostname() -> String {
     // `/etc/hostname` (Linux), puis `HOSTNAME`, puis la commande `hostname` (macOS n'a ni l'un ni l'autre sous launchd).
     std::fs::read_to_string("/etc/hostname")
         .ok()

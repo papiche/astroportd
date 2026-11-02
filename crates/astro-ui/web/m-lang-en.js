@@ -13,6 +13,8 @@ export default {
 "Envoyer vos premières photos": "Upload your first photos",
 "Reconnaître un visage": "Recognise a face",
 "Retrouver un proche": "Find someone close",
+"Synchroniser votre smartphone": "Sync your smartphone",
+"Mon smartphone": "My smartphone",
 "Brancher un assistant": "Connect an assistant",
 "Station": "Station",
 "Personnes": "People",

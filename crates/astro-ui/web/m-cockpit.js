@@ -5,7 +5,7 @@ const RANK = { down: 0, degraded: 1, info: 2, ok: 3 };
 const FLOORS = [['machine', '🖥️', 'Machine', '#/station'], ['station', '📡', 'Station', '#/station'], ['mesh', '🌐', 'Constellation', '#/planes'], ['services', '🔌', 'Services et accès', '#/options'], ['members', '👥', 'Membres', '#/station'], ['economy', '🪙', 'Économie', '#/coop']];
 const worst = (a, b) => (RANK[a] <= RANK[b] ? a : b);
 
-export function analyze({ health, cs, ec, ac, tun, tk, dash }) {
+export function analyze({ health, cs, ec, ac, tun, tk, dash, dns }) {
   const todos = [], add = (level, floor, title, why, label, href) => todos.push({ level, floor, title, why, label, href });
   const nodes = cs?.nodes || [], me = nodes.find(n => n.self), others = nodes.filter(n => !n.self);
   // Station
@@ -15,6 +15,9 @@ export function analyze({ health, cs, ec, ac, tun, tk, dash }) {
   // Constellation
   if (dash?.p2p && dash.p2p.enabled === false) add('degraded', 'mesh', 'Le maillage P2P est arrêté', 'Sans lui, aucune station ne peut vous joindre ni partager Ollama ou ComfyUI. Démarrez avec --p2p-listen.', 'Voir les plans', '#/planes');
   else if (cs && !others.length) add('info', 'mesh', 'Vous êtes seul dans l\'essaim', 'Aucune autre station n\'est vue : rejoignez une constellation ou indiquez un dossier de pairs (--swarm-dir).', 'Rejoindre', '#/planes');
+  // Adresses de la coopérative (DNSLink) : station et MULTIPASS
+  if (dns?.configured === false) add('info', 'mesh', 'Les adresses de la coopérative ne sont pas activées', 'Renseignez les clés OVH dans la configuration coopérative : la station et chaque MULTIPASS auront une adresse.', 'Configurer', '#/coop');
+  if (dns?.failed) add('degraded', 'mesh', `${dns.failed} adresse(s) de la coopérative non enregistrée(s)`, dns.errors?.[0] || '', 'Configurer', '#/coop');
   // Services et accès
   for (const sv of tun?.services || []) {
     if (sv.up === false && (sv.customized || sv.grants?.length)) add('degraded', 'services', `${sv.name} est réglé mais ne répond pas`, `Rien n'écoute sur ${sv.target || 'cette machine'} : les amis qui l'utilisent n'y arrivent pas.`, 'Régler', '#/options');
@@ -45,8 +48,8 @@ export default async function cockpit(root, K) {
   const { h, t } = K, api = p => K.api(p), soft = p => K.api(p).catch(() => null);
   const link = h('link', { rel: 'stylesheet', href: '/ui/m-cockpit.css' }); document.head.append(link);
   const draw = async () => {
-    const [dash, health, cs, ec, ac, tun, tk] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()).catch(() => null), soft('/api/v1/station/constellation'), soft('/api/v1/station/economy'), soft('/api/v1/station/accounts'), soft('/api/v1/station/admin/tunnels'), soft('/api/v1/station/admin/tasks')]);
-    const a = analyze({ health, cs, ec, ac, tun, tk, dash }), st = dash.station;
+    const [dash, health, cs, ec, ac, tun, tk, dns] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()).catch(() => null), soft('/api/v1/station/constellation'), soft('/api/v1/station/economy'), soft('/api/v1/station/accounts'), soft('/api/v1/station/admin/tunnels'), soft('/api/v1/station/admin/tasks'), soft('/api/v1/station/admin/dnslink')]);
+    const a = analyze({ health, cs, ec, ac, tun, tk, dash, dns }), st = dash.station;
     const todo = x => h('li', { class: 'ck-todo ' + x.level }, h('div', {}, h('strong', {}, t(x.title)), h('p', { class: 'muted' }, t(x.why))), h('a', { class: 'ck-btn', href: x.href }, t(x.label)));
     const floors = FLOORS.map(([k, icon, name, href]) => {
       const lv = a.floors[k], line = {
@@ -70,6 +73,10 @@ export default async function cockpit(root, K) {
       a.todos.length ? h('section', { class: 'card' }, h('h2', {}, t('À faire')), h('ul', { class: 'ck-list' }, a.todos.slice(0, 3).map(todo)), a.todos.length > 3 ? h('details', {}, h('summary', {}, t('Voir les {0} autres', a.todos.length - 3)), h('ul', { class: 'ck-list' }, a.todos.slice(3).map(todo))) : null) : null,
       h('h2', { class: 'ck-h' }, t('Les étages de la station')), h('div', { class: 'grid' }, floors),
       h('h2', { class: 'ck-h' }, t('L\'essaim'), h('small', { class: 'muted' }, brains ? ` · ${brains} ${t('Brain(s) offrent Ollama')}` : '')), h('div', { class: 'grid' }, a.nodes.map(node)),
+      dns?.configured ? h('section', { class: 'card' }, h('h2', {}, t('Adresses de la coopérative')),
+        dns.station?.name ? h('p', {}, '📡 ', h('code', {}, dns.station.name), h('small', { class: 'muted' }, ' ' + t('cette station'))) : null,
+        h('p', { class: 'muted' }, t('{0} adresse(s) à jour sur {1}', dns.unchanged + dns.written, dns.total), dns.pending ? ' · ' + t('{0} en attente', dns.pending) : '', dns.failed ? ' · ' + t('{0} en échec', dns.failed) : ''),
+        h('button', { onclick: async ev => { ev.currentTarget.disabled = true; try { await K.api('/api/v1/station/admin/dnslink', { method: 'POST', body: { action: 'sync' } }); await draw(); } catch (e) { K.toast(e.message); ev.currentTarget.disabled = false; } } }, t('Enregistrer maintenant'))) : null,
       h('p', { class: 'muted' }, h('a', { href: '#/station' }, t('Détails techniques')), ' · ', h('a', { href: '#/options' }, t('Tunnels et accès')), ' · ', h('a', { href: '#/coop' }, t('Configuration coopérative')))].filter(Boolean));
   };
   K.cleanup(() => link.remove());

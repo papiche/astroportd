@@ -1,10 +1,11 @@
 'use strict';
 // Accueil d'un membre : trois gestes (photos, proches, assistant), « Bien démarrer » coché d'après l'état réel, et une alerte
 // seulement si quelque chose le demande. Les chiffres (solde, loyer, disque…) sont à un clic : #/chiffres.
-export function steps({ dash, faces, friends, backup, me }) {
+export function steps({ dash, faces, friends, backup, me, devices }) {
   const files = dash?.sovereignty?.encrypted_files || 0;
   const list = [
     { done: files > 0, title: 'Envoyer vos premières photos', why: 'Elles sont chiffrées avant de quitter votre appareil.', href: '#/cloud' },
+    { done: (devices?.devices || []).length > 0, title: 'Synchroniser votre smartphone', why: 'Photos, contacts et agenda quittent Google et Apple pour votre station.', href: '#/account' },
     ...(faces?.enabled ? [{ done: (faces.people || []).length > 0, title: 'Reconnaître un visage', why: 'Nommez une personne : ses photos se rangent toutes seules.', href: '#/people' }] : []),
     { done: (friends?.friends || []).length > 0, title: 'Retrouver un proche', why: 'Suivez-vous mutuellement pour partager vos photos.', href: '#/contacts' },
     { done: backup?.mine?.status === 'accepted', title: 'Mettre vos fichiers à l\'abri chez un ami', why: 'Si votre station tombe en panne, rien n\'est perdu.', href: '#/account' },
@@ -16,8 +17,8 @@ export function steps({ dash, faces, friends, backup, me }) {
 export default async function home(root, K) {
   const { h, t } = K, soft = p => K.api(p).catch(() => null);
   const draw = async () => {
-    const [me, dash, faces, friends, backup, fp] = await Promise.all([K.api('/api/v1/me'), K.api('/api/v1/dashboard'), soft('/api/v1/faces'), soft('/api/v1/friends'), soft('/api/v1/backup'), soft('/api/v1/me/footprint')]);
-    const s = steps({ dash, faces, friends, backup, me }), nFriends = (friends?.friends || []).length;
+    const [me, dash, faces, friends, backup, fp, devices] = await Promise.all([K.api('/api/v1/me'), K.api('/api/v1/dashboard'), soft('/api/v1/faces'), soft('/api/v1/friends'), soft('/api/v1/backup'), soft('/api/v1/me/footprint'), soft('/api/v1/devices')]);
+    const s = steps({ dash, faces, friends, backup, me, devices }), nFriends = (friends?.friends || []).length, nDevices = (devices?.devices || []).length;
     const disk = fp?.disk, full = disk && !disk.unlimited && disk.quota_bytes && disk.used_bytes / disk.quota_bytes >= .9;
     const tile = (icon, title, line, href) => h('a', { class: 'card hm-tile', href }, h('span', { class: 'hm-ico', 'aria-hidden': 'true' }, icon), h('strong', {}, t(title)), h('span', { class: 'muted' }, line));
     const first = (me.email || '').split('@')[0];
@@ -28,7 +29,8 @@ export default async function home(root, K) {
       h('div', { class: 'grid hm-tiles' },
         tile('📸', 'Mes photos', s.files ? t('{0} fichier(s)', s.files) : t('Envoyer des photos'), s.files ? '#/library' : '#/cloud'),
         tile('👥', 'Mes proches', nFriends ? t('{0} ami(s)', nFriends) : t('Retrouver vos proches'), '#/people'),
-        me.ai ? tile('🤖', 'Mon assistant', t('BRO vous répond'), '#/bro') : tile('🤖', 'Mon assistant', t('Brancher une IA'), '#/account')),
+        // Sans assistant (pas de Brain), le geste mis en avant est de quitter Google et Apple : la synchro du smartphone.
+        me.ai ? tile('🤖', 'Mon assistant', t('BRO vous répond'), '#/bro') : tile('📱', 'Mon smartphone', nDevices ? t('{0} appareil(s) synchronisé(s)', nDevices) : t('Quitter Google et Apple : photos, contacts, agenda'), '#/account')),
       s.left ? h('section', { class: 'card' }, h('h2', {}, t('Bien démarrer'), h('small', { class: 'muted' }, ` · ${s.list.length - s.left}/${s.list.length}`)),
         h('progress', { max: s.list.length, value: s.list.length - s.left, 'aria-label': t('Étapes terminées') }),
         h('ul', { class: 'hm-steps' }, s.list.map(x => h('li', { class: x.done ? 'done' : '' }, h('span', { 'aria-hidden': 'true' }, x.done ? '✅' : '⬜'), h('div', {}, x.done ? h('span', {}, t(x.title)) : h('a', { href: x.href }, h('strong', {}, t(x.title))), x.done ? null : h('p', { class: 'muted' }, t(x.why))))))) : null,

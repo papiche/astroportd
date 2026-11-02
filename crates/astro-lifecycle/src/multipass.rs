@@ -163,8 +163,14 @@ fn random_pass() -> Result<String, MultipassError> {
 pub fn ipns_name(public: &[u8; 32]) -> String {
     let mut cid = vec![0x01, 0x72, 0x00, 0x24, 0x08, 0x01, 0x12, 0x20];
     cid.extend_from_slice(public);
+    cid_to_ipns(&cid)
+}
+
+/// Un CID binaire en base36 minuscule préfixé de `k` (forme `k51…` d'un nom IPNS). Le PeerID d'une station (`12D3Koo…`) donne son
+/// nom IPNS en préfixant `01 72` à ses octets (`PeerId::to_bytes`).
+pub fn cid_to_ipns(cid: &[u8]) -> String {
     let mut digits: Vec<u8> = Vec::new(); // base36, chiffre de poids faible en tête
-    for byte in &cid {
+    for byte in cid {
         let mut carry = u32::from(*byte);
         for d in &mut digits {
             let v = u32::from(*d) * 256 + carry;
