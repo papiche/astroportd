@@ -2,7 +2,7 @@
 
 > Version texte du [guide illustré](index.html). Préversion **0.5.1-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
 
-**Sommaire** : [0. Avant de commencer](#etape-0) · [1. Installer astroportd](#etape-1) · [2. Activer Y-Level ](#etape-2) · [3. Choisir sa constellation ](#etape-3) · [4. Démarrer la station](#etape-4) · [5. Créer mon MULTIPASS](#etape-5) · [6. Vérifier que tout va bien](#etape-6) · [7. Entrer dans l'interface web](#etape-7) · [8. FaceCloud ](#etape-8) · [9. Relier sa station aux autres Capitaines](#etape-9) · [10. En cas de problème](#etape-10)
+**Sommaire** : [0. Avant de commencer](#etape-0) · [1. Installer astroportd](#etape-1) · [2. Activer Y-Level](#etape-2) · [3. Choisir sa constellation](#etape-3) · [4. Démarrer la station](#etape-4) · [5. Créer mon MULTIPASS](#etape-5) · [6. Vérifier que tout va bien](#etape-6) · [7. Entrer dans l'interface web](#etape-7) · [7 bis. Le cockpit du Capitaine](#etape-7b) · [8. FaceCloud](#etape-8) · [8 bis. Contacts, agenda (CardDAV, CalDAV) et Mon compte](#etape-8b) · [8 bis-b. Mon coffre de mots de passe (KeePass)](#etape-8bis-b) · [8 bis-c. Reprendre son uCloud d'Astroport.ONE](#etape-8bis-c) · [8 bis-d. Remplir son uCloud depuis un autre serveur (Nextcloud, ownCloud…)](#etape-8bis-d) · [8 bis-e. Ranger son uCloud par type](#etape-8bis-e) · [8 bis-f. Un jeton par appareil (téléphones, tablettes, ordinateurs)](#etape-8bis-f) · [8 bis-g. Hébergement facturé, compte technique et règlement hebdomadaire](#etape-8bis-g) · [8 bis-h. Plusieurs astroportd sur une machine (ORIGIN + ZEN*)](#etape-8bis-h) · [8 bis-i. Plusieurs UPlanet dans un seul processus](#etape-8bis-i) · [8 bis-j. Messages privés et une personne dans plusieurs UPlanet](#etape-8bis-j) · [8 ter. Options du Capitaine](#etape-8c) · [8 quater. Inviter quelqu'un à recevoir des photos](#etape-8quater) · [8 quinquies. Sans email, connexion par PASS, signature déléguée](#etape-8quinquies) · [9. Relier sa station aux autres Capitaines](#etape-9) · [9 bis. Une adresse pour chaque station et chaque MULTIPASS (DNSLink)](#etape-9b) · [10. En cas de problème](#etape-10) · [Sur un smartphone](#sur-un-smartphone)
 
 <a id="etape-0"></a>
 
@@ -16,7 +16,7 @@ Pas à pas, chaque étape se fait au **terminal** (colonne de gauche) ou, quand 
 
 Il vous faut :
 
-- un ordinateur **Linux** (PC, serveur) ou un **Raspberry Pi** (de préférence 64 bits : Pi 4, Pi 5, Pi Zero 2 W) ;
+- un ordinateur **Linux** (PC, serveur) ou un **Raspberry Pi** (de préférence 64 bits : Pi 4, Pi 5, Pi Zero 2 W), ou un **Mac** Apple Silicon (bêta : voir [MACOS.md](MACOS.md)) ;
 - une connexion Internet et environ 15 minutes ;
 - une **horloge à l'heure** : un Raspberry Pi sans pile démarre en 1970, et astroportd refuse alors de calculer ses échéances ;
 - facultatif, pour une station ouverte sur Internet : un nom de domaine et les ports 80 et 443 ouverts ;
@@ -64,7 +64,9 @@ Ouvrez la page des versions : [https://github.com/papiche/astroportd/releases](h
 - `x86_64-unknown-linux-gnu` : PC et serveurs ;
 - `aarch64-unknown-linux-gnu` : Raspberry Pi 4/5 et Zero 2 W en 64 bits ;
 - `armv7-unknown-linux-gnueabihf` : Raspberry Pi 2/3, Pi OS 32 bits ;
-- `x86_64-unknown-linux-musl` : binaire statique, sans dépendance.
+- `x86_64-unknown-linux-musl` : binaire statique, sans dépendance ;
+- `aarch64-unknown-linux-musl` : binaire statique ARM 64 bits (Android sous Termux, Pi, NAS) ;
+- `aarch64-apple-darwin` et `x86_64-apple-darwin` : **Mac** (Apple Silicon, Intel). *Bêta* : jamais compilé sur un Mac avant la 0.5.0, voir [MACOS.md](MACOS.md).
 
 Téléchargez aussi `SHA256SUMS`. Décompressez l'archive avec votre gestionnaire de fichiers et copiez `astroportd` dans `~/.local/bin`. Comparez l'empreinte (ligne de commande : `sha256sum archive.tar.gz`) avec celle de `SHA256SUMS`.
 
@@ -322,7 +324,7 @@ Si l'application se charge sur `http://127.0.0.1:18080/`, c'est que le serveur w
 
 ## Étape 7 — Entrer dans l'interface web
 
-L'application web a quatre écrans : **Tableau de bord**, **Station** (réservé au Capitaine), **uCloud** (vos fichiers et vos photos) et **Visages & BRO**.
+L'application web s'ouvre sur l'**Accueil** : trois gestes (**Mes photos**, **Mes proches**, **Mon assistant** — ou **Mon smartphone** quand il n'y a pas d'assistant) et une liste **Bien démarrer**. Les autres écrans : **Station** (réservé au Capitaine, voir l'étape 7 bis), **uCloud**, **Personnes**, **Contacts**, **Messages**, **Réplication** et **Mon compte**.
 
 Pour s'y connecter, il faut un compte hébergé par la station (étape 5) et son **jeton**.
 
@@ -342,15 +344,30 @@ Le même jeton sert de mot de passe pour monter votre cloud en WebDAV (Finder, E
 
 1. Ouvrez la station dans votre navigateur.
 2. Une fenêtre **Connexion** s'affiche : saisissez votre email (ou votre clé) et le jeton.
-3. Le **Tableau de bord** montre votre solde en Ẑen, votre autonomie, votre empreinte sur les communs, vos fichiers chiffrés.
-4. Deux cartes distinctes : **Ẑen Opex** (ce que vous dépensez : loyer) et **Ẑen Capex** (ce que vous possédez : parts de matériel, avec leur amortissement).
+3. L'**Accueil** vous propose d'envoyer vos premières photos, de **synchroniser votre smartphone** (photos, contacts, agenda : on quitte Google et Apple), de reconnaître un visage, de retrouver un proche, de mettre vos fichiers à l'abri chez un ami. Les étapes se cochent toutes seules ; la liste disparaît quand tout est fait. Une alerte n'apparaît que si votre espace dépasse 90 %.
+4. En bas de l'accueil, **Mes chiffres** montre votre solde en Ẑen, votre autonomie, votre empreinte sur les communs, vos fichiers chiffrés, et deux cartes distinctes : **Ẑen Opex** (ce que vous dépensez : loyer) et **Ẑen Capex** (ce que vous possédez : parts de matériel, avec leur amortissement).
 5. La carte **Copie privée** vous demande d'attester, une fois, que vos films et séries sont des copies pour votre usage privé.
 
 Sur un téléphone, installez la page comme application (menu du navigateur : *Ajouter à l'écran d'accueil*).
 
-<a id="etape-8"></a>
-
 **Style de l'interface.** Dans l'en-tête, le sélecteur propose trois styles : **Aurore** (par défaut : dégradés, icônes, liseré coloré sur les cartes), **Sobre** (sans décor) et **Kraft** (papier chaud, inspiré des pochettes de FaceCloud). Le bouton voisin (◐ ☀ ☾) choisit le mode : automatique (celui de l'appareil), clair ou sombre. Ces choix restent sur l'appareil et ne sont envoyés nulle part.
+
+<a id="etape-7b"></a>
+
+## Étape 7 bis — Le cockpit du Capitaine
+
+Dans l'application web, l'écran **Station** est le **cockpit** : tout ce qu'un Capitaine doit voir, d'un seul regard.
+
+### 🌐 Navigateur (Web)
+
+1. En haut, **un verdict** : ✅ *Tout va bien*, 🟠 *N points à regarder* ou 🔴 *Intervention nécessaire*.
+2. **À faire** : les trois actions les plus urgentes, chacune avec sa raison en clair et un bouton qui mène à l'écran qui la règle (sous-système en panne, P2P arrêté, SSH ouvert à tout le réseau, service réglé qui ne répond plus, tâches abandonnées, MULTIPASS presque pleins, comptes verrouillés ou en période de grâce, trésorerie entamée).
+3. Sur une station neuve, **Mettre la station en service** : nom de domaine, maillage P2P, autres stations vues, adresses de la coopérative, premier membre invité. Les étapes se cochent d'après l'état réel.
+4. **Les étages de la station**, chacun avec son voyant : Machine, Station, Constellation, Services et accès, Membres, Économie.
+5. **L'essaim** : une carte par station (Power-Score, distance, en ligne ou vue, services partagés) et le nombre de *Brains* qui offrent Ollama.
+6. La page se met à jour toute seule toutes les 30 secondes. Les écrans détaillés restent à un clic (*Détails techniques*).
+
+<a id="etape-8"></a>
 
 ## Étape 8 — FaceCloud : retrouver et partager vos photos entre amis
 
@@ -665,9 +682,31 @@ astroportd route ollama --mode closest --lat 45.7 --lon 4.8
 
 ### 🌐 Navigateur (Web)
 
-Le Capitaine voit dans l'écran **Station** l'état de la constellation, l'économie de la station et la liste des comptes hébergés.
+Le Capitaine voit dans l'écran **Station** (le cockpit, étape 7 bis) l'état de la constellation, l'économie de la station et les comptes hébergés ; les cartes **Ollama** et **ComfyUI** de *Options › Tunnels* n'apparaissent que si le service répond sur la machine.
 
 Le territoire se lit sur la carte UPlanet : chaque dalle de 0,01° (environ 1 km²) a sa propre identité, et les stations voisines forment le territoire.
+
+<a id="etape-9b"></a>
+
+## Étape 9 bis — Une adresse pour chaque station et chaque MULTIPASS (DNSLink)
+
+La coopérative peut donner à **chaque station** et à **chaque MULTIPASS** une adresse lisible dans sa zone DNS : `_dnslink.<nom>.<zone>` pointe vers l'espace IPNS (`/ipns/k51…`), et n'importe quelle passerelle IPFS résout alors `<nom>.<zone>`.
+
+### 🖥️ Terminal (CLI)
+
+La station s'en charge seule dès que le Capitaine a renseigné les clés OVH de la coopérative (`OVH_APP_KEY`, `OVH_APP_SECRET`, `OVH_CONSUMER_KEY`, `OVH_ZONE`, `astroport.one` par défaut). Elle écrit les **mêmes** enregistrements que l'outil `Astroport.ONE/admin/system/ovh.me.sh`, que l'on peut garder pour inspecter la zone :
+
+```bash
+~/.zen/Astroport.ONE/admin/system/ovh.me.sh list
+```
+
+### 🌐 Navigateur (Web)
+
+1. Dans *Station › Configuration coopérative*, renseignez les clés OVH (elles sont chiffrées, jamais ré-affichées).
+2. Dans le cockpit, la carte **Adresses de la coopérative** montre l'adresse de la station, combien d'adresses sont à jour, en attente ou en échec ; **Enregistrer maintenant** lance un passage tout de suite.
+3. Un MULTIPASS s'appelle `<partie locale à l'envers>.<domaine>` (`geg-la@exemple.org` devient `la.geg.exemple.org`) ; une station `<nom de machine>-<6 derniers caractères du PeerID>`.
+
+> **À savoir.** Un passage a lieu 90 secondes après le démarrage puis toutes les 15 minutes, et n'appelle OVH que pour ce qui a changé. La station ne supprime jamais un enregistrement. Un échec est affiché et le Capitaine en est averti une fois.
 
 <a id="etape-10"></a>
 
