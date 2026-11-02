@@ -20,6 +20,7 @@ use astro_db::Db;
 use astro_nostr_proto::{Event, UnsignedEvent};
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
+use sha2::Digest;
 
 /// Kind du DID coopératif.
 pub const KIND: u32 = 30_800;
@@ -38,6 +39,7 @@ pub struct Section {
 
 /// Sections et clés connues. Toute autre clé est refusée à l'écriture (liste blanche, comme côté UPassport).
 pub const SECTIONS: &[Section] = &[
+    Section { id: "uplanet", title: "Nom et charte de l'UPlanet", keys: &["UPLANET_NAME", "CHARTER_VERSION", "CHARTER_TEXT"] },
     Section { id: "fiscal", title: "Paramètres fiscaux", keys: &["TVA_RATE", "IS_RATE_REDUCED", "IS_RATE_NORMAL", "IS_THRESHOLD"] },
     Section { id: "shares", title: "Parts coopératives", keys: &["ZENCARD_SATELLITE", "ZENCARD_CONSTELLATION", "PAF", "NCARD", "ZCARD"] },
     Section { id: "3x13", title: "Règle 3×1/3 + 1 %", keys: &["TREASURY_PERCENT", "RND_PERCENT", "ASSETS_PERCENT", "CAPTAIN_BONUS_PERCENT"] },
@@ -47,6 +49,33 @@ pub const SECTIONS: &[Section] = &[
     Section { id: "mj", title: "Mailjet", keys: &["MJ_APIKEY_PUBLIC", "MJ_APIKEY_PRIVATE", "MJ_SENDER_EMAIL"] },
     Section { id: "ovh", title: "DNSLink OVH", keys: &["OVH_APP_KEY", "OVH_APP_SECRET", "OVH_CONSUMER_KEY", "OVH_ZONE"] },
 ];
+
+/// Charte proposée tant que le Capitaine n'en a pas publié une (même texte que `docs/CHARTE_UPLANET.md`).
+pub const DEFAULT_CHARTER: &str = include_str!("../docs/CHARTE_UPLANET.md");
+
+/// Nom, version et texte de la charte d'une constellation, tels que la coopérative les a publiés (texte type à défaut).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Charter {
+    /// Nom de l'UPlanet, s'il en a un.
+    pub name: Option<String>,
+    /// Numéro de version (`1.0` par défaut).
+    pub version: String,
+    /// Texte de la charte.
+    pub text: String,
+    /// Publiée par la coopérative (et non le texte type).
+    pub custom: bool,
+    /// Empreinte SHA-256 du texte : ce que chaque Capitaine signe.
+    pub sha256: String,
+}
+
+/// La charte qui ressort de la configuration publiée (`None` : rien publié, donc texte type).
+pub fn charter_of(stored: Option<&Stored>) -> Charter {
+    let get = |k: &str| stored.and_then(|s| s.values.get(k)).filter(|v| !v.is_empty()).cloned();
+    let custom = get("CHARTER_TEXT");
+    let text = custom.clone().unwrap_or_else(|| DEFAULT_CHARTER.to_owned());
+    let sha256 = hex::encode(sha2::Sha256::digest(text.as_bytes()));
+    Charter { name: get("UPLANET_NAME"), version: get("CHARTER_VERSION").unwrap_or_else(|| "1.0".into()), text, custom: custom.is_some(), sha256 }
+}
 
 /// La clé est-elle connue ?
 pub fn is_known(key: &str) -> bool {
@@ -60,8 +89,16 @@ pub fn is_secret(key: &str) -> bool {
 
 /// Contrôle d'une valeur en clair avant écriture.
 pub fn validate(key: &str, value: &str) -> Result<(), String> {
-    if value.len() > 1024 || value.chars().any(char::is_control) {
-        return Err(format!("{key} : 1024 caractères au plus, sans caractère de contrôle"));
+    // La charte est un texte : 6000 caractères au plus et des retours à la ligne ; toute autre valeur tient sur une ligne.
+    let (max, text) = if key == "CHARTER_TEXT" { (6000, true) } else { (1024, false) };
+    if value.len() > max || value.chars().any(|c| c.is_control() && !(text && c == '\n')) {
+        return Err(format!("{key} : {max} caractères au plus, sans caractère de contrôle"));
+    }
+    if key == "UPLANET_NAME" && (value.chars().count() > 48 || value.trim() != value) {
+        return Err(format!("{key} : 48 caractères au plus, sans espace au début ni à la fin"));
+    }
+    if key == "CHARTER_VERSION" && !value.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        return Err(format!("{key} : un numéro de version est attendu (ex. 1.0)"));
     }
     let numeric = key.ends_with("_RATE") || key.ends_with("_PERCENT") || key.ends_with("_THRESHOLD") || matches!(key, "ZENCARD_SATELLITE" | "ZENCARD_CONSTELLATION" | "PAF" | "NCARD" | "ZCARD");
     if numeric && (value.len() > 12 || value.is_empty() || value.split('.').count() > 2 || !value.bytes().all(|b| b.is_ascii_digit() || b == b'.') || value.starts_with('.') || value.ends_with('.')) {

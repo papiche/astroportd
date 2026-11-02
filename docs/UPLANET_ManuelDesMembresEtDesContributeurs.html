@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UPLANET — astroportd</title>
+<style>
+:root{--bg:#ffffff;--ink:#1b1f2a;--mut:#454c61;--pan:#f1f4fb;--line:#c3c9dc;--acc:#2a46c8;--accink:#ffffff;--code:#10131c;--codeink:#e8ebf4;--note:#e7efff;--warn:#fff0e0;--warnb:#8f3b06;--ok:#14663a}
+@media (prefers-color-scheme:dark){:root{--bg:#12151f;--ink:#eef0f8;--mut:#bcc3da;--pan:#1b2030;--line:#3a4260;--acc:#9bb0ff;--accink:#10131c;--code:#0a0c13;--codeink:#e8ebf4;--note:#1d2744;--warn:#3a2414;--warnb:#ffb98a;--ok:#7fdca6}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:1.0625rem/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--acc);text-underline-offset:3px}a:focus-visible,summary:focus-visible,button:focus-visible{outline:3px solid var(--acc);outline-offset:3px;border-radius:4px}
+.skip{position:absolute;left:16px;top:-60px;background:var(--acc);color:var(--accink);padding:10px 14px;border-radius:8px;z-index:9;text-decoration:none}.skip:focus{top:12px}
+header.top,main,footer{max-width:68rem;margin:0 auto;padding:0 16px}
+header.top{padding-top:28px;padding-bottom:8px}
+h1{font-size:clamp(1.7rem,5vw,2.6rem);line-height:1.15;margin:.2em 0}
+.lead{font-size:1.2rem;color:var(--mut);max-width:46rem}
+.badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 12px;font-size:.9rem;color:var(--mut)}
+nav.toc{background:var(--pan);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:22px 0}
+nav.toc h2{font-size:1rem;margin:0 0 6px}nav.toc ol{margin:0;padding-left:1.3em;columns:2 16rem}nav.toc li{margin:2px 0}
+section{margin:44px 0;padding-top:8px;border-top:1px solid var(--line)}
+h2{font-size:clamp(1.35rem,3.6vw,1.8rem);line-height:1.25;margin:.6em 0 .4em}
+.num{display:inline-grid;place-items:center;min-width:2.1rem;height:2.1rem;padding:0 .5rem;border-radius:999px;background:var(--acc);color:var(--accink);font-weight:700;font-size:1.05rem;margin-right:.35em;vertical-align:.08em}
+h3{font-size:1.05rem;margin:0 0 .5em;color:var(--acc)}
+figure{margin:18px auto;max-width:34rem}figure svg{display:block;max-width:100%;height:auto}figcaption{font-size:.92rem;color:var(--mut);text-align:center;margin-top:6px}
+.cols{display:grid;gap:16px;grid-template-columns:1fr;margin-top:14px}
+@media (min-width:56rem){.cols{grid-template-columns:1fr 1fr}}
+.col{background:var(--pan);border:1px solid var(--line);border-radius:14px;padding:14px 16px;min-width:0}
+.col>*:last-child{margin-bottom:0}
+.col ul,.col ol{padding-left:1.25em}
+.div,.code{position:relative}
+pre{margin:.6em 0;background:var(--code);color:var(--codeink);border-radius:10px;padding:12px 5.2rem 12px 14px;overflow-x:auto;font-size:.92rem;line-height:1.5;-webkit-overflow-scrolling:touch}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
+p code,li code{background:rgba(127,127,160,.18);padding:1px 6px;border-radius:5px;overflow-wrap:anywhere}
+.copy{position:absolute;top:10px;right:8px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:3px 10px;font:inherit;font-size:.82rem;cursor:pointer}
+.box{border-radius:10px;padding:10px 14px;margin:.8em 0;border:1px solid var(--line)}
+.box .lbl{font-weight:700;margin-right:.4em}
+.note{background:var(--note)}.warn{background:var(--warn);border-color:var(--warnb)}.warn .lbl{color:var(--warnb)}
+
+.ill{--ink:#1b1f2a;--mut:#454c61;--pan:#eef1f9;--pan2:#e2e8f8;--line:#6b7390;--acc:#2a46c8;--ok:#14663a;--warn:#8f3b06;--bg:#ffffff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){.ill{--ink:#eef0f8;--mut:#bcc3da;--pan:#1c2133;--pan2:#262d47;--line:#8790ad;--acc:#9bb0ff;--ok:#7fdca6;--warn:#ffb98a;--bg:#12151f}}
+.ill .bg{fill:var(--bg)}.ill .pan{fill:var(--pan);stroke:var(--line);stroke-width:1.5}.ill .pan2{fill:var(--pan2);stroke:var(--acc);stroke-width:2}
+.ill .okp{fill:var(--pan);stroke:var(--ok);stroke-width:2.5}.ill .wnp{fill:var(--pan);stroke:var(--warn);stroke-width:2.5}
+.ill .t{fill:var(--ink);font-size:17px;font-weight:700}.ill .s{fill:var(--mut);font-size:14.5px}.ill .a{fill:var(--acc);font-size:15px;font-weight:700}
+.ill .g{fill:var(--ok);font-size:15px;font-weight:700}.ill .w{fill:var(--warn);font-size:15px;font-weight:700}
+.ill .ln{stroke:var(--line);stroke-width:2;fill:none}.ill .ar{stroke:var(--acc);stroke-width:2.5;fill:none}.ill .ds{stroke:var(--acc);stroke-width:2.5;fill:none;stroke-dasharray:7 6}
+.ill .hd{fill:var(--acc)}.ill .m{text-anchor:middle}
+
+footer{padding:28px 16px 48px;color:var(--mut);border-top:1px solid var(--line);margin-top:44px;font-size:.95rem}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{.copy,.skip{display:none}.col{break-inside:avoid}}
+.tw{overflow-x:auto}table{border-collapse:collapse;margin:.8em 0;font-size:.95rem}th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}th{background:var(--pan)}
+a{overflow-wrap:anywhere}
+@media (min-width:56rem){.cols.one{grid-template-columns:1fr}}
+figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:10px}
+</style>
+<style>.pg{max-width:60rem;margin:0 auto;padding:1rem 16px 3rem}</style>
+</head>
+<body>
+<main class="pg">
+<p><a href="index.html">← Retour au guide</a></p>
+<h1>UPLANET</h1>
+<h2>Manuel des membres et des contributeurs</h2>
+<h3>Construire un Internet souverain sans attendre qu'on nous dise quoi faire</h3>
+<p><strong>Version 0.1 — Document de travail collectif</strong></p>
+<p>UPlanet est un écosystème de personnes, de logiciels, de machines et de lieux qui coopèrent pour construire des communs numériques et des usages économiques plus libres.</p>
+<p>Astroport.ONE fournit une partie de l'infrastructure technique. La Monnaie Libre Ğ1 permet aux membres qui le souhaitent d'échanger dans un système monétaire indépendant des monnaies-dettes. Le ẐEN sert à rendre l'activité de l'écosystème plus lisible et à organiser les contributions.</p>
+<p>Mais aucun logiciel, aucune monnaie et aucune organisation ne suffisent à créer une communauté vivante.</p>
+<p>Ce sont les personnes qui la font exister.</p>
+<p>Ce manuel explique comment participer, proposer des projets, collaborer, prendre des responsabilités et faire progresser les communs sans dépendre d'une hiérarchie permanente.</p>
+<p>Il ne constitue ni un contrat de travail ni un règlement juridique universel. Les structures et les personnes qui participent à UPlanet conservent leurs responsabilités propres.</p>
+<hr />
+<h2>1. Bienvenue dans un environnement horizontal</h2>
+<h3>Vous n'êtes pas ici pour attendre des ordres</h3>
+<p>Dans une organisation traditionnelle, les responsabilités sont généralement distribuées par une hiérarchie. Un responsable définit les objectifs, affecte les personnes et contrôle l'exécution.</p>
+<p>UPlanet cherche une autre voie.</p>
+<p>Chaque membre doit pouvoir identifier un problème, proposer une solution, trouver des collaborateurs et contribuer directement à la réalisation du projet.</p>
+<p>Vous pouvez participer au développement d'Astroport.ONE, améliorer une documentation, héberger un service, organiser un atelier, créer une application, traduire un contenu, aider un nouveau membre ou proposer un usage de la Monnaie Libre.</p>
+<p>Vous n'avez pas besoin d'attendre qu'une personne vous attribue une fonction pour commencer à être utile.</p>
+<p>En revanche, l'autonomie ne signifie pas que chacun peut engager les autres sans leur accord.</p>
+<p>Vous pouvez prendre des initiatives dans votre périmètre. Pour les décisions qui affectent les données, les ressources, les engagements financiers ou l'infrastructure d'autres personnes, vous devez obtenir les accords nécessaires.</p>
+<h3>Les responsabilités ne sont pas des titres de propriété</h3>
+<p>Une personne qui maintient un logiciel, administre un serveur ou anime un collectif exerce une responsabilité réelle.</p>
+<p>Cette responsabilité ne lui donne pas automatiquement le droit de décider de tout le reste.</p>
+<p>Nous distinguons :</p>
+<ul>
+<li>la compétence technique ;</li>
+<li>la responsabilité opérationnelle ;</li>
+<li>le pouvoir de décision sur un projet ;</li>
+<li>la propriété ou le contrôle légal d'une ressource ;</li>
+<li>la participation aux décisions collectives.</li>
+</ul>
+<p>Ces dimensions peuvent être réparties entre plusieurs personnes.</p>
+<p>Une responsabilité doit être explicite, compréhensible et révisable. Elle ne doit pas devenir un privilège permanent.</p>
+<h3>L'horizontalité exige davantage de responsabilité personnelle</h3>
+<p>Lorsque personne ne vous dit constamment quoi faire, vous devez apprendre à choisir, communiquer, documenter et assumer les conséquences de vos décisions.</p>
+<p>La liberté de contribuer suppose de respecter la liberté de contribution des autres.</p>
+<p>Nous ne cherchons pas à supprimer toute organisation. Nous cherchons à organiser les responsabilités sans transformer les responsables en chefs permanents.</p>
+<hr />
+<h2>2. Sur quoi travailler ?</h2>
+<h3>Vous pouvez proposer votre propre projet</h3>
+<p>Vous avez identifié un besoin auquel personne ne répond ?</p>
+<p>Présentez une proposition.</p>
+<p>Un projet peut concerner :</p>
+<ul>
+<li>Astroport.ONE et son infrastructure ;</li>
+<li>UPlanet et ses usages ;</li>
+<li>les outils de la Monnaie Libre ;</li>
+<li>les G1FabLabs et les lieux de coopération ;</li>
+<li>la documentation, la traduction et la formation ;</li>
+<li>la création artistique, la vidéo, la musique et les médias ;</li>
+<li>la sobriété numérique et l'autonomie matérielle ;</li>
+<li>les outils de partage, de stockage et de communication ;</li>
+<li>les services destinés aux habitants et aux communautés locales.</li>
+</ul>
+<p>Une bonne proposition explique le problème, les bénéficiaires, les moyens nécessaires et les résultats attendus.</p>
+<p>Elle précise également ce qui sera partagé avec le collectif et ce qui restera sous la responsabilité de ses auteurs.</p>
+<h3>Choisir, c'est renoncer temporairement aux autres possibilités</h3>
+<p>Le nombre d'idées intéressantes est toujours supérieur au temps disponible.</p>
+<p>Vous n'avez pas à participer à tous les projets.</p>
+<p>Pour choisir, demandez-vous :</p>
+<ol>
+<li>Quel problème concret vais-je résoudre ?</li>
+<li>Qui bénéficiera du résultat ?</li>
+<li>Ce travail renforce-t-il un commun ou répond-il à un besoin particulier ?</li>
+<li>Quelles compétences puis-je apporter ?</li>
+<li>Qui peut m'aider ?</li>
+<li>Quelles ressources vais-je mobiliser ?</li>
+<li>Comment saurons-nous que le travail est terminé ?</li>
+<li>Que se passera-t-il si le projet échoue ou s'arrête ?</li>
+</ol>
+<p>Un projet modeste, terminé et documenté peut apporter davantage qu'une grande ambition jamais réalisée.</p>
+<h3>Trouver des collaborateurs</h3>
+<p>Présentez votre idée aux personnes susceptibles d'être intéressées.</p>
+<p>Expliquez ce que vous souhaitez réaliser et proposez plusieurs façons de participer.</p>
+<p>Un développeur peut écrire du code. Un utilisateur peut tester une fonctionnalité. Une personne qui ne programme pas peut rédiger la documentation, préparer des exemples, traduire une interface ou organiser une démonstration.</p>
+<p>La contribution n'est pas réservée aux experts.</p>
+<p>Vous devez pouvoir commencer modestement, apprendre en participant et prendre progressivement davantage de responsabilités.</p>
+<hr />
+<h2>3. Les projets appartiennent à ceux qui les construisent</h2>
+<h3>Une équipe se forme autour d'un objectif</h3>
+<p>Un projet n'a pas nécessairement besoin d'un responsable permanent.</p>
+<p>Il peut avoir :</p>
+<ul>
+<li>une personne qui porte l'idée ;</li>
+<li>une personne qui maintient le code ;</li>
+<li>une personne chargée de l'infrastructure ;</li>
+<li>des testeurs ;</li>
+<li>des utilisateurs référents ;</li>
+<li>des contributeurs occasionnels.</li>
+</ul>
+<p>Ces rôles sont définis par les besoins du projet. Ils peuvent évoluer.</p>
+<p>La personne qui propose un projet n'est pas obligée de tout réaliser. Elle doit surtout faciliter la compréhension de l'objectif, rendre les contributions possibles et respecter les engagements pris.</p>
+<h3>Les projets doivent être visibles</h3>
+<p>Pour qu'un membre puisse rejoindre un projet, il doit pouvoir comprendre ce qui s'y passe.</p>
+<p>Chaque projet important devrait disposer d'une fiche accessible comprenant :</p>
+<ul>
+<li>son objectif ;</li>
+<li>son état d'avancement ;</li>
+<li>ses responsables opérationnels ;</li>
+<li>ses besoins ;</li>
+<li>ses décisions importantes ;</li>
+<li>ses ressources ;</li>
+<li>ses prochaines étapes ;</li>
+<li>les moyens de contribuer ;</li>
+<li>les conditions de publication et de réutilisation des résultats.</li>
+</ul>
+<p>Les projets techniques peuvent utiliser les dépôts de code, les issues et les demandes de modification. Les autres projets peuvent utiliser une documentation partagée ou les outils communautaires disponibles.</p>
+<p>L'objectif est simple : éviter que l'information indispensable reste enfermée dans les conversations privées de quelques personnes.</p>
+<h3>Le droit de partir fait partie de la liberté de participer</h3>
+<p>Un membre peut quitter un projet sans devoir justifier toute sa vie personnelle.</p>
+<p>Il doit toutefois, lorsque cela est possible, transmettre les informations nécessaires à la continuité du service dont il avait la charge.</p>
+<p>Aucune personne ne devrait être indispensable au point que son départ rende un commun inutilisable.</p>
+<p>La documentation, les procédures de reprise et la distribution raisonnable des compétences sont des priorités.</p>
+<hr />
+<h2>4. Astroport.ONE : construire et maintenir les communs techniques</h2>
+<p>Astroport.ONE est une infrastructure technique, mais aussi un ensemble de responsabilités.</p>
+<p>Un logiciel libre ne fonctionne pas uniquement grâce à son code source. Il nécessite des tests, de la documentation, des mises à jour, de l'hébergement, de la sécurité, du support et des personnes capables de transmettre les connaissances.</p>
+<h3>Chaque contribution compte</h3>
+<p>Les contributions peuvent comprendre :</p>
+<ul>
+<li>le développement ;</li>
+<li>la revue de code ;</li>
+<li>les tests ;</li>
+<li>le signalement de bugs ;</li>
+<li>la traduction ;</li>
+<li>la documentation ;</li>
+<li>l'installation et le dépannage ;</li>
+<li>la maintenance des machines ;</li>
+<li>la surveillance des services ;</li>
+<li>la création de tutoriels ;</li>
+<li>l'accueil des utilisateurs.</li>
+</ul>
+<p>Une fonctionnalité visible n'est pas nécessairement plus importante qu'une correction discrète qui évite une perte de données.</p>
+<p>La reconnaissance doit tenir compte de l'utilité réelle, du travail nécessaire et des responsabilités assumées.</p>
+<h3>La souveraineté implique la transparence technique</h3>
+<p>Les services essentiels doivent, autant que possible, pouvoir être compris, administrés, restaurés et migrés par d'autres personnes compétentes.</p>
+<p>Nous cherchons à éviter :</p>
+<ul>
+<li>les dépendances inutiles à un fournisseur unique ;</li>
+<li>les secrets techniques détenus par une seule personne ;</li>
+<li>les procédures impossibles à reproduire ;</li>
+<li>les mises à jour non documentées ;</li>
+<li>les systèmes dont personne ne sait assurer la maintenance.</li>
+</ul>
+<p>Les accès d'administration, les clés cryptographiques et les données personnelles doivent être protégés.</p>
+<p>La transparence du projet ne signifie pas la divulgation des secrets, des identifiants ou des informations privées.</p>
+<h3>Expérimenter sans mettre les autres en danger</h3>
+<p>Un membre peut développer une nouvelle fonctionnalité ou tester une architecture.</p>
+<p>Il doit cependant distinguer les expérimentations des services de production.</p>
+<p>Les modifications présentant un risque pour les données, la sécurité ou la disponibilité doivent suivre une procédure de test et de validation proportionnée à leur impact.</p>
+<p>L'autonomie n'autorise pas à compromettre les machines d'autrui.</p>
+<hr />
+<h2>5. La Monnaie Libre : coopérer sans confondre les valeurs</h2>
+<p>La Monnaie Libre est une composante de l'écosystème, pas une mesure universelle de la valeur des personnes.</p>
+<p>Un membre peut contribuer en Ğ1, en euros, en compétences, en matériel, en temps, en hébergement ou en savoir partagé.</p>
+<p>Ces contributions n'ont pas toutes la même nature.</p>
+<h3>La Ğ1 et le ẐEN ont des fonctions différentes</h3>
+<p>La Ğ1 est une monnaie utilisée librement par ses membres dans leurs échanges.</p>
+<p>Le ẐEN est une unité de compte interne destinée à décrire l'activité, les besoins et les contributions de l'écosystème UPlanet.</p>
+<p>Un montant en ẐEN ne constitue pas automatiquement une créance en Ğ1, un salaire en euros ou un droit à recevoir une prestation.</p>
+<p>Il ne faut pas non plus supposer qu'une heure de travail, une machine, un service hébergé et une contribution artistique sont interchangeables selon un tarif universel.</p>
+<p>Le mode de reconnaissance dépend de ce que le collectif cherche à comprendre ou à organiser.</p>
+<h3>Rendre le travail visible</h3>
+<p>Un projet peut documenter :</p>
+<ul>
+<li>les contributions réalisées ;</li>
+<li>le temps volontairement déclaré ;</li>
+<li>les ressources matérielles mobilisées ;</li>
+<li>les frais engagés ;</li>
+<li>les services rendus ;</li>
+<li>les résultats obtenus ;</li>
+<li>les besoins de financement restant à couvrir.</li>
+</ul>
+<p>Cette information permet de mieux comprendre le fonctionnement du projet et d'organiser les soutiens.</p>
+<p>Elle ne doit pas devenir un système de surveillance permanente des membres.</p>
+<p>La collecte doit rester proportionnée, explicite et compatible avec le respect de la vie privée.</p>
+<h3>Reconnaître ne signifie pas rémunérer automatiquement</h3>
+<p>Le collectif peut remercier un contributeur, lui attribuer une responsabilité, financer ses frais ou décider de rémunérer une prestation.</p>
+<p>Ces décisions doivent être distinguées.</p>
+<p>Lorsqu'une prestation est rémunérée, les conditions doivent être définies avec les personnes concernées et respecter les obligations juridiques et comptables applicables.</p>
+<p>La comptabilité d'activité en ẐEN ne remplace ni un contrat, ni une facture, ni une comptabilité légale.</p>
+<h3>Refuser la compétition permanente</h3>
+<p>Nous ne voulons pas que chacun travaille pour accumuler le plus de points ou apparaître en tête d'un classement.</p>
+<p>Un système de reconnaissance peut aider à comprendre les contributions. Il devient contre-productif lorsqu'il encourage les activités les plus faciles à comptabiliser au détriment des tâches essentielles mais peu visibles.</p>
+<p>Le but est de renforcer la coopération, pas de créer une nouvelle course au statut.</p>
+<hr />
+<h2>6. Comment prendre les décisions ?</h2>
+<h3>Une décision doit être prise au niveau le plus pertinent</h3>
+<p>Une décision individuelle n'a pas besoin d'être soumise à l'ensemble du réseau si elle ne concerne que son auteur.</p>
+<p>Une décision de projet doit associer les personnes qui contribuent au projet et celles qui subiront directement ses conséquences.</p>
+<p>Une décision touchant aux règles communes, à la gouvernance collective ou à des ressources partagées doit suivre une procédure connue et accessible aux personnes concernées.</p>
+<p>Cette distinction évite deux excès :</p>
+<ul>
+<li>centraliser toutes les décisions entre les mains de quelques personnes ;</li>
+<li>demander à tout le monde de se prononcer sur chaque détail technique.</li>
+</ul>
+<h3>Rendre les décisions compréhensibles</h3>
+<p>Pour une décision importante, il faut pouvoir retrouver :</p>
+<ul>
+<li>le problème à résoudre ;</li>
+<li>les options envisagées ;</li>
+<li>les personnes concernées ;</li>
+<li>les conséquences prévisibles ;</li>
+<li>la décision retenue ;</li>
+<li>les raisons de ce choix ;</li>
+<li>les conditions de révision.</li>
+</ul>
+<p>Toutes les discussions n'ont pas besoin d'être publiques. Les informations personnelles, les secrets de sécurité et les échanges confidentiels doivent rester protégés.</p>
+<p>Mais la confidentialité ne doit pas servir de prétexte pour dissimuler les décisions qui engagent le collectif.</p>
+<h3>Tester avant de généraliser</h3>
+<p>Lorsqu'une décision est incertaine, une expérimentation limitée peut être préférable à une règle imposée à tout le monde.</p>
+<p>Définissez une durée, un périmètre, des critères d'évaluation et une possibilité de retour en arrière.</p>
+<p>Les résultats doivent permettre de confirmer, de modifier ou d'abandonner l'expérience.</p>
+<p>Une décision collective n'est pas irréversible simplement parce qu'elle a été prise collectivement.</p>
+<hr />
+<h2>7. Que faire lorsqu'on se trompe ?</h2>
+<p>L'erreur fait partie de l'apprentissage.</p>
+<p>Un bug, une mauvaise estimation, une fonctionnalité inutilisée ou un projet abandonné ne constituent pas automatiquement un échec personnel.</p>
+<p>La question est de savoir ce que nous apprenons de la situation.</p>
+<p>Lorsqu'un problème survient :</p>
+<ol>
+<li>Décrivons les faits sans chercher immédiatement un coupable.</li>
+<li>Évaluons les conséquences.</li>
+<li>Protégeons les utilisateurs et les ressources affectées.</li>
+<li>Corrigeons ce qui peut l'être.</li>
+<li>Documentons les causes importantes.</li>
+<li>Modifions nos pratiques si nécessaire.</li>
+</ol>
+<p>Le droit à l'erreur ne signifie pas l'absence de responsabilité.</p>
+<p>Une personne qui découvre un problème de sécurité doit le signaler de manière appropriée. Une personne qui a causé un dommage doit participer, dans la mesure de ses possibilités et de ses responsabilités, à sa résolution.</p>
+<p>Les comportements malveillants, les abus de confiance et les atteintes répétées aux autres ne doivent pas être confondus avec une expérimentation honnête.</p>
+<p>La confiance se construit en permettant d'essayer, en reconnaissant ses erreurs et en réparant leurs conséquences.</p>
+<hr />
+<h2>8. Comment donner et recevoir des retours ?</h2>
+<p>Le retour entre collègues est indispensable à une organisation autonome.</p>
+<p>Nous devons pouvoir dire ce qui fonctionne, ce qui ne fonctionne pas et ce qui pourrait être amélioré.</p>
+<p>Un retour utile porte sur des faits observables, leurs conséquences et les améliorations possibles.</p>
+<p>Au lieu de dire : « Tu ne fais jamais correctement ton travail », on peut dire : « La documentation de cette installation ne décrit pas la restauration après une erreur. Pourrais-tu ajouter cette procédure ? »</p>
+<p>Nous encourageons les retours directs, respectueux et réguliers.</p>
+<p>Les évaluations collectives peuvent être utiles pour améliorer les projets, à condition de ne pas transformer les membres en candidats permanents à un classement.</p>
+<p>Il faut distinguer :</p>
+<ul>
+<li>l'amélioration des pratiques ;</li>
+<li>la reconnaissance d'une contribution ;</li>
+<li>l'attribution d'une responsabilité ;</li>
+<li>une décision de financement ;</li>
+<li>une décision concernant l'accès à une ressource.</li>
+</ul>
+<p>Ces décisions n'ont pas nécessairement les mêmes critères.</p>
+<p>Les désaccords doivent pouvoir être exprimés sans représailles. En cas de conflit, les personnes concernées peuvent rechercher une médiation auprès de membres de confiance qui ne sont pas directement impliqués.</p>
+<hr />
+<h2>9. Accueillir les nouveaux membres</h2>
+<p>La meilleure manière d'accueillir une personne n'est pas de lui remettre une longue liste de règles, puis de la laisser se débrouiller.</p>
+<p>Il faut lui permettre de comprendre le projet, de poser des questions et de réaliser rapidement une première contribution utile.</p>
+<p>Chaque nouveau membre devrait pouvoir :</p>
+<ul>
+<li>comprendre les principes de l'écosystème ;</li>
+<li>identifier les projets actifs ;</li>
+<li>trouver les documentations ;</li>
+<li>connaître les règles de sécurité ;</li>
+<li>contacter des contributeurs ;</li>
+<li>choisir une première tâche ;</li>
+<li>recevoir un retour sur son travail.</li>
+</ul>
+<p>Les membres expérimentés ont un rôle important dans la transmission des connaissances.</p>
+<p>Nous recherchons des personnes capables d'apprendre, de partager et de collaborer, pas uniquement des spécialistes d'une technologie.</p>
+<p>Une communauté qui sait accueillir de nouveaux contributeurs est moins dépendante de ses membres historiques.</p>
+<hr />
+<h2>10. Le travail invisible fait aussi partie du projet</h2>
+<p>Les infrastructures reposent souvent sur des tâches que les utilisateurs ne voient pas.</p>
+<p>Maintenir un serveur, renouveler un certificat, vérifier une sauvegarde, répondre à une question, corriger une documentation ou organiser une rencontre peut être aussi important que développer une nouvelle fonctionnalité.</p>
+<p>Nous devons rendre ces activités visibles sans obliger chacun à justifier en permanence son existence.</p>
+<p>La reconnaissance doit tenir compte de la continuité du service, de la qualité du travail, de l'utilité collective et de la transmission des connaissances.</p>
+<p>Nous devons également accepter que tous les membres ne disposent pas du même temps, des mêmes ressources ou des mêmes compétences.</p>
+<p>La participation à UPlanet n'est pas un concours de disponibilité.</p>
+<hr />
+<h2>11. Notre responsabilité envers les communs</h2>
+<p>Un commun n'est pas simplement une ressource gratuite.</p>
+<p>C'est une ressource dont la pérennité dépend de règles de partage, d'un entretien et d'une communauté capable d'en prendre soin.</p>
+<p>Pour chaque ressource importante, nous devons nous demander :</p>
+<ul>
+<li>Qui peut l'utiliser ?</li>
+<li>Qui assure son entretien ?</li>
+<li>Qui peut modifier son fonctionnement ?</li>
+<li>Comment les décisions sont-elles prises ?</li>
+<li>Comment les coûts sont-ils couverts ?</li>
+<li>Que se passe-t-il si la personne qui la maintient disparaît ?</li>
+<li>Comment les utilisateurs peuvent-ils contribuer à son amélioration ?</li>
+</ul>
+<p>Les logiciels libres, les documentations ouvertes, les protocoles interopérables et les données publiées avec l'accord de leurs auteurs peuvent favoriser la coopération.</p>
+<p>Cependant, tout ne doit pas être public.</p>
+<p>Les données personnelles, les clés privées, les secrets d'authentification et les contenus confidentiels restent sous la protection de leurs détenteurs.</p>
+<p>La souveraineté numérique implique à la fois la possibilité de partager et la possibilité de garder le contrôle de ses propres données.</p>
+<hr />
+<h2>12. Comment savoir si nous progressons ?</h2>
+<p>Nous ne mesurons pas le succès d'UPlanet uniquement au nombre de membres, aux volumes échangés ou à la quantité de code produite.</p>
+<p>Nous devons aussi regarder :</p>
+<ul>
+<li>le nombre de projets réellement utilisés ;</li>
+<li>la facilité avec laquelle un nouveau membre peut contribuer ;</li>
+<li>la qualité de la documentation ;</li>
+<li>la continuité des services ;</li>
+<li>la capacité à réparer les incidents ;</li>
+<li>le nombre de personnes capables de maintenir chaque composant essentiel ;</li>
+<li>la réutilisation des communs ;</li>
+<li>la transparence des décisions ;</li>
+<li>la qualité des coopérations ;</li>
+<li>la capacité des membres à poursuivre leurs activités de façon autonome.</li>
+</ul>
+<p>Les indicateurs doivent nous aider à comprendre le système.</p>
+<p>Ils ne doivent jamais devenir des objectifs aveugles qui nous conduiraient à privilégier les chiffres plutôt que les besoins réels.</p>
+<p>Une infrastructure qui fonctionne durablement, qui peut être reprise par d'autres et qui rend ses utilisateurs plus autonomes constitue déjà une réussite.</p>
+<hr />
+<h2>13. Le manuel appartient à ceux qui le font vivre</h2>
+<p>Ce document n'est pas une doctrine définitive.</p>
+<p>Les membres peuvent proposer des corrections, ajouter des exemples, signaler les contradictions et expérimenter de nouvelles façons de coopérer.</p>
+<p>Toute modification importante doit pouvoir être discutée et retrouvée.</p>
+<p>Nous cherchons à faire évoluer les règles à partir de l'expérience, plutôt qu'à demander à chacun d'appliquer indéfiniment des principes devenus inadaptés.</p>
+<p>Le manuel doit rester compréhensible, accessible et révisable.</p>
+<p>Il ne doit pas devenir un instrument permettant à quelques personnes d'imposer leur interprétation à toutes les autres.</p>
+<hr />
+<h1>Notre engagement</h1>
+<p>Nous choisissons de construire des outils que nous pouvons comprendre, des communs que nous pouvons entretenir et des organisations dans lesquelles chacun peut prendre des initiatives.</p>
+<p>Nous reconnaissons le travail des autres sans réduire leur valeur à un chiffre.</p>
+<p>Nous cherchons la coopération plutôt que la compétition permanente.</p>
+<p>Nous partageons nos connaissances, protégeons les données qui nous sont confiées et assumons les conséquences de nos décisions.</p>
+<p>Nous acceptons de nous tromper, à condition de chercher à comprendre, à réparer et à progresser.</p>
+<p>Nous ne cherchons pas à supprimer toute responsabilité, mais à empêcher qu'elle se transforme en domination.</p>
+<p><strong>UPlanet ne sera pas plus libre simplement parce que ses logiciels sont libres. Il le sera lorsque les personnes qui le construisent pourront agir, coopérer, comprendre les règles et contribuer à les faire évoluer.</strong></p>
+<p>Le réseau existe par les personnes qui le font vivre.</p>
+<p>Les communs nous appartiennent collectivement, dans le respect des droits et des responsabilités de chacun.</p>
+<p>À nous de les faire grandir.</p>
+
+<p><a href="index.html">← Retour au guide</a></p>
+</main>
+</body>
+</html>

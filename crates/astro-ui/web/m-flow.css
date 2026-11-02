@@ -1,0 +1,30 @@
+/* Carte animée de la constellation (chargé avec m-constellation.js) : rendu néon léger, toujours sombre. */
+.fl { width: 100%; height: auto; display: block; border-radius: var(--r); border: 1px solid #1e3a5f; background: #060912; }
+.fl-bg { fill: #060912; }
+.fl-gridl { fill: none; stroke: #12203a; stroke-width: 1; }
+.fl-pipe-bed { fill: none; stroke: #0d1f40; stroke-linecap: round; }
+.fl-pipe { fill: none; stroke: #18e0ff; stroke-opacity: .6; stroke-linecap: round; stroke-dasharray: 2 10; animation: fl-flow 1.6s linear infinite; }
+.fl.paused .fl-pipe { animation-play-state: paused; }
+.fl-pulse { fill: #fff6a8; stroke: #ffd84a; stroke-width: 1; }
+.fl-n { fill: #0a1226; stroke-width: 2; }
+.fl-wallet { stroke: #18e0ff; }
+.fl-master { stroke: #ff2bd6; }
+.fl-members { stroke: #ffd84a; }
+.fl-outside { stroke: #ff6a3d; }
+.fl-billets { stroke: #b6ff4a; }
+.fl-label { fill: #9fb4d9; font: 11px ui-monospace, monospace; paint-order: stroke; stroke: #060912; stroke-width: 3px; }
+@keyframes fl-flow { to { stroke-dashoffset: -24; } }
+@media (prefers-reduced-motion: reduce) { .fl-pipe { animation: none; } }
+.fl-bar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin: .6rem 0; }
+.fl-bar input[type=range] { flex: 1 1 14rem; }
+.fl-legend { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; font-size: .85rem; }
+.fl-legend i { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; border: 2px solid; margin-right: .3rem; }
+.cs-wallets { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.cs-wallets th, .cs-wallets td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--panel2); }
+.cs-wallets td.n, .cs-wallets th.n { text-align: right; }
+.cs-charter p { margin: .5rem 0; max-width: 60ch; }
+.fl-lg-wallet { border-color: #18e0ff; } .fl-lg-master { border-color: #ff2bd6; } .fl-lg-members { border-color: #ffd84a; } .fl-lg-outside { border-color: #ff6a3d; } .fl-lg-billets { border-color: #b6ff4a; }
+.cs-sign { list-style: none; padding: 0; margin: .4rem 0; display: grid; gap: .3rem; }
+.cs-bil { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: .6rem; margin: .6rem 0; }
+.cs-bil div { background: var(--panel2); border-radius: var(--r); padding: .6rem .8rem; }
+.cs-bil b { display: block; font-size: 1.6rem; line-height: 1.1; }

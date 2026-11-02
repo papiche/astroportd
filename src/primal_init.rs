@@ -29,7 +29,7 @@ use crate::station::RESERVE_G1_CENTS;
 
 /// Montant de la transaction primale : 1 Ğ1, en centimes de Ğ1.
 pub const INIT_G1_CENTS: u64 = 100;
-const SCOPE: &str = "primal_init";
+pub(crate) const SCOPE: &str = "primal_init";
 const EVERY: Duration = Duration::from_secs(6 * 3600);
 
 fn now() -> i64 {
