@@ -441,7 +441,13 @@ async fn get_thumb<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, head
 }
 
 pub(crate) async fn get<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, headers: &HeaderMap, head_only: bool) -> Response {
-    let owner = auth.account.owner.clone();
+    get_owner(st, &auth.account.owner, path, headers, head_only).await
+}
+
+/// Sert le **clair** du fichier `path` de `owner` (Range, ETag, déchiffrement en flux). L'appelant décide qui a le droit de le lire :
+/// le serveur WebDAV après authentification, le site public de `/Public` sans.
+pub async fn get_owner<B: BlobStore>(st: &DavState<B>, owner: &str, path: &str, headers: &HeaderMap, head_only: bool) -> Response {
+    let owner = owner.to_owned();
     let p = path.to_owned();
     let found = st
         .db

@@ -26,4 +26,4 @@ pub mod xml;
 
 pub use blob::{AutoBlobStore, BlobError, BlobMeta, BlobStore, BlobWriter, FsBlobStore, KuboBlobStore};
 pub use manifest::{ManifestError, ManifestPublisher};
-pub use server::{DavConfig, DavState, UploadHook, router};
+pub use server::{DavConfig, DavState, UploadHook, get_owner, router};
