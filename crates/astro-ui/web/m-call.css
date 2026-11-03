@@ -27,3 +27,4 @@ body.in-call{overflow:hidden}
 .call-ring .call-ctl small{color:var(--muted)}
 .call-pick .who-list{display:grid;gap:.4rem;max-height:60vh;overflow:auto}
 .call-ctl[hidden]{display:none}
+.call-grid.radio .call-remote { visibility: hidden; } /* voix seule : pas d'image figée */

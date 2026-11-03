@@ -29,7 +29,7 @@ pub struct InitArgs {
     /// Constellation : `origin` (ouverte) ou `zen` (privée, demande une swarm.key). Demandé si absent (terminal).
     #[arg(long)]
     mode: Option<Mode>,
-    /// Email du Capitaine (conservé dans station.conf ; le MULTIPASS se crée sur une station ORIGIN).
+    /// Email du Capitaine : conservé dans station.conf, et son MULTIPASS est créé à la fin de l'installation (code PASS affiché).
     #[arg(long)]
     email: Option<String>,
     /// Latitude de la station (20h12 solaire vrai).
@@ -77,6 +77,13 @@ pub struct InitArgs {
     /// Aucune question : valeurs par défaut (ORIGIN) et options données.
     #[arg(long, short = 'y')]
     yes: bool,
+    /// Rejoint la constellation d'une **station marraine** avec le jeton qu'elle a donné (`astroportd parrainer`) :
+    /// constellation, swarm.key (ẐEN, reçue chiffrée) et amorçage P2P sans recopie de fichier.
+    #[arg(long, conflicts_with_all = ["swarm_key", "found_constellation"])]
+    pub join: Option<String>,
+    /// Offre déchiffrée (remplie par l'appelant avant `init`, qui reste synchrone).
+    #[arg(skip)]
+    pub joined: Option<crate::sponsor::Payload>,
 }
 
 /// Options de `astroportd ylevel`.
@@ -97,6 +104,18 @@ pub struct YlevelArgs {
 }
 
 type Res = Result<(), Box<dyn std::error::Error>>;
+
+/// Ce qu'`init` laisse à l'appelant pour créer, dans la foulée, le compte du Capitaine (opération asynchrone).
+pub struct InitDone {
+    /// Dossier de la station.
+    pub home: PathBuf,
+    /// Dossier `~/.zen/game`.
+    pub game: PathBuf,
+    /// Email du Capitaine (vide : à créer plus tard).
+    pub captain_email: String,
+    /// Adresse de l'interface web, pour la consigne finale.
+    pub web_url: String,
+}
 
 fn home_dir() -> Result<PathBuf, String> {
     std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| "HOME introuvable : renseigner --home, --game-dir et --ssh-dir".to_owned())
@@ -204,7 +223,7 @@ fn shared_secret(swarm_key: &str) -> Option<String> {
 }
 
 /// `astroportd init`.
-pub fn init(a: InitArgs) -> Res {
+pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
     let ask = Asker::new(a.yes);
     println!("astroportd — installation de la station\n");
 
@@ -213,8 +232,14 @@ pub fn init(a: InitArgs) -> Res {
         println!("⚠  Horloge : {e}\n   Les échéances (20h12 solaire) refuseront de tourner. Réglez l'heure (timedatectl set-ntp true).\n");
     }
 
-    // 1. Constellation.
-    let mode = match a.mode {
+    // 1. Constellation (imposée par la marraine en cas de parrainage).
+    let joined_mode = a.joined.as_ref().map(|j| if j.swarm_key.is_some() { Mode::Zen } else { Mode::Origin });
+    if let (Some(want), Some(given)) = (joined_mode, a.mode) {
+        if want != given {
+            return Err("--mode contredit la constellation de la station marraine : retirez --mode".into());
+        }
+    }
+    let mode = match joined_mode.or(a.mode) {
         Some(m) => m,
         None => {
             println!("Quelle constellation rejoindre ?\n  1) ORIGIN — réseau ouvert, bac à sable pour apprendre (1 Ẑen = 0,1 Ğ1)\n  2) ẐEN    — réseau privé de confiance, réelle (1 Ẑen = 1 €), demande une swarm.key");
@@ -234,7 +259,9 @@ pub fn init(a: InitArgs) -> Res {
             (ORIGIN_UPLANETNAME.to_owned(), None)
         }
         Mode::Zen => {
-            let text = if a.found_constellation {
+            let text = if let Some(k) = a.joined.as_ref().and_then(|j| j.swarm_key.clone()) {
+                k
+            } else if a.found_constellation {
                 astro_p2p::generate_swarm_key()?
             } else {
                 let path = match a.swarm_key.clone() {
@@ -306,7 +333,7 @@ pub fn init(a: InitArgs) -> Res {
     // Fils de calcul de l'inférence locale : l'option l'emporte, sinon ce que le précédent `init` avait retenu (0 = au choix d'ONNX Runtime).
     let threads = |arg: usize, key: &str| if arg > 0 { arg } else { prev(key).parse().unwrap_or(0) };
     let (face_threads, embed_threads) = (threads(a.face_threads, "face_threads"), threads(a.embed_threads, "embed_threads"));
-    let email = a.email.clone().unwrap_or_else(|| ask.ask("Email du Capitaine (facultatif)", &prev("captain_email")));
+    let email = a.email.clone().unwrap_or_else(|| ask.ask("Email du Capitaine (son compte est créé à la fin ; vide = plus tard)", &prev("captain_email")));
 
     // Web : domaine + certificat. Ports 80/443 libres → astroportd gère lui-même HTTPS (ACME) ; pris (NPM…) → il reste local.
     let (p80, p443) = (probe_port(80), probe_port(443));
@@ -330,6 +357,10 @@ pub fn init(a: InitArgs) -> Res {
         coords.map_or(String::new(), |c| c.0.to_string()),
         coords.map_or(String::new(), |c| c.1.to_string()),
     );
+    let conf = match &a.joined {
+        Some(j) => format!("{conf}sponsor = {}\n", j.from),
+        None => conf,
+    };
     write_private(&home.join("station.conf"), &conf)?;
 
     // 5. Commande de démarrage.
@@ -342,9 +373,16 @@ pub fn init(a: InitArgs) -> Res {
         format!("--game-dir {}", game.display()),
         format!("--snapshot-dir {}", home.join("snapshots").display()),
     ];
+    let bootstrap = a.joined.as_ref().map(|j| j.bootstrap.clone()).unwrap_or_default();
     if mode == Mode::Zen {
         serve.push(format!("--swarm-key {}", home.join("swarm.key").display()));
+    }
+    if mode == Mode::Zen || !bootstrap.is_empty() {
         serve.push("--p2p-listen /ip4/0.0.0.0/tcp/4101".into());
+    }
+    // Parrainage : la station s'amorce sur sa marraine (elle n'est pas seule dans l'essaim dès le premier démarrage).
+    for b in &bootstrap {
+        serve.push(format!("--p2p-bootstrap {b}"));
     }
     if behind_proxy {
         serve.push(format!("--http-listen {BEHIND_PROXY_LISTEN}"));
@@ -383,6 +421,9 @@ pub fn init(a: InitArgs) -> Res {
             println!("Votre constellation est fondée : copiez {} sur chaque station qui la rejoint (--swarm-key).", home.join("swarm.key").display());
         }
     }
+    if let Some(j) = &a.joined {
+        println!("Marraine :        {} : la station s'amorce sur elle au démarrage ({} adresse(s) P2P)", j.from, j.bootstrap.len());
+    }
     println!("Démarrer :        {serve}\nVérifier :        astroportd doctor --game-dir {} && astroportd ylevel --verify", game.display());
     if behind_proxy {
         println!("Web :             les ports 80/443 sont pris (Nginx Proxy Manager ?) : astroportd écoute sur http://{BEHIND_PROXY_LISTEN}/");
@@ -397,8 +438,16 @@ pub fn init(a: InitArgs) -> Res {
     } else {
         println!("Interface web :   http://127.0.0.1:18080/   (jeton : astroportd token <email>)   — HTTPS : relancez `astroportd init --domain votre.domaine`");
     }
-    println!("MULTIPASS :       astroportd multipass create {} --captain   (le premier compte devient le Capitaine ; les suivants s'inscrivent sur /register)", if email.is_empty() { "<votre@email>" } else { &email });
-    Ok(())
+    let web_url = if behind_proxy && !domain.is_empty() {
+        format!("https://{domain}/")
+    } else if behind_proxy {
+        format!("http://{BEHIND_PROXY_LISTEN}/")
+    } else if !domain.is_empty() {
+        format!("https://{domain}/")
+    } else {
+        "http://127.0.0.1:18080/".to_owned()
+    };
+    Ok(InitDone { home, game, captain_email: email, web_url })
 }
 
 /// `astroportd ylevel`.

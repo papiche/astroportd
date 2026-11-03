@@ -161,15 +161,48 @@ pub fn transfer_bytes(enc: Option<&str>) -> usize {
     let accept = enc.and_then(|e| HeaderValue::from_str(e).ok());
     let chosen = negotiate_encoding(accept.as_ref());
     shell_files()
-        .map(|(p, f)| chosen.map_or(f.data.len(), |e| compressed(&p, e, &f.data).len()))
+        .map(|(p, f)| { let d = served_bytes(&p, &f); chosen.map_or(d.len(), |e| compressed(&p, e, &d).len()) })
         .sum()
+}
+
+/// Nom du cache dans `sw.js`, remplacé au service par [`app_fingerprint`].
+const SW_CACHE_PLACEHOLDER: &str = "'astroport-v1'";
+
+/// Empreinte de l'application embarquée : un condensé de tous ses fichiers (hors `sw.js`). Elle change dès qu'un seul
+/// fichier change, même sans nouveau numéro de version. Injectée dans `sw.js`, elle en fait un **autre** fichier pour le
+/// navigateur : le nouveau worker s'installe et vide l'ancien cache d'un coup, au lieu de laisser une coque récente
+/// côtoyer des écrans (`m-*.js`) d'une version précédente.
+pub fn app_fingerprint() -> &'static str {
+    static FP: OnceLock<String> = OnceLock::new();
+    FP.get_or_init(|| {
+        use sha2::Digest;
+        let mut paths: Vec<String> = Assets::iter().filter(|p| p != "sw.js").map(|p| p.into_owned()).collect();
+        paths.sort();
+        let mut h = sha2::Sha256::new();
+        for p in paths {
+            if let Some(f) = Assets::get(&p) {
+                h.update(p.as_bytes());
+                h.update(f.metadata.sha256_hash());
+            }
+        }
+        h.finalize().iter().take(6).map(|b| format!("{b:02x}")).collect()
+    })
+}
+
+/// Contenu servi d'un fichier : tel qu'embarqué, sauf `sw.js` qui reçoit l'empreinte de l'application.
+fn served_bytes(path: &str, file: &rust_embed::EmbeddedFile) -> Vec<u8> {
+    if path == "sw.js" {
+        let text = String::from_utf8_lossy(&file.data).replacen(SW_CACHE_PLACEHOLDER, &format!("'astroport-{}'", app_fingerprint()), 1);
+        return text.into_bytes();
+    }
+    file.data.to_vec()
 }
 
 fn asset(path: &str, headers_in: &HeaderMap) -> Response {
     let Some(file) = Assets::get(path) else { return (StatusCode::NOT_FOUND, "introuvable").into_response() };
     let if_none_match = headers_in.get(header::IF_NONE_MATCH);
     let encoding = negotiate_encoding(headers_in.get(header::ACCEPT_ENCODING));
-    let base = file.metadata.sha256_hash().iter().take(8).map(|b| format!("{b:02x}")).collect::<String>();
+    let base = if path == "sw.js" { app_fingerprint().to_owned() } else { file.metadata.sha256_hash().iter().take(8).map(|b| format!("{b:02x}")).collect::<String>() };
     let etag = match encoding {
         Some(e) => format!("\"{base}-{}\"", e.token()),
         None => format!("\"{base}\""),
@@ -197,9 +230,10 @@ fn asset(path: &str, headers_in: &HeaderMap) -> Response {
         return (StatusCode::NOT_MODIFIED, headers).into_response();
     }
     put(&mut headers, header::CONTENT_TYPE, mime_of(path));
+    let data = served_bytes(path, &file);
     let body = match encoding {
-        Some(e) => compressed(path, e, &file.data),
-        None => file.data.into_owned(),
+        Some(e) => compressed(path, e, &data),
+        None => data,
     };
     (headers, body).into_response()
 }
@@ -258,7 +292,7 @@ async fn scan_page(headers: HeaderMap) -> Response {
 
 /// Routes `/ui/{fichier}`, `/register` (inscription d'un MULTIPASS), `/restore` (rétablir son compte) et `/i/{jeton}` (invitation à recevoir des photos).
 pub fn static_router() -> Router {
-    Router::new().route("/ui/{*path}", get(static_file)).route("/register", get(register_page)).route("/restore", get(restore_page)).route("/i/{token}", get(invite_page)).route("/claim", get(claim_page)).route("/scan", get(scan_page))
+    Router::new().route("/ui/{*path}", get(static_file)).route("/register", get(register_page)).route("/welcome", get(register_page)).route("/w/{token}", get(register_page)).route("/restore", get(restore_page)).route("/i/{token}", get(invite_page)).route("/claim", get(claim_page)).route("/scan", get(scan_page))
 }
 
 #[cfg(test)]
@@ -339,6 +373,11 @@ mod tests {
         // Données privées : jamais en cache.
         assert!(js.contains("/ui/") && !js.contains("/api/") && !js.contains("/dav"), "le worker ne met en cache que la coque");
         assert!(js.contains("ignoreVary"), "`/` varie selon Accept");
+        // Le cache porte l'empreinte de l'application : un écran modifié change `sw.js`, donc le cache entier.
+        assert!(js.contains(&format!("'astroport-{}'", app_fingerprint())) && !js.contains(SW_CACHE_PLACEHOLDER), "nom de cache versionné");
+        assert_eq!(app_fingerprint().len(), 12);
+        let etag = h[header::ETAG].to_str().unwrap().to_owned();
+        assert!(etag.contains(app_fingerprint()), "l'ETag de sw.js suit l'empreinte, pas le fichier source");
         let (_, html, h) = call(Some("text/html"), false, "/").await;
         assert!(html.contains("rel=\"manifest\"") && html.contains("theme-color") && html.contains("id=\"toasts\""));
         assert_eq!(h[header::VARY], "Accept, Accept-Encoding");
@@ -357,14 +396,14 @@ mod tests {
         let (mraw, mgz) = module_bytes();
         eprintln!("écrans à la demande : {mraw} o bruts, {mgz} o en gzip");
         // Le cumul des écrans (qu'un visiteur ne télécharge qu'à la demande) est borné, et chaque écran garde sa propre limite.
-        assert!(mraw > 0 && mraw < 324 * 1024 && mgz < 128 * 1024, "écrans à la demande : {mraw} o bruts (budget 324 Ko, 316 Ko avant les dictionnaires par écran et les appels de groupe, 312 Ko avant la présence visio, 296 Ko avant la visio, 292 Ko avant la fusion des doublons, 284 Ko avant l'écran Personnes, 280 Ko avant Trier en grand, 260 Ko avant le site public, 240 Ko avant les Ğ1Billets, 224 Ko avant la vision de la constellation), {mgz} o en gzip (budget 128 Ko, 120 Ko avant les dictionnaires par écran et les appels de groupe, 116 Ko avant la visio, 112 Ko avant la fusion des doublons, 108 Ko avant l'écran Personnes, 100 Ko avant le site public, 92 Ko avant les Ğ1Billets, 86 Ko avant la vision de la constellation, 80 Ko avant l'accueil des membres, 76 Ko avant le cockpit du Capitaine ; 64 Ko avant le carnet d'adresses, 56 Ko avant la carte et le fil du temps ; 128 Ko et 48 Ko avant les écrans Sources et Ranger)");
+        assert!(mraw > 0 && mraw < 336 * 1024 && mgz < 128 * 1024, "écrans à la demande : {mraw} o bruts (budget 336 Ko, 328 Ko avant les liens d'accueil, la voix seule et les brouillons du chat, 324 Ko avant le carburant et le domaine du cockpit, 316 Ko avant les dictionnaires par écran et les appels de groupe, 312 Ko avant la présence visio, 296 Ko avant la visio, 292 Ko avant la fusion des doublons, 284 Ko avant l'écran Personnes, 280 Ko avant Trier en grand, 260 Ko avant le site public, 240 Ko avant les Ğ1Billets, 224 Ko avant la vision de la constellation), {mgz} o en gzip (budget 128 Ko, 120 Ko avant les dictionnaires par écran et les appels de groupe, 116 Ko avant la visio, 112 Ko avant la fusion des doublons, 108 Ko avant l'écran Personnes, 100 Ko avant le site public, 92 Ko avant les Ğ1Billets, 86 Ko avant la vision de la constellation, 80 Ko avant l'accueil des membres, 76 Ko avant le cockpit du Capitaine ; 64 Ko avant le carnet d'adresses, 56 Ko avant la carte et le fil du temps ; 128 Ko et 48 Ko avant les écrans Sources et Ranger)");
         for (name, f) in module_files().filter(|(p, _)| !p.starts_with("m-lang-")) {
             let gz = compressed(&name, Encoding::Gzip, &f.data).len();
             assert!(gz < 12 * 1024, "{name} : {gz} o en gzip, au-delà des 12 Ko par écran");
         }
         // Page publique /scan : sa feuille, ses règles et son script, plus le décodeur de QR (chargé seulement si le navigateur n'a pas
         // BarcodeDetector). Hors budget de la coque : un visiteur ne les télécharge qu'en venant encaisser un billet.
-        let scan = |pred: fn(&str) -> bool| Assets::iter().filter(|p| pred(p)).filter_map(|p| Assets::get(&p).map(|f| (p.into_owned(), f))).fold((0, 0), |(r, g), (p, f)| (r + f.data.len(), g + compressed(&p, Encoding::Gzip, &f.data).len()));
+        let scan = |pred: fn(&str) -> bool| Assets::iter().filter(|p| pred(p)).filter_map(|p| Assets::get(&p).map(|f| (p.into_owned(), f))).fold((0, 0), |(r, g), (p, f)| { let d = served_bytes(&p, &f); (r + d.len(), g + compressed(&p, Encoding::Gzip, &d).len()) });
         // Un visiteur ne télécharge qu'une langue : on compte la page (français compris) plus la plus lourde des autres.
         let (page_raw, page_gz) = scan(|p| p.starts_with("scan") && !p.starts_with("scan-lang-"));
         let lang = ["scan-lang-en.js", "scan-lang-es.js"].map(|n| Assets::get(n).map_or((0, 0), |f| (f.data.len(), compressed(n, Encoding::Gzip, &f.data).len())));

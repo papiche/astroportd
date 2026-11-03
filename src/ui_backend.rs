@@ -51,12 +51,18 @@ pub struct StationUi<B: BlobStore> {
     account: Option<Arc<crate::account::AccountService>>,
     contacts: Option<Arc<crate::identity_links::IdentityLinks<B>>>,
     invites: Option<Arc<crate::invites::Invites<B>>>,
+    /// Liens d'accueil de la station (plusieurs arrivées par lien).
+    welcome: Option<Arc<crate::welcome::Welcome<B>>>,
     agents: Option<Arc<crate::agents::Agents>>,
     pull: Option<Arc<crate::webdav_pull::PullService<B>>>,
     organize: Option<Arc<crate::organize::OrganizeService<B>>>,
     send_fn: Option<SendFn>,
     board: astro_facecloud::board::BoardCache,
     registrar: Option<Arc<crate::register::Registrar>>,
+    /// Code d'installation d'une station sans Capitaine (page `/welcome`).
+    setup: Option<Arc<crate::first_run::SetupCode>>,
+    /// `station.conf` (domaine réglé depuis le cockpit).
+    conf_path: Option<std::path::PathBuf>,
     probe: Mutex<Option<(Instant, Result<(), String>)>>,
     planes_home: Option<std::path::PathBuf>,
     ai: Option<Arc<crate::member_ai::MemberAi>>,
@@ -120,7 +126,7 @@ pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Fu
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, site: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None, chat: None, people: None, ice: (None, None, Vec::new()), presence: None }
+        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, site: None, admin: None, console: None, account: None, contacts: None, invites: None, welcome: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, setup: None, conf_path: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None, chat: None, people: None, ice: (None, None, Vec::new()), presence: None }
     }
 
     /// Annuaire des clés d'une même personne dans plusieurs UPlanet.
@@ -180,6 +186,16 @@ impl<B: BlobStore> StationUi<B> {
     pub fn with_invites(mut self, invites: Arc<crate::invites::Invites<B>>) -> Self {
         self.invites = Some(invites);
         self
+    }
+
+    /// Liens d'accueil (`/w/<jeton>`).
+    pub fn with_welcome(mut self, welcome: Arc<crate::welcome::Welcome<B>>) -> Self {
+        self.welcome = Some(welcome);
+        self
+    }
+
+    fn welcome_service(&self) -> Result<&Arc<crate::welcome::Welcome<B>>, ApiError> {
+        self.welcome.as_ref().ok_or_else(|| ApiError::unavailable("liens d'accueil non disponibles sur cette station"))
     }
 
     /// Registre des agents et serveur MCP avec demande d'accord.
@@ -303,6 +319,18 @@ impl<B: BlobStore> StationUi<B> {
         self
     }
 
+    /// `station.conf` de la station : le cockpit y enregistre le nom de domaine.
+    pub fn with_conf_path(mut self, path: std::path::PathBuf) -> Self {
+        self.conf_path = Some(path);
+        self
+    }
+
+    /// Code d'installation (station démarrée sans Capitaine).
+    pub fn with_setup(mut self, code: Option<Arc<crate::first_run::SetupCode>>) -> Self {
+        self.setup = code;
+        self
+    }
+
     fn now() -> i64 {
         SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
     }
@@ -410,8 +438,25 @@ impl<B: BlobStore> Backend for StationUi<B> {
         let r = self.registrar.as_ref().ok_or_else(|| ApiError::unavailable("inscription non disponible sur cette station"))?;
         let limits = r.limits();
         let accounts = r.hosted_accounts().await.map_err(|e| ApiError::internal(e.to_string()))?;
-        let open = limits.open && (limits.max_accounts == 0 || accounts < limits.max_accounts);
-        Ok(json!({ "open": open, "constellation": r.constellation(), "accounts": accounts, "max_accounts": limits.max_accounts }))
+        let waiting = r.awaiting_captain().await;
+        let open = limits.open && !waiting && (limits.max_accounts == 0 || accounts < limits.max_accounts);
+        let mut out = json!({ "open": open, "constellation": r.constellation(), "accounts": accounts, "max_accounts": limits.max_accounts });
+        if waiting {
+            out["error"] = json!(crate::register::RegisterError::NoCaptain.to_string());
+            out["captain_setup"] = json!(self.setup.is_some());
+        }
+        Ok(out)
+    }
+
+    async fn register_captain(&self, ip: Option<std::net::IpAddr>, code: String, email: String, lang: String) -> Result<Value, ApiError> {
+        let (Some(r), Some(setup)) = (self.registrar.as_ref(), self.setup.as_ref()) else { return Err(ApiError::unavailable("cette station n'attend pas de Capitaine")) };
+        if !r.awaiting_captain().await {
+            return Err(ApiError::conflict("cette station a déjà un Capitaine"));
+        }
+        if !setup.redeem(&code) {
+            return Err(ApiError::forbidden("code d'installation incorrect : il est écrit dans le journal de la station (terminal ou journalctl)"));
+        }
+        r.register_captain(ip, &email, &lang).await.map(|reg| registered_json(&reg)).map_err(register_error)
     }
 
     async fn register(&self, ip: Option<std::net::IpAddr>, email: String, lang: String) -> Result<Value, ApiError> {
@@ -1469,6 +1514,109 @@ impl<B: BlobStore> Backend for StationUi<B> {
         Ok(json!({ "origin": origin.map(|o| json!({ "lat": o.0, "lon": o.1 })), "nodes": nodes, "swarm_dir_configured": svc.swarm_dir.is_some() }))
     }
 
+    async fn domain_info(&self, _who: &Principal) -> Result<Value, ApiError> {
+        let conf = self.conf_path.as_ref().ok_or_else(|| ApiError::unavailable("station.conf inconnu : réglage du domaine indisponible"))?;
+        let saved = crate::init::read_conf(conf).into_iter().find(|(k, _)| k == "domain").map(|(_, v)| v).filter(|v| !v.is_empty());
+        let running = self.services.info.domain.clone();
+        Ok(json!({
+            "domain": running, "saved": saved, "pending": saved.is_some() && saved != running,
+            "restart": crate::station_domain::restart_available(), "restart_command": "systemctl --user restart astroportd",
+        }))
+    }
+
+    async fn domain_set(&self, _who: &Principal, domain: String) -> Result<Value, ApiError> {
+        use crate::station_domain as sd;
+        let conf = self.conf_path.clone().ok_or_else(|| ApiError::unavailable("station.conf inconnu : réglage du domaine indisponible"))?;
+        let domain = sd::normalize_domain(&domain).map_err(ApiError::bad_request)?;
+        // Le DNS d'abord : sans lui, le certificat ne peut pas être obtenu.
+        let lookup = tokio::time::timeout(Duration::from_secs(8), tokio::net::lookup_host((domain.as_str(), 443))).await;
+        let ips: Vec<String> = match lookup {
+            Ok(Ok(addrs)) => {
+                let mut v: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
+                v.sort();
+                v.dedup();
+                v
+            }
+            _ => Vec::new(),
+        };
+        if ips.is_empty() {
+            return Err(ApiError::bad_request(format!("{domain} ne pointe encore nulle part : chez votre fournisseur de domaine, créez un enregistrement A vers l'adresse publique de votre box, puis réessayez (la propagation prend parfois une heure)")));
+        }
+        let mut warnings = Vec::new();
+        if self.services.info.domain.is_none() {
+            // Station en HTTP local : elle prendra elle-même les ports 80 et 443 au redémarrage.
+            let (p80, p443) = (sd::port_state(80), sd::port_state(443));
+            if p80 == "busy" || p443 == "busy" {
+                return Err(ApiError::conflict("les ports 80/443 de cette machine sont déjà pris (Nginx Proxy Manager ?) : c'est à ce proxy de servir le domaine, vers l'adresse locale de la station"));
+            }
+            if p80 == "privileged" || p443 == "privileged" {
+                let exe = std::env::current_exe().map(|e| e.display().to_string()).unwrap_or_else(|_| "astroportd".into());
+                warnings.push(format!("la station n'a pas le droit d'ouvrir les ports 80 et 443 : sur cette machine, lancez une fois « sudo setcap 'cap_net_bind_service=+ep' {exe} » avant de redémarrer"));
+            }
+        }
+        warnings.push("dans votre box, redirigez les ports 80 et 443 vers cette machine : sans cela, le certificat HTTPS ne peut pas être obtenu".to_owned());
+        sd::set_conf_value(&conf, "domain", &domain).map_err(|e| ApiError::internal(format!("{} : {e}", conf.display())))?;
+        Ok(json!({ "domain": domain, "ips": ips, "warnings": warnings, "restart": sd::restart_available(), "restart_command": "systemctl --user restart astroportd", "url": format!("https://{domain}/") }))
+    }
+
+    async fn restart(&self, _who: &Principal) -> Result<Value, ApiError> {
+        if !crate::station_domain::restart_available() {
+            return Err(ApiError::unavailable("la station ne tourne pas sous systemd : relancez-la vous-même (systemctl --user restart astroportd, ou la commande de démarrage)"));
+        }
+        self.services.activity.publish_to(astro_core::Audience::Captain, "info", "station", "redémarrage demandé par le Capitaine".to_owned(), None);
+        crate::station_domain::request_restart(Duration::from_millis(500));
+        Ok(json!({ "restarting": true }))
+    }
+
+    async fn join_take(&self, id: String) -> Result<Value, ApiError> {
+        match crate::sponsor::take(&self.services.db, &id).await.map_err(ApiError::internal)? {
+            Some(sealed) => {
+                self.services.activity.publish_to(astro_core::Audience::Captain, "info", "parrainage", "une station filleule a retiré son offre de parrainage".to_owned(), None);
+                Ok(json!({ "sealed": sealed }))
+            }
+            None => Err(ApiError::not_found("offre de parrainage introuvable, déjà utilisée ou expirée : demandez un nouveau jeton à la station marraine")),
+        }
+    }
+
+    async fn welcome_list(&self, who: &Principal) -> Result<Value, ApiError> {
+        Ok(json!({ "links": self.welcome_service()?.list(&who.hex).await.map_err(invite_error)? }))
+    }
+
+    async fn welcome_create(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
+        let n = |k: &str| body[k].as_u64().map(|v| u32::try_from(v).unwrap_or(u32::MAX));
+        self.welcome_service()?.create(&who.hex, body["label"].as_str().unwrap_or_default(), n("max_uses"), n("days")).await.map_err(invite_error)
+    }
+
+    async fn welcome_revoke(&self, who: &Principal, token: String) -> Result<Value, ApiError> {
+        self.welcome_service()?.revoke(&who.hex, &token).await.map_err(invite_error)?;
+        Ok(json!({ "revoked": true }))
+    }
+
+    async fn welcome_preview(&self, token: String) -> Result<Value, ApiError> {
+        self.welcome_service()?.preview(&token).await.map_err(invite_error)
+    }
+
+    async fn welcome_arrive(&self, ip: Option<std::net::IpAddr>, token: String, email: Option<String>, alias: Option<String>, lang: String) -> Result<Value, ApiError> {
+        let lang = if lang.is_empty() { "fr".to_owned() } else { lang };
+        let a = self.welcome_service()?.arrive(&token, ip, email.as_deref(), alias.as_deref(), &lang).await.map_err(invite_error)?;
+        let mut out = registered_json(&a.registered);
+        out["chat_peer"] = json!(a.host);
+        if !a.warnings.is_empty() {
+            out["warnings"] = json!(a.warnings);
+        }
+        Ok(out)
+    }
+
+    async fn fuel(&self, _who: &Principal) -> Result<Value, ApiError> {
+        Ok(match crate::primal_init::last_status(&self.services.db).await {
+            Some(mut st) => {
+                st["enabled"] = json!(true);
+                st
+            }
+            None => json!({ "enabled": false }),
+        })
+    }
+
     async fn economy(&self, _who: &Principal) -> Result<Value, ApiError> {
         let (latest, love, recent) = self
             .services
@@ -1693,7 +1841,44 @@ impl<B: BlobStore> Backend for StationUi<B> {
             Some(Err(e)) => Subsystem::new("bro", Status::Degraded, e),
         });
         out.push(if self.faces_enabled { Subsystem::new("facecloud", Status::Ok, "actif") } else { Subsystem::new("facecloud", Status::Disabled, "non activé") });
+        out.push(match (svc.tls_status(), crate::station_domain::refused()) {
+            (None, Some(why)) => Subsystem::new("https", Status::Down, why.to_owned()),
+            (tls, _) => tls_subsystem(tls, now_secs()),
+        });
         out
+    }
+}
+
+/// Le geste qui règle un échec ACME, d'après la cause que donne l'autorité (Let's Encrypt teste la station depuis Internet,
+/// comme le ferait une station amie : sa réponse dit déjà ce qui manque).
+pub fn acme_hint(error: &str, domain: &str) -> String {
+    let e = error.to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| e.contains(w));
+    if has(&["ratelimited", "rate limit", "too many"]) {
+        "quota de Let's Encrypt atteint pour ce domaine : la station réessaiera d'elle-même (patientez, sans redémarrer en boucle)".into()
+    } else if has(&["nxdomain", "no valid ip", "servfail", "dns problem", "no such host", "dns"]) {
+        format!("le DNS de {domain} ne mène pas ici : chez votre fournisseur de domaine, l'enregistrement A doit donner l'adresse publique de votre box")
+    } else if has(&["timeout", "timed out", "connection refused", "connection reset", "firewall", "connect"]) {
+        "Internet n'arrive pas jusqu'à la station : dans la box, redirigez les ports 80 et 443 (TCP) vers cette machine, et vérifiez son pare-feu".into()
+    } else if has(&["unauthorized", "404", "invalid response"]) {
+        format!("un autre serveur répond pour {domain} sur le port 80 : le DNS ou la redirection de la box vise une autre machine")
+    } else {
+        format!("vérifiez que le DNS de {domain} pointe sur la box et que la box redirige les ports 80 et 443 vers cette machine")
+    }
+}
+
+/// Le certificat HTTPS vu par le Capitaine : un échec ACME n'est plus seulement une ligne de journal (les reprises
+/// s'espacent jusqu'à 6 h), il remonte au cockpit avec sa cause et le geste qui la règle le plus souvent.
+pub fn tls_subsystem(tls: Option<(Vec<String>, astro_ui::acme::AcmeStatus)>, now: i64) -> Subsystem {
+    const SOON: i64 = 7 * 24 * 3600;
+    let Some((domains, st)) = tls else { return Subsystem::new("https", Status::Disabled, "sans domaine : HTTP local ou proxy (NPM) qui gère le certificat") };
+    let domain = domains.first().cloned().unwrap_or_default();
+    match (st.last_error, st.not_after) {
+        (Some(e), Some(end)) if end > now => Subsystem::new("https", Status::Degraded, format!("renouvellement en échec ({e}) ; le certificat actuel reste valable {} jour(s)", (end - now) / 86_400)),
+        (Some(e), _) => Subsystem::new("https", Status::Down, format!("certificat de {domain} non obtenu : {}. ({e}) Nouvel essai automatique.", acme_hint(&e, &domain))),
+        (None, Some(end)) if end <= now + SOON => Subsystem::new("https", Status::Degraded, format!("le certificat de {domain} expire dans {} jour(s)", (end - now).max(0) / 86_400)),
+        (None, Some(end)) => Subsystem::new("https", Status::Ok, format!("{domain}, valable {} jour(s)", (end - now) / 86_400)),
+        (None, None) => Subsystem::new("https", Status::Ok, format!("certificat de {domain} en cours d'obtention")),
     }
 }
 
@@ -1757,7 +1942,7 @@ impl<B: BlobStore> StationUi<B> {
 fn register_error(e: crate::register::RegisterError) -> ApiError {
     use crate::register::RegisterError as E;
     match e {
-        E::Closed | E::Full => ApiError::unavailable(e.to_string()),
+        E::Closed | E::Full | E::NoCaptain => ApiError::unavailable(e.to_string()),
         E::RateLimited(_) => ApiError::too_many(e.to_string()),
         E::Invalid(m) => ApiError::bad_request(m),
         E::Conflict(m) => ApiError::conflict(m),
@@ -1909,5 +2094,34 @@ fn book_error(e: crate::address_book::BookError) -> ApiError {
             eprintln!("interface : carnet d'adresses : {m}");
             ApiError::internal("opération impossible : voir les journaux de la station")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use astro_ui::acme::AcmeStatus;
+
+    use super::*;
+
+    #[test]
+    fn the_https_certificate_reaches_the_cockpit_with_its_cause() {
+        const NOW: i64 = 1_800_000_000;
+        const DAY: i64 = 86_400;
+        let d = || vec!["station.exemple.org".to_owned()];
+        let st = |err: Option<&str>, end: Option<i64>| Some((d(), AcmeStatus { issued: 0, not_after: end, last_error: err.map(str::to_owned) }));
+        assert_eq!(tls_subsystem(None, NOW).status, Status::Disabled, "sans domaine : rien à surveiller");
+        let first = tls_subsystem(st(Some("connexion refusée"), None), NOW);
+        assert_eq!(first.status, Status::Down, "jamais obtenu : HTTPS ne marche pas");
+        assert!(first.detail.contains("connexion refusée") && first.detail.contains("80 et 443") && first.detail.contains("station.exemple.org"), "{}", first.detail);
+        assert_eq!(tls_subsystem(st(Some("délai"), Some(NOW + 20 * DAY)), NOW).status, Status::Degraded, "renouvellement raté, l'ancien vaut encore");
+        // La cause de l'autorité devient un geste : box, DNS, quota, autre serveur.
+        let hint = |e: &str| acme_hint(e, "station.exemple.org");
+        assert!(hint("urn:ietf:params:acme:error:connection :: Timeout during connect (likely firewall problem)").contains("redirigez les ports 80 et 443"));
+        assert!(hint("urn:ietf:params:acme:error:dns :: DNS problem: NXDOMAIN looking up A for station.exemple.org").contains("enregistrement A"));
+        assert!(hint("urn:ietf:params:acme:error:rateLimited :: too many certificates already issued").contains("quota"));
+        assert!(hint("urn:ietf:params:acme:error:unauthorized :: Invalid response from http://station.exemple.org/.well-known/acme-challenge/x: 404").contains("un autre serveur"));
+        assert_eq!(tls_subsystem(st(None, Some(NOW + 3 * DAY)), NOW).status, Status::Degraded, "expire bientôt");
+        assert_eq!(tls_subsystem(st(None, Some(NOW + 60 * DAY)), NOW).status, Status::Ok);
+        assert_eq!(tls_subsystem(st(None, None), NOW).status, Status::Ok, "première demande en cours");
     }
 }

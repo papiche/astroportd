@@ -305,8 +305,8 @@ impl<C: Chain, P: PrimalSource> Billets<C, P> {
     /// Description d'un billet : valeur, authenticité, validité, état.
     async fn describe(&self, account: &Account) -> Result<(Value, u64), BilletError> {
         let master = self.master().await?.account();
-        let total = self.chain.balance(account).await.map_err(|e| BilletError::Failed("billet_chain_error", format!("solde illisible : {e}")))?.total.0;
-        let value = total.saturating_sub(RESERVE_G1_CENTS);
+        let balance = self.chain.balance(account).await.map_err(|e| BilletError::Failed("billet_chain_error", format!("solde illisible : {e}")))?;
+        let (total, value) = (balance.total.0, balance.spendable(Amount(RESERVE_G1_CENTS)).0);
         let (authentic, expires, state) = (self.of_this_uplanet(account, &master).await, self.expiry(account).await, self.state(account).await);
         let expired = expires.is_some_and(|t| t <= now());
         let status = match state.as_deref().and_then(|s| s.split('|').next()) {
@@ -762,11 +762,10 @@ impl<C: Chain, P: PrimalSource> Billets<C, P> {
                 self.alert(format!("Billet {} : les parts gardées ne redonnent pas sa clé", account.ss58()));
                 continue;
             }
-            let total = match self.chain.balance(&account).await {
-                Ok(b) => b.total.0,
+            let (total, forward) = match self.chain.balance(&account).await {
+                Ok(b) => (b.total.0, b.spendable(Amount(RESERVE_G1_CENTS)).0),
                 Err(_) => continue,
             };
-            let forward = total.saturating_sub(RESERVE_G1_CENTS);
             if forward == 0 {
                 self.set_state(&account, &format!("done|{}|0|{}", to.ss58(), now())).await; // déjà vide : rien à renvoyer
                 continue;
@@ -863,7 +862,7 @@ mod tests {
 
     impl Chain for Ledger {
         async fn balance(&self, a: &Account) -> Result<Balance, ChainError> {
-            Ok(Balance { total: Amount(self.balances.lock().unwrap().get(a).copied().unwrap_or(0)), transferable: Amount(0), unclaimed_uds: Amount(0) })
+            { let t = self.balances.lock().unwrap().get(a).copied().unwrap_or(0); Ok(Balance { total: Amount(t), transferable: Amount(t), unclaimed_uds: Amount(0) }) }
         }
         async fn transfer(&self, from: &Ed25519Signer, to: &Account, amount: Amount, _: TransferMode, _: Option<&str>) -> Result<TxOutcome, ChainError> {
             {

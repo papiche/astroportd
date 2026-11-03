@@ -91,6 +91,7 @@ pub fn gone_message(code: &str) -> &'static str {
         "invite_revoked" => "ce lien a été retiré par la personne qui vous l'a envoyé",
         "invite_expired" => "ce lien a expiré : demandez-en un nouveau",
         "invite_gone" => "ce lien ne sert plus (utilisé, expiré ou retiré)",
+        "welcome_full" => "ce lien d'accueil a servi autant de fois que prévu : demandez-en un nouveau",
         _ => "ce lien a déjà été utilisé",
     }
 }
@@ -422,6 +423,54 @@ impl<B: BlobStore> Invites<B> {
     }
 
     /// Nom sous lequel l'expéditeur se présente : son profil Nostr, sinon la partie locale de son email.
+    /// Migre les invitations **ancien format** (un tableau de fichiers figé à la création) encore ouvertes vers le format
+    /// courant `{ items, paths }`. Elles suivent alors le uCloud vivant comme les autres : un fichier supprimé entre-temps
+    /// sort de l'invitation au lieu d'être promis puis introuvable (son contenu a pu être libéré). Idempotent. Rend le
+    /// nombre d'invitations migrées.
+    pub async fn migrate_legacy(&self) -> Result<usize, InviteError> {
+        self.db
+            .writer()
+            .transaction(|tx| {
+                let rows: Vec<(String, String)> = tx
+                    .prepare("SELECT token, items FROM invites WHERE json_valid(items) AND json_type(items) = 'array' AND claimed_by IS NULL AND revoked_at IS NULL")?
+                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<Result<_, _>>()?;
+                let mut n = 0;
+                for (token, items) in rows {
+                    let Ok(Value::Array(list)) = serde_json::from_str::<Value>(&items) else { continue };
+                    let paths: Vec<&str> = list.iter().filter_map(|i| i["path"].as_str()).collect();
+                    let current = json!({ "items": list, "person": null, "paths": paths });
+                    tx.execute("UPDATE invites SET items = ?2 WHERE token = ?1", rusqlite::params![token, current.to_string()])?;
+                    n += 1;
+                }
+                Ok(n)
+            })
+            .await
+            .map_err(internal)
+    }
+
+    /// Nom affiché d'un compte : son profil, sinon le début de son email (pour les liens d'accueil).
+    pub async fn display_name(&self, hex: &str) -> String {
+        self.sender_name(hex).await
+    }
+
+    /// Amitié réciproque entre deux comptes hébergés ici : chacun ajoute l'autre à sa liste de contacts (kind 3, signée et
+    /// publiée). Rend les erreurs des deux côtés, sans s'arrêter à la première.
+    pub async fn befriend(&self, a: &str, b: &str) -> Vec<String> {
+        let mut errs = Vec::new();
+        for (who, target) in [(a, b), (b, a)] {
+            if let Err(e) = self.follow(who, target).await {
+                errs.push(e);
+            }
+        }
+        errs
+    }
+
+    /// Service d'inscription (création des comptes des liens d'accueil).
+    pub fn registrar(&self) -> &Arc<Registrar> {
+        &self.registrar
+    }
+
     async fn sender_name(&self, owner: &str) -> String {
         let o = owner.to_owned();
         self.db
@@ -516,7 +565,7 @@ impl<B: BlobStore> Invites<B> {
                 // La création a échoué : le lien reste valable, la personne peut corriger son adresse.
                 let _ = self.db.writer().execute("UPDATE invites SET claimed_at = NULL WHERE token = ?1 AND claimed_by IS NULL", vec![token.to_owned().into()]).await;
                 return Err(match e {
-                    RegisterError::Closed | RegisterError::Full => InviteError::Unavailable(e.to_string()),
+                    RegisterError::Closed | RegisterError::Full | RegisterError::NoCaptain => InviteError::Unavailable(e.to_string()),
                     RegisterError::RateLimited(_) => InviteError::RateLimited(e.to_string()),
                     RegisterError::Invalid(m) => InviteError::Invalid(m),
                     RegisterError::Conflict(_) => InviteError::EmailTaken,
@@ -908,7 +957,7 @@ async fn read_capped(mut body: impl tokio::io::AsyncRead + Unpin, max: u64) -> R
 }
 
 /// 128 bits aléatoires en hexadécimal.
-fn new_token() -> Result<String, InviteError> {
+pub(crate) fn new_token() -> Result<String, InviteError> {
     let mut b = [0u8; 16];
     getrandom::fill(&mut b).map_err(|e| internal(format!("aléa du système indisponible : {e}")))?;
     Ok(hex::encode(b))

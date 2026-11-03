@@ -61,7 +61,7 @@ figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line)
 <body>
 <a class="skip" href="#contenu">Aller au contenu</a>
 <header class="top">
-<p><span class="badge">Préversion 0.5.4-beta</span> <span class="badge">AGPL-3.0</span></p>
+<p><span class="badge">Préversion 0.5.5-beta</span> <span class="badge">AGPL-3.0</span></p>
 <h1>Démarrer sa station <span style="white-space:nowrap">astroportd</span>, pas à pas</h1>
 <p class="lead">Un cloud personnel chiffré, vos photos qui retrouvent les visages, le partage entre amis — sur une machine qui est la vôtre. Chaque étape se fait au <strong>terminal</strong> ou, quand c'est possible, au <strong>navigateur</strong>.</p>
 <nav class="toc" aria-labelledby="toc-t"><h2 id="toc-t">Les étapes</h2><ol style="list-style:none;padding-left:0"><li><a href="#etape-0">0. Avant de commencer</a></li><li><a href="#etape-1">1. Installer astroportd</a></li><li><a href="#etape-2">2. Activer Y-Level : une clé, quatre identités</a></li><li><a href="#etape-3">3. Choisir sa constellation : ORIGIN ou ẐEN</a></li><li><a href="#etape-4">4. Démarrer la station</a></li><li><a href="#etape-5">5. Créer mon MULTIPASS</a></li><li><a href="#etape-6">6. Vérifier que tout va bien</a></li><li><a href="#etape-7">7. Entrer dans l'interface web</a></li><li><a href="#etape-7b">7 bis. Le cockpit du Capitaine</a></li><li><a href="#etape-8">8. FaceCloud : retrouver et partager vos photos entre amis</a></li><li><a href="#etape-8b">8 bis. Contacts, agenda (CardDAV, CalDAV) et Mon compte</a></li><li><a href="#etape-8bis-b">8 bis-b. Mon coffre de mots de passe (KeePass)</a></li><li><a href="#etape-8bis-c">8 bis-c. Reprendre son uCloud d'Astroport.ONE</a></li><li><a href="#etape-8bis-d">8 bis-d. Remplir son uCloud depuis un autre serveur (Nextcloud, ownCloud…)</a></li><li><a href="#etape-8bis-e">8 bis-e. Ranger son uCloud par type</a></li><li><a href="#etape-8bis-f">8 bis-f. Un jeton par appareil (téléphones, tablettes, ordinateurs)</a></li><li><a href="#etape-8bis-g">8 bis-g. Hébergement facturé, compte technique et règlement hebdomadaire</a></li><li><a href="#etape-8bis-h">8 bis-h. Plusieurs astroportd sur une machine (ORIGIN + ZEN*) : un seul bassin de blobs</a></li><li><a href="#etape-8bis-i">8 bis-i. Plusieurs UPlanet dans un seul processus : assistant et astroportd planes</a></li><li><a href="#etape-8bis-j">8 bis-j. Messages privés et une personne dans plusieurs UPlanet</a></li><li><a href="#etape-8c">8 bis-k. Ma UPlanet : nom, charte, portefeuilles et économie en mouvement</a></li><li><a href="#etape-8bis-l">8 bis-l. Ğ1Billet : vérifier la valeur d'un billet papier et l'encaisser</a></li><li><a href="#etape-8bis-m">8 bis-m. Mon site public : le dossier /Public de l'uCloud</a></li><li><a href="#etape-8ter">8 ter. Options du Capitaine : moteur FaceID et règles du relai</a></li><li><a href="#etape-8quater">8 quater. Inviter quelqu'un à recevoir des photos</a></li><li><a href="#etape-8quinquies">8 quinquies. Sans email, connexion par PASS, signature déléguée</a></li><li><a href="#etape-9">9. Relier sa station aux autres Capitaines</a></li><li><a href="#etape-9b">9 bis. Une adresse pour chaque station et chaque MULTIPASS (DNSLink)</a></li><li><a href="#etape-10">10. En cas de problème</a></li><li><a href="#sur-un-smartphone">Sur un smartphone</a></li></ol></nav>
@@ -89,7 +89,7 @@ date       # l'année doit être 2026 ou plus
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p>Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.</p>
-<div class="box note"><p><span class="lbl">À savoir</span> astroportd est en <strong>préversion 0.5.4-beta</strong> : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.</p></div>
+<div class="box note"><p><span class="lbl">À savoir</span> astroportd est en <strong>préversion 0.5.5-beta</strong> : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.</p></div>
 <p>Vous aurez aussi besoin d'un compte <strong>MULTIPASS</strong> (votre identité Nostr) : astroportd le crée pour vous à l'étape 5.</p>
 </div>
 </div>
@@ -102,7 +102,9 @@ date       # l'année doit être 2026 ou plus
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <div class="code"><pre><code>curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 </code></pre></div>
-<p>Options utiles : <code>--version v0.5.4-beta</code>, <code>--static</code> (binaire statique, x86_64 et aarch64), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>. Ensuite :</p>
+<p>Options utiles : <code>--version v0.5.5-beta</code>, <code>--static</code> (binaire statique, x86_64 et aarch64), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>.</p>
+<p><strong>Mettre à jour</strong> : relancez simplement le même <code>install.sh</code>. Il montre l'installation en place (version, constellation, domaine, Capitaine, service), installe la nouvelle version, garde vos modèles et votre station, puis redémarre le service. Il ne relance jamais <code>init</code>, qui changerait l'identité de la station. <code>--force</code> réinstalle la même version.</p>
+<p>Ensuite :</p>
 <div class="code"><pre><code>astroportd --version
 </code></pre></div>
 <p>Si la commande est introuvable, ajoutez <code>~/.local/bin</code> à votre PATH : <code>export PATH=&quot;$HOME/.local/bin:$PATH&quot;</code>.</p>
@@ -295,6 +297,10 @@ astroportd ylevel --verify   # code de sortie 1 si ça ne correspond pas
 <div class="code"><pre><code>chmod 600 swarm.key
 astroportd init --mode zen --swarm-key ./swarm.key
 </code></pre></div>
+<p>Plus simple, <strong>sans recopier de fichier</strong> : le Capitaine de la station marraine lance <code>astroportd parrainer</code> et vous donne le jeton affiché (de la main à la main, ou par message chiffré). Sur votre station :</p>
+<div class="code"><pre><code>astroportd init --join 'astro-join:v1|https://marraine.exemple.org|…'
+</code></pre></div>
+<p>La station retire une seule fois l'offre de la marraine. Elle reçoit la <code>swarm.key</code> chiffrée (seul le jeton l'ouvre), puis s'amorce sur la marraine au démarrage : elle n'est pas seule dans l'essaim. Le jeton expire après 24 h et ne sert qu'une fois. Comparez l'empreinte de la <code>swarm.key</code> affichée des deux côtés.</p>
 <p><strong>Parcours C — Fonder SA constellation ẐEN</strong></p>
 <div class="code"><pre><code>astroportd swarm-key &gt; swarm.key
 chmod 600 swarm.key
@@ -407,7 +413,11 @@ journalctl --user -u astroportd -f   # suivre les journaux
 
 <div class="cols">
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
-<p><strong>Le Capitaine d'abord</strong> — le premier compte, désigné par <code>--captain</code> :</p>
+<p><strong>Le Capitaine d'abord.</strong> Si vous avez donné votre email à <code>astroportd init</code>, c'est déjà fait : <code>init</code> crée votre MULTIPASS de Capitaine à la fin et affiche votre code PASS. Sinon, deux chemins :</p>
+<ul>
+<li><strong>au navigateur</strong> : au démarrage, la station écrit dans son journal un <strong>code d'installation</strong> (« ⚓ Station sans Capitaine : ouvrez …/welcome et saisissez le code d'installation ABCD-EFGH »). Ouvrez <code>/welcome</code>, saisissez ce code et votre email : votre compte de Capitaine est créé. Tant qu'il n'existe pas, personne ne peut s'inscrire sur la station ;</li>
+<li><strong>au terminal</strong> — le premier compte, désigné par <code>--captain</code> :</li>
+</ul>
 <div class="code"><pre><code>astroportd multipass create capitaine@exemple.org --captain --lang fr
 </code></pre></div>
 <p><code>--captain</code> écrit aussi <code>~/.zen/game/players/.current/.player</code> et donne le rôle de Capitaine. C'est refusé si un autre Capitaine existe déjà. En ẐEN, ajoutez <code>--swarm-key ./swarm.key</code> : le compte est <strong>rattaché à une seule constellation</strong> (ORIGIN s'il n'y a pas de <code>swarm.key</code>, sinon ẐEN).</p>

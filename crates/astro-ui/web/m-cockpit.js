@@ -46,21 +46,92 @@ export function analyze({ health, cs, ec, ac, tun, tk, dash, dns }) {
 // « Mettre la station en service » : ce qu'un Capitaine fait la première semaine, coché d'après l'état réel.
 export function setup({ dash, cs, ac, dns }) {
   const list = [
-    { done: !!dash?.station?.domain, title: 'Donner un nom de domaine à la station', why: 'Pour que vos membres l\'ouvrent en HTTPS depuis leur téléphone : astroportd init --domain votre.domaine', href: '#/station' },
+    { done: !!dash?.station?.domain, title: 'Donner un nom de domaine à la station', why: 'Pour que vos membres l\'ouvrent en HTTPS depuis leur téléphone.', href: '#/cockpit', act: 'domain' },
     { done: dash?.p2p?.enabled === true, title: 'Rejoindre le maillage P2P', why: 'Sans lui, aucune autre station ne peut vous joindre (--p2p-listen).', href: '#/planes' },
     { done: (cs?.nodes || []).some(n => !n.self), title: 'Voir d\'autres stations', why: 'Rejoignez une constellation ou indiquez un dossier de pairs.', href: '#/planes' },
     { done: dns?.configured === true, title: 'Activer les adresses de la coopérative', why: 'La station et chaque MULTIPASS obtiennent leur adresse : renseignez les clés OVH.', href: '#/coop' },
-    { done: (ac?.accounts || []).length > 1, title: 'Inviter votre premier membre', why: 'Un MULTIPASS s\'inscrit sur /register ; la station héberge ses fichiers chiffrés.', href: '#/station' },
+    { done: (ac?.accounts || []).length > 1, title: 'Inviter votre premier membre', why: 'Créez un lien d\'accueil et son QR : qui l\'ouvre crée son MULTIPASS et arrive dans la discussion avec vous.', href: '#/cockpit', act: 'welcome' },
   ];
   return { list, left: list.filter(s => !s.done).length };
 }
 
+// Liens d'accueil : un lien et son QR pour plusieurs personnes ; qui l'ouvre devient ami du Capitaine et arrive dans sa discussion.
+function welcomeDialog(K) {
+  const { h, t } = K, list = h('ul', { class: 'wl-list' }), shown = h('div', { class: 'wl-shown', role: 'status' });
+  const show = l => shown.replaceChildren(h('p', {}, h('strong', {}, l.label || t('Lien d\'accueil'))), svgOf(l.qr_svg), h('p', {}, h('code', {}, l.url)),
+    h('p', {}, h('button', { type: 'button', onclick: () => navigator.clipboard?.writeText(l.url).then(() => K.toast(t('Lien copié'), 1), e => K.toast(e.message)) }, t('Copier le lien'))));
+  const act = (label, f) => h('button', { type: 'button', class: 'ghost', onclick: () => f().catch(e => K.toast(e.message)) }, label);
+  const load = async () => {
+    const r = await K.api('/api/v1/station/welcome');
+    list.replaceChildren(...(r.links.length ? r.links.map(l => h('li', { class: l.active ? '' : 'muted' },
+      h('div', {}, h('strong', {}, l.label || '—'), h('br'), h('small', { class: 'muted' }, t('{0} sur {1} place(s) prise(s)', l.uses, l.max_uses), ' · ', l.active ? t('jusqu\'au {0}', K.when(l.expires_at)) : t('ne sert plus'))),
+      l.active ? h('span', {}, act(t('QR'), async () => show((await K.api('/api/v1/station/welcome?qr=' + l.token)).links.find(x => x.token === l.token))), ' ',
+        act(t('Retirer'), async () => { await K.api(`/api/v1/station/welcome/${l.token}/revoke`, { method: 'POST' }); await load(); })) : null))
+      : [h('li', { class: 'muted' }, t('Aucun lien pour l\'instant.'))]));
+  };
+  const label = h('input', { id: 'wl-label', maxLength: 80, placeholder: t('Hackerspace, marché du samedi, article…') });
+  const uses = h('input', { id: 'wl-uses', type: 'number', min: 1, max: 1000, value: 50 });
+  const form = h('form', { onsubmit: async ev => {
+    ev.preventDefault();
+    try { show(await K.api('/api/v1/station/welcome', { method: 'POST', body: { label: label.value, max_uses: Math.trunc(+uses.value) } })); label.value = ''; await load(); } catch (e) { K.toast(e.message); }
+  } }, h('label', { for: 'wl-label' }, t('Pour qui, ou pour où ?')), label, h('label', { for: 'wl-uses' }, t('Nombre de places')), uses, h('p', {}, h('button', { type: 'submit' }, t('Créer le lien'))));
+  const dlg = h('dialog', { 'aria-labelledby': 'wl-t', onclose: () => dlg.remove() }, h('button', { type: 'button', class: 'x', 'aria-label': t('Fermer'), onclick: () => dlg.close() }, '×'),
+    h('h2', { id: 'wl-t' }, t('Liens d\'accueil')),
+    h('p', { class: 'muted' }, t('Un lien et son QR, pour plusieurs personnes : à l\'entrée d\'un lieu, sur un site ou dans un article. Qui l\'ouvre crée son MULTIPASS, devient votre ami et arrive dans la discussion avec vous. Valable 90 jours, retirable à tout moment.')),
+    form, shown, h('h3', {}, t('Vos liens')), list);
+  document.body.append(dlg); dlg.showModal(); label.focus();
+  load().catch(e => K.toast(e.message));
+  return dlg;
+}
+
 const TIER = { Light: '🌿', Standard: '⚡', Brain: '🔥' };
+// Montant en Ğ1 depuis des centimes, sans flottant.
+export const g1 = c => `${Math.floor(c / 100)},${String(c % 100).padStart(2, '0')}`;
+const svgOf = s => { const d = s && new DOMParser().parseFromString(s, 'image/svg+xml').documentElement; return d?.nodeName === 'svg' ? document.importNode(d, true) : null; };
 export default async function cockpit(root, K) {
   const { h, t } = K, api = p => K.api(p), soft = p => K.api(p).catch(() => null);
   const link = h('link', { rel: 'stylesheet', href: '/ui/m-cockpit.css' }); document.head.append(link);
+  // Carburant : le portefeuille maître à créditer pour ouvrir les portefeuilles coopératifs (transaction primale).
+  const fuelCard = f => (f?.needed_g1_cents > 0 ? h('section', { class: 'card ck-fuel' }, h('h2', {}, '⛽ ', t('Carburant de la station')),
+    h('p', {}, t('Pour ouvrir ses {0} portefeuilles coopératifs, la station envoie 1 Ğ1 à chacun depuis son portefeuille maître : il lui manque {1} Ğ1.', f.waiting, g1(f.needed_g1_cents))),
+    h('div', { class: 'ck-fuel-row' }, svgOf(f.qr_svg), h('div', {}, h('code', { class: 'ck-addr' }, f.master),
+      h('p', {}, h('button', { type: 'button', class: 'ghost', onclick: () => navigator.clipboard?.writeText(f.master).then(() => K.toast(t('Adresse copiée'), 1), e => K.toast(e.message)) }, t('Copier l\'adresse'))),
+      h('p', { class: 'muted' }, t('Disponible : {0} Ğ1 · vérifié le {1}', g1(f.spendable_g1_cents), K.when(f.at))))),
+    h('p', { class: 'muted' }, t('Virez-les depuis Cesium ou Ğecko. La station revérifie toutes les 6 h : les portefeuilles s\'ouvrent seuls dès que le dépôt arrive.'))) : null);
+  // Nom de domaine : vérifié (DNS, ports), enregistré dans station.conf, appliqué au redémarrage (systemd relance la station).
+  const restartBlock = (r, out) => (r.restart
+    ? h('button', { type: 'button', class: 'primary', onclick: async ev => {
+      ev.currentTarget.disabled = true;
+      try { await K.api('/api/v1/station/restart', { method: 'POST' }); out.replaceChildren(h('p', {}, t('Redémarrage en cours. Dans une minute, ouvrez :'), ' ', h('a', { href: r.url }, r.url)), h('p', { class: 'muted' }, t('Le certificat HTTPS s\'obtient au premier démarrage ; en cas d\'échec, le cockpit en donne la cause.'))); } catch (e) { K.toast(e.message); ev.currentTarget.disabled = false; }
+    } }, t('Redémarrer la station'))
+    : h('p', {}, t('Puis redémarrez la station sur la machine :'), ' ', h('code', {}, r.restart_command)));
+  const domainDialog = async () => {
+    const info = await api('/api/v1/station/domain').catch(e => { K.toast(e.message); return null; });
+    if (!info) return;
+    const out = h('div', { role: 'status', 'aria-live': 'polite' });
+    const pending = info.pending ? h('p', { class: 'muted' }, t('Enregistré : {0}, en attente de redémarrage.', info.saved), ' ', restartBlock({ ...info, url: `https://${info.saved}/` }, out)) : null;
+    const inp = h('input', { id: 'ck-dom', type: 'text', inputMode: 'url', autocomplete: 'off', spellcheck: false, required: true, placeholder: 'station.mondomaine.org', value: info.saved || info.domain || '' });
+    const go = h('button', { type: 'submit' }, t('Vérifier et enregistrer'));
+    const form = h('form', { onsubmit: async ev => {
+      ev.preventDefault(); go.disabled = true; out.replaceChildren(h('p', { class: 'muted' }, t('Vérification du DNS…')));
+      try {
+        const r = await K.api('/api/v1/station/domain', { method: 'POST', body: { domain: inp.value } });
+        pending?.remove();
+        out.replaceChildren(h('p', {}, '✅ ', t('{0} pointe vers {1} : domaine enregistré.', r.domain, r.ips.join(', '))), h('ul', {}, r.warnings.map(w => h('li', {}, w))),
+          h('p', { class: 'muted' }, t('Après le redémarrage, l\'interface sera à {0}.', r.url)), restartBlock(r, out));
+      } catch (e) { out.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); } finally { go.disabled = false; }
+    } }, h('label', { for: 'ck-dom' }, t('Nom de domaine')), inp, h('p', {}, go));
+    const dlg = h('dialog', { 'aria-labelledby': 'ck-dom-t', onclose: () => dlg.remove() },
+      h('button', { type: 'button', class: 'x', 'aria-label': t('Fermer'), onclick: () => dlg.close() }, '×'),
+      h('h2', { id: 'ck-dom-t' }, t('Nom de domaine de la station')),
+      h('ol', {}, h('li', {}, t('Chez votre fournisseur de domaine, faites pointer le nom (enregistrement A) vers l\'adresse publique de votre box.')), h('li', {}, t('Dans la box, redirigez les ports 80 et 443 vers cette machine.')), h('li', {}, t('Enregistrez ici, puis redémarrez : la station obtient seule son certificat HTTPS.'))),
+      pending, form, out);
+    document.body.append(dlg); dlg.showModal(); inp.focus();
+    K.cleanup(() => dlg.remove());
+  };
+  const welcome = () => { const d = welcomeDialog(K); K.cleanup(() => d.remove()); };
   const draw = async () => {
-    const [dash, health, cs, ec, ac, tun, tk, dns] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()).catch(() => null), soft('/api/v1/station/constellation'), soft('/api/v1/station/economy'), soft('/api/v1/station/accounts'), soft('/api/v1/station/admin/tunnels'), soft('/api/v1/station/admin/tasks'), soft('/api/v1/station/admin/dnslink')]);
+    const [dash, health, cs, ec, ac, tun, tk, dns, fuel] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()).catch(() => null), soft('/api/v1/station/constellation'), soft('/api/v1/station/economy'), soft('/api/v1/station/accounts'), soft('/api/v1/station/admin/tunnels'), soft('/api/v1/station/admin/tasks'), soft('/api/v1/station/admin/dnslink'), soft('/api/v1/station/fuel')]);
     const a = analyze({ health, cs, ec, ac, tun, tk, dash, dns }), st = dash.station, su = setup({ dash, cs, ac, dns });
     // Tant que la mise en service n'est pas finie, ses étapes disent déjà les informations (station seule, adresses) : pas de doublon.
     const todos = su.left ? a.todos.filter(x => x.level !== 'info') : a.todos;
@@ -84,17 +155,18 @@ export default async function cockpit(root, K) {
     const brains = a.nodes.filter(n => n.tier === 'Brain' && n.services?.includes('ollama')).length;
     root.replaceChildren(...[
       h('section', { class: 'card ck-hero ' + a.level, 'aria-live': 'polite' }, h('span', { class: 'ck-big', 'aria-hidden': 'true' }, { ok: '✅', degraded: '🟠', down: '🔴' }[a.level]), h('div', {}, h('h2', {}, t(a.verdict)), h('p', { class: 'muted' }, todos.length ? t('Voici par quoi commencer :') : t('Rien ne demande votre attention. La page se met à jour toute seule.')))),
+      fuelCard(fuel),
       todos.length ? h('section', { class: 'card' }, h('h2', {}, t('À faire')), h('ul', { class: 'ck-list' }, todos.slice(0, 3).map(todo)), todos.length > 3 ? h('details', {}, h('summary', {}, t('Voir les {0} autres', todos.length - 3)), h('ul', { class: 'ck-list' }, todos.slice(3).map(todo))) : null) : null,
       su.left ? h('section', { class: 'card' }, h('h2', {}, t('Mettre la station en service'), h('small', { class: 'muted' }, ` · ${su.list.length - su.left}/${su.list.length}`)),
         h('progress', { max: su.list.length, value: su.list.length - su.left, 'aria-label': t('Étapes terminées') }),
-        h('ul', { class: 'ck-steps' }, su.list.map(x => h('li', { class: x.done ? 'done' : '' }, h('span', { 'aria-hidden': 'true' }, x.done ? '✅' : '⬜'), h('div', {}, x.done ? t(x.title) : h('a', { href: x.href }, h('strong', {}, t(x.title))), x.done ? null : h('p', { class: 'muted' }, t(x.why))))))) : null,
+        h('ul', { class: 'ck-steps' }, su.list.map(x => h('li', { class: x.done ? 'done' : '' }, h('span', { 'aria-hidden': 'true' }, x.done ? '✅' : '⬜'), h('div', {}, x.done ? t(x.title) : h('a', { href: x.href, onclick: x.act ? ev => { ev.preventDefault(); x.act === 'domain' ? domainDialog() : welcome(); } : null }, h('strong', {}, t(x.title))), x.done ? null : h('p', { class: 'muted' }, t(x.why))))))) : null,
       h('h2', { class: 'ck-h' }, t('Les étages de la station')), h('div', { class: 'grid' }, floors),
       h('h2', { class: 'ck-h' }, t('L\'essaim'), h('small', { class: 'muted' }, brains ? ` · ${brains} ${t('Brain(s) offrent Ollama')}` : '')), h('div', { class: 'grid' }, a.nodes.map(node)),
       dns?.configured ? h('section', { class: 'card' }, h('h2', {}, t('Adresses de la coopérative')),
         dns.station?.name ? h('p', {}, '📡 ', h('code', {}, dns.station.name), h('small', { class: 'muted' }, ' ' + t('cette station'))) : null,
         h('p', { class: 'muted' }, t('{0} adresse(s) à jour sur {1}', dns.unchanged + dns.written, dns.total), dns.pending ? ' · ' + t('{0} en attente', dns.pending) : '', dns.failed ? ' · ' + t('{0} en échec', dns.failed) : ''),
         h('button', { onclick: async ev => { ev.currentTarget.disabled = true; try { await K.api('/api/v1/station/admin/dnslink', { method: 'POST', body: { action: 'sync' } }); await draw(); } catch (e) { K.toast(e.message); ev.currentTarget.disabled = false; } } }, t('Enregistrer maintenant'))) : null,
-      h('p', { class: 'muted' }, h('a', { href: '#/station' }, t('Détails techniques')), ' · ', h('a', { href: '#/options' }, t('Tunnels et accès')), ' · ', h('a', { href: '#/coop' }, t('Configuration coopérative')))].filter(Boolean));
+      h('p', { class: 'muted' }, h('a', { href: '#/station' }, t('Détails techniques')), ' · ', h('a', { href: '#/options' }, t('Tunnels et accès')), ' · ', h('a', { href: '#/coop' }, t('Configuration coopérative')), ' · ', h('a', { href: '#/cockpit', onclick: ev => { ev.preventDefault(); welcome(); } }, t('Liens d\'accueil')))].filter(Boolean));
   };
   K.cleanup(() => link.remove());
   await draw();

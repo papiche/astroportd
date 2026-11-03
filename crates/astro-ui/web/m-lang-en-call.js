@@ -1,6 +1,8 @@
 'use strict';
 // Dictionnaire en, écran m-call.js.
 export default {
+"Voix seule : couper la vidéo dans les deux sens": "Voice only: turn video off both ways",
+"Voix seule": "Voice only",
 "Micro refusé : autorisez-le dans votre navigateur pour appeler.": "Microphone blocked: allow it in your browser to call.",
 "Couper le micro": "Mute",
 "Couper la caméra": "Turn camera off",

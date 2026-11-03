@@ -554,17 +554,8 @@ pub async fn bind(addr: SocketAddr) -> std::io::Result<Vec<tokio::net::UdpSocket
     if !addr.ip().is_unspecified() {
         return Ok(vec![tokio::net::UdpSocket::bind(addr).await?]);
     }
-    let v6 = addr.is_ipv6();
-    let ips: Vec<IpAddr> = match if_addrs::get_if_addrs() {
-        Ok(list) => list
-            .into_iter()
-            .map(|i| i.ip())
-            .filter(|ip| match ip {
-                IpAddr::V4(_) => true,
-                // Adresses de lien local (fe80::/10) : il leur faudrait un numéro d'interface ; inutiles pour un appel.
-                IpAddr::V6(v) => v6 && (v.segments()[0] & 0xFFC0) != 0xFE80,
-            })
-            .collect(),
+    let ips: Vec<IpAddr> = match local_ips(addr.is_ipv6()) {
+        Ok(ips) => ips,
         Err(e) => {
             eprintln!("relais d'appel : adresses locales illisibles ({e}) : une seule prise sur {addr}");
             return Ok(vec![tokio::net::UdpSocket::bind(addr).await?]);
@@ -587,33 +578,93 @@ pub async fn bind(addr: SocketAddr) -> std::io::Result<Vec<tokio::net::UdpSocket
     Ok(out)
 }
 
+/// Adresses locales utilisables pour un appel (IPv4, et IPv6 hors lien local si `v6`).
+fn local_ips(v6: bool) -> std::io::Result<Vec<IpAddr>> {
+    Ok(if_addrs::get_if_addrs()?
+        .into_iter()
+        .map(|i| i.ip())
+        .filter(|ip| match ip {
+            IpAddr::V4(_) => true,
+            // Adresses de lien local (fe80::/10) : il leur faudrait un numéro d'interface ; inutiles pour un appel.
+            IpAddr::V6(v) => v6 && (v.segments()[0] & 0xFFC0) != 0xFE80,
+        })
+        .collect())
+}
+
+/// Prises au plus (une par adresse locale vue depuis le démarrage).
+const MAX_SOCKETS: usize = 64;
+
+/// Suivi des adresses de la machine : une box qui redonne une autre adresse (DHCP), un passage de l'Ethernet au Wi-Fi, un VPN
+/// qui démarre… Sans lui, le relais n'écouterait que les adresses du démarrage, et les appels échoueraient sans bruit.
+pub struct Rebind {
+    /// Intervalle entre deux lectures des adresses.
+    pub every: Duration,
+    /// Adresses actuelles de la machine.
+    pub ips: Box<dyn Fn() -> Vec<IpAddr> + Send + Sync>,
+}
+
+impl Rebind {
+    /// Suivi des vraies adresses toutes les 10 min, seulement pour une écoute « toutes les adresses » (0.0.0.0 ou ::).
+    pub fn local(addr: SocketAddr) -> Option<Self> {
+        let v6 = addr.is_ipv6();
+        addr.ip().is_unspecified().then(|| Self { every: Duration::from_secs(600), ips: Box::new(move || local_ips(v6).unwrap_or_default()) })
+    }
+}
+
+fn spawn_reader(i: usize, s: std::sync::Arc<tokio::net::UdpSocket>, tx: tokio::sync::mpsc::Sender<(usize, SocketAddr, Vec<u8>)>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut buf = vec![0u8; MAX_PACKET + 1];
+        loop {
+            match s.recv_from(&mut buf).await {
+                Ok((n, from)) => {
+                    if tx.send((i, from, buf[..n].to_vec())).await.is_err() {
+                        return;
+                    }
+                }
+                Err(e) => eprintln!("relais d'appel : réception impossible : {e}"),
+            }
+        }
+    })
+}
+
 /// Sert STUN et TURN sur `sockets` jusqu'à l'arrêt : un lecteur par prise, un seul fil possède l'état du relais. Chaque navigateur
 /// reçoit ses réponses et son média par la prise qu'il a jointe. Une erreur d'émission est dite, jamais fatale.
-pub async fn serve(sockets: Vec<tokio::net::UdpSocket>, mut relay: Relay, mut stop: tokio::sync::watch::Receiver<bool>) {
-    let sockets: Vec<std::sync::Arc<tokio::net::UdpSocket>> = sockets.into_iter().map(std::sync::Arc::new).collect();
+pub async fn serve(sockets: Vec<tokio::net::UdpSocket>, relay: Relay, stop: tokio::sync::watch::Receiver<bool>) {
+    serve_rebinding(sockets, relay, stop, None).await;
+}
+
+/// Comme [`serve`], et avec `rebind`, une prise de plus (même port) sur chaque nouvelle adresse de la machine. Les prises des
+/// adresses disparues restent, muettes : les retirer décalerait le routage des navigateurs déjà venus.
+pub async fn serve_rebinding(sockets: Vec<tokio::net::UdpSocket>, mut relay: Relay, mut stop: tokio::sync::watch::Receiver<bool>, rebind: Option<Rebind>) {
+    let port = sockets.first().and_then(|s| s.local_addr().ok()).map_or(0, |a| a.port());
+    let mut known: std::collections::HashSet<IpAddr> = sockets.iter().filter_map(|s| s.local_addr().ok()).map(|a| a.ip()).collect();
+    let mut sockets: Vec<std::sync::Arc<tokio::net::UdpSocket>> = sockets.into_iter().map(std::sync::Arc::new).collect();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<(usize, SocketAddr, Vec<u8>)>(4096);
-    let mut readers = Vec::new();
-    for (i, s) in sockets.iter().enumerate() {
-        let (s, tx) = (s.clone(), tx.clone());
-        readers.push(tokio::spawn(async move {
-            let mut buf = vec![0u8; MAX_PACKET + 1];
-            loop {
-                match s.recv_from(&mut buf).await {
-                    Ok((n, from)) => {
-                        if tx.send((i, from, buf[..n].to_vec())).await.is_err() {
-                            return;
-                        }
-                    }
-                    Err(e) => eprintln!("relais d'appel : réception impossible : {e}"),
-                }
-            }
-        }));
-    }
-    drop(tx);
+    let mut readers: Vec<_> = sockets.iter().enumerate().map(|(i, s)| spawn_reader(i, s.clone(), tx.clone())).collect();
+    let every = rebind.as_ref().map_or(Duration::from_secs(3600), |r| r.every);
+    let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
     // Par quelle prise joindre chaque navigateur (la dernière par laquelle il est venu), borné.
     let mut via: HashMap<SocketAddr, usize> = HashMap::new();
     loop {
         tokio::select! {
+            _ = tick.tick(), if rebind.is_some() => {
+                let Some(r) = &rebind else { continue };
+                for ip in (r.ips)() {
+                    if known.contains(&ip) || sockets.len() >= MAX_SOCKETS {
+                        continue;
+                    }
+                    known.insert(ip); // un échec n'est dit qu'une fois
+                    match tokio::net::UdpSocket::bind(SocketAddr::new(ip, port)).await {
+                        Ok(s) => {
+                            println!("relais d'appel : nouvelle adresse de la machine, écoute aussi sur udp/{ip}:{port}");
+                            let s = std::sync::Arc::new(s);
+                            readers.push(spawn_reader(sockets.len(), s.clone(), tx.clone()));
+                            sockets.push(s);
+                        }
+                        Err(e) => eprintln!("relais d'appel : udp/{ip}:{port} impossible : {e}"),
+                    }
+                }
+            }
             got = rx.recv() => {
                 let Some((i, from, packet)) = got else { break };
                 if via.len() > 4 * MAX_ALLOCATIONS + 1024 {

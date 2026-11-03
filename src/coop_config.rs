@@ -35,19 +35,25 @@ pub struct Section {
     pub title: &'static str,
     /// Clés, dans l'ordre d'affichage (celui de `cooperative_config.sh`).
     pub keys: &'static [&'static str],
+    /// Niveau de l'écran : `essential` (ce qui met la station en service), `services` (envois, paiements, API),
+    /// `experts` (fiscalité, parts, répartition : replié par défaut, rarement touché).
+    pub level: &'static str,
 }
+
+/// Niveaux, dans l'ordre de l'écran.
+pub const LEVELS: &[&str] = &["essential", "services", "experts"];
 
 /// Sections et clés connues. Toute autre clé est refusée à l'écriture (liste blanche, comme côté UPassport).
 pub const SECTIONS: &[Section] = &[
-    Section { id: "uplanet", title: "Nom et charte de l'UPlanet", keys: &["UPLANET_NAME", "CHARTER_VERSION", "CHARTER_TEXT"] },
-    Section { id: "fiscal", title: "Paramètres fiscaux", keys: &["TVA_RATE", "IS_RATE_REDUCED", "IS_RATE_NORMAL", "IS_THRESHOLD"] },
-    Section { id: "shares", title: "Parts coopératives", keys: &["ZENCARD_SATELLITE", "ZENCARD_CONSTELLATION", "PAF", "NCARD", "ZCARD"] },
-    Section { id: "3x13", title: "Règle 3×1/3 + 1 %", keys: &["TREASURY_PERCENT", "RND_PERCENT", "ASSETS_PERCENT", "CAPTAIN_BONUS_PERCENT"] },
-    Section { id: "oc", title: "OpenCollective", keys: &["OCSLUG", "OCAPIKEY", "OC_URL_CLOUD", "OC_URL_MEMBRE", "OC_URL_SATELLITE", "OC_URL_CONSTELLATION"] },
-    Section { id: "tiers", title: "Routage des paliers", keys: &["TIER_SLUG_SATELLITE", "TIER_SLUG_CONSTELLATION", "TIER_SLUG_LABO", "TIER_SLUG_CLOUD"] },
-    Section { id: "api", title: "Clés d'API", keys: &["PLANTNET_API_KEY", "GIT_HOST", "GIT_TOKEN", "GIT_OWNER"] },
-    Section { id: "mj", title: "Mailjet", keys: &["MJ_APIKEY_PUBLIC", "MJ_APIKEY_PRIVATE", "MJ_SENDER_EMAIL"] },
-    Section { id: "ovh", title: "DNSLink OVH", keys: &["OVH_APP_KEY", "OVH_APP_SECRET", "OVH_CONSUMER_KEY", "OVH_ZONE"] },
+    Section { id: "uplanet", title: "Nom et charte de l'UPlanet", keys: &["UPLANET_NAME", "CHARTER_VERSION", "CHARTER_TEXT"], level: "essential" },
+    Section { id: "fiscal", title: "Paramètres fiscaux", keys: &["TVA_RATE", "IS_RATE_REDUCED", "IS_RATE_NORMAL", "IS_THRESHOLD"], level: "experts" },
+    Section { id: "shares", title: "Parts coopératives", keys: &["ZENCARD_SATELLITE", "ZENCARD_CONSTELLATION", "PAF", "NCARD", "ZCARD"], level: "experts" },
+    Section { id: "3x13", title: "Règle 3×1/3 + 1 %", keys: &["TREASURY_PERCENT", "RND_PERCENT", "ASSETS_PERCENT", "CAPTAIN_BONUS_PERCENT"], level: "experts" },
+    Section { id: "oc", title: "OpenCollective", keys: &["OCSLUG", "OCAPIKEY", "OC_URL_CLOUD", "OC_URL_MEMBRE", "OC_URL_SATELLITE", "OC_URL_CONSTELLATION"], level: "services" },
+    Section { id: "tiers", title: "Routage des paliers", keys: &["TIER_SLUG_SATELLITE", "TIER_SLUG_CONSTELLATION", "TIER_SLUG_LABO", "TIER_SLUG_CLOUD"], level: "experts" },
+    Section { id: "api", title: "Clés d'API", keys: &["PLANTNET_API_KEY", "GIT_HOST", "GIT_TOKEN", "GIT_OWNER"], level: "services" },
+    Section { id: "mj", title: "Mailjet", keys: &["MJ_APIKEY_PUBLIC", "MJ_APIKEY_PRIVATE", "MJ_SENDER_EMAIL"], level: "services" },
+    Section { id: "ovh", title: "DNSLink OVH", keys: &["OVH_APP_KEY", "OVH_APP_SECRET", "OVH_CONSUMER_KEY", "OVH_ZONE"], level: "essential" },
 ];
 
 /// Charte proposée tant que le Capitaine n'en a pas publié une (même texte que `docs/CHARTE_UPLANET.md`).
@@ -184,7 +190,7 @@ pub fn view(stored: Option<&Stored>, uplanet_name: &str, coop_hex: &str) -> Valu
                     (false, v) => json!({ "key": k, "secret": false, "value": v }),
                 })
                 .collect();
-            json!({ "id": s.id, "title": s.title, "fields": fields })
+            json!({ "id": s.id, "title": s.title, "level": s.level, "fields": fields })
         })
         .collect();
     let extra: Vec<&String> = stored.map(|s| s.values.keys().filter(|k| !is_known(k) && !k.starts_with('_')).collect()).unwrap_or_default();
@@ -275,6 +281,15 @@ mod tests {
 
     fn patch(items: &[(&str, Option<&str>)]) -> BTreeMap<String, Option<String>> {
         items.iter().map(|(k, v)| ((*k).to_owned(), v.map(str::to_owned))).collect()
+    }
+
+    #[test]
+    fn every_section_has_a_level_and_the_essentials_unlock_the_addresses() {
+        assert!(SECTIONS.iter().all(|s| LEVELS.contains(&s.level)), "niveau inconnu");
+        let level = |id: &str| SECTIONS.iter().find(|s| s.id == id).map(|s| s.level);
+        assert_eq!(level("ovh"), Some("essential"), "le cockpit envoie ici pour activer les adresses : en tête d'écran");
+        assert_eq!((level("fiscal"), level("3x13")), (Some("experts"), Some("experts")), "la fiscalité reste repliée");
+        assert!(LEVELS.iter().all(|l| SECTIONS.iter().any(|s| s.level == *l)), "aucun niveau vide");
     }
 
     #[test]

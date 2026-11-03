@@ -22,6 +22,7 @@ use astro_lifecycle::multipass::{self, MultipassError};
 use astro_lifecycle::share::{self, Recovery};
 use astro_nostr_proto::Event;
 use astro_sync::Projector;
+use rusqlite::OptionalExtension;
 
 /// Publication des événements de naissance (relai local et relais de la constellation) ; l'échec n'annule pas
 /// l'inscription, il est dit sur le bus d'activité.
@@ -56,6 +57,9 @@ pub enum RegisterError {
     /// Quota de comptes atteint.
     #[error("cette station a atteint son nombre maximal de MULTIPASS")]
     Full,
+    /// La station n'a pas encore de Capitaine : personne ne s'inscrit avant lui.
+    #[error("cette station n'a pas encore de Capitaine : l'inscription ouvrira dès que son compte sera créé")]
+    NoCaptain,
     /// Trop d'inscriptions depuis cette adresse.
     #[error("trop d'inscriptions depuis cette adresse : réessayez dans {0} min")]
     RateLimited(u64),
@@ -101,6 +105,10 @@ pub struct Registrar {
     recent: Mutex<HashMap<IpAddr, Vec<u64>>>,
     /// Une inscription à la fois : le quota et l'unicité se jugent sur un état stable.
     gate: tokio::sync::Mutex<()>,
+    /// Inscriptions web refusées tant qu'aucun Capitaine n'est hébergé ici (voir [`Registrar::require_captain`]).
+    require_captain: bool,
+    /// `players/.current/.player` : désigne le Capitaine pour la découverte des identités au prochain démarrage.
+    player_file: Option<PathBuf>,
 }
 
 fn now() -> u64 {
@@ -152,7 +160,60 @@ fn random_suffix() -> Result<String, getrandom::Error> {
 impl Registrar {
     /// Service d'inscription de la constellation `uplanet_name`, dossiers de comptes `nostr_root`.
     pub fn new(db: Arc<Db>, nostr_root: PathBuf, uplanet_name: String, token_of: TokenFn, limits: Limits) -> Self {
-        Self { db, nostr_root, uplanet_name, captain_hex: None, relays: Vec::new(), station_domain: None, token_of, publish: None, activity: None, limits, recent: Mutex::default(), gate: tokio::sync::Mutex::new(()) }
+        Self { db, nostr_root, uplanet_name, captain_hex: None, relays: Vec::new(), station_domain: None, token_of, publish: None, activity: None, limits, recent: Mutex::default(), gate: tokio::sync::Mutex::new(()), require_captain: false, player_file: None }
+    }
+
+    /// Inscriptions publiques (`/register`, invité) fermées tant que la station n'a pas de Capitaine. Sans cela, sur un
+    /// domaine public, un inconnu pourrait prendre l'email du Capitaine avant lui (les emails sont uniques), et chaque
+    /// membre inscrit suivrait un Capitaine qui n'existe pas. La ligne de commande (`multipass create --captain`) n'est
+    /// pas concernée.
+    pub fn require_captain(mut self) -> Self {
+        self.require_captain = true;
+        self
+    }
+
+    /// Capitaine hébergé ici : celui donné au démarrage, sinon celui de la base (créé pendant que la station tourne).
+    async fn current_captain(&self) -> Option<String> {
+        if let Some(hex) = &self.captain_hex {
+            return Some(hex.clone());
+        }
+        self.db
+            .readers()
+            .read(|c| Ok(c.query_row("SELECT hex FROM identities WHERE role = 'captain' AND hosted = 1 ORDER BY hex LIMIT 1", [], |r| r.get::<_, String>(0)).optional()?))
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// Fichier `players/.current/.player` à écrire quand le Capitaine est créé depuis la page `/welcome`.
+    pub fn with_player_file(mut self, path: Option<PathBuf>) -> Self {
+        self.player_file = path;
+        self
+    }
+
+    /// Crée le compte du **Capitaine** depuis la page `/welcome`. L'appelant a vérifié le code d'installation ; ici, on
+    /// refuse seulement s'il existe déjà un Capitaine. Même résultat que `multipass create --captain`.
+    pub async fn register_captain(&self, ip: Option<IpAddr>, email: &str, lang: &str) -> Result<Registered, RegisterError> {
+        if self.current_captain().await.is_some() {
+            return Err(RegisterError::Conflict("cette station a déjà un Capitaine".into()));
+        }
+        let email = multipass::normalize_email(email).map_err(|e| RegisterError::Invalid(e.to_string()))?;
+        let reg = self.create(ip, vec![email], lang, false).await?;
+        self.db
+            .writer()
+            .execute("UPDATE identities SET role = 'captain' WHERE hex = ?1", vec![reg.account.hex.clone().into()])
+            .await
+            .map_err(|e| RegisterError::Internal(format!("rôle de Capitaine non enregistré : {e}")))?;
+        if let Some(file) = &self.player_file {
+            let written = file.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(file, format!("{}\n", reg.account.email)));
+            written.map_err(|e| RegisterError::Internal(format!("{} : {e}", file.display())))?;
+        }
+        Ok(reg)
+    }
+
+    /// Vrai si l'inscription publique attend la création du Capitaine.
+    pub async fn awaiting_captain(&self) -> bool {
+        self.require_captain && self.current_captain().await.is_none()
     }
 
     /// Clé du Capitaine, que chaque nouveau MULTIPASS suit.
@@ -222,6 +283,9 @@ impl Registrar {
         if !self.limits.open {
             return Err(RegisterError::Closed);
         }
+        if self.awaiting_captain().await {
+            return Err(RegisterError::NoCaptain);
+        }
         let email = multipass::normalize_email(email).map_err(|e| RegisterError::Invalid(e.to_string()))?;
         self.create(ip, vec![email], lang, false).await
     }
@@ -231,6 +295,9 @@ impl Registrar {
     pub async fn register_guest(&self, ip: Option<IpAddr>, alias: Option<&str>, lang: &str) -> Result<Registered, RegisterError> {
         if !self.limits.open {
             return Err(RegisterError::Closed);
+        }
+        if self.awaiting_captain().await {
+            return Err(RegisterError::NoCaptain);
         }
         let (domain, base) = (self.mail_domain().await, guest_alias(alias));
         let mut candidates = Vec::new();
@@ -353,7 +420,8 @@ impl Registrar {
         }
         let (account, shares) = created.ok_or_else(|| RegisterError::Internal("aucune adresse libre".into()))?;
 
-        let events = multipass::birth_events(&account, &self.uplanet_name, self.captain_hex.as_deref(), &self.relays, at).map_err(|e| RegisterError::Internal(e.to_string()))?;
+        let captain = self.current_captain().await;
+        let events = multipass::birth_events(&account, &self.uplanet_name, captain.as_deref(), &self.relays, at).map_err(|e| RegisterError::Internal(e.to_string()))?;
         if let Err(e) = self.store(&account.hex, &events, guest).await {
             // Base refusée : on retire le dossier, l'adresse pourra se réinscrire.
             let _ = std::fs::remove_dir_all(&account.dir);
@@ -466,6 +534,29 @@ mod tests {
         for d in [dir, _d2, _d3] {
             let _ = std::fs::remove_dir_all(d);
         }
+    }
+
+    #[tokio::test]
+    async fn nobody_registers_on_the_web_before_the_captain_and_members_follow_the_one_created_later() {
+        let dir = std::env::temp_dir().join(format!("astroportd-register-nocap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Arc::new(Db::open(&dir.join("u.db"), 2).unwrap());
+        // Station neuve : aucun Capitaine connu au démarrage.
+        let r = Registrar::new(db.clone(), dir.join("nostr"), "0".repeat(64), Arc::new(|hex| format!("jeton-{}", &hex[..8])), Limits::default()).require_captain();
+        assert!(r.awaiting_captain().await);
+        assert_eq!(r.register(Some("203.0.113.9".parse().unwrap()), "capitaine@exemple.org", "fr").await.err(), Some(RegisterError::NoCaptain), "l'email du Capitaine ne peut pas être pris");
+        assert_eq!(r.register_guest(None, Some("eve"), "fr").await.err(), Some(RegisterError::NoCaptain));
+        assert!(!dir.join("nostr").exists(), "rien n'est créé");
+        // Le Capitaine est créé pendant que la station tourne (ligne de commande) : l'inscription s'ouvre et le suit.
+        let captain = "cd".repeat(32);
+        db.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, 'captain', 'capitaine@exemple.org', 1)", vec![captain.clone().into()]).await.unwrap();
+        assert!(!r.awaiting_captain().await);
+        let reg = r.register(None, "alice@exemple.org", "fr").await.unwrap();
+        let hex = reg.account.hex.clone();
+        let follows: i64 = db.readers().read(move |c| Ok(c.query_row("SELECT COUNT(*) FROM social_graph WHERE owner_hex = ?1 AND pubkey = ?2 AND level = 1", [&hex, &captain], |r| r.get(0))?)).await.unwrap();
+        assert_eq!(follows, 1, "le nouveau membre suit le Capitaine créé après le démarrage");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

@@ -26,7 +26,7 @@ use astro_db::events::row_to_event;
 use astro_nostr_proto::{Event, is_hex64, kind};
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 
 /// Remise d'une enveloppe au relai de `peer` (station locale ou maillage).
 pub type DeliverFn = Arc<dyn Fn(String, Event) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> + Send + Sync>;
@@ -39,8 +39,9 @@ const BATCH: usize = 200;
 const PAGE: usize = 60;
 /// Espace du repère `seq` dans `kv`.
 const SEQ_SCOPE: &str = "chat_seq";
-/// Types de signaux d'appel.
-pub const CALL_TYPES: [&str; 7] = ["offer", "answer", "hangup", "reject", "busy", "join", "roster"];
+/// Types de signaux d'appel. `media` : « voix seule », le pair cesse d'envoyer sa vidéo vers l'expéditeur (`video: false`)
+/// ou la reprend (`video: true`), sans renégocier l'appel.
+pub const CALL_TYPES: [&str; 8] = ["offer", "answer", "hangup", "reject", "busy", "join", "roster", "media"];
 /// Appel de groupe (maillage) : participants au plus, hôte compris.
 pub const MAX_ROOM: usize = 4;
 /// Une salle autorisée par un ami vaut ce temps (un appel de groupe ne dure pas plus).
@@ -586,13 +587,31 @@ impl Chat {
         }
     }
 
-    /// Boucle de réception jusqu'à l'arrêt.
-    pub async fn run(self: Arc<Self>, every: Duration, mut stop: watch::Receiver<bool>) {
+    /// Boucle de réception jusqu'à l'arrêt. Une enveloppe NIP-59 acceptée par le relai réveille la lecture **tout de suite** :
+    /// une sonnerie, puis la réponse de l'appelé, ne font plus chacune attendre le tour suivant (jusqu'à 2 × `every` de
+    /// poignée de main perdus). Le passage régulier toutes les `every` reste le filet de sécurité : enveloppes rangées
+    /// sans passer par le relai (synchronisation, rejeu), canal en retard ou fermé.
+    pub async fn run(self: Arc<Self>, every: Duration, mut relay: broadcast::Receiver<Arc<Event>>, mut stop: watch::Receiver<bool>) {
+        let mut live = true;
         loop {
             self.poll_once().await;
-            tokio::select! {
-                () = tokio::time::sleep(every) => {}
-                _ = stop.changed() => return,
+            let deadline = tokio::time::sleep(every);
+            tokio::pin!(deadline);
+            loop {
+                tokio::select! {
+                    () = &mut deadline => break,
+                    e = relay.recv(), if live => match e {
+                        Ok(ev) if ev.kind == kind::GIFT_WRAP => {
+                            // Une rafale (offre puis candidats réseau) se lit en un seul passage.
+                            while relay.try_recv().is_ok() {}
+                            break;
+                        }
+                        Ok(_) => {}
+                        Err(broadcast::error::RecvError::Lagged(_)) => break,
+                        Err(broadcast::error::RecvError::Closed) => live = false,
+                    },
+                    _ = stop.changed() => return,
+                }
             }
         }
     }

@@ -149,7 +149,7 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
     };
     let account_svc = Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), relay_publish, None).with_activity(bus.clone()));
     let address_book = Arc::new(astroportd::address_book::AddressBook::new(db.clone(), dav.clone(), links.clone(), Some(account_svc.clone())));
-    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_planes_home(dir.join("home")).with_agents(agents).with_ai(member_ai).with_registrar(registrar).with_invites(invites).with_account(account_svc).with_book(address_book).with_chat(chat.clone()).with_people(people).with_contacts(links).with_coop(
+    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_planes_home(dir.join("home")).with_agents(agents).with_ai(member_ai).with_registrar(registrar).with_invites(invites.clone()).with_welcome(Arc::new(astroportd::welcome::Welcome::new(db.clone(), invites, Some(bus.clone())))).with_account(account_svc).with_book(address_book).with_chat(chat.clone()).with_people(people).with_contacts(links).with_coop(
         Arc::new(|| Box::pin(async { Ok(json!({ "exists": false, "sections": [] })) })),
         Arc::new(|values| Box::pin(async move { Ok(json!({ "saved": values.keys().collect::<Vec<_>>() })) })),
     ).with_admin(Arc::new(|section, body| Box::pin(async move {
@@ -1355,4 +1355,165 @@ async fn naming_unknown_faces_creates_or_reuses_the_contact_card() {
     let (_, again) = b.post("/api/v1/faces/assign", &alice, json!({ "ids": [3], "name": "marie  CURIE" })).await;
     assert_eq!((again["contact"]["created"].as_bool(), &again["contact"]["path"]), (Some(false), &v["contact"]["path"]), "même personne : la fiche existante, pas une seconde");
     assert_eq!(b.get("/api/v1/book", &alice).await.1["total"], 1);
+}
+
+#[tokio::test]
+async fn a_new_station_opens_only_to_its_captain_with_the_setup_code_from_the_journal() {
+    let dir = std::env::temp_dir().join(format!("astroportd-ui-welcome-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = Arc::new(Db::open(&dir.join("uplanet.db"), 2).unwrap());
+    let blobs = Arc::new(FsBlobStore::open(dir.join("blobs")).unwrap());
+    let dav = Arc::new(DavState { db: db.clone(), blobs, replay: Arc::new(SqliteReplayStore::in_memory().unwrap()), publisher: None, config: DavConfig::new(SECRET.to_vec()), on_upload: None });
+    let bus = ActivityBus::new();
+    let info = StationInfo { node_hex: hex(&[1; 32]), peer_id: None, domain: None, started: Instant::now() };
+    let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: None, chain: None, hardware: Hardware { vram_gb: 0.0, cpu_cores: 2, ram_gb: 4.0 }, p2p: None, weekly_rent_cents: 100, activity: bus.clone(), swarm_dir: None, origin: None, exposed: vec![] }));
+    let player = dir.join("game/players/.current/.player");
+    let registrar = Arc::new(astroportd::register::Registrar::new(db.clone(), dir.join("game/nostr"), "0".repeat(64), Arc::new(|hex| derive_dav_token(SECRET, hex)), astroportd::register::Limits::default()).require_captain().with_player_file(Some(player.clone())));
+    // Le « journal » de la station : seul endroit où le code apparaît.
+    let journal = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let j = journal.clone();
+    let setup = Arc::new(astroportd::first_run::SetupCode::new(Box::new(move |c| j.lock().unwrap().push(c.to_owned()))).unwrap());
+    let ui = Arc::new(StationUi::new(services, dav, None, None, false).with_registrar(registrar).with_setup(Some(setup)).with_conf_path(dir.join("station.conf")));
+    let app = astro_ui::web::static_router().merge(astro_ui::api::router(ui, bus, None));
+    let json_post = &[("content-type", "application/json")][..];
+    let post = |v: Value| v.to_string().into_bytes();
+
+    // La page /welcome existe ; l'inscription annonce qu'elle attend le Capitaine.
+    assert_eq!(call(&app, Method::GET, "/welcome", None, &[], vec![]).await.0, StatusCode::OK);
+    let (_, _, body) = call(&app, Method::GET, "/api/v1/register", None, &[], vec![]).await;
+    let info: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!((info["open"].as_bool(), info["captain_setup"].as_bool()), (Some(false), Some(true)), "{info}");
+    // Un visiteur ne peut ni s'inscrire, ni deviner le code.
+    let (s, _, _) = call(&app, Method::POST, "/api/v1/register", None, json_post, post(json!({ "email": "capitaine@exemple.org", "lang": "fr" }))).await;
+    assert_eq!(s, StatusCode::NOT_IMPLEMENTED, "l'email du Capitaine ne peut pas être pris (inscription fermée)");
+    let (s, _, _) = call(&app, Method::POST, "/api/v1/register", None, json_post, post(json!({ "setup_code": "AAAA-AAAA", "email": "intrus@exemple.org", "lang": "fr" }))).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    // Le Capitaine recopie le code du journal (casse et tiret indifférents).
+    let code = journal.lock().unwrap()[0].to_ascii_lowercase().replace('-', "");
+    let (s, _, body) = call(&app, Method::POST, "/api/v1/register", None, json_post, post(json!({ "setup_code": code, "email": "Capitaine@Exemple.org", "lang": "fr" }))).await;
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v["pass"].as_str().is_some_and(|p| p.len() == 6) && v["card"].as_str().is_some_and(|c| c.starts_with("astro-share:")), "{v}");
+    let role: String = db.readers().read(|c| Ok(c.query_row("SELECT role FROM identities WHERE email = 'capitaine@exemple.org'", [], |r| r.get(0))?)).await.unwrap();
+    assert_eq!(role, "captain");
+    assert_eq!(std::fs::read_to_string(&player).unwrap().trim(), "capitaine@exemple.org", "la découverte le retrouvera au prochain démarrage");
+    // Le code a servi : plus de second Capitaine ; l'inscription des membres est ouverte.
+    let (s, _, _) = call(&app, Method::POST, "/api/v1/register", None, json_post, post(json!({ "setup_code": code, "email": "autre@exemple.org", "lang": "fr" }))).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    let (_, _, body) = call(&app, Method::GET, "/api/v1/register", None, &[], vec![]).await;
+    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["open"], true);
+    let (s, _, body) = call(&app, Method::POST, "/api/v1/register", None, json_post, post(json!({ "email": "membre@exemple.org", "lang": "fr" }))).await;
+    assert_eq!(s, StatusCode::OK);
+    let member: Value = serde_json::from_slice(&body).unwrap();
+
+    // Le Capitaine règle le domaine depuis le cockpit ; un membre, non.
+    let basic = |email: &str, token: &Value| format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{email}:{}", token.as_str().unwrap())));
+    let (cap, mem) = (basic("capitaine@exemple.org", &v["token"]), basic("membre@exemple.org", &member["token"]));
+    let (s, _, body) = call(&app, Method::GET, "/api/v1/station/domain", Some(&cap), &[], vec![]).await;
+    let info: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!((s, info["domain"].is_null(), info["restart"].as_bool()), (StatusCode::OK, true, Some(false)), "{info}");
+    assert_eq!(call(&app, Method::GET, "/api/v1/station/domain", Some(&mem), &[], vec![]).await.0, StatusCode::FORBIDDEN);
+    let (s, _, body) = call(&app, Method::POST, "/api/v1/station/domain", Some(&cap), json_post, post(json!({ "domain": "pas un domaine" }))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{}", String::from_utf8_lossy(&body));
+    assert!(!dir.join("station.conf").exists(), "rien n'est écrit pour un nom refusé");
+    // Hors systemd, pas de redémarrage : la station ne reviendrait pas seule.
+    assert_eq!(call(&app, Method::POST, "/api/v1/station/restart", Some(&cap), &[], vec![]).await.0, StatusCode::NOT_IMPLEMENTED);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn a_welcome_link_lets_several_people_in_as_friends_of_the_captain_until_it_is_full_or_revoked() {
+    let b = bench("welcome-link", None).await;
+    let (bob, alice) = (basic("bob@example.org", &BOB), basic("alice@example.org", &ALICE));
+    // Seul le Capitaine crée un lien d'accueil.
+    assert_eq!(b.post("/api/v1/station/welcome", &alice, json!({ "label": "Hackerspace" })).await.0, StatusCode::FORBIDDEN);
+    let (s, link) = b.post("/api/v1/station/welcome", &bob, json!({ "label": "Hackerspace", "max_uses": 2 })).await;
+    assert_eq!(s, StatusCode::OK, "{link}");
+    let token = link["token"].as_str().unwrap().to_owned();
+    assert!(link["url"].as_str().unwrap().ends_with(&format!("/w/{token}")) && link["qr_svg"].as_str().unwrap().contains("<svg"), "{link}");
+    assert_eq!(b.post("/api/v1/station/welcome", &bob, json!({ "label": "x", "max_uses": 0 })).await.0, StatusCode::BAD_REQUEST);
+
+    // Un visiteur voit la page publique et qui l'accueille.
+    assert_eq!(call(&b.app, Method::GET, &format!("/w/{token}"), None, &[], vec![]).await.0, StatusCode::OK);
+    let (s, _, body) = call(&b.app, Method::GET, &format!("/api/v1/welcome/{token}"), None, &[], vec![]).await;
+    let preview: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!((s, preview["label"].as_str(), preview["left"].as_u64()), (StatusCode::OK, Some("Hackerspace"), Some(2)), "{preview}");
+
+    // Deux arrivées (email, puis pseudo seul) : chacune devient amie réciproque du Capitaine et la discussion s'ouvre avec lui.
+    let json_post = &[("content-type", "application/json")][..];
+    let uri = format!("/api/v1/welcome/{token}");
+    let arrive = |v: Value| call(&b.app, Method::POST, &uri, None, json_post, v.to_string().into_bytes());
+    let mut newcomers = Vec::new();
+    for body in [json!({ "email": "lea@exemple.org", "lang": "fr" }), json!({ "guest": true, "alias": "Tom", "lang": "fr" })] {
+        let (s, h, out) = arrive(body).await;
+        let v: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert_eq!(h[header::CACHE_CONTROL], "no-store");
+        assert_eq!(v["chat_peer"].as_str(), Some(hex(&BOB).as_str()));
+        assert!(v.get("warnings").is_none(), "{v}");
+        newcomers.push(v["hex"].as_str().unwrap().to_owned());
+    }
+    for n in &newcomers {
+        let (n1, n2, captain) = (n.clone(), n.clone(), hex(&BOB));
+        let c2 = captain.clone();
+        let both: (i64, i64) = b.db.readers().read(move |c| Ok((
+            c.query_row("SELECT COUNT(*) FROM social_graph WHERE owner_hex = ?1 AND pubkey = ?2 AND level = 1", [&n1, &captain], |r| r.get(0))?,
+            c.query_row("SELECT COUNT(*) FROM social_graph WHERE owner_hex = ?1 AND pubkey = ?2 AND level = 1", [&c2, &n2], |r| r.get(0))?,
+        ))).await.unwrap();
+        assert_eq!(both, (1, 1), "amitié réciproque avec le Capitaine");
+    }
+    assert!(b.bus.recent(50).iter().any(|a| a.source == "welcome" && a.message.contains("lea@exemple.org")), "le Capitaine est prévenu");
+
+    // Plein : la troisième personne est refusée, et une erreur d'inscription ne consomme pas de place.
+    let (s, _, out) = arrive(json!({ "email": "trois@exemple.org", "lang": "fr" })).await;
+    assert_eq!(s, StatusCode::GONE, "{}", String::from_utf8_lossy(&out));
+    let (_, list) = b.get("/api/v1/station/welcome", &bob).await;
+    let hs = list["links"].as_array().unwrap().iter().find(|l| l["label"] == "Hackerspace").unwrap().clone();
+    assert!(hs.get("qr_svg").is_none(), "la liste ne porte pas les QR");
+    assert_eq!((hs["uses"].as_u64(), hs["active"].as_bool()), (Some(2), Some(false)), "{hs}");
+
+    // Un second lien, retiré : il ne sert plus.
+    let (_, l2) = b.post("/api/v1/station/welcome", &bob, json!({ "label": "Salon" })).await;
+    let t2 = l2["token"].as_str().unwrap().to_owned();
+    let (s, _, _) = call(&b.app, Method::POST, &format!("/api/v1/welcome/{t2}"), None, json_post, json!({ "email": "../x@y.z", "lang": "fr" }).to_string().into_bytes()).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (_, list) = b.get(&format!("/api/v1/station/welcome?qr={t2}"), &bob).await;
+    let salon = list["links"].as_array().unwrap().iter().find(|l| l["label"] == "Salon").unwrap().clone();
+    assert_eq!(salon["uses"], 0, "une adresse refusée rend sa place : {salon}");
+    assert!(salon["qr_svg"].as_str().is_some_and(|q| q.contains("<svg")), "QR à la demande");
+    assert_eq!(b.post_empty(&format!("/api/v1/station/welcome/{t2}/revoke"), &bob).await.0, StatusCode::OK);
+    assert_eq!(call(&b.app, Method::GET, &format!("/api/v1/welcome/{t2}"), None, &[], vec![]).await.0, StatusCode::GONE);
+}
+
+#[tokio::test]
+async fn a_sponsor_offer_is_handed_once_without_an_account_and_only_as_ciphertext() {
+    let b = bench("sponsor", None).await;
+    let payload = astroportd::sponsor::Payload { from: "station.test".into(), swarm_key: Some("/key/swarm/psk/1.0.0/\n/base16/\nsecretdelaconstellation\n".into()), bootstrap: vec![], relay: None };
+    let token = astroportd::sponsor::create(&b.db, "https://station.test", &payload, 24).await.unwrap();
+    let t = astroportd::sponsor::parse_token(&token).unwrap();
+    let (s, _, body) = call(&b.app, Method::GET, &format!("/api/v1/join/{}", t.id), None, &[], vec![]).await;
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(!body.windows(6).any(|w| w == b"secret"), "jamais la swarm.key en clair sur le réseau");
+    assert_eq!(astroportd::sponsor::open(&t, v["sealed"].as_str().unwrap()).unwrap(), payload);
+    assert_eq!(call(&b.app, Method::GET, &format!("/api/v1/join/{}", t.id), None, &[], vec![]).await.0, StatusCode::NOT_FOUND, "usage unique");
+    assert_eq!(call(&b.app, Method::GET, "/api/v1/join/../../etc", None, &[], vec![]).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_old_style_invitation_follows_the_living_ucloud_after_migration() {
+    let b = bench("invite-legacy", None).await;
+    // Ancien format : la liste des fichiers figée à la création. Ce fichier a été supprimé depuis (son contenu a pu être libéré).
+    let legacy = json!([{ "path": "/Photos/disparue.jpg", "cid": "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy", "name": "disparue.jpg", "mime": "image/jpeg", "size": 10, "sha_plain": "00" }]);
+    let at = i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()).unwrap();
+    b.db.writer().execute("INSERT INTO invites(token, owner_hex, label, email, contact_path, items, created_at, expires_at) VALUES ('1e9ac10000000000000000000000beef', ?1, 'Léa', NULL, NULL, ?2, ?3, ?4)", vec![V::Text(hex(&ALICE)), V::Text(legacy.to_string()), V::Integer(at), V::Integer(at + 86_400)]).await.unwrap();
+    let count = || async { serde_json::from_slice::<Value>(&call(&b.app, Method::GET, "/api/v1/invite/1e9ac10000000000000000000000beef", None, &[], vec![]).await.2).unwrap()["count"].as_u64() };
+    let (st, _, raw) = call(&b.app, Method::GET, "/api/v1/invite/1e9ac10000000000000000000000beef", None, &[], vec![]).await;
+    assert_eq!(count().await, Some(1), "avant : le fichier disparu est encore promis ({st} {})", String::from_utf8_lossy(&raw));
+    let registrar = Arc::new(astroportd::register::Registrar::new(b.db.clone(), b.dir.join("nostr"), "0".repeat(64), Arc::new(|hex| derive_dav_token(SECRET, hex)), astroportd::register::Limits::default()));
+    let invites = astroportd::invites::Invites::new(b.db.clone(), Arc::new(FsBlobStore::open(b.dir.join("blobs")).unwrap()), Arc::new(StaticKeySource::new()), registrar, Arc::new(|_| Box::pin(async { Ok(()) })));
+    assert_eq!(invites.migrate_legacy().await.unwrap(), 1);
+    assert_eq!(invites.migrate_legacy().await.unwrap(), 0, "idempotent");
+    assert_eq!(count().await, Some(0), "après : l'invitation suit le uCloud vivant, rien n'est promis à tort");
 }

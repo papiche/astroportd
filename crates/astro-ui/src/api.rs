@@ -336,6 +336,47 @@ pub trait Backend: Send + Sync + 'static {
     fn constellation(&self, who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send;
     /// Régie coopérative : parts 3×1/3 de la dernière semaine, provision fiscale, Love Ledger (Capitaine).
     fn economy(&self, who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send;
+    /// Carburant de la station : portefeuille maître à créditer pour ouvrir les portefeuilles coopératifs (Capitaine).
+    /// `{ enabled: false }` sans transaction primale ; sinon `{ master, needed_g1_cents, spendable_g1_cents, waiting, ready, total, at }`.
+    fn fuel(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Ok(json!({ "enabled": false })) }
+    }
+    /// Nom de domaine de la station : actuel, enregistré, ports, redémarrage possible (Capitaine).
+    fn domain_info(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("réglage du domaine non disponible sur cette station")) }
+    }
+    /// Vérifie (forme, DNS, ports) et enregistre le nom de domaine ; effectif au redémarrage (Capitaine).
+    fn domain_set(&self, _who: &Principal, _domain: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("réglage du domaine non disponible sur cette station")) }
+    }
+    /// Redémarre la station (systemd la relance) pour appliquer la configuration enregistrée (Capitaine).
+    fn restart(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("redémarrage non disponible sur cette station")) }
+    }
+    /// Liens d'accueil de la station (Capitaine) : `{ links: [...] }`.
+    fn welcome_list(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("liens d'accueil non disponibles sur cette station")) }
+    }
+    /// Crée un lien d'accueil `{ label, max_uses?, days? }` (Capitaine) : `{ token, … }`.
+    fn welcome_create(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("liens d'accueil non disponibles sur cette station")) }
+    }
+    /// Retire un lien d'accueil (Capitaine).
+    fn welcome_revoke(&self, _who: &Principal, _token: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("liens d'accueil non disponibles sur cette station")) }
+    }
+    /// Ce que voit un visiteur d'un lien d'accueil (public).
+    fn welcome_preview(&self, _token: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::not_found("lien d'accueil inconnu")) }
+    }
+    /// Arrivée par un lien d'accueil (public) : crée le MULTIPASS, amitié réciproque avec l'hôte ; `chat_peer` = l'hôte.
+    fn welcome_arrive(&self, _ip: Option<std::net::IpAddr>, _token: String, _email: Option<String>, _alias: Option<String>, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::not_found("lien d'accueil inconnu")) }
+    }
+    /// Offre de parrainage (public, usage unique) : `{ sealed }`, chiffrée pour le seul détenteur du jeton.
+    fn join_take(&self, _id: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::not_found("offre de parrainage introuvable")) }
+    }
     /// Comptes hébergés : disque, cycle de vie (Capitaine).
     fn accounts(&self, who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send;
     /// Jeton de secours d'un compte hébergé (Capitaine).
@@ -687,6 +728,11 @@ pub trait Backend: Send + Sync + 'static {
     fn register(&self, _ip: Option<std::net::IpAddr>, _email: String, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("inscription non disponible sur cette station")) }
     }
+    /// Crée le compte du **Capitaine** d'une station qui n'en a pas (public, mais gardé par le code d'installation que
+    /// seul le journal de la station affiche).
+    fn register_captain(&self, _ip: Option<std::net::IpAddr>, _code: String, _email: String, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("cette station n'attend pas de Capitaine")) }
+    }
     /// Crée un MULTIPASS invité (public) : pas d'email, adresse générée par la station.
     fn register_guest(&self, _ip: Option<std::net::IpAddr>, _alias: Option<String>, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("inscription non disponible sur cette station")) }
@@ -870,6 +916,13 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/backup/respond", post(backup_respond::<B>))
         .route("/api/v1/station/constellation", get(constellation::<B>))
         .route("/api/v1/station/economy", get(economy::<B>))
+        .route("/api/v1/station/fuel", get(fuel::<B>))
+        .route("/api/v1/station/domain", get(domain_info::<B>).post(domain_set::<B>))
+        .route("/api/v1/station/restart", post(restart::<B>))
+        .route("/api/v1/station/welcome", get(welcome_list::<B>).post(welcome_create::<B>))
+        .route("/api/v1/station/welcome/{token}/revoke", post(welcome_revoke::<B>))
+        .route("/api/v1/welcome/{token}", get(welcome_preview::<B>).post(welcome_arrive::<B>))
+        .route("/api/v1/join/{id}", get(join_take::<B>))
         .route("/api/v1/station/accounts", get(accounts::<B>))
         .route("/api/v1/station/accounts/{hex}/token", post(account_token::<B>))
         .route("/api/v1/station/accounts/{hex}/quota", post(account_quota::<B>))
@@ -1428,6 +1481,84 @@ async fn economy<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Capt
     reply(st.backend.economy(&p).await)
 }
 
+/// Carburant de la station, avec le QR de l'adresse à créditer (lu par Cesium, Ğecko…).
+async fn fuel<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
+    reply(st.backend.fuel(&p).await.map(|mut v| {
+        if let Some(svg) = v["master"].as_str().and_then(crate::qr::svg) {
+            v["qr_svg"] = Value::String(svg);
+        }
+        v
+    }))
+}
+
+async fn domain_info<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
+    reply(st.backend.domain_info(&p).await)
+}
+
+async fn domain_set<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Json(b): Json<Value>) -> Response {
+    let Some(domain) = b["domain"].as_str().map(str::to_owned) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"domain\": \"station.exemple.org\" }"))) };
+    reply(st.backend.domain_set(&p, domain).await)
+}
+
+async fn restart<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
+    reply(st.backend.restart(&p).await)
+}
+
+/// Adresse `/w/<jeton>` d'un lien d'accueil, et son QR si `qr` (une vingtaine de Ko : jamais pour toute une liste).
+fn with_welcome_link(mut v: Value, origin: &str, qr: bool) -> Value {
+    if let Some(token) = v.get("token").and_then(Value::as_str).map(str::to_owned) {
+        let url = format!("{}/w/{token}", origin.trim_end_matches('/'));
+        if let Some(svg) = crate::qr::svg(&url).filter(|_| qr) {
+            v["qr_svg"] = Value::String(svg);
+        }
+        v["url"] = Value::String(url);
+    }
+    v
+}
+
+/// Liens d'accueil du Capitaine ; `?qr=<jeton>` joint le QR de ce seul lien.
+async fn welcome_list<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, Captain(p): Captain, Query(q): Query<std::collections::HashMap<String, String>>) -> Response {
+    let origin = origin_of(&st, &headers);
+    let want = q.get("qr").cloned();
+    reply(st.backend.welcome_list(&p).await.map(|mut v| {
+        if let Some(list) = v.get_mut("links").and_then(Value::as_array_mut) {
+            for l in list.iter_mut() {
+                let qr = want.is_some() && l["token"].as_str() == want.as_deref();
+                *l = with_welcome_link(l.take(), &origin, qr);
+            }
+        }
+        v
+    }))
+}
+
+async fn welcome_create<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, Captain(p): Captain, Json(b): Json<Value>) -> Response {
+    let origin = origin_of(&st, &headers);
+    reply(st.backend.welcome_create(&p, b).await.map(|v| with_welcome_link(v, &origin, true)))
+}
+
+async fn welcome_revoke<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Path(token): Path<String>) -> Response {
+    reply(st.backend.welcome_revoke(&p, token).await)
+}
+
+/// Lien d'accueil, vu par un visiteur (aucun compte requis : c'est la porte d'entrée).
+async fn welcome_preview<B: Backend>(State(st): State<Arc<UiState<B>>>, Path(token): Path<String>) -> Response {
+    reply(st.backend.welcome_preview(token).await)
+}
+
+/// Arrivée par un lien d'accueil : les secrets de la réponse ne sont remis qu'une fois (`no-store`, comme l'inscription).
+async fn welcome_arrive<B: Backend>(State(st): State<Arc<UiState<B>>>, Path(token): Path<String>, req: axum::extract::Request) -> Response {
+    let ip = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|c| c.0.ip());
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), 2048).await else { return reply(Err(ApiError::bad_request("requête trop grande"))) };
+    let Ok(body) = serde_json::from_slice::<RegisterBody>(&bytes) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"email\": \"…\", \"lang\": \"fr\" }"))) };
+    let email = (!body.guest).then_some(body.email);
+    reply(st.backend.welcome_arrive(ip, token, email, body.alias, body.lang).await)
+}
+
+/// Parrainage : la nouvelle station retire l'offre chiffrée (une seule fois). Sans compte : le jeton est la preuve.
+async fn join_take<B: Backend>(State(st): State<Arc<UiState<B>>>, Path(id): Path<String>) -> Response {
+    reply(st.backend.join_take(id).await)
+}
+
 async fn accounts<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
     reply(st.backend.accounts(&p).await)
 }
@@ -1708,6 +1839,9 @@ struct RegisterBody {
     alias: Option<String>,
     #[serde(default)]
     lang: String,
+    /// Code d'installation : crée le compte du Capitaine (page `/welcome`).
+    #[serde(default)]
+    setup_code: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -2068,6 +2202,9 @@ async fn register<B: Backend>(State(st): State<Arc<UiState<B>>>, req: axum::extr
     let ip = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|c| c.0.ip());
     let Ok(bytes) = axum::body::to_bytes(req.into_body(), 2048).await else { return reply(Err(ApiError::bad_request("requête trop grande"))) };
     let Ok(body) = serde_json::from_slice::<RegisterBody>(&bytes) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"email\": \"…\", \"lang\": \"fr\" }"))) };
+    if let Some(code) = body.setup_code {
+        return reply(st.backend.register_captain(ip, code, body.email, body.lang).await);
+    }
     if body.guest {
         return reply(st.backend.register_guest(ip, body.alias, body.lang).await);
     }

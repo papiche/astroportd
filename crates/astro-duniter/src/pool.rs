@@ -160,12 +160,25 @@ impl<K: Connector> RpcPool<K> {
     }
 }
 
+/// Verrou d'un compte émetteur, partagé par tout le processus (plusieurs plans peuvent signer avec la même clé de NODE).
+/// Les verrous qui ne servent plus sont retirés au passage : la table reste à la taille des virements en cours.
+fn sender_lock(who: &Account) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: std::sync::OnceLock<Mutex<std::collections::HashMap<Account, Arc<tokio::sync::Mutex<()>>>>> = std::sync::OnceLock::new();
+    let mut map = LOCKS.get_or_init(Mutex::default).lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    map.retain(|_, l| Arc::strong_count(l) > 1);
+    map.entry(*who).or_default().clone()
+}
+
 impl<K: Connector> Chain for RpcPool<K> {
     async fn balance(&self, who: &Account) -> Result<Balance, ChainError> {
         self.read(|c| async move { c.balance(who).await }).await
     }
 
     async fn transfer(&self, from: &Ed25519Signer, to: &Account, amount: Amount, mode: TransferMode, memo: Option<&str>) -> Result<TxOutcome, ChainError> {
+        // Un virement à la fois par compte émetteur : deux signatures simultanées liraient le même nonce, et la chaîne
+        // en écarterait une (« priorité trop basse ») après qu'on l'a crue envoyée.
+        let lock = sender_lock(&from.account());
+        let _turn = lock.lock().await;
         // Seule une erreur `Connection` (avant envoi) autorise de passer au nœud suivant.
         let mut last = ChainError::Connection("aucun nœud".into());
         for _ in 0..self.urls().len().max(1) {
@@ -220,6 +233,9 @@ mod tests {
     struct Log {
         connects: Mutex<Vec<String>>,
         transfers: AtomicUsize,
+        /// Virements en vol en même temps (et le maximum observé).
+        inflight: AtomicUsize,
+        max_inflight: AtomicUsize,
     }
 
     struct MockChain {
@@ -234,6 +250,10 @@ mod tests {
 
         async fn transfer(&self, _: &Ed25519Signer, _: &Account, _: Amount, _: TransferMode, _: Option<&str>) -> Result<TxOutcome, ChainError> {
             self.log.transfers.fetch_add(1, Ordering::SeqCst);
+            let now = self.log.inflight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.log.max_inflight.fetch_max(now, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(20)).await; // le temps de lire le nonce, signer et envoyer
+            self.log.inflight.fetch_sub(1, Ordering::SeqCst);
             match &self.node {
                 Node::Up { transfer, .. } => transfer.clone(),
                 Node::Down => Err(ChainError::Connection("down".into())),
@@ -354,5 +374,17 @@ mod tests {
         let mut rx = notifier.subscribe();
         tokio::time::timeout(Duration::from_secs(5), notifier.run(&p)).await.unwrap().unwrap();
         assert_eq!(rx.try_recv().unwrap().amount, Amount(5));
+    }
+    #[tokio::test]
+    async fn one_transfer_at_a_time_per_sender_but_senders_run_side_by_side() {
+        let (p, log) = pool(&[("a", Node::Up { transfer: ok_tx(), watch_fails: false })]);
+        let (alice, bob) = (Ed25519Signer::from_seed([0x51; 32]), Ed25519Signer::from_seed([0x52; 32]));
+        let to = Account([2; 32]);
+        let (x, y) = tokio::join!(p.transfer(&alice, &to, Amount(100), TransferMode::KeepAlive, None), p.transfer(&alice, &to, Amount(100), TransferMode::KeepAlive, None));
+        assert!(x.is_ok() && y.is_ok());
+        assert_eq!(log.max_inflight.load(Ordering::SeqCst), 1, "deux virements d'Alice ne lisent jamais le même nonce");
+        let (x, y) = tokio::join!(p.transfer(&alice, &to, Amount(100), TransferMode::KeepAlive, None), p.transfer(&bob, &to, Amount(100), TransferMode::KeepAlive, None));
+        assert!(x.is_ok() && y.is_ok());
+        assert_eq!(log.max_inflight.load(Ordering::SeqCst), 2, "Alice et Bob ne s'attendent pas");
     }
 }

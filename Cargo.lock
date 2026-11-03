@@ -258,7 +258,7 @@ dependencies = [
 
 [[package]]
 name = "astro-bro"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "astro-core",
  "astro-crypto",
@@ -282,7 +282,7 @@ dependencies = [
 
 [[package]]
 name = "astro-core"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "base64 0.22.1",
  "bech32",
@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "astro-crypto"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -328,7 +328,7 @@ dependencies = [
 
 [[package]]
 name = "astro-dav"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "astro-crypto",
  "astro-db",
@@ -364,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "astro-db"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "astro-crypto",
  "astro-nostr-proto",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "astro-duniter"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "astro-core",
  "astro-g1-runtime",
@@ -394,7 +394,7 @@ dependencies = [
 
 [[package]]
 name = "astro-economy"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "astro-core",
  "astro-db",
@@ -407,7 +407,7 @@ dependencies = [
 
 [[package]]
 name = "astro-facecloud"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "astro-crypto",
  "astro-dav",
@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "astro-g1-runtime"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "parity-scale-codec",
  "subxt",
@@ -442,7 +442,7 @@ dependencies = [
 
 [[package]]
 name = "astro-lifecycle"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "astro-core",
  "astro-crypto",
@@ -463,7 +463,7 @@ dependencies = [
 
 [[package]]
 name = "astro-nostr-proto"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "hex",
  "secp256k1",
@@ -475,7 +475,7 @@ dependencies = [
 
 [[package]]
 name = "astro-p2p"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "astro-core",
  "astro-dav",
@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "astro-plugins"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "serde_json",
  "thiserror 2.0.21",
@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "astro-relay"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "astro-db",
  "astro-nostr-proto",
@@ -522,7 +522,7 @@ dependencies = [
 
 [[package]]
 name = "astro-sync"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "astro-crypto",
  "astro-dav",
@@ -551,7 +551,7 @@ dependencies = [
 
 [[package]]
 name = "astro-ui"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "arc-swap",
  "astro-core",
@@ -585,7 +585,7 @@ dependencies = [
 
 [[package]]
 name = "astroportd"
-version = "0.5.4-beta"
+version = "0.5.5-beta"
 dependencies = [
  "astro-bro",
  "astro-core",

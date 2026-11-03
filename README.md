@@ -11,7 +11,7 @@ vos amis, vous fait **sauvegarder par vos proches** (et retrouver votre compte s
 une **comptabilité coopérative en Ẑen** (monnaie libre Ğ1) — sans plateforme, sans abonnement, sans serveur central.
 C'est le cœur souverain d'[Astroport.ONE](https://github.com/papiche/Astroport.ONE) et d'UPlanet, réécrit en Rust.
 
-> **Préversion 0.5.4-beta.** Le code est testé de bout en bout (≈ 790 tests, `clippy` sans avertissement) mais jeune :
+> **Préversion 0.5.5-beta.** Le code est testé de bout en bout (≈ 805 tests, `clippy` sans avertissement) mais jeune :
 > lisez [les limites connues](#8-état-du-projet-et-limites-connues). Licence **AGPL-3.0** · Auteur : Fred
 > (support@qo-op.com) · Rust 2024 (≥ 1.85).
 
@@ -91,11 +91,12 @@ Pas à pas : [étape 8 du guide](docs/GUIDE.md#etape-8).
 # 1. Installer (vérifie l'empreinte SHA-256 de l'archive, sans droits administrateur)
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 
-# 2. Préparer la station : clé Y-Level, choix ORIGIN ou ẐEN, dossiers (assistant en français)
+# 2. Préparer la station : clé Y-Level, choix ORIGIN ou ẐEN, dossiers, puis le MULTIPASS du Capitaine
+#    (son email est demandé ; secrets et code PASS affichés UNE seule fois : notez-les)
 astroportd init
 
-# 3. Créer le MULTIPASS du Capitaine (secrets affichés UNE seule fois : notez-les)
-astroportd multipass create capitaine@exemple.org --captain
+# 3. Sans email à l'étape 2 : la station démarre sans Capitaine, écrit un code d'installation dans son journal,
+#    et la page /welcome crée le compte du Capitaine avec ce code (ou : astroportd multipass create <email> --captain)
 
 # 4. Démarrer
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
@@ -119,7 +120,14 @@ d'Astroport.ONE) :
 
 - **Au terminal** : `astroportd multipass create <email> [--captain] [--lang fr|en|es] [--json]` et
   `astroportd multipass list`. `--captain` désigne le **premier** compte comme Capitaine de la station (refusé si un
-  autre Capitaine existe) ; les suivants **suivent automatiquement le Capitaine** (kind 3).
+  autre Capitaine existe) ; les suivants **suivent automatiquement le Capitaine** (kind 3). `astroportd init` le fait
+  lui-même quand on lui donne l'email du Capitaine.
+- **Station neuve, sans Capitaine** : l'inscription web reste **fermée** (personne ne peut prendre l'email du Capitaine).
+  `serve` écrit un **code d'installation** dans son journal (terminal ou `journalctl`) ; la page **`/welcome`** le demande
+  et crée le compte du Capitaine. Code à usage unique, renouvelé après 5 essais faux.
+- **Lien d'accueil** (cockpit › « Inviter votre premier membre ») : un lien `/w/<jeton>` et son QR, pour **plusieurs**
+  personnes (entrée d'un lieu, site, article). Qui l'ouvre crée son MULTIPASS (email ou simple pseudo), devient ami
+  réciproque du Capitaine et arrive dans la discussion avec lui. Places limitées (50 par défaut), 90 jours, retirable.
 - **Au navigateur** : la page publique **`/register`** (lien « Pas de compte ? Créer mon MULTIPASS » dans la fenêtre de
   connexion) : email + langue, puis une **carte d'identité** à noter (SALT, PEPPER, nsec, npub, Ğ1, IPNS, code PASS,
   jeton), téléchargeable en `.txt`, et un bouton « Ouvrir mon espace ». API : `GET/POST /api/v1/register`.
@@ -379,6 +387,7 @@ automatiquement dans `~/.zen/game` (`--game-dir` ou `ASTRO_GAME_DIR`).
 | `astroportd init [--mode origin\|zen]` | Assistant d'installation : rituel **Y-Level**, choix ORIGIN/ẐEN, dossiers de la station, service systemd (`--systemd`). |
 | `astroportd ylevel [--verify]` | Affiche (ou vérifie, code 1 si faux) la correspondance SSH ↔ PeerID IPFS ↔ Ğ1 ↔ Nostr. |
 | `astroportd multipass create <email> [--captain]` / `multipass list` | Crée (et liste) les MULTIPASS de la station ; secrets affichés une seule fois. |
+| `astroportd parrainer` / `astroportd init --join <jeton>` | Station marraine : jeton à usage unique (24 h) qui fait rejoindre sa constellation à une nouvelle station (swarm.key chiffrée, amorçage P2P). |
 | `astroportd token <email>` | Jeton de connexion d'un compte hébergé (interface web, clients WebDAV). |
 | `astroportd media --account <email> consent` | Atteste la copie privée (CPI L. 122-5), une fois. `--show` affiche le texte. |
 | `astroportd media --account <email> --db … --blobs … add --file film.mkv --series "Kaamelott" --season 2 --episode 3` | Dépose un film ou un épisode (≤ 1 024 Mo), encode en H.264/AAC (`--transcode auto\|notify`) et publie l'événement vidéo. |

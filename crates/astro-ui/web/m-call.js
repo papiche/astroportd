@@ -71,10 +71,11 @@ function screen() {
   const local = h('video', { class: 'call-local', autoplay: true, playsInline: true, muted: true });
   const mic = h('button', { type: 'button', class: 'call-btn', 'aria-pressed': 'false', 'aria-label': t('Couper le micro'), onclick: () => toggle('audio', mic) }, '🎙');
   const cam = h('button', { type: 'button', class: 'call-btn', 'aria-pressed': 'false', 'aria-label': t('Couper la caméra'), onclick: () => toggle('video', cam) }, '📷');
+  const radio = h('button', { type: 'button', class: 'call-btn', 'aria-pressed': 'false', 'aria-label': t('Voix seule : couper la vidéo dans les deux sens'), onclick: () => voiceOnly(radio, cam) }, '📻');
   const add = ctl(h('button', { type: 'button', class: 'call-btn', 'aria-label': t('Ajouter quelqu\'un à l\'appel'), onclick: pick }, '＋'), t('Ajouter'));
   const grid = h('div', { class: 'call-grid n1' }), title = h('strong', {}), statusEl = h('p', { class: 'call-status', role: 'status' });
   const el = h('section', { class: 'call', 'aria-label': t('Appel visio') }, grid, local, h('header', { class: 'call-top' }, title, statusEl),
-    h('div', { class: 'call-bar' }, ctl(mic, t('Micro')), ctl(cam, t('Caméra')), add, ctl(h('button', { type: 'button', class: 'call-btn call-end call-hang', 'aria-label': t('Raccrocher'), onclick: hangup }, '✆'), t('Raccrocher'))));
+    h('div', { class: 'call-bar' }, ctl(mic, t('Micro')), ctl(cam, t('Caméra')), ctl(radio, t('Voix seule')), add, ctl(h('button', { type: 'button', class: 'call-btn call-end call-hang', 'aria-label': t('Raccrocher'), onclick: hangup }, '✆'), t('Raccrocher'))));
   document.body.append(el); document.body.classList.add('in-call');
   local.srcObject = C.stream;
   C.ui = { el, grid, title, add, status: statusEl };
@@ -85,6 +86,27 @@ function toggle(kind, btn) {
   if (!tracks.length) return K.toast(kind === 'video' ? K.t('Pas de caméra pour cet appel') : K.t('Pas de micro'));
   const off = tracks[0].enabled; tracks.forEach(tr => { tr.enabled = !off; });
   btn.setAttribute('aria-pressed', String(off)); btn.classList.toggle('off', off);
+}
+
+// Voix seule (réseau faible) : ma caméra se coupe et chaque pair cesse de m'envoyer la sienne (signal `media`, appliqué
+// par `setParameters` sans renégocier). Le son seul passe sous 64 kbit/s. Un second appui rend l'image.
+function voiceOnly(btn, cam) {
+  C.radio = !C.radio;
+  const vids = C.stream.getVideoTracks();
+  if (C.radio) { C.camWas = vids.some(tr => tr.enabled); vids.forEach(tr => { tr.enabled = false; }); } else if (C.camWas) vids.forEach(tr => { tr.enabled = true; });
+  cam.setAttribute('aria-pressed', String(!vids.some(tr => tr.enabled))); cam.classList.toggle('off', !vids.some(tr => tr.enabled));
+  btn.setAttribute('aria-pressed', String(C.radio)); btn.classList.toggle('off', C.radio);
+  C.ui?.grid.classList.toggle('radio', C.radio);
+  for (const hex of C.peers.keys()) send(hex, { type: 'media', call: C.id, video: !C.radio }).catch(() => {});
+}
+// Un pair passe en voix seule : je cesse de lui envoyer ma vidéo (ou je la reprends).
+function sendVideo(p, on) {
+  for (const s of p?.pc?.getSenders() || []) {
+    if (s.track?.kind !== 'video') continue;
+    const prm = s.getParameters();
+    (prm.encodings || []).forEach(e => { e.active = on; });
+    s.setParameters(prm).catch(() => {});
+  }
 }
 
 // Une personne de l'appel : sa tuile et sa connexion.
@@ -108,6 +130,7 @@ async function addPeer(hex, label) {
     }
   };
   p.pc = pc;
+  if (C.radio) send(hex, { type: 'media', call: C.id, video: false }).catch(() => {});
   return p;
 }
 // Offre à une personne (l'hôte joint la liste des participants : la station de l'invité les admettra).
@@ -248,4 +271,5 @@ export function signal(kit, d) {
     else drop(d.from, C.peers.size > 1 ? t('{0} a quitté l\'appel', d.label) : t('{0} a raccroché', d.label));
   } else if (d.type === 'reject') drop(d.from, t('{0} ne peut pas répondre pour l\'instant', d.label));
   else if (d.type === 'busy') drop(d.from, t('{0} est déjà en ligne', d.label));
+  else if (d.type === 'media') sendVideo(p, d.video !== false);
 }

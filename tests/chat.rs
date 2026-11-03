@@ -206,6 +206,11 @@ async fn a_call_rings_the_friend_live_carries_the_handshake_and_a_missed_call_st
     chat.poll_once().await;
     assert!(calls(&bus).iter().any(|(s, d)| s == "call:answer" && d["from"] == bob.as_str()));
     assert!(chat.conversations(&alice).await.unwrap()["conversations"].as_array().unwrap().is_empty(), "un appel abouti ne laisse rien dans le fil");
+    // Réseau faible : Bob passe en voix seule, Alice reçoit la demande de couper sa vidéo vers lui (sans SDP, sans trace).
+    chat.signal(&bob, &alice, &json!({ "type": "media", "call": "c0ffee01", "video": false })).await.unwrap();
+    chat.poll_once().await;
+    assert!(calls(&bus).iter().any(|(s, d)| s == "call:media" && d["video"] == false && d["from"] == bob.as_str()), "{:?}", calls(&bus));
+    assert!(chat.signal(&bob, &alice, &json!({ "type": "media", "call": "c0ffee01", "sdp": sdp })).await.is_err(), "pas de SDP hors offre et réponse");
 
     // Un autre appel, raccroché avant qu'on décroche : « Appel manqué » chez Bob (non lu), « Appel sans réponse » chez Alice.
     chat.signal(&alice, &bob, &json!({ "type": "offer", "call": "c0ffee02", "sdp": sdp })).await.unwrap();
@@ -364,5 +369,35 @@ async fn in_a_group_call_a_friend_of_my_friend_reaches_me_only_inside_the_room_m
     for bad in [json!(five), json!([alice, alice]), json!(["pas-une-cle"]), json!([])] {
         assert!(chat.signal(&alice, &bob, &json!({ "type": "roster", "call": "f00d0002", "roster": bad })).await.is_err(), "{bad}");
     }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn an_envelope_accepted_by_the_relay_wakes_the_reader_at_once() {
+    let (dir, _db, chat) = rig("wake", false).await;
+    let chat = Arc::new(chat);
+    let (live, relay) = tokio::sync::broadcast::channel(16);
+    let (stop_tx, stop) = tokio::sync::watch::channel(false);
+    // Contrôle régulier toutes les 60 s : seul le réveil par le relai peut livrer le message dans le délai du test.
+    let task = tokio::spawn(chat.clone().run(std::time::Duration::from_secs(60), relay, stop));
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await; // premier passage (à vide)
+    chat.send(&hex(&ALICE), &hex(&BOB), "Tu décroches ?").await.unwrap();
+    let unread = || async { chat.conversations(&hex(&BOB)).await.unwrap()["unread"].as_i64() };
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(unread().await, Some(0), "sans réveil, rien avant le prochain tour");
+    // Un autre kind ne réveille pas ; une enveloppe NIP-59, si.
+    let other = astro_nostr_proto::UnsignedEvent { created_at: 1_800_000_000, kind: 1, tags: vec![], content: String::new() }.sign(&EVE).unwrap();
+    live.send(Arc::new(other)).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(unread().await, Some(0));
+    let wrap = astro_nostr_proto::UnsignedEvent { created_at: 1_800_000_000, kind: 1059, tags: vec![vec!["p".into(), hex(&BOB)]], content: String::new() }.sign(&EVE).unwrap();
+    live.send(Arc::new(wrap)).unwrap();
+    let start = std::time::Instant::now();
+    while unread().await != Some(1) {
+        assert!(start.elapsed() < std::time::Duration::from_secs(2), "le message aurait dû être lu tout de suite");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    stop_tx.send(true).unwrap();
+    task.await.unwrap();
     let _ = std::fs::remove_dir_all(dir);
 }

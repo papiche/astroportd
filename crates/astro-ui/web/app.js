@@ -293,7 +293,7 @@ grid.append(lazy(btn, () => (kindOf(it.mime) === 'image' ? blobUrl(it.path, !!it
 }
 }
 const feed = [], listeners = new Set(), started = Date.now();
-function badge(n) { const a = document.querySelector('nav a[data-r=chat]'); let b = a.querySelector('.ch-badge'); if (!n) return b?.remove(); if (!b) a.append(b = h('span', { class: 'ch-badge' })); b.textContent = n; }
+function badge(n) { const a = $('nav a[data-r=chat]'); let b = a.querySelector('.ch-badge'); if (!n) return b?.remove(); if (!b) a.append(b = h('span', { class: 'ch-badge' })); b.textContent = n; }
 const refreshBadge = () => api('/api/v1/chat').then(r => badge(r.unread)).catch(() => {}); // sans chat sur cette station : pas de pastille
 function startLive() {
 startLive = () => {};
@@ -331,7 +331,7 @@ if (data && ev !== 'lag') { try { onEvent(JSON.parse(data)); } catch { /* ligne 
 await new Promise(ok => setTimeout(ok, wait)); wait = Math.min(wait * 2, 30000);
 }
 }
-// Multilingue : le français du code sert de clé ; m-lang-<lg>.js donne les textes exacts traduits (sinon le français reste).
+// Le français sert de clé ; m-lang-<lg>.js traduit (sinon le français reste).
 let dict = {};
 // Phrases propres à un écran : chargées avec lui (voir m-lang-<lg>.js).
 let PARTS = new Set(); const parts = new Set();
@@ -357,7 +357,7 @@ const K = { mod, t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u
 const lazyView = f => async (root, q) => (await mod(f)).default(root, K, q);
 const views = { stats: viewHome, station: viewStation, cloud: viewCloud };
 for (const n of ['home', 'account', 'contacts', 'chat', 'people', 'replication', 'library', 'coop', 'constellation', 'billets', 'cockpit', 'options', 'planes', 'bro']) views[n] = lazyView(`m-${n}.js`);
-// Personnes = le carnet et les visages réunis (m-contacts.js) ; la table de tri en est une sous-vue (#/people/tri, ?grand : Trier en grand).
+// Personnes : carnet + visages (m-contacts.js), tri en sous-vue (#/people/tri).
 views.people = views.contacts; views.sort = lazyView('m-people.js');
 let me = null;
 async function route() {
@@ -369,7 +369,7 @@ const [p, qs] = (location.hash.slice(1) || '/').split('?'), main = h('main', { i
 $('#main').replaceWith(main);
 try {
 if (!me) { me = await api('/api/v1/me'); mod('m-nostr.js').then(m => m.default(me, api), () => {}); mod('m-ux.js').then(m => m.default(me, api, t), () => {}); }
-document.querySelector('nav a[data-r=bro]').hidden = !me.ai; // BRO n'existe que pour un MULTIPASS qui a déclaré une IA (Mon compte)
+$('nav a[data-r=bro]').hidden = !me.ai; // BRO n'existe que pour un MULTIPASS qui a déclaré une IA (Mon compte)
 if (!me.ai && location.hash.startsWith('#/bro')) { toast(t('Déclarez une IA (Ollama ou clé d\'API) dans Mon compte pour utiliser BRO')); location.hash = '#/account'; return; }
 if (me.captain) planeSwitch();
 document.querySelector('nav a[data-r=station]').hidden = !me.captain; document.querySelector('nav a[data-r=station]').href = '#/cockpit'; // l'écran Capitaine n'existe pas pour un MULTIPASS
@@ -397,8 +397,9 @@ async function planeSwitch() {
       r.planes.map(p => h('option', { value: p.name, selected: p.name === current }, p.name))));
   } catch { /* pas d'écran des plans (station sans configuration) : pas de sélecteur */ }
 }
-addEventListener('hashchange', route);
+let stale; const had = !!navigator.serviceWorker?.controller;
+addEventListener('hashchange', () => (stale && !$('.call-local') ? location.reload() : route()));
 addEventListener('offline', () => toast('Hors ligne : la station est injoignable'));
 addEventListener('online', () => toast('Connexion rétablie', 1));
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/ui/sw.js', { scope: '/' }).catch(() => { /* contexte non sécurisé : pas de PWA, l'application reste utilisable */ });
+if ('serviceWorker' in navigator) navigator.serviceWorker.oncontrollerchange = () => { stale = had; }, navigator.serviceWorker.register('/ui/sw.js', { scope: '/' }).catch(() => { /* contexte non sécurisé : sans PWA */ });
 loadLang().then(route);

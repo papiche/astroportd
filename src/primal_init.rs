@@ -30,6 +30,8 @@ use crate::station::RESERVE_G1_CENTS;
 /// Montant de la transaction primale : 1 Ğ1, en centimes de Ğ1.
 pub const INIT_G1_CENTS: u64 = 100;
 pub(crate) const SCOPE: &str = "primal_init";
+/// Clé du dernier bilan (JSON) dans `kv(primal_init, …)`.
+pub const STATUS_KEY: &str = "_status";
 const EVERY: Duration = Duration::from_secs(6 * 3600);
 
 fn now() -> i64 {
@@ -88,7 +90,7 @@ impl<C: Chain> PrimalInit<C> {
         let targets = self.wallets.targets().await?;
         let master = self.wallets.master().await?;
         let mut master_spendable = match self.chain.balance(&master.account()).await {
-            Ok(b) => b.total.0.saturating_sub(RESERVE_G1_CENTS),
+            Ok(b) => b.spendable(Amount(RESERVE_G1_CENTS)).0,
             Err(_) => {
                 report.retry += 1;
                 return Ok(report);
@@ -141,12 +143,16 @@ impl<C: Chain> PrimalInit<C> {
                 }
             }
         }
+        // Bilan lisible par le cockpit (carte « Carburant de la station ») sans appel au réseau Ğ1.
+        let needed = u64::from(report.waiting).saturating_mul(INIT_G1_CENTS).saturating_sub(master_spendable);
+        let status = json!({ "master": master.account().ss58(), "spendable_g1_cents": master_spendable, "needed_g1_cents": needed, "waiting": report.waiting, "ready": report.already + report.initialised, "total": targets.len(), "unknown": report.unknown, "at": at });
+        self.set_marker(STATUS_KEY, &status.to_string()).await;
         if low {
             // Un rappel par jour, pas toutes les 6 h.
             let day = (at / 86_400).to_string();
             if self.marker("_master_low").await.as_deref() != Some(day.as_str()) {
                 self.set_marker("_master_low", &day).await;
-                self.alert(format!("{} portefeuille(s) coopératif(s) à initialiser : le portefeuille maître UPLANETNAME_G1 doit recevoir au moins 1 Ğ1 de plus que son dépôt d'existence par portefeuille", report.waiting));
+                self.alert(format!("{} portefeuille(s) coopératif(s) à ouvrir : déposez {} Ğ1 sur le portefeuille maître {} (carte « Carburant » du cockpit)", report.waiting, needed.div_ceil(100), master.account().ss58()));
             }
         }
         Ok(report)
@@ -171,6 +177,12 @@ impl<C: Chain> PrimalInit<C> {
     }
 }
 
+/// Dernier bilan de la transaction primale (`None` : jamais passée, ou option `--primal-init` absente).
+pub async fn last_status(db: &Db) -> Option<serde_json::Value> {
+    let text: Option<String> = db.readers().read(|c| Ok(rusqlite::OptionalExtension::optional(c.query_row("SELECT value FROM kv WHERE scope = ?1 AND key = ?2", rusqlite::params![SCOPE, STATUS_KEY], |r| r.get::<_, String>(0)))?)).await.ok().flatten();
+    text.and_then(|t| serde_json::from_str(&t).ok())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -189,7 +201,7 @@ mod tests {
 
     impl Chain for Ledger {
         async fn balance(&self, a: &Account) -> Result<Balance, ChainError> {
-            Ok(Balance { total: Amount(self.balances.lock().unwrap().get(a).copied().unwrap_or(0)), transferable: Amount(0), unclaimed_uds: Amount(0) })
+            { let t = self.balances.lock().unwrap().get(a).copied().unwrap_or(0); Ok(Balance { total: Amount(t), transferable: Amount(t), unclaimed_uds: Amount(0) }) }
         }
         async fn transfer(&self, from: &Ed25519Signer, to: &Account, amount: Amount, _: TransferMode, memo: Option<&str>) -> Result<TxOutcome, ChainError> {
             if let Some(e) = self.fail.lock().unwrap().clone() {
@@ -254,10 +266,14 @@ mod tests {
         r.chain.balances.lock().unwrap().insert(r.targets[0], 250);
         let first = r.init.run_once(1_800_000_000).await.unwrap();
         assert_eq!((first.initialised, first.waiting, first.already), (2, 3, 1), "{first:?}");
+        // Le cockpit lit le bilan : l'adresse à créditer et ce qui manque (3 Ğ1, le maître gardant sa réserve).
+        let st = last_status(&r.db).await.unwrap();
+        assert_eq!((st["master"].as_str(), st["needed_g1_cents"].as_u64(), st["waiting"].as_u64(), st["ready"].as_u64(), st["total"].as_u64()), (Some(r.master.ss58().as_str()), Some(300), Some(3), Some(3), Some(6)), "{st}");
         // Le maître est rechargé : les trois restants sont initialisés au passage suivant.
         r.chain.balances.lock().unwrap().insert(r.master, 100 + 5 * 100);
         let second = r.init.run_once(1_800_021_600).await.unwrap();
         assert_eq!((second.initialised, second.waiting), (3, 0));
+        assert_eq!(last_status(&r.db).await.unwrap()["needed_g1_cents"], 0, "plein fait : la carte disparaît");
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -272,3 +288,4 @@ mod tests {
         let _ = (&r.db, std::fs::remove_dir_all(&r.dir));
     }
 }
+

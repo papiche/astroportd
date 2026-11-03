@@ -81,6 +81,25 @@ enum Command {
     PoolStatus(Box<PoolStatusArgs>),
     /// Diagnostic : permissions 0600, base WAL, certificats ACME, horloge solaire. Code 1 si une vérification échoue.
     Doctor(doctor::DoctorArgs),
+    /// Station marraine : prépare un jeton à usage unique qui fait rejoindre la constellation de cette station à une
+    /// nouvelle (`astroportd init --join <jeton>`) : amorçage P2P, relai et, en ẐEN, la swarm.key chiffrée.
+    Parrainer {
+        /// Adresse de cette station joignable par la filleule (défaut : `https://<domaine>` de station.conf).
+        #[arg(long)]
+        url: Option<String>,
+        /// Adresse P2P annoncée (`/dns4/…/tcp/4101/p2p/<PeerID>`) ; répétable. Défaut : le domaine, port 4101.
+        #[arg(long = "p2p")]
+        p2p: Vec<String>,
+        /// Validité du jeton, en heures (1 à 168).
+        #[arg(long, default_value_t = astroportd::sponsor::DEFAULT_HOURS)]
+        hours: u32,
+        /// Dossier de la station (`station.conf`, `uplanet.db`, `swarm.key`) ; défaut `~/.zen/astroportd`.
+        #[arg(long)]
+        home: Option<PathBuf>,
+        /// Dossier `~/.zen/game` (défaut : `$ASTRO_GAME_DIR`, sinon `$HOME/.zen/game`).
+        #[arg(long)]
+        game_dir: Option<PathBuf>,
+    },
     /// Affiche le jeton de connexion d'un compte hébergé (interface web et clients WebDAV).
     Token {
         /// Email ou clé Nostr (64 hex) du compte.
@@ -720,8 +739,19 @@ async fn run(cli: Cli) -> Result<(), Failure> {
     match cli.command {
         Command::Serve(args) => serve::run(*args).await,
         Command::Doctor(args) => doctor::run(args),
-        Command::Init(args) => init::init(*args),
+        Command::Init(mut args) => {
+            // Parrainage : l'offre se retire (réseau) avant l'assistant, qui reste synchrone.
+            if let Some(token) = args.join.clone() {
+                println!("Parrainage : demande de l'offre à la station marraine…");
+                let offer = astroportd::sponsor::redeem(&token).await?;
+                println!("   offre reçue de {} ({})\n", offer.from, if offer.swarm_key.is_some() { "constellation ẐEN" } else { "ORIGIN" });
+                args.joined = Some(offer);
+            }
+            let done = init::init(*args)?;
+            init_captain(done).await
+        }
         Command::Ylevel(args) => init::ylevel_cmd(args),
+        Command::Parrainer { url, p2p, hours, home, game_dir } => parrainer(url, p2p, hours, home, game_dir).await,
         Command::Token { account, game_dir, db } => {
             let station = identity::resolve(game_dir.as_deref(), true)?;
             let found = station.discovered.as_ref().ok_or("identités locales introuvables (--game-dir)")?;
@@ -984,73 +1014,130 @@ async fn multipass_cmd(action: MultipassAction) -> Result<(), Failure> {
             println!("{} MULTIPASS hébergé(s)", found.multipasses.len());
             Ok(())
         }
-        MultipassAction::Create { email, lang, game_dir, home, swarm_key, db, relays, captain: make_captain, json } => {
-            let home = station_home(home)?;
-            let uplanet_name = station_uplanet_name(&home, swarm_key)?;
-            let station = identity::resolve(game_dir.as_deref(), true)?;
-            let nostr_dir = station.nostr_dir.clone().ok_or("dossier des comptes introuvable (--game-dir)")?;
-            let db_path = db.unwrap_or_else(|| home.join("uplanet.db"));
-            let db = Arc::new(Db::open(&db_path, 1)?);
-            let secret = station.secret.clone();
-            let captain = station.discovered.as_ref().and_then(|d| d.captain()).map(|m| m.hex.clone());
-            let player_file = nostr_dir.parent().map(|g| g.join("players/.current/.player"));
-            if make_captain {
-                let wanted = astro_lifecycle::multipass::normalize_email(&email)?;
-                let current = player_file.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| t.trim().to_ascii_lowercase()).filter(|t| !t.is_empty());
-                if current.as_deref().is_some_and(|c| c != wanted) {
-                    return Err(format!("la station a déjà un Capitaine ({}) : --captain refusé", current.unwrap_or_default()).into());
-                }
-            }
-            let registrar = astroportd::register::Registrar::new(db.clone(), nostr_dir, uplanet_name, Arc::new(move |hex| astro_dav::auth::derive_dav_token(&secret, hex)), astroportd::register::Limits { open: true, max_accounts: 0, per_ip_per_hour: 0 }).with_captain(captain);
-            let reg = registrar.register(None, &email, &lang).await?;
-            if make_captain {
-                let file = player_file.ok_or("dossier de la station introuvable")?;
-                if let Some(dir) = file.parent() {
-                    std::fs::create_dir_all(dir)?;
-                }
-                std::fs::write(&file, format!("{}\n", reg.account.email))?;
-                db.writer().execute("UPDATE identities SET role = 'captain' WHERE hex = ?1", vec![rusqlite::types::Value::Text(reg.account.hex.clone())]).await?;
-                println!("⚓ {} est le Capitaine de cette station ({}).", reg.account.email, file.display());
-            }
-            // Publication directe (pas de démon ici) : les événements de naissance partent vers les relais demandés.
-            let mut failures = 0;
-            if !relays.is_empty() {
-                let mut client = WsClient::new(Duration::from_secs(30));
-                if let Some(signer) = station.signer {
-                    client = client.with_signer(signer);
-                }
-                let events = stored_birth_events(&db, &reg.account.hex).await?;
-                for relay in &relays {
-                    for e in &events {
-                        match client.publish(relay, e).await {
-                            Ok((true, _)) => {}
-                            Ok((false, why)) => {
-                                failures += 1;
-                                eprintln!("refusé par {relay} : {why}");
-                            }
-                            Err(err) => {
-                                failures += 1;
-                                eprintln!("échec sur {relay} : {err}");
-                            }
-                        }
+        MultipassAction::Create { email, lang, game_dir, home, swarm_key, db, relays, captain: make_captain, json } => multipass_create(email, lang, game_dir, home, swarm_key, db, relays, make_captain, json).await,
+    }
+}
+
+/// `astroportd parrainer` : offre chiffrée, à usage unique, rangée dans la base de cette station (la marraine).
+async fn parrainer(url: Option<String>, p2p: Vec<String>, hours: u32, home: Option<PathBuf>, game_dir: Option<PathBuf>) -> Result<(), Failure> {
+    let home = station_home(home)?;
+    let conf = init::read_conf(&home.join("station.conf"));
+    let domain = conf.iter().find(|(k, _)| k == "domain").map(|(_, v)| v.clone()).filter(|v| !v.is_empty());
+    let base_url = url.or_else(|| domain.as_ref().map(|d| format!("https://{d}"))).ok_or("indiquez --url : l'adresse de cette station, joignable par la nouvelle (cette station n'a pas de domaine)")?;
+    let station = identity::resolve(game_dir.as_deref(), true)?;
+    let peer = station.discovered.as_ref().map(|d| d.node.peer_id.clone()).ok_or("identité de la station introuvable (--game-dir)")?;
+    let bootstrap = if p2p.is_empty() { domain.iter().map(|d| format!("/dns4/{d}/tcp/4101/p2p/{peer}")).collect() } else { p2p };
+    for b in &bootstrap {
+        b.parse::<astro_p2p::Multiaddr>().map_err(|e| format!("adresse P2P invalide « {b} » : {e}"))?;
+    }
+    let swarm_key = std::fs::read_to_string(home.join("swarm.key")).ok();
+    let fingerprint = match &swarm_key {
+        Some(k) => Some(astro_p2p::fingerprint(&astro_p2p::parse_swarm_key(k).map_err(|e| format!("swarm.key invalide : {e}"))?)),
+        None => None,
+    };
+    let payload = astroportd::sponsor::Payload { from: domain.clone().unwrap_or_else(|| base_url.clone()), swarm_key, bootstrap: bootstrap.clone(), relay: domain.as_ref().map(|d| format!("wss://{d}")) };
+    let db = Arc::new(Db::open(&home.join("uplanet.db"), 1)?);
+    let token = astroportd::sponsor::create(&db, &base_url, &payload, hours).await?;
+    db.writer().shutdown().await?;
+    println!("Jeton de parrainage (usage unique, valable {} h) :\n\n  {token}\n", hours.clamp(1, 24 * 7));
+    println!("Sur la nouvelle station :  astroportd init --join '{token}'\n");
+    match &fingerprint {
+        Some(fp) => println!("Constellation ẐEN : la swarm.key part chiffrée. Empreinte à comparer après l'installation : {fp}"),
+        None => println!("Constellation ORIGIN : pas de swarm.key, seulement l'amorçage P2P et le relai."),
+    }
+    if bootstrap.is_empty() {
+        println!("⚠ aucune adresse P2P annoncée (pas de domaine) : ajoutez --p2p /ip4/<IP publique>/tcp/4101/p2p/{peer}");
+    }
+    println!("⚠ Ce jeton ouvre votre constellation : transmettez-le de la main à la main ou par message chiffré. La station doit tourner (serve) pour que la filleule le retire.");
+    Ok(())
+}
+
+/// Fin d'`astroportd init` : le compte du Capitaine est créé tout de suite, pour que la première visite de l'interface
+/// web soit une connexion (email + code PASS) et non un mur. Déjà un Capitaine : rien n'est touché.
+async fn init_captain(done: init::InitDone) -> Result<(), Failure> {
+    if done.captain_email.is_empty() {
+        println!("MULTIPASS :       astroportd multipass create <votre@email> --captain   (le Capitaine d'abord : l'inscription web n'ouvre qu'après lui)");
+        return Ok(());
+    }
+    let player = done.game.join("players/.current/.player");
+    if let Some(current) = std::fs::read_to_string(&player).ok().map(|t| t.trim().to_owned()).filter(|t| !t.is_empty()) {
+        println!("Capitaine :       {current} (déjà en place)");
+        return Ok(());
+    }
+    println!("\n④ Compte du Capitaine");
+    multipass_create(done.captain_email.clone(), "fr".into(), Some(done.game.clone()), Some(done.home.clone()), None, None, Vec::new(), true, false).await?;
+    println!("\nAprès le démarrage, ouvrez {} et connectez-vous avec {} et ce code PASS.", done.web_url, done.captain_email);
+    Ok(())
+}
+
+/// `astroportd multipass create` : crée un MULTIPASS hébergé ici (et, avec `make_captain`, le Capitaine de la station).
+/// Appelé aussi par `astroportd init`, qui crée le compte du Capitaine dans la foulée.
+#[allow(clippy::too_many_arguments)]
+async fn multipass_create(email: String, lang: String, game_dir: Option<PathBuf>, home: Option<PathBuf>, swarm_key: Option<PathBuf>, db: Option<PathBuf>, relays: Vec<String>, make_captain: bool, json: bool) -> Result<(), Failure> {
+    let home = station_home(home)?;
+    let uplanet_name = station_uplanet_name(&home, swarm_key)?;
+    let station = identity::resolve(game_dir.as_deref(), true)?;
+    let nostr_dir = station.nostr_dir.clone().ok_or("dossier des comptes introuvable (--game-dir)")?;
+    let db_path = db.unwrap_or_else(|| home.join("uplanet.db"));
+    let db = Arc::new(Db::open(&db_path, 1)?);
+    let secret = station.secret.clone();
+    let captain = station.discovered.as_ref().and_then(|d| d.captain()).map(|m| m.hex.clone());
+    let player_file = nostr_dir.parent().map(|g| g.join("players/.current/.player"));
+    if make_captain {
+        let wanted = astro_lifecycle::multipass::normalize_email(&email)?;
+        let current = player_file.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| t.trim().to_ascii_lowercase()).filter(|t| !t.is_empty());
+        if current.as_deref().is_some_and(|c| c != wanted) {
+            return Err(format!("la station a déjà un Capitaine ({}) : --captain refusé", current.unwrap_or_default()).into());
+        }
+    }
+    let registrar = astroportd::register::Registrar::new(db.clone(), nostr_dir, uplanet_name, Arc::new(move |hex| astro_dav::auth::derive_dav_token(&secret, hex)), astroportd::register::Limits { open: true, max_accounts: 0, per_ip_per_hour: 0 }).with_captain(captain);
+    let reg = registrar.register(None, &email, &lang).await?;
+    if make_captain {
+        let file = player_file.ok_or("dossier de la station introuvable")?;
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&file, format!("{}\n", reg.account.email))?;
+        db.writer().execute("UPDATE identities SET role = 'captain' WHERE hex = ?1", vec![rusqlite::types::Value::Text(reg.account.hex.clone())]).await?;
+        println!("⚓ {} est le Capitaine de cette station ({}).", reg.account.email, file.display());
+    }
+    // Publication directe (pas de démon ici) : les événements de naissance partent vers les relais demandés.
+    let mut failures = 0;
+    if !relays.is_empty() {
+        let mut client = WsClient::new(Duration::from_secs(30));
+        if let Some(signer) = station.signer {
+            client = client.with_signer(signer);
+        }
+        let events = stored_birth_events(&db, &reg.account.hex).await?;
+        for relay in &relays {
+            for e in &events {
+                match client.publish(relay, e).await {
+                    Ok((true, _)) => {}
+                    Ok((false, why)) => {
+                        failures += 1;
+                        eprintln!("refusé par {relay} : {why}");
+                    }
+                    Err(err) => {
+                        failures += 1;
+                        eprintln!("échec sur {relay} : {err}");
                     }
                 }
             }
-            db.writer().shutdown().await?;
-            let a = &reg.account;
-            if json {
-                println!("{}", serde_json::json!({ "email": a.email, "token": reg.token, "pass": a.pass, "salt": &*a.salt, "pepper": &*a.pepper, "nsec": &*a.nsec, "npub": a.npub, "hex": a.hex, "g1pub": a.g1_ss58, "nostrns": a.nostrns, "constellation": reg.constellation, "card": reg.card }));
-            } else {
-                println!("MULTIPASS {} créé sur la constellation {}\n", a.email, reg.constellation);
-                println!("  Identifiant web : {}\n  Jeton web       : {}\n  Code PASS       : {}", a.email, reg.token, a.pass);
-                println!("  nsec            : {}\n  npub            : {}\n  Ğ1              : {}\n  IPNS            : {}", &*a.nsec, a.npub, a.g1_ss58, a.nostrns);
-                println!("  Clé de secours  : {}", reg.card);
-                println!("\n⚠ Imprimez la clé de secours en QR (`astroportd multipass card {} --svg`) et gardez-la hors ligne : seule, elle ne révèle rien ; avec la part de l'un de vos amis qui héberge votre sauvegarde, elle rétablit le compte sur une autre station. Le SALT et le PEPPER ne sont plus affichés (ils restent dans le dossier du compte, sous `0600`, et dans `--json`).", a.email);
-                println!("  Dossier du compte : {}", a.dir.display());
-            }
-            if failures > 0 { Err(format!("{failures} publication(s) en échec (le compte est créé)").into()) } else { Ok(()) }
         }
     }
+    db.writer().shutdown().await?;
+    let a = &reg.account;
+    if json {
+        println!("{}", serde_json::json!({ "email": a.email, "token": reg.token, "pass": a.pass, "salt": &*a.salt, "pepper": &*a.pepper, "nsec": &*a.nsec, "npub": a.npub, "hex": a.hex, "g1pub": a.g1_ss58, "nostrns": a.nostrns, "constellation": reg.constellation, "card": reg.card }));
+    } else {
+        println!("MULTIPASS {} créé sur la constellation {}\n", a.email, reg.constellation);
+        println!("  Identifiant web : {}\n  Jeton web       : {}\n  Code PASS       : {}", a.email, reg.token, a.pass);
+        println!("  nsec            : {}\n  npub            : {}\n  Ğ1              : {}\n  IPNS            : {}", &*a.nsec, a.npub, a.g1_ss58, a.nostrns);
+        println!("  Clé de secours  : {}", reg.card);
+        println!("\n⚠ Imprimez la clé de secours en QR (`astroportd multipass card {} --svg`) et gardez-la hors ligne : seule, elle ne révèle rien ; avec la part de l'un de vos amis qui héberge votre sauvegarde, elle rétablit le compte sur une autre station. Le SALT et le PEPPER ne sont plus affichés (ils restent dans le dossier du compte, sous `0600`, et dans `--json`).", a.email);
+        println!("  Dossier du compte : {}", a.dir.display());
+    }
+    if failures > 0 { Err(format!("{failures} publication(s) en échec (le compte est créé)").into()) } else { Ok(()) }
 }
 
 /// Dossier de la station : `--home`, sinon `~/.zen/astroportd`.

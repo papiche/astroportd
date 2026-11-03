@@ -40,6 +40,15 @@ pub struct Balance {
     pub unclaimed_uds: Amount,
 }
 
+impl Balance {
+    /// Ce qu'on peut **envoyer** en laissant `reserve` sur le compte : le total moins la réserve, sans jamais dépasser
+    /// ce que la chaîne déclare transférable. Un compte dont une partie est gelée (caution, verrou) ne promet donc pas
+    /// un virement que l'extrinsic refuserait (`LiquidityRestrictions`). Toute décision de dépense passe par ici.
+    pub fn spendable(&self, reserve: Amount) -> Amount {
+        Amount(self.total.0.saturating_sub(reserve.0).min(self.transferable.0))
+    }
+}
+
 /// Politique de virement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferMode {
@@ -186,4 +195,20 @@ async fn wait_in_block(mut progress: subxt::tx::TxProgress<PolkadotConfig, Onlin
         }
     }
     Err(ChainError::UnknownOutcome("flux de statut terminé sans inclusion".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spendable_keeps_the_reserve_and_never_exceeds_transferable() {
+        let b = |total, transferable| Balance { total: Amount(total), transferable: Amount(transferable), unclaimed_uds: Amount(0) };
+        // Compte libre : total moins la réserve.
+        assert_eq!(b(5_000, 4_900).spendable(Amount(100)), Amount(4_900));
+        // 45 Ğ1 gelés sur 50 : seul le transférable compte, pas « 49 Ğ1 ».
+        assert_eq!(b(5_000, 500).spendable(Amount(100)), Amount(500));
+        // Sous la réserve : rien.
+        assert_eq!(b(80, 80).spendable(Amount(100)), Amount(0));
+    }
 }

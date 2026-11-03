@@ -30,12 +30,12 @@ serde_json.workspace = true
 thiserror.workspace = true
 brotli.workspace = true
 flate2.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 time = "0.3"
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tower.workspace = true
-sha2.workspace = true
 tokio-tungstenite.workspace = true
 
 [lints]

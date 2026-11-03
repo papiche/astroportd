@@ -1,3 +1,32 @@
+## astroportd 0.5.5-beta
+
+Cette version rend la station **robuste** sur ses points sensibles (argent, sonnerie, mises à jour de l'application) et transforme **l'arrivée d'un Capitaine** : plus de terminal une fois la station démarrée. Elle inclut aussi la 0.5.4-beta, jamais publiée (Personnes et Contacts réunis, visio sans tiers).
+
+### Robustesse
+- **Personne ne s'inscrit avant le Capitaine** : tant que la station n'en a pas, `/register` et l'inscription invitée sont fermés (un inconnu ne peut plus prendre l'email du Capitaine). Les membres suivent le Capitaine même s'il est créé pendant que la station tourne.
+- **Solde réellement dépensable** : toute dépense (réactions payantes, hébergement, clôture, transactions primales, billets) s'appuie sur le solde *transférable* de la chaîne (fonds gelés exclus), plus jamais sur le total.
+- **Un virement à la fois par portefeuille** : deux signatures simultanées ne lisent plus le même nonce.
+- **Sonnerie instantanée** : une enveloppe privée acceptée par le relai réveille le chat tout de suite (la poignée de main visio ne perd plus jusqu'à 6 s) ; le passage toutes les 3 s reste en secours.
+- **Application installée (PWA) toujours cohérente** : le cache porte l'empreinte de tous les fichiers web ; une nouvelle version recharge la page au prochain écran (jamais pendant un appel).
+- **Certificat HTTPS visible** : `/health` a un sous-système `https` ; un échec Let's Encrypt arrive au cockpit avec le geste qui le règle (box, DNS, quota, autre serveur sur le port 80).
+- **Relais d'appel** : une nouvelle adresse de la machine (DHCP, Wi-Fi, VPN) est écoutée sans redémarrer.
+- **Invitations de l'ancien format** migrées au démarrage : elles suivent le uCloud vivant (un fichier supprimé n'est plus promis).
+
+### Arrivée du Capitaine
+- `astroportd init` **crée le compte du Capitaine** quand on lui donne l'email, et affiche son code PASS.
+- Sans email : la station écrit un **code d'installation** dans son journal ; la page **`/welcome`** crée le compte du Capitaine avec ce code (usage unique, renouvelé après 5 essais faux).
+- **Carte « Carburant de la station »** (avec `--primal-init`) : QR et adresse du portefeuille maître, montant exact qui manque.
+- **Nom de domaine depuis le cockpit** : vérification (forme, DNS, ports), enregistrement dans `station.conf`, bouton **« Redémarrer la station »** (systemd la relance). Filet : si les ports 80/443 sont indisponibles, la station reste joignable en local et le cockpit dit pourquoi.
+- **Configuration coopérative en trois niveaux** : Essentiel (nom, charte, OVH), Services (OpenCollective, Mailjet, API), Réglages experts repliés (fiscalité, parts, 3×1/3).
+
+### Faire venir du monde
+- **Liens d'accueil** `/w/<jeton>` (cockpit › « Inviter votre premier membre ») : un lien et son QR pour **plusieurs** personnes. Qui l'ouvre crée son MULTIPASS (email ou simple pseudo), devient ami réciproque du Capitaine et arrive dans la discussion avec lui. Places limitées, 90 jours, retirable.
+- **Station marraine** : `astroportd parrainer` donne un jeton à usage unique (24 h) ; `astroportd init --join <jeton>` rejoint la constellation (swarm.key reçue **chiffrée**, amorçage P2P sur la marraine), sans recopier de fichier.
+- Chat : **brouillons** gardés le temps de l'onglet ; visio : bouton **« Voix seule »** (la vidéo se coupe dans les deux sens, l'appel tient en 3G).
+
+### Installation
+- **`install.sh` relancé met à jour** : il montre l'installation en place (version, constellation, domaine, Capitaine, service), met à jour le binaire et les modèles déjà choisis, redémarre le service, et ne repropose jamais `init`. `--force` réinstalle la même version.
+
 ## astroportd 0.5.4-beta
 
 Cette version réunit **Personnes et Contacts** (un visage appartient à une fiche, plus jamais à un nom), apporte la **visio sans tiers** (appels à deux et en groupe, relais d'appel de la station, présence « en ligne ») et allège le premier chargement de l'interface.

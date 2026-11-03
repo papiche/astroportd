@@ -228,7 +228,7 @@ impl<C: Chain> HostingFees<C> {
                 continue;
             };
             let balance = match self.chain.balance(&signer.account()).await {
-                Ok(b) => b.total.0.saturating_sub(RESERVE_G1_CENTS).saturating_mul(ZEN_PER_G1),
+                Ok(b) => b.spendable(Amount(RESERVE_G1_CENTS)).0.saturating_mul(ZEN_PER_G1),
                 Err(_) => {
                     report.retry += 1;
                     continue;
@@ -372,7 +372,7 @@ pub(crate) mod tests {
 
     impl Chain for Node {
         async fn balance(&self, _: &Account) -> Result<Balance, ChainError> {
-            Ok(Balance { total: Amount(*self.total.lock().unwrap()), transferable: Amount(0), unclaimed_uds: Amount(0) })
+            { let t = *self.total.lock().unwrap(); Ok(Balance { total: Amount(t), transferable: Amount(t), unclaimed_uds: Amount(0) }) }
         }
         async fn transfer(&self, _: &Ed25519Signer, to: &Account, amount: Amount, _: TransferMode, memo: Option<&str>) -> Result<TxOutcome, ChainError> {
             if let Some(e) = self.fail.lock().unwrap().clone() {

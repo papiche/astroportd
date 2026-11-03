@@ -19,6 +19,11 @@
   <p id="info" class="muted" role="status">Vérification de la station…</p>
 
   <form id="f" hidden>
+    <div id="code-box" hidden>
+      <label for="code">Code d’installation</label>
+      <input id="code" name="code" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="12" placeholder="ABCD-EFGH">
+      <p class="muted small">Il est écrit dans le journal de la station au démarrage (terminal, ou <code>journalctl --user -u astroportd</code>) : il prouve que vous avez la main sur la machine.</p>
+    </div>
     <label for="email">Votre adresse email</label>
     <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="vous@exemple.org">
     <label class="check"><input id="guest" type="checkbox"> Je préfère ne pas donner mon email</label>

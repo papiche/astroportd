@@ -66,11 +66,13 @@ export default async function chat(root, K, query) {
     s.msgs = r.messages; s.more = r.more; paint(stick);
     if (document.visibilityState === 'visible') api('/api/v1/chat/read', { method: 'POST', body: { peer } }).then(loadList).catch(() => {});
   }
-  const box = h('textarea', { rows: 1, maxlength: 4000, placeholder: t('Écrire un message…'), 'aria-label': t('Message') });
+  // Brouillon par conversation, gardé le temps de l'onglet (rechargement, coupure réseau) : jamais au-delà, c'est un message privé.
+  const draft = { get: p => { try { return sessionStorage.getItem('draft:' + p) || ''; } catch { return ''; } }, set: (p, v) => { try { v ? sessionStorage.setItem('draft:' + p, v) : sessionStorage.removeItem('draft:' + p); } catch { /* stockage indisponible */ } } };
+  const box = h('textarea', { rows: 1, maxlength: 4000, placeholder: t('Écrire un message…'), 'aria-label': t('Message'), oninput: () => s.peer && draft.set(s.peer, box.value) });
   async function send() {
     const text = box.value.trim(); if (!text || !s.peer) return;
     box.disabled = true;
-    try { await api('/api/v1/chat/send', { method: 'POST', body: { peer: s.peer, text } }); box.value = ''; await refresh(true); await loadList(); }
+    try { await api('/api/v1/chat/send', { method: 'POST', body: { peer: s.peer, text } }); box.value = ''; draft.set(s.peer, ''); await refresh(true); await loadList(); }
     catch (e) { K.toast(e.message); } finally { box.disabled = false; box.focus(); }
   }
   box.onkeydown = ev => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); send(); } };
@@ -82,7 +84,7 @@ export default async function chat(root, K, query) {
     detail.replaceChildren(h('div', { class: 'ch-head' }, h('button', { type: 'button', class: 'ab-back', onclick: () => { s.open = false; s.peer = null; main.classList.remove('open'); loadList(); } }, '← ' + t('Retour')),
       h('span', { class: 'ab-av' }, initial(s.label)), h('span', { class: 'ab-name' }, h('strong', {}, s.label), presText), h('small', { class: 'muted' }, t('Chiffré de bout en bout')),
       h('button', { type: 'button', class: 'ch-callbtn', title: t('Appeler en visio'), 'aria-label': t('Appeler {0} en visio', s.label), onclick: callBack }, '📹')), thread, form);
-    paintPres();
+    paintPres(); box.value = draft.get(peer);
     await refresh(true); await loadList(); box.focus();
   }
   K.listen(ev => {

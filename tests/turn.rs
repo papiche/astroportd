@@ -262,3 +262,42 @@ fn authenticated_traffic_is_never_throttled_but_challenges_are() {
     let answered = (0..60).filter(|_| !r.handle(&stranger.request(0x0003, &[(0x0019, vec![17, 0, 0, 0])]), stranger.addr, Instant::now()).is_empty()).count();
     assert!(answered <= astroportd::stun::PER_IP_PER_SEC as usize, "{answered} défis servis");
 }
+
+/// Requête STUN « Binding » minimale.
+fn binding(tx: u8) -> Vec<u8> {
+    let mut p = vec![0x00, 0x01, 0x00, 0x00];
+    p.extend_from_slice(&MAGIC);
+    p.extend_from_slice(&[tx; 12]);
+    p
+}
+
+#[tokio::test]
+async fn a_new_address_of_the_machine_is_listened_to_without_restarting() {
+    use std::net::{IpAddr, Ipv4Addr};
+    let socks = astroportd::turn::bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    let port = socks[0].local_addr().unwrap().port();
+    let (stop_tx, stop) = tokio::sync::watch::channel(false);
+    // La machine « gagne » 127.0.0.2 (nouveau bail DHCP, Wi-Fi, VPN…).
+    let ips = std::sync::Arc::new(std::sync::Mutex::new(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]));
+    let seen = ips.clone();
+    let rebind = astroportd::turn::Rebind { every: Duration::from_millis(50), ips: Box::new(move || seen.lock().unwrap().clone()) };
+    let task = tokio::spawn(astroportd::turn::serve_rebinding(socks, Relay::new(SECRET).stun_only(), stop, Some(rebind)));
+    let client = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let ask = |to: SocketAddr, tx: u8| {
+        let c = &client;
+        async move {
+            c.send_to(&binding(tx), to).await.unwrap();
+            let mut buf = [0u8; 1500];
+            tokio::time::timeout(Duration::from_millis(400), c.recv_from(&mut buf)).await.ok().map(|r| buf[..r.unwrap().0].to_vec())
+        }
+    };
+    let (first, second): (SocketAddr, SocketAddr) = (format!("127.0.0.1:{port}").parse().unwrap(), format!("127.0.0.2:{port}").parse().unwrap());
+    assert!(ask(first, 1).await.is_some_and(|r| r[..2] == [0x01, 0x01]), "l'adresse du démarrage répond");
+    assert!(ask(second, 2).await.is_none(), "127.0.0.2 n'est pas encore une adresse de la machine");
+    ips.lock().unwrap().push(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let reply = ask(second, 3).await.expect("la nouvelle adresse est écoutée, sur le même port");
+    assert_eq!(&reply[..2], &[0x01, 0x01], "réponse Binding");
+    stop_tx.send(true).unwrap();
+    task.await.unwrap();
+}

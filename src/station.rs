@@ -103,12 +103,24 @@ pub struct StationServices {
     chain_seen: Mutex<Option<(Instant, bool)>>,
     /// Dernier solde lu par compte : affiché quand le nœud est lent, pour ne jamais bloquer une page.
     last_balance: Mutex<std::collections::HashMap<String, BalanceView>>,
+    /// Certificat HTTPS (domaines, état du gestionnaire ACME) : posé au démarrage du frontal TLS, lu par `/health`.
+    tls: std::sync::OnceLock<(Vec<String>, Arc<Mutex<astro_ui::acme::AcmeStatus>>)>,
 }
 
 impl StationServices {
     /// Assemble le contexte.
     pub fn new(d: StationDeps) -> Self {
-        Self { db: d.db, info: d.info, nostr_dir: d.nostr_dir, chain: d.chain, hardware: d.hardware, p2p: d.p2p, weekly_rent_cents: d.weekly_rent_cents, activity: d.activity, swarm_dir: d.swarm_dir, origin: d.origin, exposed: d.exposed, chain_seen: Mutex::new(None), last_balance: Mutex::new(std::collections::HashMap::new()) }
+        Self { db: d.db, info: d.info, nostr_dir: d.nostr_dir, chain: d.chain, hardware: d.hardware, p2p: d.p2p, weekly_rent_cents: d.weekly_rent_cents, activity: d.activity, swarm_dir: d.swarm_dir, origin: d.origin, exposed: d.exposed, chain_seen: Mutex::new(None), last_balance: Mutex::new(std::collections::HashMap::new()), tls: std::sync::OnceLock::new() }
+    }
+
+    /// Branche l'état du certificat HTTPS (une seule fois, quand le frontal TLS démarre).
+    pub fn set_tls(&self, domains: Vec<String>, status: Arc<Mutex<astro_ui::acme::AcmeStatus>>) {
+        let _ = self.tls.set((domains, status));
+    }
+
+    /// État du certificat HTTPS : `None` sans domaine (HTTP local ou derrière un proxy qui gère le TLS).
+    pub fn tls_status(&self) -> Option<(Vec<String>, astro_ui::acme::AcmeStatus)> {
+        self.tls.get().map(|(d, s)| (d.clone(), s.lock().unwrap_or_else(|e| e.into_inner()).clone()))
     }
 
     /// Résultat du dernier appel Duniter (`None` : jamais sollicité).

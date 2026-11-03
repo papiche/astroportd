@@ -405,14 +405,41 @@ async fn watch_relay(mut live: tokio::sync::broadcast::Receiver<Arc<Event>>, act
 
 /// Lance le démon complet.
 pub async fn run(a: ServeArgs) -> Result<(), Failure> {
+    astroportd::station_domain::arm();
     run_until(a, async {
-        let _ = tokio::signal::ctrl_c().await;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            () = astroportd::station_domain::RESTART.notified() => {}
+        }
     })
-    .await
+    .await?;
+    if astroportd::station_domain::restart_requested() {
+        // Code d'échec voulu : systemd (Restart=on-failure) relance la station avec sa nouvelle configuration.
+        return Err("redémarrage demandé depuis le cockpit : systemd relance la station".into());
+    }
+    Ok(())
 }
 
 /// Comme [`run`], mais s'arrête quand `shutdown` se termine : plusieurs plans d'un même processus partagent un seul signal d'arrêt.
-pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output = ()>) -> Result<(), Failure> {
+pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Output = ()>) -> Result<(), Failure> {
+    // Domaine réglé depuis le cockpit : repris de station.conf quand la commande n'en donne pas.
+    if a.domains.is_empty() {
+        let conf = a.db.parent().map_or_else(|| PathBuf::from("station.conf"), |d| d.join("station.conf"));
+        if let Some((domain, email)) = astroportd::station_domain::domain_from_conf(&conf, a.http_listen.is_some()) {
+            // Filet : une station qui ne peut pas ouvrir 80/443 resterait en échec au démarrage, donc injoignable. Elle
+            // garde alors son accès local et le cockpit dit pourquoi le domaine attend.
+            let blocked: Vec<String> = [80, a.https_listen.port()].into_iter().filter(|p| astroportd::station_domain::port_state(*p) != "free").map(|p| p.to_string()).collect();
+            if blocked.is_empty() {
+                println!("domaine repris de {} : {domain}", conf.display());
+                a.domains = vec![domain];
+                a.acme_email = a.acme_email.take().or(email);
+            } else {
+                let why = format!("domaine {domain} enregistré mais pas appliqué : le(s) port(s) {} de cette machine sont pris ou interdits à la station (droits : sudo setcap 'cap_net_bind_service=+ep' sur le binaire). La station reste en accès local ; redémarrez une fois le port libéré.", blocked.join(" et "));
+                eprintln!("{why}");
+                astroportd::station_domain::set_refused(why);
+            }
+        }
+    }
     // Étanchéité des constellations : les CID d'une UPlanet privée ne sortent jamais de son essaim (même règle que `planes`).
     if a.swarm_key.is_some() && a.kubo.is_some() {
         return Err("--kubo n'appartient qu'à ORIGIN : une UPlanet privée (--swarm-key) n'a jamais de Kubo (ses CID ne doivent pas sortir de son essaim)".into());
@@ -748,10 +775,20 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
         Arc::new(
             astroportd::register::Registrar::new(db.clone(), secrets_dir.clone(), uplanet_name.clone(), Arc::new(move |hex| astro_dav::auth::derive_dav_token(&secret, hex)), limits)
                 .with_captain(captain)
+                .require_captain()
+                .with_player_file(station.nostr_dir.as_ref().and_then(|d| d.parent()).map(|g| g.join("players/.current/.player")))
                 .with_station_domain(a.domains.first().cloned())
                 .with_relays(a.domains.first().map(|d| format!("wss://{d}")).into_iter().collect())
                 .with_publisher(publish, Some(activity.clone())),
         )
+    };
+    // Station sans Capitaine : un code d'installation, écrit dans le journal seulement, ouvre la page /welcome.
+    let setup_code = if registrar.awaiting_captain().await {
+        let url = a.domains.first().map_or_else(|| a.http_listen.map_or_else(|| "http://127.0.0.1:18080".to_owned(), |l| format!("http://{l}")), |d| format!("https://{d}"));
+        let code = astroportd::first_run::SetupCode::new(Box::new(move |code| println!("\n⚓ Station sans Capitaine : ouvrez {url}/welcome et saisissez le code d'installation {code}\n   (ou, sur cette machine : astroportd multipass create <votre@email> --captain)\n")))?;
+        Some(Arc::new(code))
+    } else {
+        None
     };
     println!("inscription web des MULTIPASS : {} (constellation {}, max {} comptes, {} par heure et par adresse) → /register", if a.no_register { "fermée" } else { "ouverte" }, registrar.constellation(), a.max_accounts, a.register_per_hour);
     // Invitations : le lien `/i/<jeton>` crée le MULTIPASS du destinataire, l'abonne à l'expéditeur et range les photos.
@@ -759,6 +796,12 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
         let publish = publish_fn(&event_publisher);
         Arc::new(astroportd::invites::Invites::new(db.clone(), dav.blobs.clone(), invites_keys, registrar.clone(), publish).with_links(links.clone()).with_publisher(publisher.clone()).with_activity(activity.clone()).with_remote(sharing.clone()))
     };
+    match invites.migrate_legacy().await {
+        Ok(0) => {}
+        Ok(n) => println!("invitations : {n} ancienne(s) invitation(s) migrée(s) vers le suivi du uCloud vivant"),
+        Err(e) => eprintln!("invitations : migration de l'ancien format impossible : {e:?}"),
+    }
+    let welcome = Arc::new(astroportd::welcome::Welcome::new(db.clone(), invites.clone(), Some(activity.clone())));
     let account_publish = publish_fn(&event_publisher);
     // Agents du membre (kind 31903 `d = agents`) et serveur MCP : un agent demande, le membre accorde ou refuse.
     let agents = Arc::new(astroportd::agents::Agents::new(db.clone(), agent_keys, publish_fn(&event_publisher)).with_activity(activity.clone()));
@@ -792,10 +835,10 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
                 let call_relay = astroportd::turn::Relay::new(turn_secret);
                 if a.no_turn {
                     println!("visio : STUN sur udp/{} (relais d'appel coupé : --no-turn)", bound.join(", "));
-                    background.push(tokio::spawn(astroportd::turn::serve(socks, call_relay.stun_only(), stop_watch.clone())));
+                    background.push(tokio::spawn(astroportd::turn::serve_rebinding(socks, call_relay.stun_only(), stop_watch.clone(), astroportd::turn::Rebind::local(addr))));
                 } else {
                     println!("visio : STUN et relais d'appel sur udp/{}, réservés aux membres et à leurs amis N¹ (ouvrez le port UDP {port} sur la box)", bound.join(", "));
-                    background.push(tokio::spawn(astroportd::turn::serve(socks, call_relay, stop_watch.clone())));
+                    background.push(tokio::spawn(astroportd::turn::serve_rebinding(socks, call_relay, stop_watch.clone(), astroportd::turn::Rebind::local(addr))));
                 }
                 Some(port)
             }
@@ -831,8 +874,8 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
         let presence = Arc::new(astroportd::presence::Presence::new(db.clone(), chat_keys.clone(), activity.clone(), deliver.clone(), publish_local.clone()));
         background.push(tokio::spawn(presence.clone().run(relay.subscribe(), stop_watch.clone())));
         let chat = Arc::new(astroportd::chat::Chat::new(db.clone(), chat_keys, deliver, publish_local, activity.clone()).with_people(people.clone()).with_turn_opt(turn));
-        background.push(tokio::spawn(chat.clone().run(Duration::from_secs(3), stop_watch.clone())));
-        println!("chat : conversations privées 1 à 1 (NIP-17), réception toutes les 3 s ; présence visio sur option");
+        background.push(tokio::spawn(chat.clone().run(Duration::from_secs(3), relay.subscribe(), stop_watch.clone())));
+        println!("chat : conversations privées 1 à 1 (NIP-17), réception dès l'arrivée (contrôle toutes les 3 s) ; présence visio sur option");
         (chat, presence)
     };
     let (chat, presence) = chat;
@@ -846,7 +889,7 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
     if let Some(bad) = a.ice_servers.iter().find(|u| !["stun:", "stuns:", "turn:", "turns:"].iter().any(|p| u.starts_with(p)) || u.len() > 200 || u.chars().any(char::is_whitespace)) {
         return Err(format!("--ice-server « {bad} » : stun:hôte:port ou turn:hôte:port attendu").into());
     }
-    let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_ice(stun_port, turn.map(|t| t.0), a.ice_servers.clone()).with_presence(presence).with_chat(chat).with_people(people.clone()).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
+    let mut ui = StationUi::new(services.clone(), dav.clone(), memory, ollama, true).with_setup(setup_code).with_conf_path(conf_path.clone()).with_ice(stun_port, turn.map(|t| t.0), a.ice_servers.clone()).with_presence(presence).with_chat(chat).with_people(people.clone()).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_welcome(welcome).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
         .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), targets: service_targets(&a), dnslink: Some(dnslink.clone()), assist: Some(assist_admin), tasks: Some(db.clone()) }).handler());
     if let Some(f) = thumbs_fn {
         ui = ui.with_face_thumbs(f);
@@ -909,6 +952,7 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
             acme.eab = Some((kid.clone(), base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(hmac.trim_end_matches('='))?));
         }
         let manager = AcmeManager::new(acme, KvCertStore::new(db.clone()));
+        services.set_tls(a.domains.clone(), manager.status.clone());
         let http = a.http_listen.unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 80)));
         let front = Frontend::start(manager, app, http, a.https_listen).await?;
         println!("astroportd : HTTP {} (défi ACME + redirection) et HTTPS {} pour {}", front.http_addr, front.https_addr, a.domains.join(", "));

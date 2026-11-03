@@ -228,7 +228,7 @@ impl<C: Chain, P: PrimalSource> ZenReactions<C, P> {
             Err(ChainError::Connection(why)) => return Outcome::Retry(format!("nœud Duniter : {why}")),
             Err(other) => return refuse(&format!("solde illisible ({other})")),
         };
-        let spendable = balance.total.0.saturating_sub(RESERVE_G1_CENTS);
+        let spendable = balance.spendable(Amount(RESERVE_G1_CENTS)).0;
         if spendable < g1_cents {
             return refuse(&format!("solde insuffisant ({} Ẑen disponibles)", spendable * ZEN_PER_G1 / 100));
         }
@@ -315,13 +315,16 @@ mod tests {
 
     struct Node {
         total: Mutex<u64>,
+        /// Part gelée par la chaîne (caution, verrou) : comptée dans le total, pas dans le transférable.
+        frozen: Mutex<u64>,
         sent: Mutex<Vec<(Account, u64, String)>>,
         fail: Mutex<Option<ChainError>>,
     }
 
     impl Chain for Node {
         async fn balance(&self, _: &Account) -> Result<Balance, ChainError> {
-            Ok(Balance { total: Amount(*self.total.lock().unwrap()), transferable: Amount(0), unclaimed_uds: Amount(0) })
+            let t = *self.total.lock().unwrap();
+            Ok(Balance { total: Amount(t), transferable: Amount(t.saturating_sub(*self.frozen.lock().unwrap())), unclaimed_uds: Amount(0) })
         }
         async fn transfer(&self, _: &Ed25519Signer, to: &Account, amount: Amount, _: TransferMode, memo: Option<&str>) -> Result<TxOutcome, ChainError> {
             if let Some(e) = self.fail.lock().unwrap().clone() {
@@ -368,7 +371,7 @@ mod tests {
         for (hex, email, wallet, hosted) in [(hex(&ALICE), "alice@example.org", alice_signer.account().ss58(), 1), (hex(&BOB), "bob@example.org", bob_wallet.ss58(), 0), (hex(&REMOTE), "remote@example.org", Account([0x33; 32]).ss58(), 0)] {
             db.writer().execute("INSERT INTO identities(hex, role, email, g1pub_nostr, hosted) VALUES (?1, 'multipass', ?2, ?3, ?4)", vec![hex.into(), email.to_owned().into(), wallet.into(), i64::from(hosted).into()]).await.unwrap();
         }
-        let node = Arc::new(Node { total: Mutex::new(100 + 2_000), sent: Mutex::new(Vec::new()), fail: Mutex::new(None) }); // 1 Ğ1 de réserve + 20 Ğ1
+        let node = Arc::new(Node { total: Mutex::new(100 + 2_000), frozen: Mutex::new(0), sent: Mutex::new(Vec::new()), fail: Mutex::new(None) }); // 1 Ğ1 de réserve + 20 Ğ1
         let master = Account([0x01; 32]).ss58();
         let primal = Primals(HashMap::from([(bob_wallet.ss58(), bob_primal)]));
         let bus = ActivityBus::new();
@@ -452,6 +455,12 @@ mod tests {
         *r.node.total.lock().unwrap() = 100 + 5;
         let broke = ZenReactions::new(r.db.clone(), r.node.clone(), r.dir.join("accounts"), Some(Arc::new(Primals(HashMap::from([(r.bob_wallet.ss58(), Ok(Some(master_of(&r))))])))), master_of(&r), r.bus.clone(), None, ZenLimits { per_reaction: 100, per_day: 10_000 });
         assert!(matches!(broke.handle(&like(&ALICE, "+10", &BOB, 18)).await, Outcome::Refused(w) if w.contains("solde insuffisant")));
+        // 50 Ğ1 au total dont 45 gelés : le virement de 10 Ẑen (1 Ğ1) passe, celui de 100 Ẑen (10 Ğ1) est refusé AVANT envoi.
+        *r.node.total.lock().unwrap() = 5_000;
+        *r.node.frozen.lock().unwrap() = 4_500;
+        let sent = r.node.sent.lock().unwrap().len();
+        assert!(matches!(broke.handle(&like(&ALICE, "+100", &BOB, 19)).await, Outcome::Refused(w) if w.contains("solde insuffisant")), "les fonds gelés ne sont pas dépensables");
+        assert_eq!(r.node.sent.lock().unwrap().len(), sent, "rien n'est parti vers la chaîne");
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 

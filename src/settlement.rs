@@ -160,7 +160,7 @@ impl<C: Chain> Settlement<C> {
             ]);
         }
         let balance = match self.chain.balance(&signer.account()).await {
-            Ok(b) => b.total.0.saturating_sub(RESERVE_G1_CENTS).saturating_mul(ZEN_PER_G1),
+            Ok(b) => b.spendable(Amount(RESERVE_G1_CENTS)).0.saturating_mul(ZEN_PER_G1),
             Err(_) => {
                 report.retry += 1;
                 return Ok(());

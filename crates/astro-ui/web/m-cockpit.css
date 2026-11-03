@@ -29,3 +29,12 @@
 .ck-steps li { display: flex; gap: .6rem; align-items: flex-start; }
 .ck-steps li.done { color: var(--muted); }
 .ck-steps p { margin: .1rem 0 0; }
+.ck-fuel { border-left: 6px solid var(--warn); }
+.ck-fuel-row { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+.ck-fuel-row svg { width: 9rem; height: 9rem; flex: none; background: #fff; padding: .4rem; border-radius: var(--r); }
+.ck-addr { word-break: break-all; font-size: .85rem; }
+dialog li, dialog code { overflow-wrap: anywhere; }
+.wl-list { list-style: none; padding: 0; margin: 0; }
+.wl-list li { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: space-between; align-items: center; padding: .5rem 0; border-bottom: 1px solid var(--line); }
+.wl-shown svg { width: 12rem; height: 12rem; display: block; }
+.wl-shown code { overflow-wrap: anywhere; }

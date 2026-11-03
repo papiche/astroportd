@@ -7,7 +7,9 @@
 # Ce script : détecte votre machine, télécharge l'archive de la release GitHub, VÉRIFIE son empreinte SHA-256
 # (il s'arrête si elle ne correspond pas : aucun repli silencieux), installe le binaire, prépare la reconnaissance
 # de visages et d'embeddings locaux (libonnxruntime + modèles, chacun vérifié par SHA-256), signale les ports déjà pris,
-# puis propose de lancer `astroportd init`. Il ne demande jamais les droits administrateur.
+# puis propose de lancer `astroportd init`. Relancé sur une station déjà installée, il montre ce qui est en place et
+# fait une MISE À JOUR (binaire, modèles manquants, redémarrage du service) sans reproposer `init`.
+# Il ne demande jamais les droits administrateur.
 #
 # Avant d'installer les modèles, il examine la machine (architecture, cœurs, mémoire, place et vitesse du disque, GPU,
 # Ollama) et recommande un profil — léger, standard ou confort — que vous pouvez accepter ou changer.
@@ -26,6 +28,7 @@ NO_FACE=0
 EMBED=auto       # auto : selon la machine ; yes : impose ; no : refuse
 PROFILE=auto     # auto | leger | standard | confort
 CHECK_ONLY=0
+FORCE=0
 MODE=""
 EMAIL=""
 DOMAIN=""
@@ -44,6 +47,7 @@ Usage : install.sh [options]
   --embed / --no-embed   impose ou refuse les embeddings locaux de BRO (bge-m3, ≈ 560 Mo), quelle que soit la machine
   --check-hardware   affiche le diagnostic de la machine et le profil recommandé, sans rien installer
   --no-init          n'appelle pas `astroportd init` à la fin
+  --force            réinstalle même si la version en place est déjà la dernière
   --yes, -y          mode non interactif : accepte les réponses par défaut
   --mode origin|zen  constellation à rejoindre (transmis à `astroportd init`)
   --email EMAIL      email du Capitaine (transmis à `astroportd init`)
@@ -71,6 +75,7 @@ while [ $# -gt 0 ]; do
     --prefix)  shift; PREFIX="${1:?--prefix attend un dossier}" ;;
     --static)  STATIC=1 ;;
     --no-init) RUN_INIT=0 ;;
+    --force)   FORCE=1 ;;
     --no-face) NO_FACE=1 ;;
     --embed)    EMBED=yes ;;
     --no-embed) EMBED=no ;;
@@ -138,6 +143,42 @@ fi
 # ≈ 560 Mo) et du processeur. L'assistant mesure ce que la machine offre et recommande ce qui tient confortablement.
 DATA="${HOME}/.zen/astroportd"
 MODELS="${DATA}/models"
+
+# --- Installation déjà en place ? -------------------------------------------------------------------------------
+# Binaire présent ET station initialisée (station.conf) : on met à jour, on ne refait jamais « init » (il redériverait
+# l'identité de la station). Le profil est déduit des modèles déjà là : ce qui avait été refusé n'est pas installé.
+UNIT="${HOME}/.config/systemd/user/${BIN}.service"
+INSTALLED=""
+if [ -x "${PREFIX}/bin/${BIN}" ]; then
+  INSTALLED="$("${PREFIX}/bin/${BIN}" --version 2>/dev/null | awk '{print $2}' || true)"
+fi
+conf_get() { sed -n "s/^${1}[[:space:]]*=[[:space:]]*//p" "${DATA}/station.conf" 2>/dev/null | head -n 1; }
+service_state() {
+  if command -v systemctl >/dev/null 2>&1 && [ -f "$UNIT" ]; then systemctl --user is-active "$BIN" 2>/dev/null || true
+  else printf 'absent'; fi
+}
+UPDATE=0
+if [ -n "$INSTALLED" ] && [ -f "${DATA}/station.conf" ]; then
+  UPDATE=1
+  RUN_INIT=0
+  mode_txt="ORIGIN (ouverte)"; [ "$(conf_get mode)" = zen ] && mode_txt="ẐEN (privée)"
+  dom="$(conf_get domain)"; cap="$(conf_get captain_email)"
+  say ""
+  say "▶ Installation en place"
+  say "  Binaire      : ${PREFIX}/bin/${BIN} (${INSTALLED})"
+  say "  Station      : ${DATA} · constellation ${mode_txt}"
+  say "  Adresse      : $([ -n "$dom" ] && printf 'https://%s/' "$dom" || printf 'HTTP local (sans domaine)')"
+  [ -n "$cap" ] || cap="pas encore créé (page /welcome, code d'installation dans le journal)"
+  say "  Capitaine    : ${cap}"
+  case "$(service_state)" in
+    active) say "  Service      : ${BIN} (systemd utilisateur) en marche" ;;
+    absent) if pgrep -x "$BIN" >/dev/null 2>&1; then say "  Service      : en marche hors systemd (PID $(pgrep -x "$BIN" | head -n 1))"; else say "  Service      : aucun (lancé à la main)"; fi ;;
+    *) say "  Service      : ${BIN} (systemd utilisateur) arrêté" ;;
+  esac
+  say "  Mise à jour  : la station, ses comptes et ses données sont conservés ; pas de nouvel « init »."
+elif [ -n "$INSTALLED" ]; then
+  say ""; say "▶ Binaire déjà installé (${INSTALLED}) mais station pas encore initialisée : installation, puis « init »."
+fi
 
 meminfo_mb() { awk -v k="$1:" '$1 == k { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || true; }
 
@@ -297,25 +338,60 @@ choose_profile() {
 }
 
 detect_hardware
+# Version à installer (« latest » : la dernière release, préversions comprises).
+resolve_version() {
+  if [ "$VERSION" = "latest" ]; then
+    # Une préversion n'est jamais « latest » pour GitHub : on interroge alors la liste des releases.
+    local api="https://api.github.com/repos/${REPO}/releases?per_page=1" tag
+    tag="$(curl -fsSL "$api" 2>/dev/null | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1 || true)"
+    [ -n "$tag" ] || die "impossible de lire la dernière release sur $api (réseau ? aucune release publiée ?)."
+    VERSION="$tag"
+  fi
+  case "$VERSION" in v*) ;; *) VERSION="v${VERSION}" ;; esac
+}
+
+# Oui/non au terminal (oui par défaut ; --yes répond oui ; sans terminal : non).
+confirm() {
+  [ "$YES" = 1 ] && return 0
+  [ -r /dev/tty ] || return 1
+  printf '%s [O/n] ' "$1" > /dev/tty
+  local a; read -r a < /dev/tty || a="n"
+  case "${a:-o}" in n|N|non|Non) return 1 ;; *) return 0 ;; esac
+}
+
+if [ "$UPDATE" = 1 ] && [ "$CHECK_ONLY" = 0 ]; then
+  resolve_version
+  if [ "${VERSION#v}" = "$INSTALLED" ] && [ "$FORCE" = 0 ]; then
+    say ""; say "✔ Déjà à jour (${INSTALLED}). Rien à faire (--force pour réinstaller). Vérifier : ${BIN} doctor"
+    exit 0
+  fi
+  say ""
+  confirm "Mettre à jour ${INSTALLED} → ${VERSION#v} ?" || { say "D'accord, rien n'a changé."; exit 0; }
+fi
+
 recommend
-show_hardware
-show_recommendation
+if [ "$UPDATE" = 0 ] || [ "$CHECK_ONLY" = 1 ]; then
+  show_hardware
+  show_recommendation
+fi
 if [ "$CHECK_ONLY" = 1 ]; then
   say ""; say "Diagnostic seul (--check-hardware) : rien n'a été installé."
   exit 0
 fi
-choose_profile
+if [ "$UPDATE" = 1 ] && [ "$PROFILE" = auto ]; then
+  # Mise à jour : on garde les choix de la première installation, lus sur le disque.
+  WANT_FACE=0; WANT_EMBED=0; WANT_THREADS=0; PROFILE_CHOSEN=actuel
+  { [ -f "${MODELS}/det_10g.onnx" ] || [ -f "${HOME}/.insightface/models/buffalo_l/det_10g.onnx" ]; } && WANT_FACE=1
+  [ -f "${MODELS}/bge-m3-int8.onnx" ] && WANT_EMBED=1
+  [ "$NO_FACE" = 1 ] && WANT_FACE=0
+  case "$EMBED" in yes) WANT_EMBED=1 ;; no) WANT_EMBED=0 ;; esac
+else
+  choose_profile
+fi
 say ""; say "▶ Profil retenu : $(pname "$PROFILE_CHOSEN") (visages locaux : $([ "$WANT_FACE" = 1 ] && printf oui || printf non), embeddings locaux : $([ "$WANT_EMBED" = 1 ] && printf oui || printf non))"
 
 # --- Téléchargement ---------------------------------------------------------------------------------------------
-if [ "$VERSION" = "latest" ]; then
-  # Une préversion n'est jamais « latest » pour GitHub : on interroge alors la liste des releases.
-  api="https://api.github.com/repos/${REPO}/releases?per_page=1"
-  tag="$(curl -fsSL "$api" 2>/dev/null | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1 || true)"
-  [ -n "$tag" ] || die "impossible de lire la dernière release sur $api (réseau ? aucune release publiée ?)."
-  VERSION="$tag"
-fi
-case "$VERSION" in v*) ;; *) VERSION="v${VERSION}" ;; esac
+resolve_version
 BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 NUM="${VERSION#v}"
 NAME="${BIN}-${NUM}-${TARGET}"
@@ -500,6 +576,29 @@ case ":${PATH}:" in
   *":${PREFIX}/bin:"*) ;;
   *) warn "${PREFIX}/bin n'est pas dans votre PATH. Ajoutez à ~/.bashrc :  export PATH=\"${PREFIX}/bin:\$PATH\"" ;;
 esac
+
+# --- Mise à jour : redémarrer le service, jamais « init » --------------------------------------------------------
+if [ "$UPDATE" = 1 ]; then
+  say ""
+  case "$(service_state)" in
+    active)
+      if confirm "Redémarrer le service ${BIN} pour passer à la nouvelle version ?"; then
+        systemctl --user restart "$BIN" || warn "redémarrage refusé par systemd : journalctl --user -u ${BIN}"
+        sleep 3
+        if [ "$(service_state)" = active ]; then say "  ✔ ${BIN} redémarré : $("${PREFIX}/bin/${BIN}" --version 2>/dev/null)"
+        else warn "le service ne tourne pas après le redémarrage : journalctl --user -u ${BIN} -n 50"; fi
+      else
+        say "  Le service tourne encore l'ancienne version : systemctl --user restart ${BIN}"
+      fi ;;
+    absent)
+      if pgrep -x "$BIN" >/dev/null 2>&1; then warn "${BIN} tourne hors systemd : arrêtez-le et relancez votre commande « ${BIN} serve … » pour passer à la nouvelle version."
+      else say "  Démarrer : systemctl --user start ${BIN} (ou votre commande « ${BIN} serve … »)"; fi ;;
+    *) say "  Le service est arrêté : systemctl --user start ${BIN}" ;;
+  esac
+  say ""
+  say "Mise à jour terminée. Station, comptes et données conservés. Vérifier : ${BIN} doctor"
+  exit 0
+fi
 
 # --- Suite : astroportd init ------------------------------------------------------------------------------------
 if [ "$RUN_INIT" = 0 ]; then

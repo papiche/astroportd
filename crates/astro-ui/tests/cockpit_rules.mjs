@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../web/m-cockpit.js'), 'utf8');
 const tmp = join(mkdtempSync(join(tmpdir(), 'cockpit-')), 'm-cockpit.mjs');
 writeFileSync(tmp, src);
-const { analyze, setup } = await import(pathToFileURL(tmp));
+const { analyze, setup, g1 } = await import(pathToFileURL(tmp));
 
 const me = { self: true, node_id: 'A', tier: 'Brain', power_score: 60 };
 const peer = (extra = {}) => ({ node_id: 'B', status: 'connected', tier: 'Standard', power_score: 20, ...extra });
@@ -61,4 +61,6 @@ assert.equal(s.list.length, 5); assert.equal(s.left, 5);
 s = setup({ dash: { station: { domain: 'x.org' }, p2p: { enabled: true } }, cs: { nodes: [me, peer()] }, ac: { accounts: [{}, {}] }, dns: { configured: true } });
 assert.equal(s.left, 0);
 assert.equal(setup({}).left, 5);
+// Carburant : montants en Ğ1 depuis des centimes, sans flottant.
+assert.equal(g1(300), '3,00'); assert.equal(g1(5), '0,05'); assert.equal(g1(123457), '1234,57');
 console.log('cockpit : règles OK');
