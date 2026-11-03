@@ -1,3 +1,30 @@
+## astroportd 0.5.4-beta
+
+Cette version réunit **Personnes et Contacts** (un visage appartient à une fiche, plus jamais à un nom), apporte la **visio sans tiers** (appels à deux et en groupe, relais d'appel de la station, présence « en ligne ») et allège le premier chargement de l'interface.
+
+### Personnes : fiches et visages réunis
+- Un seul écran **Personnes** (menu allégé, `#/contacts` reste un alias) : en tête, le sas **« N visages à ranger »** mène à **Trier en grand** (plein écran, une question à la fois : « Est-ce Léa ? », « Qui est-ce ? », raccourcis O, N, Espace, Échap) ou à la table de tri. Chaque fiche montre ses visages ; un clic ouvre la **photo d'origine, le visage entouré**.
+- **Lien par UID vCard** (`faces.contact_uid`, migration automatique) : deux homonymes sont deux personnes, renommer une fiche renomme ses visages, supprimer une fiche les délie. Une fiche sans UID en reçoit un. Les visages d'avant sont rattachés une fois, par leur clé ou par un nom qu'une seule fiche porte. Si plusieurs fiches portent le nom tapé, l'interface demande laquelle.
+- **Fusion des doublons exacts** en un geste (même nom, société, emails, téléphones), par lots, avec aperçu, progression et arrêt ; rien n'est perdu.
+
+### Visio sans tiers
+- Bouton 📹 dans Messages et sur une fiche reliée ; carte d'appel sur tout écran (sonnerie, vibration, titre qui clignote, notification système sur option), écran d'appel au pouce (Micro, Caméra, Raccrocher), « Appel manqué » + Rappeler dans la conversation, « Appel pris sur un autre écran ».
+- **Appels de groupe** jusqu'à 4 (maillage de navigateur à navigateur) : l'hôte ajoute des proches en cours d'appel ; un invité n'est admis par la station d'un autre que dans la salle ouverte par un ami.
+- Signalisation chiffrée comme un message privé (NIP-59, enveloppe qui expire) ; seul un proche fait sonner.
+- **STUN et relais d'appel (TURN)** servis par la station en UDP sur le port de l'interface, réservés aux membres et à leurs amis N¹, relais **uniquement entre appels de la station** (jamais un relais ouvert), une prise par adresse locale. Options `--stun-listen`, `--no-turn`, `--no-stun`, `--ice-server`.
+- **Présence** sur option (Mon compte → Visio) : vos amis réciproques voient « en ligne » ou « en appel » ; battements NIP-101 (kind 24315) vers les autres stations ; rien n'est stocké.
+- La visio demande une adresse `https` (le navigateur l'exige pour la caméra) ; l'écran le dit.
+
+### Interface
+- **Traductions par écran** : le dictionnaire chargé au démarrage passe de 12,5 à 5 Ko ; les phrases d'un écran viennent avec lui. Texte « compte invité » de nouveau traduit.
+- Jargon retiré des écrans des membres (NIP-65, kind 0, NIP-05) ; l'index A–Z du carnet ne masque plus la liste sur téléphone.
+- Budgets : coque < 20 Ko, écrans < 128 Ko au cumul (toutes les parts d'une langue comprises), chaque écran < 12 Ko.
+
+### Station
+- `init` ajoute `--kubo` quand l'uCloud repris d'Astroport.ONE en dépend (ORIGIN seulement) et `serve` le signale s'il manque ; `serve` refuse `--kubo` avec une `swarm.key` (étanchéité des constellations).
+- Historique des portefeuilles : les virements repris de la Ğ1 v1 (blocs négatifs) sont lus.
+- Mon compte ne plante plus à l'ouverture.
+
 ## astroportd 0.5.3-beta
 
 Cette version donne à chaque UPlanet un **nom, une charte et un argent commun visible**, ajoute les **Ğ1Billets** (vérifier, encaisser, créer), un **site public** par membre et plusieurs outils pour le Capitaine.

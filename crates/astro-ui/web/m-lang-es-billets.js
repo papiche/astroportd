@@ -1,0 +1,33 @@
+'use strict';
+// Dictionnaire es, écran m-billets.js.
+export default {
+"Le Capitaine ne vous a pas autorisé à créer des Ğ1Billets.": "El Capitán no le ha autorizado a crear Ğ1Billetes.",
+"3 mois": "3 meses",
+"Créer la planche": "Crear la plancha",
+"Total engagé : {0} ẑ ({1} billet(s) de {2} ẑ). Un dépôt d’activation de 1 Ğ1 par billet est avancé par la coopérative et lui revient à l’encaissement.": "Total comprometido: {0} ẑ ({1} billete(s) de {2} ẑ). La cooperativa adelanta un depósito de activación de 1 Ğ1 por billete y le vuelve al cobrarlo.",
+"Nouvelle planche": "Nueva plancha",
+"Chaque billet est une clé Ğ1 jetable. Le porteur l’encaisse avec la caméra sur la page /scan, sans compte.": "Cada billete es una clave Ğ1 desechable. El portador lo cobra con la cámara en la página /scan, sin cuenta.",
+"Nombre de billets": "Número de billetes",
+"Valeur de chaque billet (ẑ)": "Valor de cada billete (ẑ)",
+"Si le billet n’est pas encaissé à la date de fin, sa valeur revient sur mon portefeuille": "Si el billete no se cobra en la fecha de fin, su valor vuelve a mi cartera",
+"Avec le retour automatique, la station garde deux des trois parts (chiffrées, pour elle seule) : elle peut renvoyer la valeur à la date de fin, mais elle garde le billet en dépôt jusque-là.": "Con la devolución automática, la estación guarda dos de las tres partes (cifradas, solo para ella): puede devolver el valor en la fecha de fin, pero custodia el billete hasta entonces.",
+"Financer": "Financiar",
+"Financement…": "Financiando…",
+"✅ Déjà financé": "✅ Ya financiado",
+"✅ Financé": "✅ Financiado",
+"Tout financer": "Financiar todos",
+"Imprimer la planche": "Imprimir la plancha",
+"SOUS LE PLI": "BAJO EL PLIEGUE",
+"À scanner": "Escanear",
+"valable jusqu’au {0}": "válido hasta el {0}",
+"retour à l’émetteur": "vuelve al emisor",
+"Planche de billets à imprimer": "Plancha de billetes para imprimir",
+"Planche créée": "Plancha creada",
+"Les QR ne s’affichent qu’une seule fois : imprimez maintenant, puis financez chaque billet. Un billet non financé ne vaut rien.": "Los QR solo se muestran una vez: imprima ahora y luego financie cada billete. Un billete sin financiar no vale nada.",
+"Mes billets créés": "Billetes que he creado",
+"encaissement en cours": "cobro en curso",
+"pas encore financé": "aún sin financiar",
+"Aucun billet pour l’instant.": "Ningún billete por ahora.",
+"↩ : la valeur revient sur votre portefeuille à la date de fin si le billet n’est pas encaissé.": "↩: el valor vuelve a su cartera en la fecha de fin si el billete no se cobra.",
+"renvoyé à l’émetteur": "devuelto al emisor"
+};

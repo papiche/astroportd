@@ -64,17 +64,22 @@ fn module_files() -> impl Iterator<Item = (String, rust_embed::EmbeddedFile)> {
 }
 
 /// Taille cumulée des écrans chargés à la demande (octets bruts, Gzip) : chacun ne se télécharge qu'à sa première visite.
-/// Un visiteur ne charge qu'**un** dictionnaire de langue (`m-lang-*`) : on compte le plus lourd, pas leur somme.
+/// Un visiteur ne charge qu'**une** langue : on compte toutes les parts de la plus lourde (`m-lang-<lg>.js`, phrases communes,
+/// et `m-lang-<lg>-<écran>.js`, chargées avec chaque écran), pas la somme des langues.
 pub fn module_bytes() -> (usize, usize) {
-    let sizes = |(p, f): (String, rust_embed::EmbeddedFile)| (p.starts_with("m-lang-"), f.data.len(), compressed(&p, Encoding::Gzip, &f.data).len());
-    let (mut raw, mut gz, mut lang) = (0, 0, (0, 0));
-    for (is_lang, r, g) in module_files().map(sizes) {
-        if is_lang {
-            lang = (lang.0.max(r), lang.1.max(g));
-        } else {
-            (raw, gz) = (raw + r, gz + g);
+    let (mut raw, mut gz) = (0, 0);
+    let mut langs: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
+    for (p, f) in module_files() {
+        let (r, g) = (f.data.len(), compressed(&p, Encoding::Gzip, &f.data).len());
+        match p.strip_prefix("m-lang-") {
+            Some(rest) => {
+                let e = langs.entry(rest.chars().take(2).collect()).or_default();
+                *e = (e.0 + r, e.1 + g);
+            }
+            None => (raw, gz) = (raw + r, gz + g),
         }
     }
+    let lang = langs.values().fold((0, 0), |m, l| (m.0.max(l.0), m.1.max(l.1)));
     (raw + lang.0, gz + lang.1)
 }
 
@@ -352,7 +357,7 @@ mod tests {
         let (mraw, mgz) = module_bytes();
         eprintln!("écrans à la demande : {mraw} o bruts, {mgz} o en gzip");
         // Le cumul des écrans (qu'un visiteur ne télécharge qu'à la demande) est borné, et chaque écran garde sa propre limite.
-        assert!(mraw > 0 && mraw < 280 * 1024 && mgz < 108 * 1024, "écrans à la demande : {mraw} o bruts (budget 280 Ko, 260 Ko avant le site public, 240 Ko avant les Ğ1Billets, 224 Ko avant la vision de la constellation), {mgz} o en gzip (budget 108 Ko, 100 Ko avant le site public, 92 Ko avant les Ğ1Billets, 86 Ko avant la vision de la constellation, 80 Ko avant l'accueil des membres, 76 Ko avant le cockpit du Capitaine ; 64 Ko avant le carnet d'adresses, 56 Ko avant la carte et le fil du temps ; 128 Ko et 48 Ko avant les écrans Sources et Ranger)");
+        assert!(mraw > 0 && mraw < 324 * 1024 && mgz < 128 * 1024, "écrans à la demande : {mraw} o bruts (budget 324 Ko, 316 Ko avant les dictionnaires par écran et les appels de groupe, 312 Ko avant la présence visio, 296 Ko avant la visio, 292 Ko avant la fusion des doublons, 284 Ko avant l'écran Personnes, 280 Ko avant Trier en grand, 260 Ko avant le site public, 240 Ko avant les Ğ1Billets, 224 Ko avant la vision de la constellation), {mgz} o en gzip (budget 128 Ko, 120 Ko avant les dictionnaires par écran et les appels de groupe, 116 Ko avant la visio, 112 Ko avant la fusion des doublons, 108 Ko avant l'écran Personnes, 100 Ko avant le site public, 92 Ko avant les Ğ1Billets, 86 Ko avant la vision de la constellation, 80 Ko avant l'accueil des membres, 76 Ko avant le cockpit du Capitaine ; 64 Ko avant le carnet d'adresses, 56 Ko avant la carte et le fil du temps ; 128 Ko et 48 Ko avant les écrans Sources et Ranger)");
         for (name, f) in module_files().filter(|(p, _)| !p.starts_with("m-lang-")) {
             let gz = compressed(&name, Encoding::Gzip, &f.data).len();
             assert!(gz < 12 * 1024, "{name} : {gz} o en gzip, au-delà des 12 Ko par écran");

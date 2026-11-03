@@ -1,6 +1,6 @@
 # Guide pas à pas : démarrer sa station astroportd
 
-> Version texte du [guide illustré](index.html). Préversion **0.5.3-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
+> Version texte du [guide illustré](index.html). Préversion **0.5.4-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
 
 **Sommaire** : [0. Avant de commencer](#etape-0) · [1. Installer astroportd](#etape-1) · [2. Activer Y-Level](#etape-2) · [3. Choisir sa constellation](#etape-3) · [4. Démarrer la station](#etape-4) · [5. Créer mon MULTIPASS](#etape-5) · [6. Vérifier que tout va bien](#etape-6) · [7. Entrer dans l'interface web](#etape-7) · [7 bis. Le cockpit du Capitaine](#etape-7b) · [8. FaceCloud](#etape-8) · [8 bis. Contacts, agenda (CardDAV, CalDAV) et Mon compte](#etape-8b) · [8 bis-b. Mon coffre de mots de passe (KeePass)](#etape-8bis-b) · [8 bis-c. Reprendre son uCloud d'Astroport.ONE](#etape-8bis-c) · [8 bis-d. Remplir son uCloud depuis un autre serveur (Nextcloud, ownCloud…)](#etape-8bis-d) · [8 bis-e. Ranger son uCloud par type](#etape-8bis-e) · [8 bis-f. Un jeton par appareil (téléphones, tablettes, ordinateurs)](#etape-8bis-f) · [8 bis-g. Hébergement facturé, compte technique et règlement hebdomadaire](#etape-8bis-g) · [8 bis-h. Plusieurs astroportd sur une machine (ORIGIN + ZEN*)](#etape-8bis-h) · [8 bis-i. Plusieurs UPlanet dans un seul processus](#etape-8bis-i) · [8 bis-j. Messages privés et une personne dans plusieurs UPlanet](#etape-8bis-j) · [8 bis-k. Ma UPlanet](#etape-8c) · [8 bis-l. Ğ1Billet](#etape-8bis-l) · [8 bis-m. Mon site public](#etape-8bis-m) · [8 ter. Options du Capitaine](#etape-8ter) · [8 quater. Inviter quelqu'un à recevoir des photos](#etape-8quater) · [8 quinquies. Sans email, connexion par PASS, signature déléguée](#etape-8quinquies) · [9. Relier sa station aux autres Capitaines](#etape-9) · [9 bis. Une adresse pour chaque station et chaque MULTIPASS (DNSLink)](#etape-9b) · [10. En cas de problème](#etape-10) · [Sur un smartphone](#sur-un-smartphone)
 
@@ -33,7 +33,7 @@ date       # l'année doit être 2026 ou plus
 
 Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.
 
-> **À savoir.** astroportd est en **préversion 0.5.3-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
+> **À savoir.** astroportd est en **préversion 0.5.4-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
 
 Vous aurez aussi besoin d'un compte **MULTIPASS** (votre identité Nostr) : astroportd le crée pour vous à l'étape 5.
 
@@ -49,7 +49,7 @@ Le plus simple : l'installeur. Il choisit le bon fichier pour votre machine et *
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 ```
 
-Options utiles : `--version v0.5.3-beta`, `--static` (binaire statique, x86_64 et aarch64), `--prefix DIR`, `--no-init`, `--yes`. Ensuite :
+Options utiles : `--version v0.5.4-beta`, `--static` (binaire statique, x86_64 et aarch64), `--prefix DIR`, `--no-init`, `--yes`. Ensuite :
 
 ```bash
 astroportd --version
@@ -344,7 +344,7 @@ Si l'application se charge sur `http://127.0.0.1:18080/`, c'est que le serveur w
 
 ## Étape 7 — Entrer dans l'interface web
 
-L'application web s'ouvre sur l'**Accueil** : trois gestes (**Mes photos**, **Mes proches**, **Mon assistant** — ou **Mon smartphone** quand il n'y a pas d'assistant) et une liste **Bien démarrer**. Les autres écrans : **Station** (réservé au Capitaine, voir l'étape 7 bis), **uCloud**, **Personnes**, **Contacts**, **Messages**, **Réplication** et **Mon compte**.
+L'application web s'ouvre sur l'**Accueil** : trois gestes (**Mes photos**, **Mes proches**, **Mon assistant** — ou **Mon smartphone** quand il n'y a pas d'assistant) et une liste **Bien démarrer**. Les autres écrans : **Station** (réservé au Capitaine, voir l'étape 7 bis), **uCloud**, **Personnes** (le carnet d'adresses et les visages réunis), **Messages**, **Réplication** et **Mon compte**.
 
 Pour s'y connecter, il faut un compte hébergé par la station (étape 5) et son **jeton**.
 
@@ -436,7 +436,9 @@ Les deux fichiers sont `bge-m3-int8.onnx` (≈ 540 Mo) et `bge-m3-tokenizer.json
 
 Ordres de grandeur sur un PC de bureau à 12 cœurs : chargement ≈ 2 s au démarrage, environ 20 ms pour une phrase courte et 170 ms pour 200 jetons (≈ 150 mots), **≈ 1,3 Go de mémoire au pic**. Ollama reste nécessaire pour les **résumés** du cycle RÊVE ; seuls les vecteurs sont calculés en local. Le binaire statique (musl) n'a pas cette fonction.
 
-L'écran **Personnes** (« table de tri ») montre les visages sur une table lumineuse : chaque pastille est un visage, les visages inconnus qui se ressemblent sont regroupés en grappes, et on les **glisse** sur la pochette d'une personne (ou au lasso, ou avec la barre d'actions au clavier). Les vignettes sont recadrées par la station ; les empreintes ne quittent jamais la station.
+L'écran **Personnes** réunit le carnet d'adresses et les visages : **une personne est une fiche de contact**. En tête, le sas **« N visages à ranger »** propose **Trier en grand** (plein écran, une question à la fois : « Ces 3 visages sont-ils Léa ? » Oui / Non, puis « Qui est-ce ? » ; la photo entière s'affiche, le visage entouré ; raccourcis O, N, Espace, Échap) et la **table de tri** pour les gestes en masse. Chaque fiche montre ses visages ; un clic ouvre la photo d'origine, le visage entouré. Si plusieurs fiches portent le nom tapé, l'interface demande laquelle (ou « une nouvelle personne ») : elle ne devine jamais.
+
+La **table de tri** (`#/people/tri`) montre les visages sur une table lumineuse : chaque pastille est un visage, les visages inconnus qui se ressemblent sont regroupés en grappes, et on les **glisse** sur la pochette d'une personne (ou au lasso, ou avec la barre d'actions au clavier). Les vignettes sont recadrées par la station ; les empreintes ne quittent jamais la station.
 
 Déposez vos photos par WebDAV, par exemple avec `curl` :
 
@@ -468,7 +470,7 @@ curl -u vous@exemple.org:JETON -T photo.jpg https://votre-domaine/dav/Photos/pho
 - **Serveur** : le même `https://<station>/dav/` (découverte `/.well-known/caldav` et `calendar-home-set` du principal) ; mêmes identifiants. Un seul agenda par compte, nommé « Agenda ».
 - Limites connues : `calendar-query` renvoie tout l'agenda sans appliquer le filtre de dates ni développer les récurrences (le client le fait) ; pas d'invitations entre participants ; pas de création d'agendas supplémentaires. `sync-collection` est pris en charge, avec le même journal que le carnet.
 
-**Rapprochement photo ↔ fiche ↔ MULTIPASS.** Une fiche relie un visage à un MULTIPASS de deux façons : la fiche porte une clé Nostr (`X-NOSTR-PUBKEY` ou `X-NOSTR-NPUB`, en hexadécimal ou `npub1…`), ou son email est celui d'un compte **hébergé par cette station** (un email déclaré dans un DID distant n'est jamais une preuve). Les visages de même nom (sans accents ni casse) prennent alors cette clé ; deux fiches du même nom pour deux clés différentes restent ambiguës et ne sont pas rapprochées. Si vous êtes Proches réciproques, les photos déjà analysées de cette personne lui sont partagées aussitôt. L'écran **Contacts** montre les fiches, leur lien, les personnes reconnues sans fiche (*Créer la fiche*) et permet de relier à la main (email d'un MULTIPASS de la station, ou `npub`) ; une clé ajoutée à la main est écrite dans la fiche, donc elle suit le carnet sur votre téléphone.
+**Rapprochement photo ↔ fiche ↔ MULTIPASS.** Une fiche relie un visage à un MULTIPASS de deux façons : la fiche porte une clé Nostr (`X-NOSTR-PUBKEY` ou `X-NOSTR-NPUB`, en hexadécimal ou `npub1…`), ou son email est celui d'un compte **hébergé par cette station** (un email déclaré dans un DID distant n'est jamais une preuve). Un visage est relié à **sa fiche par l'UID vCard** de celle-ci, jamais par le nom : deux homonymes restent deux personnes, renommer la fiche (sur le téléphone ou dans Personnes) renomme ses visages, et supprimer la fiche les délie (ils gardent leur nom). Une fiche sans UID en reçoit un à l'indexation ; le téléphone le récupère à sa synchronisation suivante. La clé Nostr de la fiche passe à ses visages. Les visages nommés avant ce lien sont rattachés une seule fois, par leur clé ou par un nom qu'une seule fiche porte. Si vous êtes Proches réciproques, les photos déjà analysées de cette personne lui sont partagées aussitôt. L'écran **Personnes** (onglet *Synchroniser et inviter*) montre les fiches, leur lien, les personnes reconnues sans fiche (*Créer la fiche*) et permet de relier à la main (email d'un MULTIPASS de la station, ou `npub`) ; une clé ajoutée à la main est écrite dans la fiche, donc elle suit le carnet sur votre téléphone.
 
 **Mon compte.** Identité et clés publiques, profil Nostr (nom, présentation, image : un nouveau kind 0 signé par la station pour votre compte), langue de l'interface (français, English, Español), relais annoncés (NIP-65), **changement du jeton** (l'ancien cesse de fonctionner immédiatement ; la génération est conservée dans la base) et **export de vos clés** (case à cocher de confirmation, 3 exports par heure, chaque export est tracé et vous est signalé).
 
@@ -619,6 +621,21 @@ Dans les deux cas : ports choisis libres, clé écrite en `0600` sous `~/.zen/ga
 
 <a id="etape-8c"></a>
 
+### Appeler en visio
+
+Dans **Messages**, le bouton 📹 en haut d'une conversation appelle votre proche en visio ; la fiche d'une personne reliée à un MULTIPASS (écran **Personnes**) a aussi son bouton *Appeler en visio*. Chez votre proche, une carte **« Léa vous appelle »** apparaît sur n'importe quel écran, avec une sonnerie et une vibration : *Décrocher* ou *Refuser*. Pendant l'appel : *Micro*, *Caméra*, *Raccrocher*. Un appel sans réponse laisse **« 📹 Appel manqué »** dans la conversation, avec un bouton *Rappeler*.
+
+- **Qui est là** : dans **Mon compte → Visio**, cochez *Être joignable en visio*. Vos amis réciproques voient alors une pastille sur votre avatar dans Messages (« en ligne », ou « en appel » en rouge), tant qu'une page Astroport est ouverte chez vous. Personne d'autre ne la voit, et rien n'est gardé.
+- **Plusieurs écrans** : si la station est ouverte sur votre téléphone et votre ordinateur, tous sonnent ; décrochez sur l'un, les autres s'arrêtent (« Appel pris sur un autre écran »).
+- **Onglet en arrière-plan** : le titre de l'onglet clignote et, si vous l'avez accepté (*Être prévenu des appels sur cet appareil*, ou au premier appel que vous passez), une notification du système vous prévient.
+
+- **Sans tiers** : le son et l'image vont directement d'un navigateur à l'autre. La station ne transporte que la sonnerie et la mise en relation, chiffrées comme un message privé, dans une enveloppe que les relais oublient au bout de dix minutes. Seul un proche qui vous suit peut vous faire sonner.
+- **Adresse sécurisée obligatoire** : un navigateur n'ouvre la caméra et le micro que sur une adresse `https` (ou `localhost`). Une station sans nom de domaine ne permet donc la visio que depuis la machine elle-même : `astroportd init --domain votre.domaine`.
+- **Relais d'appel** : quand deux navigateurs ne peuvent pas se joindre en direct (réseaux mobiles, réseaux d'entreprise), le son et l'image passent par la station de l'appelant. Ce relais est **réservé aux membres de la station et à leurs amis N¹** (amis réciproques) : un membre reçoit ses accès de sa station, un ami ne les reçoit que dans l'appel chiffré qui lui est destiné, pour lui seul. Le relais ne fait passer le trafic qu'entre deux appels de la station : il ne peut servir à joindre ni Internet ni le réseau de la station.
+- **Pour le Capitaine** : STUN et relais écoutent en **UDP sur le même port** que l'interface (443 avec un domaine) : ouvrez ce port **en UDP** sur la box, en plus du TCP. Sur une machine à plusieurs adresses (box, VPN, conteneurs), la station ouvre une prise par adresse, pour répondre depuis l'adresse que le navigateur a jointe. `--stun-listen ip:port` change ce port, `--no-turn` garde STUN sans relais, `--no-stun` coupe les deux, `--ice-server stun:…|turn:…` (répétable) ajoute des serveurs. Derrière un reverse proxy qui ne transmet pas l'UDP, donnez un `--stun-listen` joignable directement.
+- **Appel de groupe** (4 personnes au plus) : pendant un appel que vous avez lancé, *＋ Ajouter* invite un autre proche. Chacun voit les autres en tuiles ; qui raccroche quitte l'appel, les autres continuent. Les invités n'ont pas besoin d'être amis entre eux : la station de chacun n'admet les autres participants que dans la salle ouverte par un ami, et tout le monde peut passer par le relais de la station de l'hôte.
+- **Limites** : 4 personnes au plus (chaque navigateur envoie son image à tous les autres) ; si les réseaux bloquent aussi l'UDP vers la station, l'appel échoue et l'écran le dit.
+
 ## Étape 8 bis-k — Ma UPlanet : nom, charte, portefeuilles et économie en mouvement
 
 Chaque UPlanet a un **nom**, une **charte** et un **argent commun visible de tous ses membres**. L'écran **Ma UPlanet** (`#/constellation`, lien en bas de l'Accueil) réunit trois choses.
@@ -734,7 +751,7 @@ Une règle invalide est refusée avant d'être enregistrée (ou signalée au dé
 
 ## Étape 8 quater — Inviter quelqu'un à recevoir des photos
 
-Pour envoyer des photos à une personne qui n'a pas encore de MULTIPASS : écran **Contacts → Inviter** (sur une fiche, ou sur une personne reconnue sans fiche : la fiche est alors créée d'abord). La station retient la liste des photos où cette personne apparaît (200 au plus) et rend un **lien** `https://<station>/i/<jeton>` avec son **QR code**, à envoyer par le moyen de votre choix (le bouton *Partager* ouvre le menu de partage du téléphone).
+Pour envoyer des photos à une personne qui n'a pas encore de MULTIPASS : écran **Personnes → Synchroniser et inviter → Inviter** (sur une fiche, ou sur une personne reconnue sans fiche : la fiche est alors créée d'abord). La station retient la liste des photos où cette personne apparaît (200 au plus) et rend un **lien** `https://<station>/i/<jeton>` avec son **QR code**, à envoyer par le moyen de votre choix (le bouton *Partager* ouvre le menu de partage du téléphone).
 
 Ce que voit la personne, sans compte : qui l'invite, combien de fichiers, de petites vignettes **floutées** (16 pixels de côté : on reconnaît une scène, pas un visage). Elle saisit **son** adresse email ; la station crée alors son MULTIPASS, lui remet ses identifiants une seule fois, la rend **Proche réciproque** de l'expéditeur (chacun suit l'autre, listes de contacts signées par chacune des deux clés et publiées), range les photos dans `/Partages/De_<expéditeur>/` (même blob chiffré, même clé : aucune copie) et **relie la fiche de contact** à son nouveau MULTIPASS. Les autres photos où elle apparaît lui sont partagées aussitôt, comme pour tout Proche relié.
 

@@ -61,6 +61,13 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
+/// Nombre de fichiers de l'uCloud dont le blob est un CID v0 (`Qm…`, repris d'Astroport.ONE) : ils ne se lisent que par Kubo.
+/// `None` si la base n'existe pas encore ou n'a pas d'uCloud (station neuve).
+pub fn count_ipfs_only(db: &Path) -> Option<u64> {
+    let c = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).ok()?;
+    c.query_row("SELECT count(*) FROM ucloud_entries WHERE type != 'dir' AND cid LIKE 'Qm%'", [], |r| r.get(0)).ok()
+}
+
 /// Lit l'ancien uCloud de `owner` et en fait un manifeste prêt à être appliqué.
 ///
 /// # Errors

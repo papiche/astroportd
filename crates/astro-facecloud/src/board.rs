@@ -56,6 +56,10 @@ pub struct BoardFace {
     pub bbox: [f64; 4],
     /// Suggestion « est-ce X ? » (zone grise de reconnaissance).
     pub suggest: Option<(String, f64)>,
+    /// Fiche de contact (UID vCard) de la personne suggérée.
+    pub suggest_contact: Option<String>,
+    /// Fiche de contact (UID vCard) de la personne : le lien fait foi, pas le nom.
+    pub contact: Option<String>,
     /// Position PCA, dans [-1, 1].
     pub x: f32,
     /// Position PCA, dans [-1, 1].
@@ -64,11 +68,13 @@ pub struct BoardFace {
     pub group: Option<(String, usize)>,
 }
 
-/// Une personne (visages regroupés par clé, sinon par nom).
+/// Une personne : visages regroupés par fiche de contact, sinon par clé, sinon (visages sans fiche) par nom.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Person {
     /// Nom affiché.
     pub name: String,
+    /// Fiche de contact (UID vCard).
+    pub contact: Option<String>,
     /// Clé Nostr.
     pub pubkey: Option<String>,
     /// Visages.
@@ -315,9 +321,9 @@ impl BoardCache {
         let scope = scope.map(|p| p.trim().trim_end_matches('/')).filter(|p| p.starts_with('/') && p.len() > 1).map(str::to_owned);
         let (sp, slow, shigh) = (scope.clone(), scope.as_ref().map(|p| format!("{p}/")), scope.as_ref().map(|p| format!("{p}0")));
         let tag = scope.clone().unwrap_or_default();
-        type Row = (i64, String, Option<String>, String, [f64; 4], Option<String>, Option<f64>);
-        /// Une personne du compte : nom, clé, visages, photos.
-        type PersonRow = (String, Option<String>, i64, i64);
+        type Row = (i64, String, Option<String>, String, [f64; 4], Option<String>, Option<f64>, Option<String>, Option<String>);
+        /// Une personne du compte : nom, fiche, clé, visages, photos.
+        type PersonRow = (String, Option<String>, Option<String>, i64, i64);
         let (rows, total, revision, people_rows): (Vec<Row>, i64, String, Vec<PersonRow>) = db
             .readers()
             .read(move |c| {
@@ -331,20 +337,20 @@ impl BoardCache {
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                 )?;
                 let mut stmt = c.prepare(&format!(
-                    "SELECT face_id, name, pubkey, ucloud_path, bbox_x1, bbox_y1, bbox_x2, bbox_y2, suggest_name, suggest_score FROM faces \
+                    "SELECT face_id, name, pubkey, ucloud_path, bbox_x1, bbox_y1, bbox_x2, bbox_y2, suggest_name, suggest_score, contact_uid, suggest_contact_uid FROM faces \
                      WHERE owner_hex = ?1 AND ref IS NULL AND ucloud_path IS NOT NULL AND bbox_x1 IS NOT NULL {in_scope} ORDER BY face_id DESC LIMIT ?5"
                 ))?;
                 let rows = stmt
                     .query_map(params![o, sp, slow, shigh, i64::try_from(BOARD_MAX).unwrap_or(i64::MAX)], |r| {
-                        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, [r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?], r.get(8)?, r.get(9)?))
+                        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, [r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?], r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?))
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
                 // Les personnes sont celles de tout le compte, pas seulement celles du dossier regardé : on peut toujours y ranger un visage.
                 let mut stmt = c.prepare(
-                    "SELECT MAX(name), pubkey, COUNT(*), COUNT(DISTINCT ucloud_path) FROM faces WHERE owner_hex = ?1 AND ref IS NULL AND ucloud_path IS NOT NULL \
-                     AND (name NOT LIKE 'Inconnu%' OR pubkey IS NOT NULL) GROUP BY COALESCE(NULLIF(pubkey, ''), 'nom:' || name)",
+                    "SELECT MAX(name), MAX(contact_uid), MAX(pubkey), COUNT(*), COUNT(DISTINCT ucloud_path) FROM faces WHERE owner_hex = ?1 AND ref IS NULL AND ucloud_path IS NOT NULL \
+                     AND (name NOT LIKE 'Inconnu%' OR pubkey IS NOT NULL) GROUP BY COALESCE('fiche:' || contact_uid, 'clé:' || NULLIF(pubkey, ''), 'nom:' || name)",
                 )?;
-                let people_rows = stmt.query_map([&o], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<Result<Vec<_>, _>>()?;
+                let people_rows = stmt.query_map([&o], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?.collect::<Result<Vec<_>, _>>()?;
                 Ok((rows, count, format!("{count}:{max_id}:{unnamed}:{named_sum}:{}", tag), people_rows))
             })
             .await?;
@@ -388,13 +394,15 @@ impl BoardCache {
         };
         let mut faces: Vec<BoardFace> = rows
             .into_iter()
-            .map(|(face_id, name, pubkey, path, bbox, sname, sscore)| {
+            .map(|(face_id, name, pubkey, path, bbox, sname, sscore, contact, suggest_contact)| {
                 let (x, y) = layout.xy.get(&face_id).copied().unwrap_or((0.0, 0.0));
                 BoardFace {
                     face_id,
                     named: named(&name, pubkey.as_deref()),
                     group: layout.group.get(&face_id).cloned(),
                     suggest: sname.zip(sscore),
+                    suggest_contact,
+                    contact,
                     name,
                     pubkey,
                     path,
@@ -405,7 +413,7 @@ impl BoardCache {
             })
             .collect();
         faces.sort_by_key(|f| f.face_id);
-        let mut people: Vec<Person> = people_rows.into_iter().map(|(name, pubkey, faces, photos)| Person { name, pubkey, faces: usize::try_from(faces).unwrap_or(0), photos: usize::try_from(photos).unwrap_or(0) }).collect();
+        let mut people: Vec<Person> = people_rows.into_iter().map(|(name, contact, pubkey, faces, photos)| Person { name, contact, pubkey, faces: usize::try_from(faces).unwrap_or(0), photos: usize::try_from(photos).unwrap_or(0) }).collect();
         people.sort_by(|a, b| b.photos.cmp(&a.photos).then_with(|| a.name.cmp(&b.name)));
         let unknown = faces.iter().filter(|f| !f.named).count();
         Ok(Board { faces, people, unknown, groups_skipped: layout.skipped, truncated })

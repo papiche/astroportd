@@ -8,6 +8,11 @@
 //!   Tout le reste est lu une fois et ignoré sans bruit. La signature du scellé prouve l'expéditeur.
 //! - Les messages déchiffrés sont un **état local** (`chat_messages`) : les enveloppes restent dans `nostr_events`, la base se
 //!   reconstruit en remettant le repère à zéro.
+//! - **Appels visio** : la sonnerie et la poignée de main WebRTC (offre, réponse, raccrochage, refus, occupé) voyagent par le
+//!   même chemin, en rumeur privée `kind::CALL_SIGNAL` dans une enveloppe qui **expire** (elle contient des adresses réseau).
+//!   Seul un proche peut faire sonner. Un signal reçu est poussé en direct au navigateur (flux d'activité `call:<type>`) ;
+//!   une sonnerie trop vieille, ou un appel raccroché sans réponse, devient « Appel manqué » dans la conversation. Le son et
+//!   l'image vont ensuite de navigateur à navigateur, sans passer par la station.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -34,6 +39,22 @@ const BATCH: usize = 200;
 const PAGE: usize = 60;
 /// Espace du repère `seq` dans `kv`.
 const SEQ_SCOPE: &str = "chat_seq";
+/// Types de signaux d'appel.
+pub const CALL_TYPES: [&str; 7] = ["offer", "answer", "hangup", "reject", "busy", "join", "roster"];
+/// Appel de groupe (maillage) : participants au plus, hôte compris.
+pub const MAX_ROOM: usize = 4;
+/// Une salle autorisée par un ami vaut ce temps (un appel de groupe ne dure pas plus).
+const ROOM_SECS: u64 = 4 * 3600;
+/// Description de session (SDP) d'une offre ou d'une réponse : 64 Kio au plus.
+pub const MAX_SDP: usize = 65_536;
+/// Au-delà, une sonnerie est un appel manqué et un autre signal est périmé (station éteinte, réseau lent).
+pub const RING_SECS: i64 = 60;
+/// Durée de vie d'une enveloppe d'appel sur les relais.
+const CALL_TTL: u64 = 600;
+/// Traces d'appel rangées dans la conversation (le texte fait foi : l'interface reconnaît le pictogramme).
+pub const MISSED: &str = "📹 Appel manqué";
+/// Côté appelant : l'ami n'a pas décroché.
+pub const UNANSWERED: &str = "📹 Appel sans réponse";
 
 /// Erreurs d'usage du chat.
 #[derive(Debug, thiserror::Error)]
@@ -44,6 +65,9 @@ pub enum ChatError {
     /// Clé du compte indisponible sur cette station.
     #[error("clé du compte indisponible : envoi impossible")]
     NoKey,
+    /// La station de l'ami n'a pas reçu le signal.
+    #[error("{0}")]
+    Unreachable(String),
     /// Base de données.
     #[error("base : {0}")]
     Db(String),
@@ -62,6 +86,9 @@ fn clean(text: &str) -> String {
     text.chars().filter(|c| !c.is_control() || *c == '\n').collect::<String>().trim().to_owned()
 }
 
+/// Salle d'appel de groupe autorisée par un ami : hôte, participants, échéance.
+type Room = (String, Vec<String>, std::time::Instant);
+
 /// Service de conversations.
 pub struct Chat {
     db: Arc<Db>,
@@ -70,12 +97,44 @@ pub struct Chat {
     publish_local: DeliverFn,
     activity: ActivityBus,
     people: Option<Arc<crate::person_keys::PersonKeys>>,
+    /// Relais d'appel de la station : secret des identifiants et port UDP.
+    turn: Option<([u8; 32], u16)>,
+    /// Salles d'appel de groupe où un ami a invité le membre : `(membre, salle) → (hôte, participants, échéance)`. Un
+    /// participant qui n'est pas un proche du membre ne peut le joindre que dans une telle salle. État en mémoire.
+    rooms: std::sync::Mutex<std::collections::HashMap<(String, String), Room>>,
 }
 
 impl Chat {
     /// `deliver` remet l'enveloppe à l'ami ; `publish_local` la publie sur le relai de cette station (copie de l'expéditeur).
     pub fn new(db: Arc<Db>, keys: Arc<dyn KeySource>, deliver: DeliverFn, publish_local: DeliverFn, activity: ActivityBus) -> Self {
-        Self { db, keys, deliver, publish_local, activity, people: None }
+        Self { db, keys, deliver, publish_local, activity, people: None, turn: None, rooms: std::sync::Mutex::default() }
+    }
+
+    /// Relais d'appel : une offre vers un membre de la station ou un ami réciproque emporte des identifiants pour lui seul.
+    pub fn with_turn(mut self, secret: [u8; 32], port: u16) -> Self {
+        self.turn = Some((secret, port));
+        self
+    }
+
+    /// Comme [`Self::with_turn`], relais facultatif.
+    pub fn with_turn_opt(mut self, turn: Option<([u8; 32], u16)>) -> Self {
+        self.turn = turn;
+        self
+    }
+
+    /// Ami N¹ : suivi par le titulaire **et** qui le suit (sa liste kind 3), ou compte hébergé par cette station.
+    async fn mutual_or_member(&self, owner: &str, peer: &str) -> bool {
+        let (o, p) = (owner.to_owned(), peer.to_owned());
+        self.db
+            .readers()
+            .read(move |c| {
+                let member: Option<i64> = c.query_row("SELECT 1 FROM identities WHERE hex = ?1 AND hosted = 1", [&p], |r| r.get(0)).optional()?;
+                let follows: Option<i64> = c.query_row("SELECT 1 FROM social_graph WHERE owner_hex = ?1 AND pubkey = ?2 AND level = 1", [&o, &p], |r| r.get(0)).optional()?;
+                let back: Option<i64> = c.query_row("SELECT 1 FROM nostr_events e JOIN nostr_tags t ON t.event_id = e.seq WHERE e.kind = 3 AND e.pubkey = ?1 AND t.name = 'p' AND t.value = ?2 LIMIT 1", [&p, &o], |r| r.get(0)).optional()?;
+                Ok(member.is_some() || (follows.is_some() && back.is_some()))
+            })
+            .await
+            .unwrap_or(false)
     }
 
     /// Active les conversations par **personne** : ses clés dans plusieurs UPlanet (voir [`crate::person_keys`]).
@@ -337,9 +396,160 @@ impl Chat {
         stored
     }
 
+    /// Identifiant d'appel : 8 à 64 caractères hexadécimaux, tiré au hasard par l'appelant.
+    fn call_id(v: &Value) -> Option<String> {
+        v["call"].as_str().filter(|c| (8..=64).contains(&c.len()) && c.bytes().all(|b| b.is_ascii_hexdigit())).map(str::to_owned)
+    }
+
+    /// Participants d'une salle (`roster`) : 1 à [`MAX_ROOM`] clés hexadécimales, sans doublon.
+    fn roster(v: &Value) -> Option<Vec<String>> {
+        let list: Vec<String> = v["roster"].as_array()?.iter().filter_map(Value::as_str).map(str::to_owned).collect();
+        let mut seen = std::collections::HashSet::new();
+        (!list.is_empty() && list.len() <= MAX_ROOM && list.len() == v["roster"].as_array()?.len() && list.iter().all(|h| is_hex64(h) && seen.insert(h.clone()))).then_some(list)
+    }
+
+    /// Envoie un signal d'appel à `peer` : `{ type, call, sdp?, video?, missed?, roster? }` (voir [`CALL_TYPES`]). `roster`
+    /// (offre ou mise à jour d'un appel de groupe) : les participants de la salle, que la station de `peer` admettra. Rien n'est rangé,
+    /// sauf la trace « Appel sans réponse » quand l'appelant raccroche avant qu'on décroche (`missed`).
+    pub async fn signal(&self, owner: &str, peer: &str, sig: &Value) -> Result<Value, ChatError> {
+        if !is_hex64(peer) || peer == owner {
+            return Err(ChatError::Invalid("destinataire invalide".into()));
+        }
+        let ty = sig["type"].as_str().filter(|t| CALL_TYPES.contains(t)).ok_or_else(|| ChatError::Invalid("type de signal inconnu".into()))?;
+        let call = Self::call_id(sig).ok_or_else(|| ChatError::Invalid("identifiant d'appel invalide".into()))?;
+        let sdp = sig["sdp"].as_str();
+        if matches!(ty, "offer" | "answer") != sdp.is_some_and(|d| !d.is_empty() && d.len() <= MAX_SDP) {
+            return Err(ChatError::Invalid("description de session attendue pour une offre ou une réponse (64 Kio au plus), et seulement pour elles".into()));
+        }
+        let missed = ty == "hangup" && sig["missed"].as_bool() == Some(true);
+        let mut content = json!({ "type": ty, "call": call, "video": sig["video"].as_bool().unwrap_or(true) });
+        if let Some(d) = sdp {
+            content["sdp"] = json!(d);
+        }
+        if missed {
+            content["missed"] = json!(true);
+        }
+        if !sig["roster"].is_null() || ty == "roster" {
+            content["roster"] = json!(Self::roster(sig).ok_or_else(|| ChatError::Invalid(format!("participants invalides (1 à {MAX_ROOM} clés)")))?);
+        }
+        let peer = self.channel(peer).await?;
+        // Relais d'appel : des identifiants pour ce seul destinataire, s'il est membre de la station ou ami réciproque (N¹).
+        // `turn_host` : le nom sous lequel l'appelant joint sa station (le navigateur le connaît, la station pas toujours).
+        let host = sig["turn_host"].as_str().filter(|h| !h.is_empty() && h.len() <= 253 && h.bytes().all(|b| b.is_ascii_alphanumeric() || b"-.:[]".contains(&b)));
+        if let (true, Some((turn_secret, port)), Some(host)) = (ty == "offer", self.turn, host) {
+            if self.mutual_or_member(owner, &peer).await {
+                let (username, credential) = crate::turn::credentials(&turn_secret, &format!("n1-{}", &peer[..16]), u64::try_from(now()).unwrap_or(0), crate::turn::PEER_CREDENTIAL_TTL);
+                content["ice"] = json!({ "urls": [format!("turn:{host}:{port}?transport=udp")], "username": username, "credential": credential });
+            }
+        }
+        let secret = self.keys.secret(owner).ok_or(ChatError::NoKey)?;
+        let at = now();
+        let created = u64::try_from(at).unwrap_or(0);
+        let rumor = nip59::Rumor { pubkey: owner.to_owned(), created_at: created, kind: kind::CALL_SIGNAL, tags: vec![vec!["p".into(), peer.clone()]], content: content.to_string() };
+        let id = rumor.id().map_err(|e| ChatError::Invalid(e.to_string()))?;
+        let wrap = nip59::gift_wrap_expiring(&secret, &peer, &rumor, created, created + CALL_TTL).map_err(|e| ChatError::Invalid(e.to_string()))?;
+        (self.deliver)(peer.clone(), wrap).await.map_err(|e| ChatError::Unreachable(format!("appel non transmis : {e}")))?;
+        if missed {
+            self.store(owner, &peer, &id, true, at, UNANSWERED, "ok", true).await?;
+            self.activity.publish_to(Audience::Owner(owner.to_owned()), "chat", "chat:msg", peer.clone(), None);
+        }
+        // Décroché, refusé ou occupé ici : les autres onglets du membre (téléphone, ordinateur) cessent de sonner.
+        if matches!(ty, "answer" | "reject" | "busy") {
+            self.activity.publish_to(Audience::Owner(owner.to_owned()), "call", "call:handled", String::new(), Some(json!({ "type": "handled", "call": call, "from": peer, "at": at })));
+        }
+        Ok(json!({ "sent": ty, "call": call, "peer": peer }))
+    }
+
+    /// Signal d'appel reçu. Seul un proche fait sonner ; un signal périmé ne sonne pas ; une sonnerie trop vieille ou un
+    /// raccrochage sans réponse laisse « Appel manqué » dans la conversation. Rend le nombre de messages rangés.
+    async fn handle_call(&self, owner: &str, sender: &str, rumor: &nip59::Rumor) -> usize {
+        if sender == owner {
+            return 0;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&rumor.content) else { return 0 };
+        let (Some(ty), Some(call), Ok(id)) = (v["type"].as_str().filter(|t| CALL_TYPES.contains(t)), Self::call_id(&v), rumor.id()) else { return 0 };
+        // Seul un proche fait sonner. Un participant d'appel de groupe qui n'est pas un proche n'est admis que dans une salle où
+        // un proche a invité le membre, et seulement s'il figure sur la liste de cet hôte (jamais pour ouvrir une salle).
+        let friend = self.follows(owner, sender).await;
+        let key = (owner.to_owned(), call.clone());
+        let in_room = {
+            let mut rooms = self.rooms.lock().unwrap_or_else(|e| e.into_inner());
+            rooms.retain(|_, r| r.2 > std::time::Instant::now());
+            if friend && matches!(ty, "offer" | "roster") {
+                if let Some(list) = Self::roster(&v) {
+                    // L'hôte d'une salle est l'ami qui l'a ouverte : un autre ne peut pas en réécrire la liste.
+                    let host = rooms.get(&key).map_or_else(|| sender.to_owned(), |r| r.0.clone());
+                    if host == sender {
+                        rooms.insert(key.clone(), (host, list, std::time::Instant::now() + std::time::Duration::from_secs(ROOM_SECS)));
+                    }
+                }
+            }
+            rooms.get(&key).is_some_and(|r| r.0 == sender || r.1.iter().any(|p| p == sender))
+        };
+        if !friend && !in_room {
+            return 0;
+        }
+        let at = i64::try_from(rumor.created_at).unwrap_or(0).min(now());
+        let stale = now() - at > RING_SECS;
+        let mut stored = 0;
+        if friend && ((ty == "offer" && stale) || (ty == "hangup" && v["missed"].as_bool() == Some(true))) {
+            match self.store(owner, sender, &id, false, at, MISSED, "ok", false).await {
+                Ok(true) => {
+                    self.activity.publish_to(Audience::Owner(owner.to_owned()), "chat", "chat:msg", sender.to_owned(), None);
+                    stored = 1;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    self.activity.publish_to(Audience::Captain, "alert", "chat:in", format!("appel manqué non rangé : {e}"), None);
+                }
+            }
+        }
+        if stale {
+            return stored;
+        }
+        let label = self.label(owner, sender).await;
+        let sdp = v["sdp"].as_str().filter(|d| d.len() <= MAX_SDP);
+        // Accès au relais de l'appelant (offre seulement) : une adresse turn: et des identifiants, rien d'autre.
+        let short = |k: &str| v["ice"][k].as_str().filter(|x| !x.is_empty() && x.len() <= 256).map(str::to_owned);
+        let ice = (ty == "offer")
+            .then(|| (v["ice"]["urls"][0].as_str().filter(|u| u.starts_with("turn:") && u.len() <= 300).map(str::to_owned), short("username"), short("credential")))
+            .and_then(|(u, n, c)| Some(json!({ "urls": [u?], "username": n?, "credential": c? })));
+        self.activity.publish_to(
+            Audience::Owner(owner.to_owned()),
+            "call",
+            &format!("call:{ty}"),
+            label.clone(),
+            Some(json!({ "type": ty, "call": call, "from": sender, "label": label, "sdp": sdp, "ice": ice, "roster": Self::roster(&v), "friend": friend, "video": v["video"].as_bool().unwrap_or(true), "at": at })),
+        );
+        stored
+    }
+
+    /// Nom à montrer pour `peer` : sa fiche de contact, sinon son profil Nostr, sinon le début de sa clé.
+    async fn label(&self, owner: &str, peer: &str) -> String {
+        let (o, p) = (owner.to_owned(), peer.to_owned());
+        let name: Option<String> = self
+            .db
+            .readers()
+            .read(move |c| {
+                Ok(c.query_row(
+                    "SELECT COALESCE((SELECT json_extract(f.fields, '$.name') FROM contact_cards f WHERE f.owner_hex = ?1 AND json_extract(f.fields, '$.nostr') = ?2 LIMIT 1), \
+                                     (SELECT json_extract(e.content, '$.name') FROM nostr_events e WHERE e.pubkey = ?2 AND e.kind = 0 ORDER BY e.created_at DESC LIMIT 1))",
+                    [&o, &p],
+                    |r| r.get::<_, Option<String>>(0),
+                )?)
+            })
+            .await
+            .ok()
+            .flatten();
+        name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| peer.chars().take(8).collect())
+    }
+
     async fn handle(&self, owner: &str, secret: &[u8; 32], wrap: &Event) -> usize {
         let Ok(opened) = nip59::unwrap(secret, wrap) else { return 0 };
         let (sender, rumor) = (opened.sender, opened.rumor);
+        if rumor.kind == kind::CALL_SIGNAL {
+            return self.handle_call(owner, &sender, &rumor).await;
+        }
         if rumor.kind != kind::CHAT {
             return 0;
         }

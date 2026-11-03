@@ -71,6 +71,30 @@ struct Inner {
 pub struct ActivityBus {
     inner: Arc<Mutex<Inner>>,
     tx: broadcast::Sender<Arc<Activity>>,
+    /// Comptes qui écoutent le flux (un onglet ouvert = un écouteur) : la présence « en ligne » de la visio.
+    listeners: Arc<Mutex<std::collections::HashMap<String, usize>>>,
+    /// Arrivées (`true`) et départs (`false`) : le premier onglet ouvert, le dernier fermé.
+    presence: broadcast::Sender<(String, bool)>,
+}
+
+/// Tant qu'il vit, le compte compte comme « là » (rendu par [`ActivityBus::listen`]).
+pub struct ListenGuard {
+    bus: ActivityBus,
+    hex: String,
+}
+
+impl Drop for ListenGuard {
+    fn drop(&mut self) {
+        let mut l = self.bus.listeners.lock().unwrap_or_else(|e| e.into_inner());
+        let left = l.get_mut(&self.hex).map(|n| {
+            *n -= 1;
+            *n
+        });
+        if left == Some(0) {
+            l.remove(&self.hex);
+            let _ = self.bus.presence.send((self.hex.clone(), false));
+        }
+    }
 }
 
 impl Default for ActivityBus {
@@ -83,7 +107,29 @@ impl ActivityBus {
     /// Bus vide.
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(256);
-        Self { inner: Arc::new(Mutex::new(Inner { next_id: 1, ring: VecDeque::with_capacity(BACKLOG) })), tx }
+        let (presence, _) = broadcast::channel(256);
+        Self { inner: Arc::new(Mutex::new(Inner { next_id: 1, ring: VecDeque::with_capacity(BACKLOG) })), tx, listeners: Arc::default(), presence }
+    }
+
+    /// `hex` ouvre le flux : il est « là » jusqu'à ce que la garde soit lâchée (onglet fermé, connexion perdue).
+    pub fn listen(&self, hex: &str) -> ListenGuard {
+        let mut l = self.listeners.lock().unwrap_or_else(|e| e.into_inner());
+        let n = l.entry(hex.to_owned()).or_default();
+        *n += 1;
+        if *n == 1 {
+            let _ = self.presence.send((hex.to_owned(), true));
+        }
+        ListenGuard { bus: self.clone(), hex: hex.to_owned() }
+    }
+
+    /// `hex` a-t-il au moins un onglet ouvert ?
+    pub fn is_listening(&self, hex: &str) -> bool {
+        self.listeners.lock().unwrap_or_else(|e| e.into_inner()).contains_key(hex)
+    }
+
+    /// Arrivées et départs à venir.
+    pub fn presence_changes(&self) -> broadcast::Receiver<(String, bool)> {
+        self.presence.subscribe()
     }
 
     /// Publie un événement visible de tout compte connecté. Pour une donnée personnelle, voir [`ActivityBus::publish_to`].
@@ -156,5 +202,19 @@ mod tests {
         bus.publish("bro", "t", "trois", Some(serde_json::json!({"k": 1})));
         let live = rx.recv().await.unwrap();
         assert_eq!((live.id, live.message.as_str()), (3, "trois"));
+    }
+
+    #[test]
+    fn a_member_is_present_while_at_least_one_tab_listens() {
+        let bus = ActivityBus::new();
+        let mut changes = bus.presence_changes();
+        let (a, b) = (bus.listen("lea"), bus.listen("lea"));
+        assert!(bus.is_listening("lea") && !bus.is_listening("paul"));
+        drop(a);
+        assert!(bus.is_listening("lea"), "un second onglet reste ouvert");
+        drop(b);
+        assert!(!bus.is_listening("lea"));
+        assert_eq!((changes.try_recv().unwrap(), changes.try_recv().unwrap()), (("lea".to_owned(), true), ("lea".to_owned(), false)));
+        assert!(changes.try_recv().is_err(), "une arrivée, un départ : rien entre les deux");
     }
 }

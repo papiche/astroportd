@@ -7,7 +7,7 @@ export function steps({ dash, faces, friends, backup, me, devices }) {
     { done: files > 0, title: 'Envoyer vos premières photos', why: 'Elles sont chiffrées avant de quitter votre appareil.', href: '#/cloud' },
     { done: (devices?.devices || []).length > 0, title: 'Synchroniser votre smartphone', why: 'Photos, contacts et agenda quittent Google et Apple pour votre station.', href: '#/account' },
     ...(faces?.enabled ? [{ done: (faces.people || []).length > 0, title: 'Reconnaître un visage', why: 'Nommez une personne : ses photos se rangent toutes seules.', href: '#/people' }] : []),
-    { done: (friends?.friends || []).length > 0, title: 'Retrouver un proche', why: 'Suivez-vous mutuellement pour partager vos photos.', href: '#/contacts' },
+    { done: (friends?.friends || []).length > 0, title: 'Retrouver un proche', why: 'Suivez-vous mutuellement pour partager vos photos.', href: '#/people' },
     { done: backup?.mine?.status === 'accepted', title: 'Mettre vos fichiers à l\'abri chez un ami', why: 'Si votre station tombe en panne, rien n\'est perdu.', href: '#/account' },
     { done: !!me?.ai, title: 'Brancher un assistant', why: 'BRO répond avec votre propre IA, sans rien envoyer ailleurs.', href: '#/account' },
   ];

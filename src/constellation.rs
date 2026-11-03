@@ -38,8 +38,8 @@ pub const MAX_EVENTS: usize = 20_000;
 pub struct Transfer {
     /// Identifiant chez l'indexeur.
     pub id: String,
-    /// Numéro du bloc.
-    pub block: u64,
+    /// Numéro du bloc ; négatif pour l'historique de la Ğ1 v1 repris à la genèse de Duniter v2s.
+    pub block: i64,
     /// Secondes Unix.
     pub at: u64,
     /// Expéditeur.
@@ -100,7 +100,7 @@ pub fn parse_page(body: &[u8]) -> Result<Page, String> {
     let mut transfers = Vec::with_capacity(nodes.len());
     for n in nodes {
         let text = |k: &str| n[k].as_str().filter(|s| !s.is_empty()).map(str::to_owned);
-        let (Some(id), Some(block), Some(at), Some(cents)) = (text("id"), n["blockNumber"].as_u64(), text("timestamp").and_then(|s| unix_of(&s)), text("amount").and_then(|s| s.parse::<u64>().ok())) else {
+        let (Some(id), Some(block), Some(at), Some(cents)) = (text("id"), n["blockNumber"].as_i64(), text("timestamp").and_then(|s| unix_of(&s)), text("amount").and_then(|s| s.parse::<u64>().ok())) else {
             return Err(format!("virement incomplet chez l'indexeur : {n}"));
         };
         transfers.push(Transfer { id, block, at, from: text("fromId"), to: text("toId"), cents });
@@ -226,7 +226,7 @@ impl<C: Chain> Constellation<C> {
                 .iter()
                 .map(|t| Statement {
                     sql: "INSERT OR IGNORE INTO coop_ledger(id, block, at, from_id, to_id, cents) VALUES (?1, ?2, ?3, ?4, ?5, ?6)".into(),
-                    params: vec![t.id.clone().into(), Value::Integer(t.block as i64), Value::Integer(t.at as i64), t.from.clone().map_or(Value::Null, Value::Text), t.to.clone().map_or(Value::Null, Value::Text), Value::Integer(t.cents as i64)],
+                    params: vec![t.id.clone().into(), Value::Integer(t.block), Value::Integer(t.at as i64), t.from.clone().map_or(Value::Null, Value::Text), t.to.clone().map_or(Value::Null, Value::Text), Value::Integer(t.cents as i64)],
                 })
                 .collect();
             if !stmts.is_empty() {
@@ -387,6 +387,9 @@ mod tests {
         let p = parse_page(body).unwrap();
         assert_eq!(p.next.as_deref(), Some("abc"));
         assert_eq!(p.transfers, vec![Transfer { id: "t1".into(), block: 7, at: 1_735_689_600, from: Some("g1a".into()), to: None, cents: 5000 }]);
+        // Virement de la Ğ1 v1 repris à la genèse : bloc négatif, réponse réelle de cinq indexeurs (2026-11-03).
+        let genesis = r#"{"data":{"transfers":{"pageInfo":{"hasNextPage":false},"nodes":[{"amount":"99300","blockNumber":-1868,"fromId":"g1Kj6f","id":"genesis-tx_n°812049","timestamp":"2026-02-28T21:54:56+00:00","toId":"g1LbTd"}]}}}"#.as_bytes();
+        assert_eq!(parse_page(genesis).unwrap().transfers[0].block, -1868);
         assert!(parse_page(br#"{"errors":[{"message":"boom"}]}"#).unwrap_err().contains("boom"));
         assert!(parse_page(br#"{"data":{"transfers":{"nodes":[{"id":"x"}]}}}"#).is_err());
         let last = br#"{"data":{"transfers":{"pageInfo":{"hasNextPage":false,"endCursor":"z"},"nodes":[]}}}"#;

@@ -107,6 +107,8 @@ pub enum BookOp {
     Duplicates,
     /// Fusionne des fiches dans une fiche gardée.
     Merge(String, Vec<String>),
+    /// Doublons exacts : aperçu (`false`) ou fusion d'un lot de `usize` groupes au plus (`true`).
+    MergeExact(bool, usize),
     /// « Ma fiche » : lecture.
     Me,
     /// « Ma fiche » : enregistrement (publie le profil Nostr et écrit la fiche).
@@ -124,6 +126,8 @@ pub enum ChatOp {
     Send(String, String),
     /// Marque la conversation comme lue.
     Read(String),
+    /// Signal d'appel visio `{ peer, type, call, sdp?, video?, missed? }`.
+    Signal(Value),
 }
 
 /// Demande de carte telle que l'URL la porte.
@@ -369,7 +373,15 @@ pub trait Backend: Send + Sync + 'static {
     fn book(&self, _who: &Principal, _op: BookOp) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("le carnet d'adresses n'est pas disponible sur cette station")) }
     }
-    /// Chat privé : une opération ([`ChatOp`]) pour le titulaire.
+    /// Présence visio : `{ reachable, friends: { hex: statut } }` ; `body` (POST) change le choix `reachable` ou l'état `in_call`.
+    fn presence(&self, _who: &Principal, _body: Option<Value>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("la présence visio n'est pas disponible sur cette station")) }
+    }
+    /// Visio : serveurs de traversée à donner au navigateur (`{ stun_port, servers }`).
+    fn call_ice(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("la visio n'est pas disponible sur cette station")) }
+    }
+    /// Chat privé : une opération ([`ChatOp`]) pour le titulaire (dont les signaux d'appel visio).
     fn chat(&self, _who: &Principal, _op: ChatOp) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("le chat privé n'est pas disponible sur cette station")) }
     }
@@ -488,8 +500,9 @@ pub trait Backend: Send + Sync + 'static {
     fn faces_thumbs(&self, _who: &Principal, _ids: Vec<i64>, _size: u32) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("vignettes de visages non disponibles sur cette station")) }
     }
-    /// Range des visages dans une personne (`pubkey` : sa clé Nostr, facultative).
-    fn faces_assign(&self, _who: &Principal, _ids: Vec<i64>, _name: String, _pubkey: Option<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+    /// Range des visages dans une personne : la fiche choisie (`target.contact`, son UID vCard) fait foi, sinon le nom ;
+    /// `target.new` crée une nouvelle personne même si une fiche porte déjà ce nom.
+    fn faces_assign(&self, _who: &Principal, _ids: Vec<i64>, _target: AssignTarget) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("FaceCloud non activé")) }
     }
     /// Lots de photos en attente de confirmation d'envoi : `{ pending: [{ recipient_hex, name, count, sample_path }] }`.
@@ -759,12 +772,16 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/book/import", post(book_import::<B>))
         .route("/api/v1/book/duplicates", get(book_duplicates::<B>))
         .route("/api/v1/book/merge", post(book_merge::<B>))
+        .route("/api/v1/book/merge-exact", post(book_merge_exact::<B>))
         .route("/api/v1/book/me", get(book_me::<B>).post(book_save_me::<B>))
         .route("/api/v1/me/links", get(my_links::<B>).post(announce_links::<B>))
         .route("/api/v1/chat", get(chat_list::<B>))
         .route("/api/v1/chat/messages", get(chat_messages::<B>))
         .route("/api/v1/chat/send", post(chat_send::<B>))
         .route("/api/v1/chat/read", post(chat_read::<B>))
+        .route("/api/v1/call/signal", post(call_signal::<B>))
+        .route("/api/v1/call/ice", get(call_ice::<B>))
+        .route("/api/v1/presence", get(presence_get::<B>).post(presence_set::<B>))
         .route("/api/v1/dashboard", get(dashboard::<B>))
         .route("/api/v1/activity", get(activity_stream::<B>))
         .route("/api/v1/ucloud/list", get(ucloud_list::<B>))
@@ -973,6 +990,14 @@ struct BookMergeBody {
     drop: Vec<String>,
 }
 
+#[derive(Deserialize)]
+struct BookMergeExactBody {
+    #[serde(default)]
+    apply: bool,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
 async fn book_list<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<BookListQuery>) -> Response {
     reply(st.backend.book(&p, BookOp::List(q.q.unwrap_or_default().chars().take(200).collect(), q.group.filter(|g| g.len() <= 80))).await)
 }
@@ -1030,6 +1055,10 @@ async fn book_merge<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Au
     reply(st.backend.book(&p, BookOp::Merge(b.keep, b.drop)).await)
 }
 
+async fn book_merge_exact<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<BookMergeExactBody>) -> Response {
+    reply(st.backend.book(&p, BookOp::MergeExact(b.apply, b.limit.unwrap_or(50).clamp(1, 200))).await)
+}
+
 async fn book_me<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
     reply(st.backend.book(&p, BookOp::Me).await)
 }
@@ -1069,6 +1098,22 @@ async fn chat_list<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Aut
 
 async fn chat_messages<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Query(q): Query<ChatPeerQuery>) -> Response {
     reply(st.backend.chat(&p, ChatOp::Messages(q.peer.chars().take(80).collect(), q.before)).await)
+}
+
+async fn call_signal<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<Value>) -> Response {
+    reply(st.backend.chat(&p, ChatOp::Signal(b)).await)
+}
+
+async fn presence_get<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.presence(&p, None).await)
+}
+
+async fn presence_set<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<Value>) -> Response {
+    reply(st.backend.presence(&p, Some(b)).await)
+}
+
+async fn call_ice<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.call_ice(&p).await)
 }
 
 async fn chat_send<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(b): Json<ChatSendBody>) -> Response {
@@ -1288,6 +1333,23 @@ struct AssignBody {
     name: String,
     #[serde(default)]
     pubkey: Option<String>,
+    #[serde(default)]
+    contact: Option<String>,
+    #[serde(default)]
+    new: bool,
+}
+
+/// Où ranger des visages : une fiche choisie, ou un nom (et la clé Nostr de la personne, si elle est connue).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssignTarget {
+    /// Nom tapé (ou celui de la fiche choisie).
+    pub name: String,
+    /// Clé Nostr (64 hex, minuscules).
+    pub pubkey: Option<String>,
+    /// UID vCard de la fiche choisie : il fait foi.
+    pub contact: Option<String>,
+    /// Nouvelle personne, même si une fiche porte déjà ce nom.
+    pub new: bool,
 }
 
 async fn faces_assign<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<AssignBody>) -> Response {
@@ -1302,7 +1364,11 @@ async fn faces_assign<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): 
     if body.pubkey.as_deref().is_some_and(|k| k.len() != 64 || !k.bytes().all(|b| b.is_ascii_hexdigit())) {
         return reply(Err(ApiError::bad_request("clé Nostr de 64 caractères hexadécimaux attendue")));
     }
-    reply(st.backend.faces_assign(&p, ids, name, body.pubkey.map(|k| k.to_ascii_lowercase())).await)
+    let contact = body.contact.map(|c| c.trim().to_owned()).filter(|c| !c.is_empty());
+    if contact.as_deref().is_some_and(|c| c.len() > 200 || c.chars().any(char::is_control)) {
+        return reply(Err(ApiError::bad_request("identifiant de fiche invalide")));
+    }
+    reply(st.backend.faces_assign(&p, ids, AssignTarget { name, pubkey: body.pubkey.map(|k| k.to_ascii_lowercase()), contact, new: body.new }).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -2155,9 +2221,11 @@ async fn activity_stream<B: Backend>(State(st): State<Arc<UiState<B>>>, headers:
     };
     let after = headers.get("last-event-id").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
     let (backlog, rx) = st.activity.subscribe(after);
+    // Tant que ce flux est ouvert, le compte est « là » (présence visio, pour ses amis qui l'ont choisie).
+    let here = st.activity.listen(&principal.hex);
     // Un événement personnel n'est ni rejoué ni diffusé à un autre compte (virement, e-mail d'un nouveau membre…).
     let backlog: Vec<_> = backlog.into_iter().filter(|a| a.audience.admits(&principal.hex, principal.captain)).collect();
-    let sse = Sse::new(event_stream(backlog, rx, principal)).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("ping"));
+    let sse = Sse::new(event_stream(backlog, rx, principal, here)).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("ping"));
     private(sse.into_response())
 }
 
@@ -2167,17 +2235,17 @@ fn to_event(a: &astro_core::Activity) -> Event {
     Event::default().id(a.id.to_string()).event(a.kind.clone()).data(serde_json::to_string(a).unwrap_or_default())
 }
 
-fn event_stream(backlog: Vec<Arc<astro_core::Activity>>, rx: Live, who: Principal) -> impl Stream<Item = Result<Event, Infallible>> {
-    stream::unfold((backlog.into_iter(), rx, who), |(mut backlog, mut rx, who)| async move {
+fn event_stream(backlog: Vec<Arc<astro_core::Activity>>, rx: Live, who: Principal, here: astro_core::activity::ListenGuard) -> impl Stream<Item = Result<Event, Infallible>> {
+    stream::unfold((backlog.into_iter(), rx, who, here), |(mut backlog, mut rx, who, here)| async move {
         if let Some(a) = backlog.next() {
-            return Some((Ok(to_event(&a)), (backlog, rx, who)));
+            return Some((Ok(to_event(&a)), (backlog, rx, who, here)));
         }
         loop {
             match rx.recv().await {
-                Ok(a) if a.audience.admits(&who.hex, who.captain) => return Some((Ok(to_event(&a)), (backlog, rx, who))),
+                Ok(a) if a.audience.admits(&who.hex, who.captain) => return Some((Ok(to_event(&a)), (backlog, rx, who, here))),
                 Ok(_) => {}
                 // Le client lisait trop lentement : on le dit plutôt que de laisser croire à un flux complet.
-                Err(RecvError::Lagged(n)) => return Some((Ok(Event::default().event("lag").data(n.to_string())), (backlog, rx, who))),
+                Err(RecvError::Lagged(n)) => return Some((Ok(Event::default().event("lag").data(n.to_string())), (backlog, rx, who, here))),
                 Err(RecvError::Closed) => return None,
             }
         }

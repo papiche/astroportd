@@ -8,8 +8,12 @@
 //! Les fiches sont des fichiers chiffrés du uCloud (`/Contacts/*.vcf`) : ce module n'en garde qu'un **index**
 //! (`identity_links`, reconstructible) et fait le lien avec FaceCloud :
 //!
+//! - un visage est relié à **une fiche** par son UID vCard (`faces.contact_uid`), jamais par le nom : deux homonymes restent
+//!   deux personnes, et renommer la fiche renomme ses visages. Une fiche sans UID en reçoit un à l'indexation (RFC 6350) ;
 //! - une fiche qui porte une clé Nostr (`X-NOSTR-PUBKEY` / `X-NOSTR-NPUB`) ou l'email d'un MULTIPASS **hébergé ici**
-//!   donne sa clé aux visages du même nom (comparaison sans accents ni casse) ; un nom ambigu n'est jamais rapproché ;
+//!   donne sa clé aux visages de la fiche ;
+//! - les visages nommés avant le lien par fiche sont rattachés une fois : par leur clé, sinon par un nom que **une seule**
+//!   fiche porte (un nom ambigu n'est jamais rapproché) ;
 //! - une personne reliée voit ses photos déjà analysées partagées tout de suite si l'amitié est réciproque (N¹) ;
 //! - une fiche se crée depuis une personne reconnue, et se relie à la main (email d'un MULTIPASS hébergé, `npub`).
 //!
@@ -118,7 +122,7 @@ impl<B: BlobStore> IdentityLinks<B> {
     }
 
     async fn index_one(&self, owner: &str, entry: &astro_dav::vfs::Entry) -> Result<(), LinkError> {
-        let cid = entry.cid.clone().unwrap_or_default();
+        let mut cid = entry.cid.clone().unwrap_or_default();
         let bytes = carddav::read_file(&self.dav, owner, &entry.path).await;
         let stem = astro_dav::vfs::name_of(&entry.path).trim_end_matches(".vcf").to_owned();
         let parsed = match bytes.as_deref().map(vcard::parse) {
@@ -129,7 +133,14 @@ impl<B: BlobStore> IdentityLinks<B> {
         let (name, key, emails, uid, pubkey, via, g1, warning) = match &parsed {
             Ok(card) => {
                 let (pubkey, via) = self.resolve(owner, card).await;
-                (card.name.clone(), vcard::name_key(&card.name), card.emails.clone(), card.uid.clone(), pubkey, via, card.g1.clone(), card.nostr_invalid.clone())
+                let uid = match &card.uid {
+                    Some(u) => Some(u.clone()),
+                    None => self.give_uid(owner, &entry.path, bytes.as_deref().unwrap_or_default(), &card.name).await.map(|(u, c)| {
+                        cid = c; // la fiche réécrite est l'état indexé : la relecture suivante n'a rien à refaire
+                        u
+                    }),
+                };
+                (card.name.clone(), vcard::name_key(&card.name), card.emails.clone(), uid, pubkey, via, card.g1.clone(), card.nostr_invalid.clone())
             }
             // Fiche invalide : indexée avec son avertissement, jamais rapprochée d'un visage (clé de nom vide).
             Err(why) => (stem, String::new(), Vec::new(), None, None, None, None, Some(why.clone())),
@@ -153,11 +164,41 @@ impl<B: BlobStore> IdentityLinks<B> {
             .execute(
                 "INSERT INTO identity_links(owner_hex, path, uid, name, name_key, emails, pubkey, via, g1pub, warning, cid, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) \
                  ON CONFLICT(owner_hex, path) DO UPDATE SET uid=excluded.uid, name=excluded.name, name_key=excluded.name_key, emails=excluded.emails, pubkey=excluded.pubkey, via=excluded.via, g1pub=excluded.g1pub, warning=excluded.warning, cid=excluded.cid, updated_at=excluded.updated_at",
-                vec![o.into(), p.into(), uid.into(), name.into(), key.into(), json!(emails).to_string().into(), pubkey.into(), via.map(str::to_owned).into(), g1.into(), warning.into(), cid.into(), now().into()],
+                vec![o.into(), p.into(), uid.clone().into(), name.clone().into(), key.into(), json!(emails).to_string().into(), pubkey.into(), via.map(str::to_owned).into(), g1.into(), warning.into(), cid.into(), now().into()],
             )
             .await
             .map_err(internal)?;
+        // La fiche fait foi : la renommer renomme ses visages (le téléphone, le carnet ou la table, peu importe d'où).
+        if let Some(u) = uid.filter(|_| parsed.is_ok()) {
+            self.db
+                .writer()
+                .execute("UPDATE faces SET name = ?3 WHERE owner_hex = ?1 AND contact_uid = ?2 AND ref IS NULL AND name <> ?3", vec![owner.to_owned().into(), u.into(), name.into()])
+                .await
+                .map_err(internal)?;
+        }
         Ok(())
+    }
+
+    /// Donne un UID à une fiche qui n'en a pas : sans lui, aucun visage ne peut s'y relier. La fiche est réécrite (le
+    /// téléphone la reçoit à sa prochaine synchronisation). Rend l'UID et le CID de la fiche réécrite ; `None` si l'écriture
+    /// échoue : la fiche reste indexée, sans lien possible, et l'échec est dit.
+    async fn give_uid(&self, owner: &str, path: &str, bytes: &[u8], name: &str) -> Option<(String, String)> {
+        let text = std::str::from_utf8(bytes).ok()?;
+        let uid = new_uid(owner, name);
+        let file = astro_dav::vfs::name_of(path).to_owned();
+        if let Err(e) = ingest::replace(&self.dav, owner, carddav::CONTACTS_DIR, &file, Some("text/vcard"), std::io::Cursor::new(vcard::set_property(text, "UID", Some(&uid), now()).into_bytes())).await {
+            eprintln!("annuaire : UID impossible à écrire dans {path} : {e}");
+            return None;
+        }
+        let (o, p) = (owner.to_owned(), path.to_owned());
+        let cid: Option<String> = self.db.readers().read(move |c| Ok(c.query_row("SELECT cid FROM ucloud_entries WHERE owner_hex = ?1 AND path = ?2", [o, p], |r| r.get(0)).optional()?.flatten())).await.ok().flatten();
+        Some((uid, cid.unwrap_or_default()))
+    }
+
+    /// UID de la fiche `path` (indexée).
+    pub async fn uid_of(&self, owner: &str, path: &str) -> Result<Option<String>, LinkError> {
+        let (o, p) = (owner.to_owned(), path.to_owned());
+        self.db.readers().read(move |c| Ok(c.query_row("SELECT uid FROM identity_links WHERE owner_hex = ?1 AND path = ?2", [o, p], |r| r.get::<_, Option<String>>(0)).optional()?.flatten())).await.map_err(internal)
     }
 
     /// Relit les fiches modifiées de `/Contacts`, retire celles qui ont disparu, puis rapproche les visages.
@@ -184,45 +225,118 @@ impl<B: BlobStore> IdentityLinks<B> {
         }
         let alive: BTreeSet<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         for gone in known.keys().filter(|p| !alive.contains(p.as_str())) {
+            let uid = self.uid_of(owner, gone).await?;
             let (o, p) = (owner.to_owned(), gone.clone());
             self.db.writer().execute("DELETE FROM identity_links WHERE owner_hex = ?1 AND path = ?2", vec![o.clone().into(), p.clone().into()]).await.map_err(internal)?;
-            self.db.writer().execute("DELETE FROM contact_cards WHERE owner_hex = ?1 AND path = ?2", vec![o.into(), p.into()]).await.map_err(internal)?;
+            self.db.writer().execute("DELETE FROM contact_cards WHERE owner_hex = ?1 AND path = ?2", vec![o.clone().into(), p.into()]).await.map_err(internal)?;
+            // Fiche supprimée : ses visages gardent leur nom mais ne sont plus reliés (sauf si le même UID vit dans une autre fiche :
+            // un fichier déplacé ou renommé n'est pas une suppression).
+            if let Some(u) = uid {
+                self.db
+                    .writer()
+                    .execute(
+                        "UPDATE faces SET contact_uid = CASE WHEN contact_uid = ?2 THEN NULL ELSE contact_uid END, suggest_contact_uid = CASE WHEN suggest_contact_uid = ?2 THEN NULL ELSE suggest_contact_uid END \
+                         WHERE owner_hex = ?1 AND (contact_uid = ?2 OR suggest_contact_uid = ?2) AND NOT EXISTS (SELECT 1 FROM identity_links WHERE owner_hex = ?1 AND uid = ?2)",
+                        vec![o.into(), u.into()],
+                    )
+                    .await
+                    .map_err(internal)?;
+            }
             report.removed += 1;
         }
+        self.adopt_by_name_once(owner).await?;
         report.linked = self.reconcile(owner).await?;
         Ok(report)
     }
 
-    /// Donne leur clé aux visages nommés comme une fiche reliée à un MULTIPASS, puis partage leurs photos (amis réciproques).
-    pub async fn reconcile(&self, owner: &str) -> Result<Vec<(String, String)>, LinkError> {
+    /// Rattache une fois pour toutes les visages nommés **avant** le lien par fiche : à la fiche dont le nom est le leur, si une
+    /// seule fiche le porte (un nom ambigu attend qu'on choisisse). Ensuite, plus jamais de rapprochement par le nom.
+    async fn adopt_by_name_once(&self, owner: &str) -> Result<(), LinkError> {
         let o = owner.to_owned();
-        let (contacts, names): (Vec<(String, String)>, Vec<String>) = self
+        let flag = format!("contact_uid:{owner}");
+        let (done, names, cards): (bool, Vec<String>, Vec<(String, String, String)>) = self
             .db
             .readers()
             .read(move |c| {
-                let mut stmt = c.prepare("SELECT name_key, pubkey FROM identity_links WHERE owner_hex = ?1 AND pubkey IS NOT NULL AND name_key <> ''")?;
-                let contacts = stmt.query_map([&o], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
-                let mut stmt = c.prepare(&format!("SELECT DISTINCT name FROM faces WHERE owner_hex = ?1 AND pubkey IS NULL AND ref IS NULL AND name IS NOT NULL AND name NOT LIKE '{UNKNOWN}' ESCAPE '\\'"))?;
+                if c.query_row("SELECT 1 FROM kv WHERE scope = 'faces' AND key = ?1", [&flag], |_| Ok(())).optional()?.is_some() {
+                    return Ok((true, Vec::new(), Vec::new())); // déjà fait : rien d'autre à lire (appelé à chaque relecture du carnet)
+                }
+                let done = false;
+                let mut stmt = c.prepare(&format!("SELECT DISTINCT name FROM faces WHERE owner_hex = ?1 AND contact_uid IS NULL AND ref IS NULL AND name IS NOT NULL AND name NOT LIKE '{UNKNOWN}' ESCAPE '\\'"))?;
                 let names = stmt.query_map([&o], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?;
-                Ok((contacts, names))
+                let mut stmt = c.prepare("SELECT name_key, uid, name FROM identity_links WHERE owner_hex = ?1 AND uid IS NOT NULL AND name_key <> ''")?;
+                let cards = stmt.query_map([&o], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<Vec<_>, _>>()?;
+                Ok((done, names, cards))
             })
             .await
             .map_err(internal)?;
-        let mut by_name: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        for (key, pk) in contacts {
-            by_name.entry(key).or_default().insert(pk);
+        if done {
+            return Ok(());
         }
-        let mut linked = Vec::new();
+        let mut by_name: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
+        for (key, uid, card_name) in cards {
+            by_name.entry(key).or_default().insert((uid, card_name));
+        }
         for name in names {
-            // Deux fiches de même nom pour deux clés différentes : ambigu, on ne devine pas.
-            let Some(pk) = by_name.get(&vcard::name_key(&name)).filter(|s| s.len() == 1).and_then(|s| s.iter().next().cloned()) else { continue };
-            let (o, n, k) = (owner.to_owned(), name.clone(), pk.clone());
+            // La fiche fait foi : ses visages prennent son nom tel qu'elle l'écrit.
+            let Some((uid, card_name)) = by_name.get(&vcard::name_key(&name)).filter(|s| s.len() == 1).and_then(|s| s.iter().next().cloned()) else { continue };
+            self.db
+                .writer()
+                .execute("UPDATE faces SET contact_uid = ?3, name = ?4 WHERE owner_hex = ?1 AND name = ?2 AND contact_uid IS NULL AND ref IS NULL", vec![owner.to_owned().into(), name.into(), uid.into(), card_name.into()])
+                .await
+                .map_err(internal)?;
+        }
+        self.db
+            .writer()
+            .execute("INSERT OR REPLACE INTO kv(scope, key, value, updated_at) VALUES ('faces', ?1, 'fait', ?2)", vec![format!("contact_uid:{owner}").into(), now().into()])
+            .await
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    /// Relie les visages à leur fiche par la clé Nostr (une seule fiche pour cette clé ; vos propres visages à « Ma fiche »),
+    /// donne la clé d'une fiche reliée à un MULTIPASS à ses visages, puis partage leurs photos (amis réciproques).
+    pub async fn reconcile(&self, owner: &str) -> Result<Vec<(String, String)>, LinkError> {
+        let o = owner.to_owned();
+        self.db
+            .writer()
+            .transaction(move |tx| {
+                tx.execute(
+                    "UPDATE faces SET contact_uid = (SELECT max(l.uid) FROM identity_links l WHERE l.owner_hex = faces.owner_hex AND l.pubkey = faces.pubkey AND l.uid IS NOT NULL) \
+                     WHERE owner_hex = ?1 AND contact_uid IS NULL AND pubkey IS NOT NULL AND ref IS NULL \
+                     AND (SELECT count(DISTINCT l.uid) FROM identity_links l WHERE l.owner_hex = faces.owner_hex AND l.pubkey = faces.pubkey AND l.uid IS NOT NULL) = 1",
+                    [&o],
+                )?;
+                tx.execute(
+                    "UPDATE faces SET contact_uid = (SELECT max(l.uid) FROM identity_links l JOIN contact_cards k ON k.owner_hex = l.owner_hex AND k.path = l.path WHERE l.owner_hex = ?1 AND k.me = 1 AND l.uid IS NOT NULL) \
+                     WHERE owner_hex = ?1 AND pubkey = ?1 AND contact_uid IS NULL AND ref IS NULL",
+                    [&o],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(internal)?;
+        let o = owner.to_owned();
+        let todo: Vec<(String, String, String)> = self
+            .db
+            .readers()
+            .read(move |c| {
+                let mut stmt = c.prepare(
+                    "SELECT DISTINCT l.uid, l.pubkey, l.name FROM identity_links l JOIN faces f ON f.owner_hex = l.owner_hex AND f.contact_uid = l.uid \
+                     WHERE l.owner_hex = ?1 AND l.pubkey IS NOT NULL AND f.pubkey IS NULL AND f.ref IS NULL",
+                )?;
+                Ok(stmt.query_map([&o], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .map_err(internal)?;
+        let mut linked = Vec::new();
+        for (uid, pk, name) in todo {
             let changed = self
                 .db
                 .writer()
                 .execute(
-                    "UPDATE faces SET pubkey = ?3, suggest_pubkey = NULL, suggest_name = NULL, suggest_score = NULL WHERE owner_hex = ?1 AND name = ?2 AND pubkey IS NULL AND ref IS NULL",
-                    vec![o.into(), n.into(), k.into()],
+                    "UPDATE faces SET pubkey = ?3, suggest_pubkey = NULL, suggest_name = NULL, suggest_score = NULL, suggest_contact_uid = NULL WHERE owner_hex = ?1 AND contact_uid = ?2 AND pubkey IS NULL AND ref IS NULL",
+                    vec![owner.to_owned().into(), uid.into(), pk.clone().into()],
                 )
                 .await
                 .map_err(internal)?
@@ -263,25 +377,19 @@ impl<B: BlobStore> IdentityLinks<B> {
             .db
             .readers()
             .read(move |c| {
-                let mut stmt = c.prepare("SELECT path, name, name_key, emails, pubkey, via, g1pub, warning FROM identity_links WHERE owner_hex = ?1 ORDER BY name_key, path")?;
-                let rows = stmt.query_map([&o], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?, r.get::<_, Option<String>>(6)?, r.get::<_, Option<String>>(7)?)))?.collect::<Result<Vec<_>, _>>()?;
-                let mut stmt = c.prepare(&format!("SELECT name, count(*), count(pubkey) FROM faces WHERE owner_hex = ?1 AND ref IS NULL AND name IS NOT NULL AND name NOT LIKE '{UNKNOWN}' ESCAPE '\\' GROUP BY name"))?;
-                let faces = stmt.query_map([&o], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))?.collect::<Result<Vec<_>, _>>()?;
+                let mut stmt = c.prepare("SELECT path, name, uid, emails, pubkey, via, g1pub, warning FROM identity_links WHERE owner_hex = ?1 ORDER BY name_key, path")?;
+                let rows = stmt.query_map([&o], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, String>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?, r.get::<_, Option<String>>(6)?, r.get::<_, Option<String>>(7)?)))?.collect::<Result<Vec<_>, _>>()?;
+                // Visages par fiche ; ceux sans fiche, par nom (« personnes reconnues sans fiche »).
+                let mut stmt = c.prepare(&format!("SELECT contact_uid, max(name), count(*), count(pubkey) FROM faces WHERE owner_hex = ?1 AND ref IS NULL AND name IS NOT NULL AND name NOT LIKE '{UNKNOWN}' ESCAPE '\\' GROUP BY coalesce('fiche:' || contact_uid, 'nom:' || name)"))?;
+                let faces = stmt.query_map([&o], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?)))?.collect::<Result<Vec<_>, _>>()?;
                 Ok((rows, faces))
             })
             .await
             .map_err(internal)?;
-        let mut faces_by_key: BTreeMap<String, (i64, i64)> = BTreeMap::new();
-        for (name, n, keyed) in &faces {
-            let e = faces_by_key.entry(vcard::name_key(name)).or_default();
-            e.0 += n;
-            e.1 += keyed;
-        }
+        let by_uid: HashMap<&str, (i64, i64)> = faces.iter().filter_map(|(u, _, n, k)| u.as_deref().map(|u| (u, (*n, *k)))).collect();
         let mut contacts = Vec::new();
-        let mut with_card: BTreeSet<String> = BTreeSet::new();
-        for (path, name, key, emails, pubkey, via, g1, warning) in rows {
-            with_card.insert(key.clone());
-            let (n, keyed) = faces_by_key.get(&key).copied().unwrap_or((0, 0));
+        for (path, name, uid, emails, pubkey, via, g1, warning) in rows {
+            let (n, keyed) = uid.as_deref().and_then(|u| by_uid.get(u)).copied().unwrap_or((0, 0));
             let (mut station, mut friends) = (Value::Null, false);
             if let Some(pk) = &pubkey {
                 let k = pk.clone();
@@ -289,16 +397,21 @@ impl<B: BlobStore> IdentityLinks<B> {
                 friends = self.reciprocal(owner, pk).await;
             }
             contacts.push(json!({
-                "path": path, "name": name, "emails": serde_json::from_str::<Value>(&emails).unwrap_or_default(), "pubkey": pubkey, "via": via, "g1pub": g1, "warning": warning,
+                "path": path, "uid": uid, "name": name, "emails": serde_json::from_str::<Value>(&emails).unwrap_or_default(), "pubkey": pubkey, "via": via, "g1pub": g1, "warning": warning,
                 "hosted_here": station, "friends": friends, "faces": n, "faces_linked": keyed,
             }));
         }
-        let without: Vec<Value> = faces.iter().filter(|(name, ..)| !with_card.contains(&vcard::name_key(name))).map(|(name, n, _)| json!({ "name": name, "faces": n })).collect();
+        let without: Vec<Value> = faces.iter().filter(|(uid, ..)| uid.is_none()).map(|(_, name, n, _)| json!({ "name": name, "faces": n })).collect();
         Ok(json!({ "contacts": contacts, "people_without_contact": without }))
     }
 
     /// Crée la fiche d'une personne reconnue (avec sa clé Nostr si elle en a une) et rapproche aussitôt.
-    pub async fn create_from_person(self: &Arc<Self>, owner: &str, name: &str, email: Option<&str>) -> Result<Value, LinkError> {
+    ///
+    /// Sans `homonym`, une fiche de même nom est un conflit (on ne double pas une personne par mégarde), et les visages de ce
+    /// nom encore **sans fiche** la rejoignent : c'est le geste « Créer sa fiche » d'une personne reconnue. Avec `homonym`, la
+    /// fiche naît seule, à côté de l'homonyme (« une autre Marie ») : c'est l'appelant qui y range des visages précis.
+    /// Rend `{ path, uid, linked }`.
+    pub async fn create_from_person(self: &Arc<Self>, owner: &str, name: &str, email: Option<&str>, homonym: bool) -> Result<Value, LinkError> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
             return Err(LinkError::Invalid("nom attendu (80 caractères, sans caractère de contrôle)".into()));
@@ -310,19 +423,32 @@ impl<B: BlobStore> IdentityLinks<B> {
         let key = vcard::name_key(name);
         let (o, k) = (owner.to_owned(), key.clone());
         let exists: Option<String> = self.db.readers().read(move |c| Ok(c.query_row("SELECT path FROM identity_links WHERE owner_hex = ?1 AND name_key = ?2", [o, k], |r| r.get(0)).optional()?)).await.map_err(internal)?;
-        if let Some(path) = exists {
+        if let Some(path) = exists.filter(|_| !homonym) {
             return Err(LinkError::Conflict(format!("une fiche porte déjà ce nom ({path})")));
         }
         let (o, n) = (owner.to_owned(), name.to_owned());
-        let pubkey: Option<String> = self.db.readers().read(move |c| Ok(c.query_row("SELECT pubkey FROM faces WHERE owner_hex = ?1 AND name = ?2 AND pubkey IS NOT NULL AND ref IS NULL LIMIT 1", [o, n], |r| r.get(0)).optional()?)).await.map_err(internal)?;
+        let pubkey: Option<String> = if homonym {
+            None
+        } else {
+            self.db.readers().read(move |c| Ok(c.query_row("SELECT pubkey FROM faces WHERE owner_hex = ?1 AND name = ?2 AND contact_uid IS NULL AND pubkey IS NOT NULL AND ref IS NULL LIMIT 1", [o, n], |r| r.get(0)).optional()?)).await.map_err(internal)?
+        };
         let card = vcard::new_card(&new_uid(owner, name), name, email, pubkey.as_deref(), now());
         let file = ingest::sanitize_name(name).ok_or_else(|| LinkError::Invalid("nom de fiche invalide".into()))?;
         let done = ingest::ingest(&self.dav, owner, carddav::CONTACTS_DIR, &format!("{file}.vcf"), Some("text/vcard"), std::io::Cursor::new(card.into_bytes())).await.map_err(|e| match e {
             ingest::IngestError::TooLarge(m) => LinkError::Invalid(m),
             other => internal(other),
         })?;
-        let report = self.sync_owner(owner).await?;
-        Ok(json!({ "path": done.path, "linked": report.linked.len() }))
+        self.sync_owner(owner).await?;
+        let uid = self.uid_of(owner, &done.path).await?.ok_or_else(|| internal("fiche créée mais non indexée"))?;
+        if !homonym {
+            self.db
+                .writer()
+                .execute("UPDATE faces SET contact_uid = ?3 WHERE owner_hex = ?1 AND name = ?2 AND contact_uid IS NULL AND ref IS NULL", vec![owner.to_owned().into(), name.to_owned().into(), uid.clone().into()])
+                .await
+                .map_err(internal)?;
+        }
+        let linked = self.reconcile(owner).await?;
+        Ok(json!({ "path": done.path, "uid": uid, "linked": linked.len() }))
     }
 
     /// Relie (ou délie, `target = None`) une fiche à un MULTIPASS : l'email d'un compte hébergé ici, une clé `npub…`/hex.

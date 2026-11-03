@@ -174,19 +174,19 @@ impl<B: BlobStore> AddressBook<B> {
         content.and_then(|c| serde_json::from_str(&c).ok())
     }
 
-    /// Lignes de l'index : `(chemin, champs, me, clé de nom, clé Nostr, lien, avertissement)`.
+    /// Lignes de l'index : chemin, champs, me, clé Nostr, lien, avertissement, UID.
     async fn rows(&self, owner: &str) -> Result<Vec<Row>, BookError> {
         let o = owner.to_owned();
         self.db
             .readers()
             .read(move |c| {
                 let mut stmt = c.prepare(
-                    "SELECT k.path, k.fields, k.me, k.search, COALESCE(l.name_key, ''), l.pubkey, l.via, l.warning FROM contact_cards k \
+                    "SELECT k.path, k.fields, k.me, k.search, l.pubkey, l.via, l.warning, l.uid FROM contact_cards k \
                      LEFT JOIN identity_links l ON l.owner_hex = k.owner_hex AND l.path = k.path WHERE k.owner_hex = ?1 ORDER BY k.path LIMIT ?2",
                 )?;
                 let rows = stmt
                     .query_map(rusqlite::params![o, MAX_CARDS], |r| {
-                        Ok(Row { path: r.get(0)?, fields: serde_json::from_str(&r.get::<_, String>(1)?).unwrap_or_default(), me: r.get::<_, i64>(2)? == 1, search: r.get(3)?, name_key: r.get(4)?, pubkey: r.get(5)?, via: r.get(6)?, warning: r.get(7)? })
+                        Ok(Row { path: r.get(0)?, fields: serde_json::from_str(&r.get::<_, String>(1)?).unwrap_or_default(), me: r.get::<_, i64>(2)? == 1, search: r.get(3)?, pubkey: r.get(4)?, via: r.get(5)?, warning: r.get(6)?, uid: r.get(7)? })
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(rows)
@@ -195,29 +195,24 @@ impl<B: BlobStore> AddressBook<B> {
             .map_err(internal)
     }
 
-    async fn faces_by_key(&self, owner: &str) -> HashMap<String, i64> {
+    /// Visages par fiche (UID vCard) : le lien fait foi, jamais le nom.
+    async fn faces_by_uid(&self, owner: &str) -> HashMap<String, i64> {
         let o = owner.to_owned();
-        let rows: Vec<(String, i64)> = self
-            .db
+        self.db
             .readers()
             .read(move |c| {
-                let mut stmt = c.prepare("SELECT name, count(*) FROM faces WHERE owner_hex = ?1 AND ref IS NULL AND name IS NOT NULL AND name NOT LIKE 'Inconnu%' GROUP BY name")?;
-                Ok(stmt.query_map([o], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?)
+                let mut stmt = c.prepare("SELECT contact_uid, count(*) FROM faces WHERE owner_hex = ?1 AND ref IS NULL AND contact_uid IS NOT NULL GROUP BY contact_uid")?;
+                Ok(stmt.query_map([o], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<HashMap<_, _>, _>>()?)
             })
             .await
-            .unwrap_or_default();
-        let mut out: HashMap<String, i64> = HashMap::new();
-        for (name, n) in rows {
-            *out.entry(vcard::name_key(&name)).or_default() += n;
-        }
-        out
+            .unwrap_or_default()
     }
 
     /// Fiches filtrées par `q` (tous les mots, sans accents ni casse, dans le nom, la société, les emails, les chiffres des téléphones, les notes…)
     /// et par `group`, avec la liste des groupes et des lettres de l'index.
     pub async fn list(&self, owner: &str, q: &str, group: Option<&str>) -> Result<Value, BookError> {
         let rows = self.rows(owner).await?;
-        let faces = self.faces_by_key(owner).await;
+        let faces = self.faces_by_uid(owner).await;
         let tokens: Vec<String> = vcard::name_key(q).split_whitespace().map(str::to_owned).chain(digits(q).chars().count().ge(&3).then(|| digits(q))).collect();
         let (mut groups, mut letters): (BTreeMap<String, usize>, BTreeSet<String>) = (BTreeMap::new(), BTreeSet::new());
         for r in &rows {
@@ -236,7 +231,7 @@ impl<B: BlobStore> AddressBook<B> {
             contacts.push((key.clone(), json!({
                 "path": r.path, "name": r.fields.name, "org": r.fields.org, "title": r.fields.title, "emails": r.fields.emails.iter().map(|e| &e.value).collect::<Vec<_>>(),
                 "phones": r.fields.phones, "groups": r.fields.groups, "letter": l, "me": r.me, "pubkey": r.pubkey, "via": r.via, "warning": r.warning,
-                "faces": faces.get(&r.name_key).copied().unwrap_or(0), "picture": r.fields.picture,
+                "faces": r.uid.as_ref().and_then(|u| faces.get(u)).copied().unwrap_or(0), "picture": r.fields.picture, "uid": r.uid,
             })));
         }
         contacts.sort_by(|a, b| b.1["me"].as_bool().cmp(&a.1["me"].as_bool()).then_with(|| a.0.cmp(&b.0)));
@@ -253,16 +248,19 @@ impl<B: BlobStore> AddressBook<B> {
         let link: Option<LinkRow> = self
             .db
             .readers()
-            .read(move |c| Ok(c.query_row("SELECT name_key, pubkey, via, warning FROM identity_links WHERE owner_hex = ?1 AND path = ?2", [o, p], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?))
+            .read(move |c| Ok(c.query_row("SELECT uid, pubkey, via, warning FROM identity_links WHERE owner_hex = ?1 AND path = ?2", [o, p], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?))
             .await
             .map_err(internal)?;
-        let (name_key, pubkey, via, warning) = link.unwrap_or_default();
+        let (uid, pubkey, via, warning) = link.unwrap_or_default();
         let pubkey = if me { Some(owner.to_owned()) } else { pubkey };
         let profile = match &pubkey {
             Some(k) => self.profile_of(k).await,
             None => None,
         };
-        let faces = self.faces_by_key(owner).await.get(&name_key).copied().unwrap_or(0);
+        let faces = match &uid {
+            Some(u) => self.faces_by_uid(owner).await.get(u).copied().unwrap_or(0),
+            None => 0,
+        };
         let hosted_here: Option<String> = match &pubkey {
             Some(k) => {
                 let k = k.clone();
@@ -271,7 +269,7 @@ impl<B: BlobStore> AddressBook<B> {
             None => None,
         };
         let comparison = profile.as_ref().map(|p| diff(&fields, p));
-        Ok(json!({ "path": path, "fields": fields, "me": me, "pubkey": pubkey, "via": via, "warning": warning, "faces": faces, "hosted_here": hosted_here, "profile": profile.as_ref().map(|p| json!({
+        Ok(json!({ "path": path, "uid": uid, "fields": fields, "me": me, "pubkey": pubkey, "via": via, "warning": warning, "faces": faces, "hosted_here": hosted_here, "profile": profile.as_ref().map(|p| json!({
             "name": profile_value(p, "name"), "about": profile_value(p, "about"), "picture": profile_value(p, "picture"), "website": profile_value(p, "website"), "nip05": profile_value(p, "nip05"), "lud16": profile_value(p, "lud16") })),
             "diff": comparison, "drift": comparison.as_ref().is_some_and(|d| d.iter().any(|x| x["can_take"] == true || (x["same"] == false && x["mine"] != "" && me))) }))
     }
@@ -305,22 +303,27 @@ impl<B: BlobStore> AddressBook<B> {
         Ok(json!({ "uri": vcard::embedded_photo(&text) }))
     }
 
-    /// Visages reconnus de la personne de la fiche (les plus nets d'abord, 12 au plus) : `{ faces: [face_id] }`.
+    /// Visages de la personne de la fiche (les plus nets d'abord, 24 au plus), reliés par son UID : `{ faces: [face_id],
+    /// photos: [{ id, path, bbox }], total }` (`photos` : de quoi montrer la photo d'origine, le visage entouré).
     pub async fn photo_choices(&self, owner: &str, path: &str) -> Result<Value, BookError> {
-        let text = self.read(owner, path).await?;
-        let key = vcard::name_key(&vcard::read_fields(&text).name);
+        Self::safe_path(path)?;
+        let Some(uid) = self.links.uid_of(owner, path).await? else { return Ok(json!({ "faces": [], "photos": [], "total": 0 })) };
         let o = owner.to_owned();
-        let rows: Vec<(i64, String)> = self
+        let (rows, total): (Vec<(i64, String, [f64; 4])>, i64) = self
             .db
             .readers()
             .read(move |c| {
-                let mut st = c.prepare("SELECT face_id, name FROM faces WHERE owner_hex = ?1 AND ucloud_path IS NOT NULL AND bbox_x1 IS NOT NULL AND name NOT LIKE 'Inconnu\\_%' ESCAPE '\\' ORDER BY det_score DESC LIMIT 5000")?;
-                Ok(st.query_map([&o], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?)
+                let mut st = c.prepare(
+                    "SELECT face_id, ucloud_path, bbox_x1, bbox_y1, bbox_x2, bbox_y2 FROM faces WHERE owner_hex = ?1 AND contact_uid = ?2 AND ref IS NULL \
+                     AND ucloud_path IS NOT NULL AND bbox_x1 IS NOT NULL ORDER BY det_score DESC LIMIT 24",
+                )?;
+                let rows = st.query_map([&o, &uid], |r| Ok((r.get(0)?, r.get(1)?, [r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?])))?.collect::<Result<Vec<_>, _>>()?;
+                let total = c.query_row("SELECT count(*) FROM faces WHERE owner_hex = ?1 AND contact_uid = ?2 AND ref IS NULL", [&o, &uid], |r| r.get(0))?;
+                Ok((rows, total))
             })
             .await
             .map_err(internal)?;
-        let faces: Vec<i64> = rows.into_iter().filter(|(_, n)| vcard::name_key(n) == key).map(|(id, _)| id).take(12).collect();
-        Ok(json!({ "faces": faces }))
+        Ok(json!({ "faces": rows.iter().take(12).map(|r| r.0).collect::<Vec<_>>(), "photos": rows.iter().map(|(id, p, b)| json!({ "id": id, "path": p, "bbox": b })).collect::<Vec<_>>(), "total": total }))
     }
 
     /// Change la photo d'une fiche. `uri` : image `data:` (JPEG, PNG, WebP ou GIF, 2 Mo au plus) ramenée à 256 px et
@@ -381,14 +384,20 @@ impl<B: BlobStore> AddressBook<B> {
         if vcard::is_me(&text) {
             return Err(BookError::Invalid("votre propre fiche ne se supprime pas".into()));
         }
+        self.remove_file(owner, path).await?;
+        self.links.sync_owner(owner).await?;
+        Ok(json!({ "deleted": path }))
+    }
+
+    /// Retire le fichier d'une fiche, sans relire le carnet (l'appelant le fait une fois, après un lot).
+    async fn remove_file(&self, owner: &str, path: &str) -> Result<(), BookError> {
         let (o, p) = (owner.to_owned(), path.to_owned());
         let cids = astro_dav::vfs::vfs_tx(&self.dav.db, move |tx| astro_dav::vfs::delete_tree_tx(tx, &o, &p)).await.map_err(|e| BookError::Internal(e.to_string()))?;
         astro_dav::server::release_blobs(&self.dav, cids).await;
         if let Some(p) = &self.dav.publisher {
             p.notify(owner);
         }
-        self.links.sync_owner(owner).await?;
-        Ok(json!({ "deleted": path }))
+        Ok(())
     }
 
     /// Prend dans la fiche les valeurs choisies du profil Nostr de la personne (`keys` : `name`, `about`, `picture`, `website`, `nip05`, `lud16`).
@@ -544,8 +553,17 @@ impl<B: BlobStore> AddressBook<B> {
         if drop.is_empty() || drop.len() > 20 || drop.iter().any(|d| d == keep) {
             return Err(BookError::Invalid("choisissez 1 à 20 fiches à fusionner dans la fiche gardée".into()));
         }
+        self.merge_cards(owner, keep, drop).await?;
+        self.links.sync_owner(owner).await?;
+        Ok(json!({ "kept": keep, "removed": drop.len() }))
+    }
+
+    /// Le cœur de la fusion, sans relire le carnet : la fiche gardée n'est réécrite que si elle change (un doublon exact
+    /// ne la modifie pas, et le téléphone n'a alors rien à resynchroniser) ; les visages des fiches fusionnées la rejoignent.
+    async fn merge_cards(&self, owner: &str, keep: &str, drop: &[String]) -> Result<(), BookError> {
         let keep_text = self.read(owner, keep).await?;
         let mut f = vcard::read_fields(&keep_text);
+        let before = f.clone();
         let mut text = keep_text.clone();
         let mut notes = vec![f.note.clone()];
         for d in drop {
@@ -593,25 +611,120 @@ impl<B: BlobStore> AddressBook<B> {
         }
         let mut seen = BTreeSet::new();
         f.note = notes.into_iter().filter(|n| !n.is_empty() && seen.insert(n.clone())).collect::<Vec<_>>().join("\n");
-        let out = vcard::apply_fields(&text, &f, now()).ok_or_else(|| BookError::Invalid("un nom est nécessaire".into()))?;
-        self.write(owner, keep, out).await?;
-        for d in drop {
-            self.delete(owner, d).await?;
+        if f != before || text != keep_text {
+            let out = vcard::apply_fields(&text, &f, now()).ok_or_else(|| BookError::Invalid("un nom est nécessaire".into()))?;
+            self.write(owner, keep, out).await?;
         }
-        self.links.sync_owner(owner).await?;
-        Ok(json!({ "kept": keep, "removed": drop.len() }))
+        // Les visages des fiches fusionnées rejoignent la fiche gardée avant que celles-ci disparaissent (sinon ils seraient
+        // déliés). Les UID viennent de l'index : réécrire une fiche garde son UID.
+        if let Some(kept) = self.links.uid_of(owner, keep).await? {
+            for d in drop {
+                if let Some(gone) = self.links.uid_of(owner, d).await?.filter(|u| *u != kept) {
+                    self.db
+                        .writer()
+                        .execute("UPDATE faces SET contact_uid = ?3 WHERE owner_hex = ?1 AND contact_uid = ?2", vec![owner.to_owned().into(), gone.clone().into(), kept.clone().into()])
+                        .await
+                        .map_err(internal)?;
+                    self.db
+                        .writer()
+                        .execute("UPDATE faces SET suggest_contact_uid = ?3 WHERE owner_hex = ?1 AND suggest_contact_uid = ?2", vec![owner.to_owned().into(), gone.into(), kept.clone().into()])
+                        .await
+                        .map_err(internal)?;
+                }
+            }
+        }
+        for d in drop {
+            self.remove_file(owner, d).await?;
+        }
+        Ok(())
     }
 
-    /// Fiche de `name` : la fiche existante, sinon une fiche neuve créée sur le champ (depuis la table de tri des visages).
-    pub async fn ensure_person(&self, owner: &str, name: &str) -> Result<Value, BookError> {
-        let key = vcard::name_key(name);
-        let (o, k) = (owner.to_owned(), key);
-        let found: Option<String> = self.db.readers().read(move |c| Ok(c.query_row("SELECT path FROM identity_links WHERE owner_hex = ?1 AND name_key = ?2 ORDER BY path LIMIT 1", [o, k], |r| r.get(0)).optional()?)).await.map_err(internal)?;
-        if let Some(path) = found {
-            return Ok(json!({ "path": path, "created": false }));
+    /// Doublons **exacts** : même nom, même société, mêmes emails, mêmes téléphones, avec au moins un email ou un téléphone
+    /// (deux homonymes sans coordonnées ne sont jamais réunis). Par groupe, la fiche gardée est celle qui a le plus de visages,
+    /// puis la plus remplie. Rend `(gardée, fusionnées)` par groupe.
+    async fn exact_groups(&self, owner: &str) -> Result<Vec<(Row, Vec<Row>)>, BookError> {
+        let faces = self.faces_by_uid(owner).await;
+        let mut groups: BTreeMap<ExactKey, Vec<Row>> = BTreeMap::new();
+        for r in self.rows(owner).await?.into_iter().filter(|r| !r.me) {
+            let mut emails: Vec<String> = r.fields.emails.iter().map(|e| e.value.trim().to_lowercase()).filter(|e| !e.is_empty()).collect();
+            let mut phones: Vec<String> = r.fields.phones.iter().map(|p| digits(&p.value)).filter(|d| d.len() >= 7).map(|d| d[d.len() - 9.min(d.len())..].to_owned()).collect();
+            let name = vcard::name_key(&r.fields.name);
+            if name.is_empty() || (emails.is_empty() && phones.is_empty()) {
+                continue;
+            }
+            emails.sort();
+            emails.dedup();
+            phones.sort();
+            phones.dedup();
+            groups.entry((name, vcard::name_key(&r.fields.org), emails, phones)).or_default().push(r);
         }
-        let made = self.links.create_from_person(owner, name, None).await?;
-        Ok(json!({ "path": made["path"], "created": true }))
+        let weight = |r: &Row| (r.uid.as_ref().and_then(|u| faces.get(u)).copied().unwrap_or(0), serde_json::to_string(&r.fields).map_or(0, |j| j.len()));
+        Ok(groups
+            .into_values()
+            .filter(|g| g.len() > 1)
+            .map(|mut g| {
+                g.sort_by(|a, b| weight(b).cmp(&weight(a)).then_with(|| a.path.cmp(&b.path)));
+                let keep = g.remove(0);
+                (keep, g)
+            })
+            .collect())
+    }
+
+    /// Fusionne les doublons exacts, par lots (`limit` groupes au plus, 1 à 200) ; `apply = false` : aperçu seulement
+    /// (`{ groups, cards, sample }`). Le carnet n'est relu qu'une fois par lot. Rend `{ merged, removed, failed, remaining }` :
+    /// l'interface enchaîne les lots tant qu'il en reste, et s'arrête si un lot n'avance plus.
+    pub async fn merge_exact(&self, owner: &str, apply: bool, limit: usize) -> Result<Value, BookError> {
+        let groups = self.exact_groups(owner).await?;
+        if !apply {
+            let sample: Vec<Value> = groups.iter().take(5).map(|(k, d)| json!({ "name": k.fields.name, "org": k.fields.org, "emails": k.fields.emails.iter().map(|e| &e.value).collect::<Vec<_>>(), "phones": k.fields.phones.iter().map(|p| &p.value).collect::<Vec<_>>(), "copies": d.len() + 1 })).collect();
+            return Ok(json!({ "groups": groups.len(), "cards": groups.iter().map(|g| g.1.len()).sum::<usize>(), "sample": sample }));
+        }
+        let limit = limit.clamp(1, 200);
+        let (mut merged, mut removed, mut failed) = (0, 0, Vec::new());
+        for (keep, drop) in groups.iter().take(limit) {
+            let paths: Vec<String> = drop.iter().map(|r| r.path.clone()).collect();
+            match self.merge_cards(owner, &keep.path, &paths).await {
+                Ok(()) => {
+                    merged += 1;
+                    removed += paths.len();
+                }
+                Err(BookError::Invalid(m) | BookError::NotFound(m) | BookError::Conflict(m) | BookError::Internal(m)) => failed.push(json!({ "path": keep.path, "name": keep.fields.name, "error": m })),
+            }
+        }
+        self.links.sync_owner(owner).await?;
+        Ok(json!({ "merged": merged, "removed": removed, "failed": failed, "remaining": groups.len().saturating_sub(merged) }))
+    }
+
+    /// Fiche où ranger des visages (table de tri, Trier en grand). Le **choix explicite** d'une fiche (`contact` : son UID) fait
+    /// foi. Sinon, selon le nom : aucune fiche → elle est créée ; une seule → c'est elle ; plusieurs → conflit (« choisissez
+    /// laquelle »), jamais deviné. `new` : une personne nouvelle, même si une fiche porte déjà ce nom (« une autre Marie »).
+    /// Rend `{ path, uid, name, created }` : `name` est celui de la fiche, qui fait foi.
+    pub async fn person_card(&self, owner: &str, name: &str, contact: Option<&str>, new: bool) -> Result<Value, BookError> {
+        let (o, k) = (owner.to_owned(), vcard::name_key(name));
+        if let Some(uid) = contact {
+            let (o, u) = (owner.to_owned(), uid.to_owned());
+            let found: Option<(String, String)> = self.db.readers().read(move |c| Ok(c.query_row("SELECT path, name FROM identity_links WHERE owner_hex = ?1 AND uid = ?2 ORDER BY path LIMIT 1", [o, u], |r| Ok((r.get(0)?, r.get(1)?))).optional()?)).await.map_err(internal)?;
+            let (path, name) = found.ok_or_else(|| BookError::NotFound("fiche introuvable : elle a peut-être été supprimée".into()))?;
+            return Ok(json!({ "path": path, "uid": uid, "name": name, "created": false }));
+        }
+        let same: Vec<(String, Option<String>, String)> = self
+            .db
+            .readers()
+            .read(move |c| {
+                let mut st = c.prepare("SELECT path, uid, name FROM identity_links WHERE owner_hex = ?1 AND name_key = ?2 ORDER BY path")?;
+                Ok(st.query_map([o, k], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .map_err(internal)?;
+        match (same.as_slice(), new) {
+            ([(path, Some(uid), name)], false) => Ok(json!({ "path": path, "uid": uid, "name": name, "created": false })),
+            ([(path, None, _)], false) => Err(BookError::Conflict(format!("la fiche {path} n'a pas d'identifiant (UID) : rouvrez-la dans Personnes pour la réparer"))),
+            ([_, _, ..], false) => Err(BookError::Conflict(format!("{} fiches s'appellent « {} » : choisissez laquelle, ou créez une nouvelle personne", same.len(), name.trim()))),
+            _ => {
+                let made = self.links.create_from_person(owner, name, None, true).await?;
+                Ok(json!({ "path": made["path"], "uid": made["uid"], "name": name.trim(), "created": true }))
+            }
+        }
     }
 
     /// « Ma fiche » : la fiche du titulaire, créée à la première visite à partir de son profil Nostr ; **le profil Nostr fait foi** pour les champs
@@ -674,17 +787,19 @@ impl<B: BlobStore> AddressBook<B> {
 }
 
 /// Ligne de l'annuaire d'une fiche : clé de nom, clé Nostr, lien, avertissement.
-type LinkRow = (String, Option<String>, Option<String>, Option<String>);
+type LinkRow = (Option<String>, Option<String>, Option<String>, Option<String>);
+/// Clé d'un doublon exact : nom, société, emails, téléphones (comparables, triés).
+type ExactKey = (String, String, Vec<String>, Vec<String>);
 
 struct Row {
     path: String,
     fields: Fields,
     me: bool,
     search: String,
-    name_key: String,
     pubkey: Option<String>,
     via: Option<String>,
     warning: Option<String>,
+    uid: Option<String>,
 }
 
 /// Un champ typé simple, pour les appelants qui n'ont qu'une valeur.

@@ -84,7 +84,7 @@ async fn key_of(b: &Bench, name: &str) -> Option<String> {
 }
 
 #[tokio::test]
-async fn a_card_with_a_key_or_a_hosted_email_gives_its_key_to_the_faces_of_the_same_name() {
+async fn a_card_with_a_key_or_a_hosted_email_gives_its_key_to_the_faces_it_holds() {
     let b = bench("link").await;
     let alice = hex(&ALICE);
     for (i, name) in ["Léa Martin", "Léa Martin", "Bea", "Inconnu_deadbeef", "Paul", "Zoe"].iter().enumerate() {
@@ -103,10 +103,11 @@ async fn a_card_with_a_key_or_a_hosted_email_gives_its_key_to_the_faces_of_the_s
     let r = b.links.sync_owner(&alice).await.unwrap();
     assert_eq!((r.indexed, r.removed), (5, 0));
     let linked: std::collections::BTreeMap<_, _> = r.linked.iter().cloned().collect();
-    assert_eq!(linked.get("Léa Martin"), Some(&hex(&LEA)));
+    // Visages nommés avant le lien par fiche : rattachés une fois à la seule fiche de ce nom, dont ils prennent le nom.
+    assert_eq!(linked.get("LEA  martin"), Some(&hex(&LEA)));
     assert_eq!(linked.get("Bea"), Some(&hex(&BEA)));
     assert_eq!(r.linked.len(), 2, "{:?}", r.linked);
-    assert_eq!(key_of(&b, "Léa Martin").await.as_deref(), Some(hex(&LEA).as_str()));
+    assert_eq!(key_of(&b, "LEA  martin").await.as_deref(), Some(hex(&LEA).as_str()));
     assert_eq!(key_of(&b, "Paul").await, None, "nom ambigu : pas de rapprochement");
     assert_eq!(key_of(&b, "Zoe").await, None, "un email non hébergé ici n'est pas une preuve");
     assert_eq!(key_of(&b, "Inconnu_deadbeef").await, None);
@@ -160,16 +161,16 @@ async fn a_card_is_created_from_a_person_and_linked_by_hand() {
     // Zoé est déjà reconnue avec une clé (ex. photo partagée) : sa fiche naît avec.
     b.db.writer().execute("INSERT INTO faces(owner_hex, name, pubkey, embed_hash, ts, ucloud_path) VALUES (?1, 'Zoé', ?2, 'h1', 1, '/Photos/z.jpg')", vec![V::Text(alice.clone()), V::Text(hex(&LEA))]).await.unwrap();
     face(&b, 1, "Marc").await;
-    let created = b.links.create_from_person(&alice, "Zoé", Some("zoe@example.org")).await.unwrap();
+    let created = b.links.create_from_person(&alice, "Zoé", Some("zoe@example.org"), false).await.unwrap();
     assert_eq!(created["path"], "/Contacts/Zoé.vcf");
     let text = String::from_utf8(astro_dav::carddav::read_file(&b.dav, &alice, "/Contacts/Zoé.vcf").await.unwrap()).unwrap();
     let c = vcard::parse(text.as_bytes()).unwrap();
     assert_eq!((c.name.as_str(), c.nostr.as_deref(), c.emails.as_slice()), ("Zoé", Some(hex(&LEA).as_str()), ["zoe@example.org".to_owned()].as_slice()));
-    assert!(matches!(b.links.create_from_person(&alice, "zoé", None).await, Err(LinkError::Conflict(_))), "une seule fiche par nom");
-    assert!(matches!(b.links.create_from_person(&alice, "  ", None).await, Err(LinkError::Invalid(_))));
-    assert!(matches!(b.links.create_from_person(&alice, "X", Some("pas un email")).await, Err(LinkError::Invalid(_))));
+    assert!(matches!(b.links.create_from_person(&alice, "zoé", None, false).await, Err(LinkError::Conflict(_))), "une seule fiche par nom");
+    assert!(matches!(b.links.create_from_person(&alice, "  ", None, false).await, Err(LinkError::Invalid(_))));
+    assert!(matches!(b.links.create_from_person(&alice, "X", Some("pas un email"), false).await, Err(LinkError::Invalid(_))));
     // Marc : fiche sans clé, puis reliée à la main par l'email d'un MULTIPASS hébergé.
-    b.links.create_from_person(&alice, "Marc", None).await.unwrap();
+    b.links.create_from_person(&alice, "Marc", None, false).await.unwrap();
     assert_eq!(key_of(&b, "Marc").await, None);
     let before = b.shared.lock().unwrap().len();
     b.links.link(&alice, "/Contacts/Marc.vcf", Some("bea@example.org")).await.unwrap();
@@ -191,4 +192,67 @@ async fn a_card_is_created_from_a_person_and_linked_by_hand() {
     face(&b, 2, "Nina").await;
     let v = b.links.list(&alice).await.unwrap();
     assert_eq!(v["people_without_contact"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect::<Vec<_>>(), ["Nina"]);
+}
+
+async fn contact_of(b: &Bench, n: i64) -> (Option<String>, String) {
+    b.db.readers()
+        .read(move |c| Ok(c.query_row("SELECT contact_uid, name FROM faces WHERE embed_hash = ?1", [format!("hash{n:04}")], |r| Ok((r.get(0)?, r.get(1)?)))?))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn faces_follow_their_card_by_uid_through_renames_homonyms_moves_and_deletions() {
+    let b = bench("uid").await;
+    let alice = hex(&ALICE);
+    // Deux « Marie » : la première fiche n'a pas d'UID (carnet importé), la seconde en a un.
+    card(&b, "marie1.vcf", &vc("Marie", "EMAIL:marie@example.org\r\n")).await;
+    card(&b, "marie2.vcf", &vc("Marie", "UID:urn:uuid:marie-2\r\n")).await;
+    b.links.sync_owner(&alice).await.unwrap();
+    let text = String::from_utf8(astro_dav::carddav::read_file(&b.dav, &alice, "/Contacts/marie1.vcf").await.unwrap()).unwrap();
+    let uid1 = vcard::parse(text.as_bytes()).unwrap().uid.unwrap(); // une fiche sans UID en reçoit un
+    assert!(text.contains("marie@example.org"), "le reste de la fiche est gardé");
+    assert_eq!(b.links.sync_owner(&alice).await.unwrap().indexed, 0, "la fiche réécrite est déjà l'état indexé");
+
+    // Des visages rangés dans chacune : deux personnes de même nom, jamais confondues.
+    face(&b, 1, "Marie").await;
+    face(&b, 2, "Marie").await;
+    face(&b, 3, "Nina").await;
+    let set = |n: i64, uid: &str| {
+        let (db, uid) = (b.db.clone(), uid.to_owned());
+        async move { db.writer().execute("UPDATE faces SET contact_uid = ?2 WHERE embed_hash = ?1", vec![V::Text(format!("hash{n:04}")), V::Text(uid)]).await.unwrap() }
+    };
+    set(1, &uid1).await;
+    set(2, "marie-2").await;
+    let v = b.links.list(&alice).await.unwrap();
+    let faces_of = |file: &str| v["contacts"].as_array().unwrap().iter().find(|c| c["path"].as_str().unwrap().ends_with(file)).unwrap()["faces"].as_i64().unwrap();
+    assert_eq!((faces_of("marie1.vcf"), faces_of("marie2.vcf")), (1, 1), "chaque fiche compte ses visages, pas ceux de l'homonyme");
+
+    // Renommer la fiche renomme ses visages, et seulement les siens.
+    card_replace(&b, "marie2.vcf", &vc("Marie Curie", "UID:urn:uuid:marie-2\r\n")).await;
+    b.links.sync_owner(&alice).await.unwrap();
+    assert_eq!(contact_of(&b, 2).await, (Some("marie-2".into()), "Marie Curie".into()));
+    assert_eq!(contact_of(&b, 1).await.1, "Marie");
+
+    // Déplacer le fichier (même UID, autre chemin) n'est pas une suppression : le lien tient.
+    let text = String::from_utf8(astro_dav::carddav::read_file(&b.dav, &alice, "/Contacts/marie2.vcf").await.unwrap()).unwrap();
+    card(&b, "curie.vcf", &text).await;
+    let (db, a) = (b.db.clone(), alice.clone());
+    db.writer().transaction(move |tx| astro_dav::vfs::delete_tree_tx(tx, &a, "/Contacts/marie2.vcf").map(|_| ()).map_err(|_| astro_db::DbError::Aborted)).await.unwrap();
+    b.links.sync_owner(&alice).await.unwrap();
+    assert_eq!(contact_of(&b, 2).await.0.as_deref(), Some("marie-2"));
+
+    // Supprimer la fiche délie ses visages ; ils gardent leur nom (« personne reconnue sans fiche »).
+    let (db, a) = (b.db.clone(), alice.clone());
+    db.writer().transaction(move |tx| astro_dav::vfs::delete_tree_tx(tx, &a, "/Contacts/curie.vcf").map(|_| ()).map_err(|_| astro_db::DbError::Aborted)).await.unwrap();
+    b.links.sync_owner(&alice).await.unwrap();
+    assert_eq!(contact_of(&b, 2).await, (None, "Marie Curie".into()));
+
+    // Le rattachement par le nom n'a eu lieu qu'une fois : une fiche « Nina » arrivée après ne capte pas un visage par son nom.
+    card(&b, "nina.vcf", &vc("Nina", "")).await;
+    b.links.sync_owner(&alice).await.unwrap();
+    assert_eq!(contact_of(&b, 3).await.0, None, "plus jamais de lien par le nom");
+    // « Créer sa fiche » depuis la personne reconnue, en revanche, est un geste explicite : ses visages la rejoignent.
+    let made = b.links.create_from_person(&alice, "Marie Curie", None, false).await.unwrap();
+    assert_eq!(contact_of(&b, 2).await.0.as_deref(), made["uid"].as_str());
 }

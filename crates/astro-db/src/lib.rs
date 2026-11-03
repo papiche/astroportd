@@ -194,7 +194,7 @@ fn apply_schema(conn: &Connection) -> Result<(), DbError> {
 
 /// Colonnes ajoutées après la première version du schéma : `(table, colonne, définition)`.
 /// `CREATE TABLE IF NOT EXISTS` ne modifie pas une table existante ; une base créée avant l'ajout reçoit la colonne ici.
-const ADDED_COLUMNS: [(&str, &str, &str); 2] = [("identities", "peer_id", "TEXT"), ("capital_assets", "node_hex", "TEXT")];
+const ADDED_COLUMNS: [(&str, &str, &str); 4] = [("identities", "peer_id", "TEXT"), ("capital_assets", "node_hex", "TEXT"), ("faces", "contact_uid", "TEXT"), ("faces", "suggest_contact_uid", "TEXT")];
 
 /// Ajoute à une base ancienne les colonnes apparues depuis (idempotent).
 fn migrate(conn: &Connection) -> Result<(), DbError> {
@@ -204,6 +204,11 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
             conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {def}"))?;
         }
     }
+    // Index sur des colonnes ajoutées ci-dessus : après elles, jamais dans le schéma (une base ancienne ne les a pas encore).
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS faces_owner_contact ON faces(owner_hex, contact_uid) WHERE contact_uid IS NOT NULL; \
+         CREATE INDEX IF NOT EXISTS identity_links_uid ON identity_links(owner_hex, uid) WHERE uid IS NOT NULL;",
+    )?;
     // Base antérieure à l'index de recherche : les événements déjà là sont indexés une fois (les triggers font le reste).
     let (indexed, stored): (i64, i64) = conn.query_row("SELECT (SELECT count(*) FROM nostr_fts_docsize), (SELECT count(*) FROM nostr_events WHERE kind NOT IN (4, 1059))", [], |r| Ok((r.get(0)?, r.get(1)?)))?;
     if indexed == 0 && stored > 0 {
@@ -415,14 +420,17 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("uplanet.db");
         {
-            // Base de la première version : `identities` sans `peer_id`.
+            // Base de la première version : `identities` sans `peer_id`, `faces` sans lien vers la fiche de contact.
             let old = Connection::open(&path).unwrap();
-            let without = SCHEMA.lines().filter(|l| !l.trim_start().starts_with("peer_id")).collect::<Vec<_>>().join("\n");
+            let without = SCHEMA.lines().filter(|l| !["peer_id", "contact_uid", "suggest_contact_uid"].iter().any(|c| l.trim_start().starts_with(c))).collect::<Vec<_>>().join("\n");
             assert!(without.len() < SCHEMA.len(), "la colonne peer_id doit exister dans le schéma courant");
             old.execute_batch(&without).unwrap();
         }
         let conn = open(&path).unwrap();
         conn.execute("INSERT INTO identities(hex, role, peer_id) VALUES ('aa', 'node', '12D3KooWx')", []).unwrap();
+        conn.execute("INSERT INTO faces(owner_hex, name, embed_hash, ts, contact_uid, suggest_contact_uid) VALUES ('aa', 'Léa', 'h', 0, 'uid-1', NULL)", []).unwrap();
+        let indexed: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'faces_owner_contact')", [], |r| r.get(0)).unwrap();
+        assert!(indexed, "l'index du lien visage → fiche est créé après la colonne");
         drop(conn);
         drop(open(&path).unwrap()); // seconde ouverture : rien à refaire
         std::fs::remove_dir_all(&dir).unwrap();

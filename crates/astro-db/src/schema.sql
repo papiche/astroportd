@@ -195,9 +195,12 @@ CREATE TABLE IF NOT EXISTS faces (
   suggest_pubkey TEXT,                 -- zone grise [0,55 ; 0,82[ : « est-ce X ? », à valider par l'humain
   suggest_name   TEXT,
   suggest_score  REAL,
+  contact_uid    TEXT,                 -- UID vCard de la fiche de la personne (/Contacts) : le lien fait foi, pas le nom
+  suggest_contact_uid TEXT,            -- fiche de la personne suggérée
   UNIQUE (owner_hex, embed_hash)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS faces_owner_name ON faces(owner_hex, name);
+-- faces_owner_contact et identity_links_uid : créés par la migration (une base ancienne n'a pas encore la colonne ici).
 
 -- Annuaire des contacts : index des fiches vCard de `/Contacts` (le chiffré reste la source de vérité ; table rebuildable
 -- par un balayage). `pubkey` = clé Nostr rattachée à la fiche : donnée par la fiche (X-NOSTR-*) ou déduite de l'email d'un

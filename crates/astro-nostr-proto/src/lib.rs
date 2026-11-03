@@ -51,6 +51,8 @@ pub mod kind {
     pub const VISIO_PRESENCE: u32 = 24315;
     /// Sonnerie visio (éphémère).
     pub const VISIO_RING: u32 = 24316;
+    /// Signal d'appel visio (offre, réponse, raccrochage…) : **rumeur privée** emballée en NIP-59, jamais publiée en clair.
+    pub const CALL_SIGNAL: u32 = 25050;
     /// Article long (annonces UMAP/SECTOR/REGION).
     pub const LONG_FORM: u32 = 30023;
     /// Données applicatives (`d` tag par usage).

@@ -8,7 +8,7 @@ use astro_bro::{AnyEmbedder, MemoryStore, Meta, OllamaClient, Slot};
 use astro_core::Amount;
 use astro_dav::{BlobStore, DavState};
 use astro_p2p::routing::{Candidate, haversine_km};
-use astro_ui::api::{Applicant, BookOp, ChatOp};
+use astro_ui::api::{Applicant, AssignTarget, BookOp, ChatOp};
 use astro_ui::{ApiError, Backend, Principal, Status, Subsystem};
 use axum::http::{HeaderMap, Uri};
 use rusqlite::{Connection, params};
@@ -62,6 +62,9 @@ pub struct StationUi<B: BlobStore> {
     ai: Option<Arc<crate::member_ai::MemberAi>>,
     book: Option<Arc<crate::address_book::AddressBook<B>>>,
     chat: Option<Arc<crate::chat::Chat>>,
+    /// Visio : port STUN de la station (UDP), secret du relais d'appel s'il est actif, serveurs supplémentaires.
+    ice: (Option<u16>, Option<[u8; 32]>, Vec<String>),
+    presence: Option<Arc<crate::presence::Presence>>,
     people: Option<Arc<crate::person_keys::PersonKeys>>,
 }
 
@@ -117,7 +120,7 @@ pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Fu
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, site: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None, chat: None, people: None }
+        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, site: None, admin: None, console: None, account: None, contacts: None, invites: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None, chat: None, people: None, ice: (None, None, Vec::new()), presence: None }
     }
 
     /// Annuaire des clés d'une même personne dans plusieurs UPlanet.
@@ -129,6 +132,19 @@ impl<B: BlobStore> StationUi<B> {
     /// Chat privé 1 à 1 (NIP-17).
     pub fn with_chat(mut self, chat: Arc<crate::chat::Chat>) -> Self {
         self.chat = Some(chat);
+        self
+    }
+
+    /// Présence visio (« en ligne », « en appel ») entre amis mutuels, sur option.
+    pub fn with_presence(mut self, presence: Arc<crate::presence::Presence>) -> Self {
+        self.presence = Some(presence);
+        self
+    }
+
+    /// Visio : port STUN servi par la station (`None` : aucun), secret du relais d'appel (`None` : pas de relais) et serveurs
+    /// STUN/TURN supplémentaires.
+    pub fn with_ice(mut self, stun_port: Option<u16>, turn_secret: Option<[u8; 32]>, servers: Vec<String>) -> Self {
+        self.ice = (stun_port, turn_secret, servers);
         self
     }
 
@@ -666,7 +682,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
                 let mut p = c.prepare_cached(
                     "SELECT name, COUNT(DISTINCT cid), face_id, ucloud_path, bbox_x1, bbox_y1, bbox_x2, bbox_y2, MAX(det_score), \
                             (SELECT json_extract(e.data, '$.thumb') FROM ucloud_entries e WHERE e.owner_hex = faces.owner_hex AND e.path = faces.ucloud_path) FROM faces \
-                     WHERE owner_hex = ?1 AND ucloud_path IS NOT NULL AND bbox_x1 IS NOT NULL AND name NOT LIKE 'Inconnu\\_%' ESCAPE '\\' GROUP BY name ORDER BY COUNT(DISTINCT cid) DESC, name LIMIT 200",
+                     WHERE owner_hex = ?1 AND ucloud_path IS NOT NULL AND bbox_x1 IS NOT NULL AND name NOT LIKE 'Inconnu\\_%' ESCAPE '\\' GROUP BY coalesce('fiche:' || contact_uid, 'nom:' || name) ORDER BY COUNT(DISTINCT cid) DESC, name LIMIT 200",
                 )?;
                 let people = p
                     .query_map([&owner], |r| Ok(json!({ "name": r.get::<_, String>(0)?, "count": r.get::<_, i64>(1)?, "sample": { "face_id": r.get::<_, i64>(2)?, "name": r.get::<_, String>(0)?, "path": r.get::<_, String>(3)?, "bbox": bbox(r, 4)?, "thumb": thumb_of(r.get::<_, Option<String>>(9)?) } })))?
@@ -705,14 +721,12 @@ impl<B: BlobStore> Backend for StationUi<B> {
         if !self.faces_enabled {
             return Err(ApiError::unavailable("La reconnaissance des visages n'est pas activée sur cette station (le Capitaine l'active dans Options)."));
         }
-        match astro_facecloud::review::name_face(&self.services.db, &who.hex, face_id, None, &name).await {
-            Ok(()) => {
-                self.services.activity.publish_to(astro_core::Audience::Owner(who.hex.clone()), "facecloud", "ui:faces", "visage nommé", None);
-                Ok(json!({ "named": name }))
-            }
-            Err(astro_facecloud::FaceError::Invalid(m)) => Err(ApiError::not_found(m)),
-            Err(e) => Err(db_err(e)),
+        // Même chemin que la table : la fiche de la personne d'abord, le visage s'y relie par son UID.
+        let r = self.faces_assign(who, vec![face_id], AssignTarget { name, pubkey: None, contact: None, new: false }).await?;
+        if r["assigned"] == 0 {
+            return Err(ApiError::not_found("visage introuvable"));
         }
+        Ok(json!({ "named": r["name"] }))
     }
 
     async fn devices_list(&self, who: &Principal) -> Result<Value, ApiError> {
@@ -864,14 +878,14 @@ impl<B: BlobStore> Backend for StationUi<B> {
             .iter()
             .map(|f| {
                 json!({
-                    "id": f.face_id, "name": f.name, "pubkey": f.pubkey, "named": f.named, "path": f.path, "bbox": f.bbox,
+                    "id": f.face_id, "name": f.name, "pubkey": f.pubkey, "contact": f.contact, "named": f.named, "path": f.path, "bbox": f.bbox,
                     "x": (f64::from(f.x) * 10_000.0).round() / 10_000.0, "y": (f64::from(f.y) * 10_000.0).round() / 10_000.0,
                     "group_id": f.group.as_ref().map(|g| g.0.clone()), "group_size": f.group.as_ref().map(|g| g.1),
-                    "suggest": f.suggest.as_ref().map(|(name, score)| json!({ "name": name, "score": score })),
+                    "suggest": f.suggest.as_ref().map(|(name, score)| json!({ "name": name, "score": score, "contact": f.suggest_contact })),
                 })
             })
             .collect();
-        let people: Vec<Value> = b.people.iter().map(|p| json!({ "name": p.name, "pubkey": p.pubkey, "faces": p.faces, "photos": p.photos })).collect();
+        let people: Vec<Value> = b.people.iter().map(|p| json!({ "name": p.name, "contact": p.contact, "pubkey": p.pubkey, "faces": p.faces, "photos": p.photos })).collect();
         Ok(json!({ "enabled": true, "dav": self.dav.config.mount, "faces": faces, "people": people, "unknown": b.unknown, "groups_skipped": b.groups_skipped, "truncated": b.truncated }))
     }
 
@@ -885,14 +899,22 @@ impl<B: BlobStore> Backend for StationUi<B> {
         Ok(json!({ "thumbs": map, "failed": failed.into_iter().map(|(id, why)| json!([id, why])).collect::<Vec<_>>() }))
     }
 
-    async fn faces_assign(&self, who: &Principal, ids: Vec<i64>, name: String, pubkey: Option<String>) -> Result<Value, ApiError> {
+    async fn faces_assign(&self, who: &Principal, ids: Vec<i64>, target: AssignTarget) -> Result<Value, ApiError> {
         if !self.faces_enabled {
             return Err(ApiError::unavailable("La reconnaissance des visages n'est pas activée sur cette station (le Capitaine l'active dans Options)."));
         }
-        match astro_facecloud::review::name_faces(&self.services.db, &who.hex, &ids, pubkey.as_deref(), &name).await {
+        // La fiche d'abord : son UID relie les visages (jamais le nom) et son nom fait foi. Un nom ambigu est refusé avec le
+        // nombre de fiches en cause : l'interface fait choisir, elle ne devine pas.
+        let contact = match &self.book {
+            Some(book) => Some(book.person_card(&who.hex, &target.name, target.contact.as_deref(), target.new).await.map_err(book_error)?),
+            None => None,
+        };
+        let uid = contact.as_ref().and_then(|c| c["uid"].as_str()).map(str::to_owned);
+        let name = contact.as_ref().and_then(|c| c["name"].as_str()).map_or_else(|| target.name.clone(), str::to_owned);
+        match astro_facecloud::review::name_faces(&self.services.db, &who.hex, &ids, uid.as_deref(), target.pubkey.as_deref(), &name).await {
             Ok(changed) => {
                 self.services.activity.publish_to(astro_core::Audience::Owner(who.hex.clone()), "facecloud", "ui:faces", format!("{changed} visage(s) rangé(s) dans « {name} »"), None);
-                // Une fiche de contact du même nom relie aussitôt la personne à son MULTIPASS (et partage ses photos).
+                // La fiche reliée donne aussitôt sa clé Nostr aux visages (et partage leurs photos, amis réciproques).
                 if let Some(links) = &self.contacts {
                     let (links, owner) = (links.clone(), who.hex.clone());
                     tokio::spawn(async move {
@@ -901,11 +923,6 @@ impl<B: BlobStore> Backend for StationUi<B> {
                         }
                     });
                 }
-                // Une personne nommée a toujours sa fiche : créée sur le champ si aucune ne porte ce nom.
-                let contact = match &self.book {
-                    Some(book) if !name.trim().is_empty() => book.ensure_person(&who.hex, &name).await.ok(),
-                    _ => None,
-                };
                 Ok(json!({ "assigned": changed, "name": name, "contact": contact }))
             }
             Err(astro_facecloud::FaceError::Invalid(m)) => Err(ApiError::bad_request(m)),
@@ -981,6 +998,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
             BookOp::Import(vcf) => book.import(o, &vcf).await,
             BookOp::Duplicates => book.duplicates(o).await,
             BookOp::Merge(keep, drop) => book.merge(o, &keep, &drop).await,
+            BookOp::MergeExact(apply, limit) => book.merge_exact(o, apply, limit).await,
             BookOp::Me => book.me(o).await,
             BookOp::SaveMe(f) => book.save_me(o, &fields(f)?).await,
         };
@@ -999,6 +1017,27 @@ impl<B: BlobStore> Backend for StationUi<B> {
         people.announce(&who.hex, email).await.map_err(ApiError::bad_request)
     }
 
+    async fn presence(&self, who: &Principal, body: Option<Value>) -> Result<Value, ApiError> {
+        let p = self.presence.as_ref().ok_or_else(|| ApiError::unavailable("la présence visio n'est pas disponible sur cette station"))?;
+        if let Some(b) = body {
+            if let Some(on) = b["reachable"].as_bool() {
+                p.set_reachable(&who.hex, on).await.map_err(ApiError::unavailable)?;
+            }
+            if let Some(on) = b["in_call"].as_bool() {
+                p.set_in_call(&who.hex, on).await;
+            }
+        }
+        Ok(p.view(&who.hex).await)
+    }
+
+    async fn call_ice(&self, who: &Principal) -> Result<Value, ApiError> {
+        // Les identifiants du relais sont fabriqués pour ce membre seul (l'API est authentifiée) ; ses amis N¹ reçoivent les leurs
+        // dans l'offre d'appel.
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let turn = self.ice.1.as_ref().map(|s| crate::turn::credentials(s, &who.hex[..16.min(who.hex.len())], now, crate::turn::CREDENTIAL_TTL)).map(|(u, c)| json!({ "username": u, "credential": c }));
+        Ok(json!({ "stun_port": self.ice.0, "turn": turn, "servers": self.ice.2 }))
+    }
+
     async fn chat(&self, who: &Principal, op: ChatOp) -> Result<Value, ApiError> {
         let chat = self.chat.as_ref().ok_or_else(|| ApiError::unavailable("le chat privé n'est pas disponible sur cette station"))?;
         let o = who.hex.as_str();
@@ -1007,10 +1046,12 @@ impl<B: BlobStore> Backend for StationUi<B> {
             ChatOp::Messages(peer, before) => chat.messages(o, &peer, before).await,
             ChatOp::Send(peer, text) => chat.send(o, &peer, &text).await,
             ChatOp::Read(peer) => chat.mark_read(o, &peer).await,
+            ChatOp::Signal(sig) => chat.signal(o, sig["peer"].as_str().unwrap_or_default(), &sig).await,
         };
         out.map_err(|e| match e {
             crate::chat::ChatError::Invalid(m) => ApiError::bad_request(m),
             crate::chat::ChatError::NoKey => ApiError::unavailable("clé du compte indisponible sur cette station : envoi impossible"),
+            crate::chat::ChatError::Unreachable(m) => ApiError::unavailable(m),
             crate::chat::ChatError::Db(m) => {
                 eprintln!("interface : chat : {m}");
                 ApiError::internal("opération impossible : voir les journaux de la station")
@@ -1169,7 +1210,7 @@ impl<B: BlobStore> Backend for StationUi<B> {
     }
 
     async fn contacts_create(&self, who: &Principal, name: String, email: Option<String>) -> Result<Value, ApiError> {
-        self.contacts_service()?.create_from_person(&who.hex, &name, email.as_deref()).await.map_err(link_error)
+        self.contacts_service()?.create_from_person(&who.hex, &name, email.as_deref(), false).await.map_err(link_error)
     }
 
     async fn contacts_link(&self, who: &Principal, path: String, target: Option<String>) -> Result<Value, ApiError> {

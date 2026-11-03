@@ -1,5 +1,7 @@
 'use strict';
-// Contacts : un vrai carnet d'adresses. Recherche instantanée, index A–Z, groupes, fiche détaillée modifiable, import vCard, doublons à fusionner.
+// Personnes : le carnet d'adresses et les visages réunis. Une personne EST une fiche (vCard) : ses visages s'y relient par son UID.
+// En tête, le sas « N visages à ranger » mène à Trier en grand (#/people/tri?grand) ou à la table de tri. Ensuite, un vrai carnet :
+// recherche instantanée, index A–Z, groupes, fiche détaillée modifiable (avec ses visages), import vCard, doublons à fusionner.
 // La première ligne est « Ma fiche » : votre profil Nostr et votre fiche réunis. Les fiches restent des fichiers chiffrés synchronisables avec un téléphone.
 
 export default async function contacts(root, K) {
@@ -36,9 +38,9 @@ export default async function contacts(root, K) {
         !c.me && s.select ? h('input', { type: 'checkbox', class: 'ab-chk', 'aria-label': c.name, checked: sel.has(c.path), onchange: ev => { if (ev.target.checked) sel.add(c.path); else sel.delete(c.path); bar(); } }) : null,
         h('button', { type: 'button', class: 'ab-item', onclick: () => (s.select && !c.me ? toggle(c) : select(c)) },
           c.picture ? h('img', { src: c.picture, alt: '', width: 36, height: 36, loading: 'lazy', referrerpolicy: 'no-referrer' }) : avatar(c),
-          h('span', { class: 'ab-name' }, h('strong', {}, c.name), c.me ? h('span', { class: 'pill ok' }, t('Moi')) : null, h('small', { class: 'muted' }, [c.org, c.emails[0], c.phones[0]?.value].filter(Boolean).join(' · ')))));
+          h('span', { class: 'ab-name' }, h('strong', {}, c.name), c.me ? h('span', { class: 'pill ok' }, t('Moi')) : null, h('small', { class: 'muted' }, [c.faces ? t('{0} visage(s)', c.faces) : '', c.org, c.emails[0], c.phones[0]?.value].filter(Boolean).join(' · ')))));
     }));
-    index.replaceChildren(...s.data.letters.map(l => h('a', { href: '#/contacts', onclick: ev => { ev.preventDefault(); document.getElementById('ab-' + l)?.scrollIntoView({ block: 'start' }); } }, l)));
+    index.replaceChildren(...s.data.letters.map(l => h('a', { href: '#/people', onclick: ev => { ev.preventDefault(); document.getElementById('ab-' + l)?.scrollIntoView({ block: 'start' }); } }, l)));
     if (!s.data.contacts.length) list.replaceChildren(h('li', { class: 'muted ab-empty' }, s.q || s.group ? t('Aucune fiche ne correspond.') : t('Aucune fiche. Créez-en une, importez un fichier .vcf ou synchronisez votre téléphone.')));
   }
   function toggle(c) { if (sel.has(c.path)) sel.delete(c.path); else sel.add(c.path); load(); bar(); }
@@ -68,7 +70,7 @@ export default async function contacts(root, K) {
     detail.replaceChildren(h('p', { class: 'muted' }, t('Chargement…')));
     main.classList.toggle('open', s.open);
     try {
-      const card = (await import('/ui/m-card.js')).default;
+      const card = (await K.mod('m-card.js')).default;
       const el = await card(K, { path: s.path, me: s.me, blank: s.blank, groups, onClose: () => { s.open = false; s.path = null; s.blank = false; show0(); }, onSaved: async path => { s.path = path; s.me = false; s.blank = false; await load(); if (path) show(); else { s.open = false; show0(); } } });
       detail.replaceChildren(el);
     } catch (e) { detail.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }
@@ -86,22 +88,66 @@ export default async function contacts(root, K) {
     try { const r = await api('/api/v1/book/import', { method: 'POST', body: { vcf: await f.text() } }); K.toast(t('{0} fiche(s) importée(s), {1} doublon(s) ignoré(s)', r.imported, r.duplicates) + (r.rejected.length ? ' · ' + t('{0} refusée(s)', r.rejected.length) : ''), 1); load(); } catch (e) { K.toast(e.message); }
     file.value = '';
   } });
+  // Doublons EXACTS (même nom, société, emails et téléphones) : fusionnés d'un geste, par lots de 50, avec progression et arrêt.
+  // Rien n'est perdu : notes, groupes et adresses s'additionnent ; la fiche gardée est celle qui a le plus de visages.
+  async function exact(box) {
+    const p = await api('/api/v1/book/merge-exact', { method: 'POST', body: { apply: false } });
+    if (!p.groups) return box.replaceChildren();
+    const bar = h('progress', { max: p.groups, value: 0, hidden: true }), msg = h('p', { class: 'muted', role: 'status' });
+    let stop = false;
+    const halt = h('button', { class: 'ghost', hidden: true, onclick: () => { stop = true; halt.disabled = true; } }, t('Arrêter'));
+    const go = h('button', { onclick: async () => {
+      if (!confirm(t('Fusionner {0} groupe(s) de doublons exacts ? {1} fiche(s) en trop seront supprimées ; rien n\'est perdu (notes, groupes et adresses s\'additionnent).', p.groups, p.cards))) return;
+      go.disabled = true; bar.hidden = halt.hidden = false;
+      let done = 0, removed = 0, failed = [];
+      try {
+        while (!stop) {
+          const r = await api('/api/v1/book/merge-exact', { method: 'POST', body: { apply: true, limit: 50 } });
+          done += r.merged; removed += r.removed; failed = failed.concat(r.failed);
+          bar.value = done; msg.textContent = t('{0} / {1} groupe(s) fusionné(s)', done, p.groups);
+          if (!r.remaining || !r.merged) break; // fini, ou plus rien n'avance (échecs) : on s'arrête et on le dit
+        }
+        K.toast(t('{0} fiche(s) en trop supprimée(s)', removed), 1);
+        msg.textContent = t('{0} groupe(s) fusionné(s), {1} fiche(s) supprimée(s)', done, removed) + (stop ? ' · ' + t('arrêté') : '') + (failed.length ? ' · ' + t('{0} échec(s) : {1}', failed.length, failed.slice(0, 3).map(f => f.name + ' (' + f.error + ')').join(', ')) : '');
+      } catch (e) { msg.textContent = e.message; }
+      halt.hidden = true; load(); dupCount();
+    } }, t('Fusionner les {0} doublons exacts', p.groups));
+    box.replaceChildren(h('h4', {}, t('Doublons exacts')),
+      h('p', { class: 'muted' }, t('{0} groupe(s) de fiches identiques (même nom, société, emails et téléphones), soit {1} fiche(s) en trop. Par exemple :', p.groups, p.cards)),
+      h('ul', {}, p.sample.map(x => h('li', {}, h('strong', {}, x.name), ' ', h('small', { class: 'muted' }, [x.org, ...x.emails, ...x.phones].filter(Boolean).join(' · ') + ' · ' + t('{0} copies', x.copies))))),
+      h('p', { class: 'bar' }, go, halt), bar, msg);
+  }
+  const dupBtn = h('button', { class: 'ghost', onclick: () => duplicates() }, t('Doublons'));
+  const dupCount = () => api('/api/v1/book/merge-exact', { method: 'POST', body: { apply: false } }).then(p => { dupBtn.textContent = p.groups ? t('Doublons ({0} exacts)', p.groups) : t('Doublons'); }, () => {});
   async function duplicates() {
     try {
-      const r = await api('/api/v1/book/duplicates');
-      if (!r.groups.length) { K.toast(t('Aucun doublon probable'), 1); return; }
+      const top = h('div', { class: 'card' }), r = await api('/api/v1/book/duplicates');
       s.open = true; main.classList.add('open');
-      detail.replaceChildren(h('h3', {}, t('Doublons probables')), h('p', { class: 'muted' }, t('Choisissez la fiche à garder : les autres y sont fusionnées (téléphones, emails, adresses, groupes et notes sont additionnés) puis supprimées.')),
+      if (!r.groups.length) { detail.replaceChildren(h('p', { class: 'muted' }, t('Aucun doublon probable'))); return; }
+      exact(top).catch(e => top.replaceChildren(h('p', { class: 'err' }, e.message)));
+      detail.replaceChildren(top, h('h3', {}, t('Doublons probables')), h('p', { class: 'muted' }, t('Choisissez la fiche à garder : les autres y sont fusionnées (téléphones, emails, adresses, groupes et notes sont additionnés) puis supprimées.')),
         ...r.groups.map(g => h('div', { class: 'card' }, h('p', { class: 'muted' }, g.reasons.join(', ')),
           h('ul', {}, g.cards.map(c => h('li', {}, h('strong', {}, c.name), ' ', h('small', { class: 'muted' }, [...c.emails, ...c.phones].join(' · ')), ' ',
             h('button', { class: 'ghost', onclick: async ev => { ev.target.disabled = true; try { await api('/api/v1/book/merge', { method: 'POST', body: { keep: c.path, drop: g.cards.filter(x => x.path !== c.path).map(x => x.path) } }); K.toast(t('Fiches fusionnées'), 1); duplicates(); load(); } catch (e) { K.toast(e.message); ev.target.disabled = false; } } }, t('Garder celle-ci')))))))); }
     catch (e) { K.toast(e.message); }
   }
   const tabs = h('div', { class: 'bar', role: 'tablist' }, h('button', { role: 'tab', 'aria-selected': 'true' }, t('Carnet')),
-    h('button', { role: 'tab', class: 'ghost', 'aria-selected': 'false', onclick: async () => { const sync = (await import('/ui/m-sync.js')).default; K.cleanup(() => {}); await sync(root, K); root.prepend(h('p', {}, h('button', { class: 'ghost', onclick: () => contacts(root, K) }, '← ' + t('Retour au carnet')))); } }, t('Synchroniser et inviter')));
-  tools.append(h('button', { onclick: create }, '＋ ' + t('Nouvelle fiche')), h('button', { class: 'ghost', onclick: () => file.click() }, t('Importer un .vcf')), h('button', { class: 'ghost', onclick: duplicates }, t('Doublons')), selbtn, file);
+    h('button', { role: 'tab', class: 'ghost', 'aria-selected': 'false', onclick: async () => { const sync = (await K.mod('m-sync.js')).default; K.cleanup(() => {}); await sync(root, K); root.prepend(h('p', {}, h('button', { class: 'ghost', onclick: () => contacts(root, K) }, '← ' + t('Retour au carnet')))); } }, t('Synchroniser et inviter')));
+  tools.append(h('button', { onclick: create }, '＋ ' + t('Nouvelle fiche')), h('button', { class: 'ghost', onclick: () => file.click() }, t('Importer un .vcf')), dupBtn, selbtn, file);
+  dupCount();
   q.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { s.q = q.value; load(); }, 200); };
   K.cleanup(() => clearTimeout(timer));
-  root.replaceChildren(h('h2', {}, t('Contacts')), tabs, tools, selbar, main);
+  // Le sas : les visages à ranger d'abord (une question à la fois), la table de tri pour les gestes en masse.
+  const sas = h('section', { class: 'card ab-sas', hidden: true });
+  api('/api/v1/faces').then(f => {
+    if (!f.enabled) return;
+    const n = f.unknown + f.suggestions.length, go = to => () => { location.hash = to; };
+    sas.hidden = false;
+    sas.replaceChildren(h('span', { class: 'ab-sas-n', 'aria-hidden': 'true' }, n > 999 ? '999+' : String(n)),
+      h('div', {}, h('strong', {}, n ? t('{0} visage(s) à ranger', n) : t('Tous les visages sont rangés')),
+        h('p', { class: 'muted' }, n ? t('Une question à la fois : « Est-ce Léa ? », « Qui est-ce ? ». Chaque réponse range les visages dans la fiche de la personne.') : t('La station analyse vos nouvelles photos : les visages à ranger apparaîtront ici.'))),
+      h('span', { class: 'ab-sas-go' }, n ? h('button', { onclick: go('#/people/tri?grand') }, t('Trier en grand')) : null, h('button', { class: 'ghost', onclick: go('#/people/tri') }, t('Table de tri'))));
+  }, () => {});
+  root.replaceChildren(h('h2', {}, t('Personnes')), sas, tabs, tools, selbar, main);
   show0();
 }

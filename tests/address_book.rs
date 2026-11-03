@@ -260,12 +260,80 @@ async fn my_own_card_is_created_from_my_profile_cannot_be_deleted_or_merged_and_
 }
 
 #[tokio::test]
-async fn a_person_is_given_a_card_only_when_none_carries_that_name() {
+async fn a_person_gets_a_card_by_explicit_choice_never_by_guessing_between_homonyms() {
     let b = bench("person").await;
     let me = hex(&ALICE);
-    let first = b.book.ensure_person(&me, "Léa Martin").await.unwrap();
+    let first = b.book.person_card(&me, "Léa Martin", None, false).await.unwrap();
     assert_eq!(first["created"], true);
-    let second = b.book.ensure_person(&me, "lea  MARTIN").await.unwrap();
-    assert_eq!((second["created"].as_bool(), &second["path"]), (Some(false), &first["path"]), "même nom (sans accent ni casse) : la fiche existante");
-    assert_eq!(names(&b.book.list(&me, "", None).await.unwrap()), ["Léa Martin"]);
+    let uid = first["uid"].as_str().unwrap().to_owned();
+    let second = b.book.person_card(&me, "lea  MARTIN", None, false).await.unwrap();
+    assert_eq!((second["created"].as_bool(), &second["uid"]), (Some(false), &first["uid"]), "une seule fiche de ce nom : c'est elle");
+    assert_eq!(second["name"], "Léa Martin", "le nom de la fiche fait foi");
+    // « Une autre Léa Martin » : demandée explicitement, elle a sa propre fiche ; ensuite, le nom seul est ambigu.
+    let other = b.book.person_card(&me, "Léa Martin", None, true).await.unwrap();
+    assert!(other["created"] == true && other["uid"] != first["uid"]);
+    assert!(matches!(b.book.person_card(&me, "Léa Martin", None, false).await, Err(BookError::Conflict(m)) if m.contains("2 fiches")));
+    // Le choix d'une fiche par son UID tranche ; un UID inconnu est dit.
+    assert_eq!(b.book.person_card(&me, "peu importe", Some(&uid), false).await.unwrap()["path"], first["path"]);
+    assert!(matches!(b.book.person_card(&me, "x", Some("uid-inconnu"), false).await, Err(BookError::NotFound(_))));
+    assert_eq!(names(&b.book.list(&me, "", None).await.unwrap()), ["Léa Martin", "Léa Martin"]);
+}
+
+#[tokio::test]
+async fn exact_duplicates_merge_in_batches_keep_the_card_with_faces_and_leave_near_duplicates_alone() {
+    let b = bench("exact").await;
+    let me = hex(&ALICE);
+    let email = |mut f: Fields, e: &str| {
+        f.emails.push(Typed { kind: "home".into(), value: e.into() });
+        f
+    };
+    let path = |v: Value| v["path"].as_str().unwrap().to_owned();
+    // Deux paires et un triplet exacts (le carnet importé deux ou trois fois) ; la casse de l'email ne compte pas.
+    let lea1 = path(b.book.save(&me, None, &email(fields("Léa Martin"), "lea@example.org")).await.unwrap());
+    let lea2 = path(b.book.save(&me, None, &email(fields("Léa Martin"), "LEA@example.org")).await.unwrap());
+    for _ in 0..3 {
+        b.book.save(&me, None, &with_phone(fields("Paul"), "06 12 34 56 78")).await.unwrap();
+    }
+    b.book.save(&me, None, &email(fields("Zoé"), "zoe@example.org")).await.unwrap();
+    let mut zoe = email(fields("Zoé"), "zoe@example.org");
+    zoe.note = "à garder".into();
+    b.book.save(&me, None, &zoe).await.unwrap();
+    // Jamais réunis : homonymes sans coordonnées, même nom mais autre email, même nom et email mais autre société.
+    b.book.save(&me, None, &fields("Marie")).await.unwrap();
+    b.book.save(&me, None, &fields("Marie")).await.unwrap();
+    b.book.save(&me, None, &email(fields("Nina"), "nina@a.org")).await.unwrap();
+    b.book.save(&me, None, &email(fields("Nina"), "nina@b.org")).await.unwrap();
+    let mut org = email(fields("Hugo"), "hugo@example.org");
+    org.org = "Boulangerie".into();
+    b.book.save(&me, None, &org).await.unwrap();
+    b.book.save(&me, None, &email(fields("Hugo"), "hugo@example.org")).await.unwrap();
+    // La seconde Léa a des visages : c'est elle qu'on garde, et ses visages restent à elle.
+    let uid = |p: String| {
+        let db = b.db.clone();
+        async move { db.readers().read(move |c| Ok(c.query_row("SELECT uid FROM identity_links WHERE path = ?1", [p], |r| r.get::<_, String>(0))?)).await.unwrap() }
+    };
+    let (uid1, uid2) = (uid(lea1.clone()).await, uid(lea2.clone()).await);
+    b.db.writer().execute("INSERT INTO faces(owner_hex, name, embed_hash, ts, contact_uid) VALUES (?1, 'Léa Martin', 'h1', 1, ?2), (?1, 'Léa Martin', 'h2', 1, ?3)", vec![V::Text(me.clone()), V::Text(uid2.clone()), V::Text(uid1.clone())]).await.unwrap();
+    b.db.writer().execute("INSERT INTO faces(owner_hex, name, embed_hash, ts, contact_uid) VALUES (?1, 'Léa Martin', 'h3', 1, ?2)", vec![V::Text(me.clone()), V::Text(uid2.clone())]).await.unwrap();
+
+    let preview = b.book.merge_exact(&me, false, 50).await.unwrap();
+    assert_eq!((preview["groups"].as_u64(), preview["cards"].as_u64()), (Some(3), Some(4)), "{preview}");
+    assert_eq!(names(&b.book.list(&me, "", None).await.unwrap()).len(), 13, "l'aperçu ne touche à rien");
+
+    // Par lots : un groupe, puis le reste.
+    let first = b.book.merge_exact(&me, true, 1).await.unwrap();
+    assert_eq!((first["merged"].as_u64(), first["remaining"].as_u64()), (Some(1), Some(2)), "{first}");
+    let rest = b.book.merge_exact(&me, true, 50).await.unwrap();
+    assert_eq!((rest["merged"].as_u64(), rest["remaining"].as_u64(), rest["failed"].as_array().map(Vec::len)), (Some(2), Some(0), Some(0)), "{rest}");
+    let mut left = names(&b.book.list(&me, "", None).await.unwrap());
+    left.sort();
+    assert_eq!(left, ["Hugo", "Hugo", "Léa Martin", "Marie", "Marie", "Nina", "Nina", "Paul", "Zoé"]);
+    assert_eq!(b.book.merge_exact(&me, false, 50).await.unwrap()["groups"], 0, "plus rien d'exact");
+
+    // La Léa gardée est celle qui avait le plus de visages ; ceux de l'autre l'ont rejointe.
+    let kept: Vec<String> = b.db.readers().read(|c| Ok(c.prepare("SELECT DISTINCT contact_uid FROM faces")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?)).await.unwrap();
+    assert_eq!(kept, [uid2]);
+    // Rien n'est perdu : la note de la copie fusionnée de Zoé est dans la fiche gardée.
+    let zoe_path = b.book.list(&me, "Zoé", None).await.unwrap()["contacts"][0]["path"].as_str().unwrap().to_owned();
+    assert!(card_text(&b, &zoe_path).await.contains("à garder"));
 }

@@ -89,6 +89,19 @@ pub struct ServeArgs {
     /// Écoute HTTPS (avec `--domain`).
     #[arg(long, default_value = "0.0.0.0:443")]
     https_listen: SocketAddr,
+    /// Visio : écoute STUN (UDP) pour que deux navigateurs derrière leur box s'appellent en direct. Défaut : le même port que
+    /// l'interface (`--https-listen` avec un domaine, sinon `--http-listen`) : une seule ouverture de port sur la box.
+    #[arg(long)]
+    stun_listen: Option<SocketAddr>,
+    /// Visio : pas de serveur STUN sur cette station (ni de relais d'appel).
+    #[arg(long, conflicts_with = "stun_listen")]
+    no_stun: bool,
+    /// Visio : STUN seulement, sans relais d'appel (TURN). Sans relais, un appel entre deux réseaux très fermés échoue.
+    #[arg(long)]
+    no_turn: bool,
+    /// Visio : serveur STUN ou TURN supplémentaire donné aux navigateurs (`stun:hôte:port`, `turn:hôte:port`), répétable.
+    #[arg(long = "ice-server")]
+    ice_servers: Vec<String>,
     /// Reverse proxy : `/préfixe=http://hôte:port` (répétable). Authentification de la station exigée.
     #[arg(long = "proxy")]
     proxies: Vec<String>,
@@ -400,6 +413,10 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
 
 /// Comme [`run`], mais s'arrête quand `shutdown` se termine : plusieurs plans d'un même processus partagent un seul signal d'arrêt.
 pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output = ()>) -> Result<(), Failure> {
+    // Étanchéité des constellations : les CID d'une UPlanet privée ne sortent jamais de son essaim (même règle que `planes`).
+    if a.swarm_key.is_some() && a.kubo.is_some() {
+        return Err("--kubo n'appartient qu'à ORIGIN : une UPlanet privée (--swarm-key) n'a jamais de Kubo (ses CID ne doivent pas sortir de son essaim)".into());
+    }
     let station = identity::resolve(a.game_dir.as_deref(), true)?;
     let station_secret = station.secret.clone();
     let signer = station.signer.clone();
@@ -416,6 +433,14 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
     let ssh_dir = ssh_managed.then(|| a.ssh_dir.clone().or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ssh")))).flatten();
     let tunnel_policy = TunnelPolicy::load(db.clone(), a.swarm_key.is_none(), ssh_dir, activity.clone()).await;
     let mut exposed_names: Vec<String> = a.p2p_expose.iter().filter_map(|s| s.split_once('=').map(|(n, _)| n.to_owned())).collect();
+    if a.kubo.is_none()
+        && a.swarm_key.is_none()
+        && let Some(n) = astroportd::legacy_ucloud::count_ipfs_only(&a.db).filter(|n| *n > 0)
+    {
+        let msg = format!("{n} fichier(s) de l'uCloud repris d'Astroport.ONE ne sont que dans IPFS : sans --kubo (ex. --kubo http://127.0.0.1:5001) ils restent illisibles (fiches, photos, miniatures)");
+        eprintln!("ATTENTION : {msg}");
+        activity.publish("system", "astroportd", msg, None);
+    }
     let local = Arc::new(AutoBlobStore::new(a.kubo.as_deref().map(KuboBlobStore::new), FsBlobStore::open(&a.blobs)?).with_pool_peers(a.pool_peers.clone()));
     if !a.pool_peers.is_empty() {
         println!("bassin de blobs partagé : {} (pairs : {})", a.blobs.display(), a.pool_peers.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "));
@@ -754,6 +779,36 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
         Arc::new(astroportd::person_keys::PersonKeys::new(db.clone(), plane_name, siblings, people_keys, publish_fn(&event_publisher)))
     };
     // Chat privé 1 à 1 : un ami hébergé ici reçoit sur le relai local, les autres par le maillage ; la copie de l'expéditeur reste ici.
+    // Visio : STUN et relais d'appel (TURN) en UDP sur le port de l'interface. Le relais ne sert qu'aux membres de la station et à
+    // leurs amis N¹ (identifiants signés par `turn_secret`). Un échec n'arrête pas la station : les appels restent possibles sur
+    // un même réseau ou en IPv6, et la raison est dite.
+    let mut turn_secret = [0u8; 32];
+    getrandom::fill(&mut turn_secret).map_err(|e| format!("aléa indisponible : {e}"))?;
+    let stun_port = match (!a.no_stun).then(|| a.stun_listen.unwrap_or_else(|| if a.domains.is_empty() { a.http_listen.unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 18080))) } else { a.https_listen })) {
+        Some(addr) => match astroportd::turn::bind(addr).await {
+            Ok(socks) => {
+                let bound: Vec<String> = socks.iter().filter_map(|s| s.local_addr().ok()).map(|a| a.to_string()).collect();
+                let port = socks.first().and_then(|s| s.local_addr().ok()).map_or(addr.port(), |a| a.port());
+                let call_relay = astroportd::turn::Relay::new(turn_secret);
+                if a.no_turn {
+                    println!("visio : STUN sur udp/{} (relais d'appel coupé : --no-turn)", bound.join(", "));
+                    background.push(tokio::spawn(astroportd::turn::serve(socks, call_relay.stun_only(), stop_watch.clone())));
+                } else {
+                    println!("visio : STUN et relais d'appel sur udp/{}, réservés aux membres et à leurs amis N¹ (ouvrez le port UDP {port} sur la box)", bound.join(", "));
+                    background.push(tokio::spawn(astroportd::turn::serve(socks, call_relay, stop_watch.clone())));
+                }
+                Some(port)
+            }
+            Err(e) => {
+                let msg = format!("visio : STUN impossible sur udp/{addr} ({e}) : appels limités au réseau local et à l'IPv6 (--stun-listen pour un autre port)");
+                eprintln!("{msg}");
+                activity.publish_to(astro_core::Audience::Captain, "alert", "visio", msg, None);
+                None
+            }
+        },
+        None => None,
+    };
+    let turn = stun_port.filter(|_| !a.no_turn).map(|p| (turn_secret, p));
     let chat = {
         let (local_pub, mesh, hosted_db) = (publish_fn(&event_publisher), mesh_outbox.clone(), db.clone());
         let publish_local: astroportd::chat::DeliverFn = {
@@ -772,11 +827,15 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
                 }
             })
         });
-        let chat = Arc::new(astroportd::chat::Chat::new(db.clone(), chat_keys, deliver, publish_local, activity.clone()).with_people(people.clone()));
+        // Présence visio (sur option, amis mutuels) : même remise aux stations des amis que le chat.
+        let presence = Arc::new(astroportd::presence::Presence::new(db.clone(), chat_keys.clone(), activity.clone(), deliver.clone(), publish_local.clone()));
+        background.push(tokio::spawn(presence.clone().run(relay.subscribe(), stop_watch.clone())));
+        let chat = Arc::new(astroportd::chat::Chat::new(db.clone(), chat_keys, deliver, publish_local, activity.clone()).with_people(people.clone()).with_turn_opt(turn));
         background.push(tokio::spawn(chat.clone().run(Duration::from_secs(3), stop_watch.clone())));
-        println!("chat : conversations privées 1 à 1 (NIP-17), réception toutes les 3 s");
-        chat
+        println!("chat : conversations privées 1 à 1 (NIP-17), réception toutes les 3 s ; présence visio sur option");
+        (chat, presence)
     };
+    let (chat, presence) = chat;
     let charter_accept = Arc::new(astroportd::charter_accept::CharterAccept::new(db.clone(), ui_keys, publish_fn(&event_publisher), uplanet_name.to_string()));
     let constellation = astroportd::constellation::Constellation::new(db.clone(), ui_chain, ui_wallets.clone(), uplanet_name.to_string(), squid_urls.clone()).with_acceptances(charter_accept.clone());
     let constellation = Arc::new(match &billets {
@@ -784,7 +843,10 @@ pub async fn run_until(a: ServeArgs, shutdown: impl std::future::Future<Output =
         None => constellation,
     });
     background.push(tokio::spawn(constellation.clone().run(stop_watch.clone())));
-    let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_chat(chat).with_people(people.clone()).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
+    if let Some(bad) = a.ice_servers.iter().find(|u| !["stun:", "stuns:", "turn:", "turns:"].iter().any(|p| u.starts_with(p)) || u.len() > 200 || u.chars().any(char::is_whitespace)) {
+        return Err(format!("--ice-server « {bad} » : stun:hôte:port ou turn:hôte:port attendu").into());
+    }
+    let mut ui = StationUi::new(services, dav.clone(), memory, ollama, true).with_ice(stun_port, turn.map(|t| t.0), a.ice_servers.clone()).with_presence(presence).with_chat(chat).with_people(people.clone()).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
         .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), targets: service_targets(&a), dnslink: Some(dnslink.clone()), assist: Some(assist_admin), tasks: Some(db.clone()) }).handler());
     if let Some(f) = thumbs_fn {
         ui = ui.with_face_thumbs(f);

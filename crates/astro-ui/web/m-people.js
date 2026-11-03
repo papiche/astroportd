@@ -8,7 +8,9 @@ const IMG_CAP = [2500, 400]; // vignettes gardées en mémoire par niveau (petit
 const THUMB = [96, 192]; // vignettes demandées au serveur : petite, grande (visage affiché en grand)
 let K, S, root, cv, cx, tip, tray, dirty = false, dpr = 1, colors = {};
 
-const key = f => (f.named ? 'p:' + (f.pubkey || f.name) : f.group_id ? 'g:' + f.group_id : 's:' + f.id);
+// Une personne = sa fiche de contact (UID vCard) ; à défaut sa clé ; à défaut (visages d'avant les fiches) son nom.
+const who = x => (x.contact ? 'c:' + x.contact : x.pubkey ? 'k:' + x.pubkey : 'n:' + x.name);
+const key = f => (f.named ? 'p:' + who(f) : f.group_id ? 'g:' + f.group_id : 's:' + f.id);
 const css = v => { const s = document.createElement('span'); s.style.color = `var(${v})`; document.body.append(s); const c = getComputedStyle(s).color; s.remove(); return c; };
 const loadColors = () => { colors = { accent: css('--accent'), ok: css('--ok'), warn: css('--warn'), line: css('--line'), panel: css('--panel'), ink: css('--ink'), muted: css('--muted') }; dirty = true; };
 const initials = n => (n.startsWith('Inconnu') ? '?' : n.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase());
@@ -144,7 +146,14 @@ function toggle(id) { S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); trayDraw
 async function act(label, call) {
   try { const r = await call(); K.toast(label(r), 1); S.sel.clear(); await load(); } catch (e) { K.toast(e.message); }
 }
-const assign = (ids, name, pubkey) => act(r => `${r.assigned} visage(s) rangé(s) dans « ${name} »${r.contact ? (r.contact.created ? ' · fiche créée dans Contacts' : ' · reliés à sa fiche de Contacts') : ''}`, () => K.api('/api/v1/faces/assign', { method: 'POST', body: { ids, name, ...(pubkey && { pubkey }) } }));
+// Où ranger : la fiche choisie fait foi. Un nom tapé que plusieurs fiches portent fait choisir (m-who.js) : jamais deviné.
+const norm = s => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim();
+async function target(name) {
+  const same = S.cards.filter(c => c.uid && norm(c.name) === norm(name));
+  return same.length < 2 ? { name, ...(same[0] && { contact: same[0].uid }) } : (await K.mod('m-who.js')).default(K, name, same);
+}
+const into = p => ({ name: p.name, ...(p.contact && { contact: p.contact }), ...(p.pubkey && { pubkey: p.pubkey }) });
+const assign = (ids, tgt) => tgt && act(r => `${r.assigned} visage(s) rangé(s) dans « ${r.name} »${r.contact?.created ? ' · nouvelle fiche dans Personnes' : ''}`, () => K.api('/api/v1/faces/assign', { method: 'POST', body: { ids, ...tgt } }));
 const forget = ids => confirm(`Ne plus reconnaître ${ids.length} visage(s) ? Les photos restent dans votre uCloud.`) && act(r => `${r.forgotten} visage(s) oublié(s)`, () => K.api('/api/v1/faces/forget', { method: 'POST', body: { ids } }));
 // Supprime les PHOTOS (pas seulement la reconnaissance) où apparaissent les visages choisis : irréversible, donc confirmée avec le compte exact.
 const wipe = ids => {
@@ -155,20 +164,46 @@ const wipe = ids => {
 };
 function ask(ids) {
   const d = root.querySelector('.pe-name'), inp = d.querySelector('input'), list = d.querySelector('datalist');
-  const names = new Set([...S.people.map(p => p.name), ...S.contactNames]);
-  list.replaceChildren(...[...names].map(n => K.h('option', { value: n })));
-  d.querySelector('p').textContent = `${ids.length} visage(s) à ranger. Un nom déjà connu (une personne reconnue ou une fiche de Contacts) les relie à elle ; un nouveau nom crée aussi sa fiche dans Contacts.`;
-  d.onsubmit = ev => { if (ev.submitter?.value === 'ok' && inp.value.trim()) assign(ids, inp.value.trim(), S.people.find(p => p.name === inp.value.trim())?.pubkey); };
+  list.replaceChildren(...names().map(n => K.h('option', { value: n })));
+  d.querySelector('p').textContent = `${ids.length} visage(s) à ranger. Le nom d'une de vos Personnes les range dans sa fiche (plusieurs fiches de ce nom : vous choisissez laquelle) ; un nouveau nom crée sa fiche.`;
+  d.onsubmit = ev => { if (ev.submitter?.value === 'ok' && inp.value.trim()) target(inp.value.trim()).then(tg => assign(ids, tg)); };
   inp.value = ''; d.showModal(); inp.focus();
 }
-const photo = id => { const f = S.byId.get(id)?.f; if (f) K.open([{ path: f.path, mime: 'image/jpeg', mtime: 0 }], 0); };
+const names = () => [...new Set([...S.cards.map(c => c.name), ...S.people.map(p => p.name)])];
+const faceOf = id => S.byId.get(id)?.f || S.faces.find(x => x.id === id);
+// Photo entière, le visage entouré (m-framed.js, commun avec la fiche d'une personne).
+const photo = async id => { const f = faceOf(id); if (f) (await K.mod('m-framed.js')).showFace(K, f, (f.named ? f.name + ' · ' : '') + f.path); };
+
+/* ── Trier en grand : une question à la fois, en plein écran ───────────────────
+   File construite à l'ouverture : d'abord les ressemblances « est-ce X ? », de la plus sûre à la moins sûre (un groupe anonyme
+   dont des membres ressemblent à X devient UNE question), puis les groupes anonymes sans ressemblance, du plus nombreux au plus
+   petit (« Qui est-ce ? »). « Non » transforme la question en « Qui est-ce alors ? ». Les visages isolés sans suggestion restent
+   sur la table. Les réponses sont envoyées une à une ; la table n'est rechargée qu'en quittant. */
+function rvQueue() {
+  const groups = new Map(), items = [];
+  for (const f of S.faces) {
+    if (f.named) continue;
+    if (f.group_id) { if (!groups.has(f.group_id)) groups.set(f.group_id, []); groups.get(f.group_id).push(f); }
+    else if (f.suggest && !S.no.has(f.id)) items.push({ ids: [f.id], sug: f.suggest });
+  }
+  for (const m of groups.values()) {
+    const best = m.filter(f => f.suggest && !S.no.has(f.id)).sort((a, b) => b.suggest.score - a.suggest.score)[0];
+    items.push({ ids: m.map(f => f.id), sug: best?.suggest });
+  }
+  return items.sort((a, b) => (!!a.sug !== !!b.sug ? (a.sug ? -1 : 1) : a.sug ? b.sug.score - a.sug.score : b.ids.length - a.ids.length));
+}
+const rvCount = () => rvQueue().length;
+async function review() {
+  const fr = await K.mod('m-framed.js');
+  (await K.mod('m-review.js')).default({ K, S, root, load, framed: f => fr.framed(K, f), photo, faceOf, target, names, size: THUMB[1], queue: rvQueue });
+}
 
 function trayDraw() {
   const ids = [...S.sel];
   tray.hidden = !ids.length;
   if (!ids.length) return;
-  const pick = K.h('select', { 'aria-label': 'Personne' }, K.h('option', { value: '' }, 'Ranger dans…'), S.people.slice(0, 200).map(p => K.h('option', { value: p.name }, `${p.name} (${p.photos})`)));
-  pick.onchange = () => { const p = S.people.find(x => x.name === pick.value); if (p) assign(ids, p.name, p.pubkey); };
+  const pick = K.h('select', { 'aria-label': 'Personne' }, K.h('option', { value: '' }, 'Ranger dans…'), S.people.slice(0, 200).map((p, i) => K.h('option', { value: i }, `${p.name} (${p.photos})`)));
+  pick.onchange = () => { const p = S.people[+pick.value]; if (pick.value && p) assign(ids, into(p)); };
   tray.replaceChildren(K.h('strong', {}, `${ids.length} visage(s)`), pick,
     K.h('button', { onclick: () => ask(ids) }, 'Nouvelle personne…'), K.h('button', { class: 'ghost', onclick: () => forget(ids) }, 'Pas à reconnaître'), K.h('button', { class: 'ghost danger', onclick: () => wipe(ids) }, 'Supprimer les photos'),
     ids.length === 1 && K.h('button', { class: 'ghost', onclick: () => photo(ids[0]) }, 'Voir la photo'), K.h('button', { class: 'ghost', onclick: () => select([]) }, 'Annuler'));
@@ -215,7 +250,7 @@ function pointer() {
     } else if (g.kind === 'face') {
       if (ghost) {
         const t = over, ids = [...S.sel]; ghost.remove(); ghost = null; over?.classList.remove('over'); over = null;
-        if (t) { const kind = t.dataset.drop; if (kind === 'person') assign(ids, t.dataset.name, t.dataset.key || undefined); else if (kind === 'new') ask(ids); else if (kind === 'trash') forget(ids); else if (kind === 'wipe') wipe(ids); }
+        if (t) { const kind = t.dataset.drop; if (kind === 'person') assign(ids, into(S.people[+t.dataset.i])); else if (kind === 'new') ask(ids); else if (kind === 'trash') forget(ids); else if (kind === 'wipe') wipe(ids); }
       } else toggle(g.n.f.id);
     } else if (g.kind === 'pan' && !g.moved) { const c = hitCluster(p.x, p.y); if (c) select(c.members.map(m => m.id), g.add); else if (!g.add) select([]); }
     g = null;
@@ -233,8 +268,8 @@ function pointer() {
 function side() {
   const box = root.querySelector('.pe-side'), q = box.querySelector('input').value.trim().toLowerCase();
   const list = box.querySelector('.pe-people');
-  list.replaceChildren(...S.people.filter(p => !q || p.name.toLowerCase().includes(q)).slice(0, 200).map(p => {
-    const f = S.faces.find(x => x.named && (x.pubkey || x.name) === (p.pubkey || p.name)), b = K.h('button', { class: 'pe-pochette', 'data-drop': 'person', 'data-name': p.name, 'data-key': p.pubkey || '', title: 'Déposer ici pour ranger · cliquer pour sélectionner ses visages', onclick: () => { select(S.faces.filter(x => x.named && (x.pubkey || x.name) === (p.pubkey || p.name)).map(x => x.id)); if (S.view !== 'all') setView('all'); const n = S.byId.get(f?.id); if (n) focus(n.c); } },
+  list.replaceChildren(...S.people.map((p, i) => [p, i]).filter(([p]) => !q || p.name.toLowerCase().includes(q)).slice(0, 200).map(([p, i]) => {
+    const f = S.faces.find(x => x.named && who(x) === who(p)), b = K.h('button', { class: 'pe-pochette', 'data-drop': 'person', 'data-i': i, title: 'Déposer ici pour ranger · cliquer pour sélectionner ses visages', onclick: () => { select(S.faces.filter(x => x.named && who(x) === who(p)).map(x => x.id)); if (S.view !== 'all') setView('all'); const n = S.byId.get(f?.id); if (n) focus(n.c); } },
       K.h('strong', {}, p.name), K.h('span', { class: 'muted' }, `${p.photos} photo(s)`));
     return b;
   }));
@@ -258,7 +293,9 @@ function maybe() {
   K.api('/api/v1/faces/thumbs', { method: 'POST', body: { ids: [s.id], size: 96 } }).then(r => { if (r.thumbs[s.id]) img.src = r.thumbs[s.id]; }).catch(() => {});
   box.replaceChildren(img, K.h('div', {}, K.h('p', {}, 'Est-ce ', K.h('strong', {}, s.suggest.name), ` ? (${Math.round(s.suggest.score * 100)} % de ressemblance)`),
     K.h('button', { onclick: () => act(() => `Photo associée à ${s.suggest.name}`, () => K.api(`/api/v1/faces/${s.id}/accept`, { method: 'POST' })) }, `Oui, c'est ${s.suggest.name}`), ' ',
-    K.h('button', { class: 'ghost', onclick: () => { S.no.add(s.id); maybe(); } }, 'Non, quelqu\'un d\'autre')));
+    K.h('button', { class: 'ghost', onclick: () => { S.no.add(s.id); maybe(); } }, 'Non, quelqu\'un d\'autre'), ' ',
+    K.h('button', { class: 'ghost', onclick: () => photo(s.id) }, 'Voir la photo'), ' ',
+    K.h('button', { class: 'ghost', onclick: review }, `Trier en grand (${rvCount()})`)));
 }
 function setView(v) {
   S.view = v; root.querySelectorAll('.pe-views button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
@@ -285,26 +322,28 @@ async function loadBoard() {
   S.faces = r.faces; S.people = r.people; S.byId = new Map(); S.sel = new Set([...S.sel].filter(i => r.faces.some(f => f.id === i)));
   S.visible = () => (S.view === 'all' ? S.faces : S.faces.filter(f => !f.named));
   root.querySelector('.pe-count').textContent = `${r.unknown} à ranger · ${r.people.length} personne(s)${r.truncated ? ' · seuls les 20 000 plus récents sont montrés : choisissez un dossier' : ''}${r.groups_skipped ? ' · groupes non calculés (trop de visages) : choisissez un dossier pour les calculer' : ''}${dir ? ' · dossier ' + dir : ''}`;
+  const nq = rvCount(), rb = root.querySelector('.pe-rv-open'); rb.textContent = `Trier en grand (${nq})`; rb.hidden = !nq;
   root.querySelector('[data-v=todo]').textContent = `À ranger (${r.unknown})`; root.querySelector('[data-v=all]').textContent = `Tous (${r.faces.length})`;
   const first = !S.nodes.length; layout(); side(); maybe(); shares().catch(() => {}); trayDraw(); if (first) fit(); redraw();
   root.querySelector('.pe-empty').hidden = !!r.faces.length;
   return true;
 }
 
-export default async function people(el, kit) {
+export default async function people(el, kit, q) {
   K = kit; root = el;
-  S = { contactNames: [], faces: [], people: [], nodes: [], clusters: [], pos: new Map(), byId: new Map(), hash: new Map(), sel: new Set(), view: 'todo', s: 1, tx: 0, ty: 0, img: [new Map(), new Map()], pend: [new Set(), new Set()], bad: new Set(), no: new Set(), lasso: false, lassoPts: [], visible: () => [] };
+  S = { cards: [], faces: [], people: [], nodes: [], clusters: [], pos: new Map(), byId: new Map(), hash: new Map(), sel: new Set(), view: 'todo', s: 1, tx: 0, ty: 0, img: [new Map(), new Map()], pend: [new Set(), new Set()], bad: new Set(), no: new Set(), lasso: false, lassoPts: [], visible: () => [] };
   const h = K.h, link = h('link', { rel: 'stylesheet', href: '/ui/m-people.css' });
   document.head.append(link); K.cleanup(() => link.remove());
   cv = h('canvas', { class: 'pe-board', tabindex: 0, role: 'application', 'aria-label': 'Table de tri des visages. Flèches : déplacer, plus et moins : zoom, zéro : tout voir. Utilisez la liste « À ranger » pour un tri au clavier.' });
   tip = h('div', { class: 'pe-tip', hidden: true });
   tray = h('div', { class: 'pe-tray', role: 'region', 'aria-label': 'Visages sélectionnés', hidden: true });
   root.replaceChildren(h('div', { class: 'pe' },
-    h('div', { class: 'bar' }, h('h2', {}, 'Table de tri'), h('span', { class: 'pe-count muted' }, ''), h('span', { class: 'sp' }),
+    h('div', { class: 'bar' }, h('a', { href: '#/people', class: 'ghost' }, '← ' + K.t('Personnes')), h('h2', {}, 'Table de tri'), h('span', { class: 'pe-count muted' }, ''), h('span', { class: 'sp' }),
       h('select', { class: 'pe-dir', 'aria-label': 'Dossier à trier', onchange: ev => { dir = ev.target.value; S.sel.clear(); S.nodes = []; load().catch(e => K.toast(e.message)); } }, h('option', { value: '' }, 'Tous les dossiers (les plus récents)')),
       h('span', { class: 'pe-views' }, h('button', { 'data-v': 'todo', class: 'ghost', 'aria-pressed': 'true', onclick: () => setView('todo') }, 'À ranger'), h('button', { 'data-v': 'all', class: 'ghost', 'aria-pressed': 'false', onclick: () => setView('all') }, 'Tous')),
       h('button', { class: 'ghost', 'aria-pressed': 'false', onclick: ev => { S.lasso = !S.lasso; ev.target.setAttribute('aria-pressed', String(S.lasso)); } }, 'Lasso'),
-      h('button', { class: 'ghost', onclick: () => { fit(); redraw(); } }, 'Tout voir')),
+      h('button', { class: 'ghost', onclick: () => { fit(); redraw(); } }, 'Tout voir'),
+      h('button', { class: 'pe-rv-open', hidden: true, onclick: review }, 'Trier en grand')),
     h('div', { class: 'pe-maybe card' }), h('div', { class: 'pe-shares' }),
     h('div', { class: 'pe-main' }, h('div', { class: 'pe-stage' }, cv, h('div', { class: 'pe-busy', role: 'status', hidden: true }, h('span', { class: 'pe-glass', 'aria-hidden': 'true' }, '⏳'), h('span', {}, 'Chargement des visages et reconnaissance des groupes… Avec beaucoup de photos, cela peut durer une minute. Un dossier précis (en haut) va plus vite.')), h('p', { class: 'pe-empty muted', hidden: true }, 'Aucun visage pour le moment : déposez des photos dans votre uCloud, la station les analyse.')),
       h('aside', { class: 'pe-side card' }, h('h3', {}, 'Pochettes'),
@@ -319,8 +358,11 @@ export default async function people(el, kit) {
   K.cleanup(() => { clearTimeout(timer); timer = 0; queue.clear(); tip.remove(); document.querySelectorAll('.pe-ghost').forEach(g => g.remove()); });
   const mq = matchMedia('(prefers-color-scheme: dark)'); mq.onchange = loadColors; K.cleanup(() => { mq.onchange = null; });
   loadColors(); pointer(); size();
-  K.api('/api/v1/book').then(r => { S.contactNames = r.contacts.filter(c => !c.me).map(c => c.name); }, () => {});
+  // Les fiches de Personnes : cibles du rangement (par UID), noms proposés à la saisie.
+  K.api('/api/v1/book').then(r => { S.cards = r.contacts; }, () => {});
   K.api('/api/v1/faces/folders').then(r => { const sel = root.querySelector('.pe-dir'); sel.append(...r.folders.map(f => K.h('option', { value: f.dir, selected: f.dir === dir }, `${f.dir} · ${f.faces} visage(s)${f.todo ? `, ${f.todo} à ranger` : ''}`))); }, () => {});
   try { await load(); } catch (e) { root.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }
-  K.every(60000, () => { if (!S.sel.size) load().catch(() => {}); });
+  if (q?.has('grand') && rvCount()) review(); // le sas de Personnes ouvre directement « Trier en grand »
+  K.cleanup(() => S.rv?.off());
+  K.every(60000, () => { if (!S.sel.size && !S.rv) load().catch(() => {}); });
 }

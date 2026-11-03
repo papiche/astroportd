@@ -1,0 +1,33 @@
+'use strict';
+// Dictionnaire en, écran m-billets.js.
+export default {
+"Le Capitaine ne vous a pas autorisé à créer des Ğ1Billets.": "The Captain has not allowed you to create Ğ1Notes.",
+"3 mois": "3 months",
+"Créer la planche": "Create the sheet",
+"Total engagé : {0} ẑ ({1} billet(s) de {2} ẑ). Un dépôt d’activation de 1 Ğ1 par billet est avancé par la coopérative et lui revient à l’encaissement.": "Total committed: {0} ẑ ({1} note(s) of {2} ẑ). A 1 Ğ1 activation deposit per note is advanced by the cooperative and goes back to it when the note is cashed.",
+"Nouvelle planche": "New sheet",
+"Chaque billet est une clé Ğ1 jetable. Le porteur l’encaisse avec la caméra sur la page /scan, sans compte.": "Each note is a disposable Ğ1 key. The bearer cashes it with the camera on the /scan page, no account needed.",
+"Nombre de billets": "Number of notes",
+"Valeur de chaque billet (ẑ)": "Value of each note (ẑ)",
+"Si le billet n’est pas encaissé à la date de fin, sa valeur revient sur mon portefeuille": "If the note is not cashed by the end date, its value goes back to my wallet",
+"Avec le retour automatique, la station garde deux des trois parts (chiffrées, pour elle seule) : elle peut renvoyer la valeur à la date de fin, mais elle garde le billet en dépôt jusque-là.": "With automatic return, the station keeps two of the three parts (encrypted, for itself only): it can send the value back at the end date, but it holds the note in custody until then.",
+"Financer": "Fund",
+"Financement…": "Funding…",
+"✅ Déjà financé": "✅ Already funded",
+"✅ Financé": "✅ Funded",
+"Tout financer": "Fund all",
+"Imprimer la planche": "Print the sheet",
+"SOUS LE PLI": "UNDER THE FOLD",
+"À scanner": "Scan this",
+"valable jusqu’au {0}": "valid until {0}",
+"retour à l’émetteur": "returns to issuer",
+"Planche de billets à imprimer": "Sheet of notes to print",
+"Planche créée": "Sheet created",
+"Les QR ne s’affichent qu’une seule fois : imprimez maintenant, puis financez chaque billet. Un billet non financé ne vaut rien.": "The QR codes show only once: print now, then fund each note. An unfunded note is worth nothing.",
+"Mes billets créés": "Notes I created",
+"encaissement en cours": "being cashed",
+"pas encore financé": "not funded yet",
+"Aucun billet pour l’instant.": "No note yet.",
+"↩ : la valeur revient sur votre portefeuille à la date de fin si le billet n’est pas encaissé.": "↩: the value goes back to your wallet at the end date if the note is not cashed.",
+"renvoyé à l’émetteur": "sent back to the issuer"
+};

@@ -363,6 +363,11 @@ pub fn init(a: InitArgs) -> Res {
     if embed_threads > 0 {
         serve.push(format!("--embed-threads {embed_threads}"));
     }
+    // Un uCloud repris d'Astroport.ONE (import-ucloud) n'a ses blobs que dans IPFS : sans --kubo, il devient illisible.
+    // ORIGIN seulement : une UPlanet ẐEN n'a jamais de Kubo (étanchéité des constellations).
+    if mode == Mode::Origin && crate::legacy_ucloud::count_ipfs_only(&home.join("uplanet.db")).unwrap_or(0) > 0 {
+        serve.push("--kubo http://127.0.0.1:5001".into());
+    }
     let serve = serve.join(" ");
     if a.systemd {
         let unit = format!("[Unit]\nDescription=astroportd ({})\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nExecStart={serve}\nRestart=on-failure\nRestartSec=5\nUMask=0077\n\n[Install]\nWantedBy=default.target\n", if mode == Mode::Zen { "constellation ẐEN" } else { "constellation ORIGIN" });

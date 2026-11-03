@@ -8,24 +8,24 @@ use rusqlite::types::Value;
 
 use crate::FaceError;
 
-/// Nomme un visage (validation humaine) ; efface la suggestion.
+/// Nomme un visage (validation humaine) ; efface la suggestion et le lien vers une fiche (le rapprochement le refait par la clé).
 pub async fn name_face(db: &Db, owner: &str, face_id: i64, pubkey: Option<&str>, name: &str) -> Result<(), FaceError> {
     let n = db
         .writer()
         .execute(
-            "UPDATE faces SET name = ?3, pubkey = ?4, suggest_pubkey = NULL, suggest_name = NULL, suggest_score = NULL WHERE owner_hex = ?1 AND face_id = ?2",
+            "UPDATE faces SET name = ?3, pubkey = ?4, contact_uid = NULL, suggest_pubkey = NULL, suggest_name = NULL, suggest_score = NULL, suggest_contact_uid = NULL WHERE owner_hex = ?1 AND face_id = ?2",
             vec![owner.to_owned().into(), face_id.into(), name.to_owned().into(), pubkey.map_or(Value::Null, |p| p.to_owned().into())],
         )
         .await?;
     if n.changes == 0 { Err(FaceError::Invalid("visage introuvable")) } else { Ok(()) }
 }
 
-/// Valide la suggestion « est-ce X ? » d'un visage : il prend le nom et la clé suggérés. `false` : rien à valider.
+/// Valide la suggestion « est-ce X ? » d'un visage : il prend le nom, la clé et la fiche suggérés. `false` : rien à valider.
 pub async fn accept_suggestion(db: &Db, owner: &str, face_id: i64) -> Result<bool, FaceError> {
     let n = db
         .writer()
         .execute(
-            "UPDATE faces SET name = suggest_name, pubkey = suggest_pubkey, suggest_pubkey = NULL, suggest_name = NULL, suggest_score = NULL \
+            "UPDATE faces SET name = suggest_name, pubkey = suggest_pubkey, contact_uid = suggest_contact_uid, suggest_pubkey = NULL, suggest_name = NULL, suggest_score = NULL, suggest_contact_uid = NULL \
              WHERE owner_hex = ?1 AND face_id = ?2 AND suggest_name IS NOT NULL",
             vec![owner.to_owned().into(), face_id.into()],
         )
@@ -43,12 +43,12 @@ fn checked_ids(ids: &[i64]) -> Result<(), FaceError> {
     Ok(())
 }
 
-/// Range des visages dans une personne : ils prennent `name` (et la clé Nostr de la personne).
+/// Range des visages dans une personne : ils prennent `name`, la fiche `contact` (UID vCard) et la clé Nostr de la personne.
 ///
-/// Sans `pubkey`, un nom déjà porté par une personne qui a une clé la reprend : ranger dans « Marie » ne crée pas
-/// une seconde Marie sans clé. Les références de contacts et visages confiés par des amis ne sont jamais touchés.
-/// Rend le nombre de visages modifiés.
-pub async fn name_faces(db: &Db, owner: &str, ids: &[i64], pubkey: Option<&str>, name: &str) -> Result<usize, FaceError> {
+/// **La fiche fait foi, jamais le nom** : sans `pubkey`, la clé est reprise d'un visage déjà rangé dans **la même fiche** ;
+/// deux « Marie » de deux fiches restent deux personnes. Sans `contact`, les visages ne sont reliés à aucune fiche.
+/// Les références de contacts et visages confiés par des amis ne sont jamais touchés. Rend le nombre de visages modifiés.
+pub async fn name_faces(db: &Db, owner: &str, ids: &[i64], contact: Option<&str>, pubkey: Option<&str>, name: &str) -> Result<usize, FaceError> {
     checked_ids(ids)?;
     let name = name.trim();
     if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
@@ -57,21 +57,25 @@ pub async fn name_faces(db: &Db, owner: &str, ids: &[i64], pubkey: Option<&str>,
     if pubkey.is_some_and(|p| !astro_nostr_proto::is_hex64(p)) {
         return Err(FaceError::Invalid("clé Nostr invalide (64 caractères hexadécimaux)"));
     }
-    let (o, n, pk, ids) = (owner.to_owned(), name.to_owned(), pubkey.map(str::to_owned), ids.to_vec());
+    if contact.is_some_and(|c| c.is_empty() || c.len() > 200 || c.chars().any(char::is_control)) {
+        return Err(FaceError::Invalid("fiche de contact invalide"));
+    }
+    let (o, n, ct, pk, ids) = (owner.to_owned(), name.to_owned(), contact.map(str::to_owned), pubkey.map(str::to_owned), ids.to_vec());
     Ok(db
         .writer()
         .transaction(move |tx| {
-            let pk = match pk {
-                Some(p) => Some(p),
-                None => tx
-                    .query_row("SELECT pubkey FROM faces WHERE owner_hex = ?1 AND name = ?2 AND pubkey IS NOT NULL AND ref IS NULL LIMIT 1", rusqlite::params![o, n], |r| r.get::<_, String>(0))
+            let pk = match (pk, &ct) {
+                (Some(p), _) => Some(p),
+                (None, Some(c)) => tx
+                    .query_row("SELECT pubkey FROM faces WHERE owner_hex = ?1 AND contact_uid = ?2 AND pubkey IS NOT NULL AND ref IS NULL LIMIT 1", rusqlite::params![o, c], |r| r.get::<_, String>(0))
                     .ok(),
+                (None, None) => None,
             };
             let mut changed = 0;
             for id in ids {
                 changed += tx.execute(
-                    "UPDATE faces SET name = ?3, pubkey = ?4, suggest_pubkey = NULL, suggest_name = NULL, suggest_score = NULL WHERE owner_hex = ?1 AND face_id = ?2 AND ref IS NULL",
-                    rusqlite::params![o, id, n, pk],
+                    "UPDATE faces SET name = ?3, pubkey = ?4, contact_uid = ?5, suggest_pubkey = NULL, suggest_name = NULL, suggest_score = NULL, suggest_contact_uid = NULL WHERE owner_hex = ?1 AND face_id = ?2 AND ref IS NULL",
+                    rusqlite::params![o, id, n, pk, ct],
                 )?;
             }
             Ok(changed)

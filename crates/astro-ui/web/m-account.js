@@ -17,12 +17,14 @@ export default async function account(root, K) {
     h('dt', {}, 'Clé publique Nostr'), h('dd', {}, code(a.npub), ' ', copy(a.npub, 'npub')),
     h('dt', {}, 'Clé Ğ1'), h('dd', {}, code(a.g1pub)),
     h('dt', {}, 'Station d\'accueil'), h('dd', {}, code(a.home_station)),
-    h('dt', {}, 'Relais annoncés (NIP-65)'), h('dd', {}, a.relays.length ? a.relays.map(r => h('div', {}, code(r.url), ` ${r.read && r.write ? '' : r.read ? '(lecture)' : '(écriture)'}`)) : h('span', { class: 'muted' }, 'aucun'))));
+    h('dt', {}, 'Relais où vous publiez'), h('dd', {}, a.relays.length ? a.relays.map(r => h('div', {}, code(r.url), ` ${r.read && r.write ? '' : r.read ? '(lecture)' : '(écriture)'}`)) : h('span', { class: 'muted' }, 'aucun'))));
 
 
   // Téléverser une image de profil : réduite ici (cadre de l'image ou du bandeau) puis envoyée en JPEG ; la station la range, la publie
   // à son adresse et met le profil (kind 0) à jour. L'aperçu ne s'affiche que pour une image de cette station (CSP).
   const FRAME = { picture: [320, 320], banner: [1200, 400] };
+  // Lu avant imageTools, qui s'en sert pour proposer les images de /Public.
+  const site = await K.api('/api/v1/account/site').catch(() => null);
   const imageTools = (kind, input) => {
     const file = h('input', { type: 'file', accept: 'image/*', hidden: '' }), msg = h('span', { class: 'muted', role: 'status' });
     const pick = h('button', { type: 'button', class: 'ghost', onclick: () => file.click() }, t('Choisir une image sur cet appareil'));
@@ -65,13 +67,12 @@ export default async function account(root, K) {
     try { await api('/profile', patch); K.toast(t('Profil enregistré'), 1); if (langChanged) K.setLang(f.lang.value); else account(root, K); } catch (e) { K.toast(e.message); ev.target.disabled = false; }
   } }, 'Enregistrer');
   const profile = h('section', { class: 'card' }, h('h2', {}, 'Profil'),
-    h('p', { class: 'muted' }, 'Publié sur le relai (kind 0) : vos Proches le voient.'),
+    h('p', { class: 'muted' }, 'Publié sur votre relai : vos Proches le voient.'),
     h('label', { for: 'ac-name' }, 'Nom affiché'), f.name, h('label', { for: 'ac-about' }, 'Présentation'), f.about, h('label', { for: 'ac-pic' }, 'Image (https)'), f.picture, imageTools('picture', f.picture), h('label', { for: 'ac-ban' }, t('Bandeau (https) : fond de vos Ğ1Billets et de votre profil')), f.banner, imageTools('banner', f.banner),
     h('label', { for: 'ac-lang' }, 'Langue de l\'interface'), f.lang, h('p', {}, save));
 
 
   // ── Mon site public : le dossier /Public de l'uCloud, servi en clair à tous (modèle : déplacer un fichier dans /Public le publie) ──
-  const site = await K.api('/api/v1/account/site').catch(() => null);
   const sitebox = site && h('section', { class: 'card' }, h('h2', {}, t('Mon site public')),
     h('p', { class: 'muted' }, t('Tout ce que vous mettez dans le dossier Public de votre uCloud est public : lisible par tout le monde, sans mot de passe. Déplacez-y un fichier pour le publier, sortez-le pour le retirer. Vous pouvez y construire un site (pages HTML, images, CSS) avec votre client WebDAV.')),
     h('dl', { class: 'stack' },
@@ -99,6 +100,26 @@ export default async function account(root, K) {
       h('p', {}, h('button', { onclick: () => send({ ollama_url: url.value.trim() || null, provider: prov.value || null, model: model.value.trim() || null, ...(key.value && { api_key: key.value }) }) }, t('Enregistrer')),
         p.has_key ? [' ', h('button', { class: 'ghost', onclick: () => { if (confirm(t('Retirer la clé d\'API enregistrée ?'))) send({ api_key: null }); } }, t('Retirer la clé'))] : null));
   }, e => ai.append(h('p', { class: 'err', role: 'alert' }, e.message)));
+
+  // ── Visio : être joignable (mes amis réciproques voient si je suis là ou en appel) et notifications d'appel sur cet appareil ──
+  const visio = h('section', { class: 'card' }, h('h2', {}, t('Visio')));
+  K.api('/api/v1/presence').then(p => {
+    const box = h('input', { type: 'checkbox', id: 'vi-reach', checked: p.reachable, onchange: async () => {
+      box.disabled = true;
+      try {
+        await K.api('/api/v1/presence', { method: 'POST', body: { reachable: box.checked } });
+        K.toast(box.checked ? t('Vos amis voient quand vous êtes là') : t('Vous n\'êtes plus visible'), 1);
+        if (box.checked) K.mod('m-call.js').then(m => m.askNotify(), () => {});
+      } catch (e) { box.checked = !box.checked; K.toast(e.message); }
+      box.disabled = false;
+    } });
+    const N = window.Notification;
+    const notif = !N ? null : N.permission === 'granted' ? h('p', { class: 'muted' }, t('Notifications d\'appel : activées sur cet appareil.'))
+      : N.permission === 'denied' ? h('p', { class: 'muted' }, t('Notifications d\'appel bloquées sur cet appareil : autorisez-les dans le navigateur pour être prévenu quand l\'onglet est en arrière-plan.'))
+      : h('p', {}, h('button', { type: 'button', class: 'ghost', onclick: async ev => { await N.requestPermission().catch(() => {}); ev.target.replaceWith(h('span', { class: 'muted' }, N.permission === 'granted' ? t('Notifications d\'appel activées') : t('Notifications refusées'))); } }, t('Être prévenu des appels sur cet appareil')));
+    visio.append(h('p', {}, h('label', { for: 'vi-reach' }, box, ' ', t('Être joignable en visio'))),
+      h('p', { class: 'muted' }, t('Seuls vos amis réciproques voient si vous êtes en ligne ou en appel, et seulement quand une page Astroport est ouverte. Rien n\'est gardé.')), notif);
+  }, () => { visio.hidden = true; });
 
   // ── Mes UPlanet : mes clés dans les autres plans de la station, et l'annonce (publique, sur demande) qu'elles sont les miennes ──
   const planes = h('section', { class: 'card', hidden: true }, h('h2', {}, t('Mes UPlanet')));
@@ -227,5 +248,5 @@ export default async function account(root, K) {
   const title = a.profile.name || a.email || 'Mon compte';
   const hero = h('div', { class: 'hero' }, h('div', { class: 'avatar', 'aria-hidden': 'true' }, [...title][0].toUpperCase()),
     h('div', { class: 'who' }, h('h2', {}, title), a.email && a.email !== title ? h('div', { class: 'sub' }, a.email) : null, h('span', { class: 'pill' }, ROLE[a.role] || a.role), a.guest ? h('span', { class: 'pill' }, 'Invité') : null));
-  root.replaceChildren(...[hero, guest, h('div', { class: 'grid' }, idCard, profile, sitebox, ai, planes, dav, devices, backup, keys)].filter(Boolean));
+  root.replaceChildren(...[hero, guest, h('div', { class: 'grid' }, idCard, profile, sitebox, visio, ai, planes, dav, devices, backup, keys)].filter(Boolean));
 }

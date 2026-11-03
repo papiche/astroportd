@@ -9,6 +9,7 @@ use astro_db::Db;
 use astro_db::events::insert_event;
 use astro_nostr_proto::pubkey_of;
 use astroportd::chat::{Chat, DeliverFn};
+use serde_json::json;
 
 const ALICE: [u8; 32] = [0xA1; 32];
 const BOB: [u8; 32] = [0xB2; 32];
@@ -168,4 +169,200 @@ async fn one_conversation_per_person_across_planes_and_the_channel_is_the_shared
 fn publish_one(db: &Arc<Db>) -> astroportd::register::PublishFn {
     let d = into_db(db, false);
     Arc::new(move |ev| d(String::new(), ev))
+}
+
+/// Le flux d'activité poussé au navigateur : les événements d'appel.
+fn calls(bus: &ActivityBus) -> Vec<(String, serde_json::Value)> {
+    bus.recent(100).iter().filter(|a| a.kind == "call").map(|a| (a.source.clone(), a.data.clone().unwrap_or_default())).collect()
+}
+
+#[tokio::test]
+async fn a_call_rings_the_friend_live_carries_the_handshake_and_a_missed_call_stays_in_the_conversation() {
+    let dir = std::env::temp_dir().join(format!("astroportd-chat-call-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = Arc::new(Db::open(&dir.join("u.db"), 2).unwrap());
+    for (s, email) in [(&ALICE, "alice@example.org"), (&BOB, "bob@example.org")] {
+        db.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, 'multipass', ?2, 1)", vec![hex(s).into(), email.to_owned().into()]).await.unwrap();
+    }
+    let bus = ActivityBus::default();
+    let chat = Chat::new(db.clone(), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), into_db(&db, false), into_db(&db, false), bus.clone());
+    let (alice, bob) = (hex(&ALICE), hex(&BOB));
+    let sdp = "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\n";
+
+    // Alice appelle : la sonnerie arrive chez Bob avec l'offre, et rien n'est rangé dans la conversation.
+    chat.signal(&alice, &bob, &json!({ "type": "offer", "call": "c0ffee01", "sdp": sdp, "video": true })).await.unwrap();
+    assert_eq!(chat.poll_once().await, 0);
+    let rung = calls(&bus);
+    assert_eq!(rung.len(), 1);
+    assert_eq!((rung[0].0.as_str(), rung[0].1["from"].as_str(), rung[0].1["sdp"].as_str(), rung[0].1["call"].as_str()), ("call:offer", Some(alice.as_str()), Some(sdp), Some("c0ffee01")));
+    // L'enveloppe expire : le relai l'oubliera (elle contient des adresses réseau).
+    let expiring: i64 = db.readers().read(|c| Ok(c.query_row("SELECT count(*) FROM nostr_events WHERE kind = 1059 AND expires_at IS NOT NULL", [], |r| r.get(0))?)).await.unwrap();
+    assert_eq!(expiring, 1);
+
+    // Bob décroche : la réponse revient à Alice, et les autres onglets de Bob cessent de sonner.
+    chat.signal(&bob, &alice, &json!({ "type": "answer", "call": "c0ffee01", "sdp": sdp })).await.unwrap();
+    assert!(calls(&bus).iter().any(|(s, d)| s == "call:handled" && d["call"] == "c0ffee01" && d["from"] == alice.as_str()));
+    chat.poll_once().await;
+    assert!(calls(&bus).iter().any(|(s, d)| s == "call:answer" && d["from"] == bob.as_str()));
+    assert!(chat.conversations(&alice).await.unwrap()["conversations"].as_array().unwrap().is_empty(), "un appel abouti ne laisse rien dans le fil");
+
+    // Un autre appel, raccroché avant qu'on décroche : « Appel manqué » chez Bob (non lu), « Appel sans réponse » chez Alice.
+    chat.signal(&alice, &bob, &json!({ "type": "offer", "call": "c0ffee02", "sdp": sdp })).await.unwrap();
+    chat.signal(&alice, &bob, &json!({ "type": "hangup", "call": "c0ffee02", "missed": true })).await.unwrap();
+    assert_eq!(chat.poll_once().await, 1);
+    let b = chat.messages(&bob, &alice, None).await.unwrap();
+    assert_eq!(b["messages"].as_array().unwrap().iter().map(|m| m["text"].as_str().unwrap()).collect::<Vec<_>>(), ["📹 Appel manqué"]);
+    assert_eq!(chat.conversations(&bob).await.unwrap()["unread"], 1);
+    assert_eq!(chat.messages(&alice, &bob, None).await.unwrap()["messages"][0]["text"], "📹 Appel sans réponse");
+    assert!(calls(&bus).iter().any(|(s, _)| s == "call:hangup"), "la sonnerie s'arrête aussi en direct");
+
+    // Une sonnerie vieille de plus d'une minute (station éteinte) ne sonne pas : elle devient un appel manqué.
+    let old = astro_crypto::nip59::Rumor { pubkey: alice.clone(), created_at: 1_700_000_000, kind: astro_nostr_proto::kind::CALL_SIGNAL, tags: vec![vec!["p".into(), bob.clone()]], content: json!({ "type": "offer", "call": "c0ffee03", "sdp": sdp }).to_string() };
+    let wrap = astro_crypto::nip59::gift_wrap(&ALICE, &bob, &old, 1_700_000_000).unwrap();
+    db.writer().transaction(move |tx| insert_event(tx, &wrap).map(|_| ())).await.unwrap();
+    let before = calls(&bus).len();
+    assert_eq!(chat.poll_once().await, 1);
+    assert_eq!(calls(&bus).len(), before, "pas de sonnerie pour un appel périmé");
+    assert_eq!(chat.messages(&bob, &alice, None).await.unwrap()["messages"].as_array().unwrap().len(), 2);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn only_friends_can_ring_and_malformed_signals_are_refused() {
+    let (dir, db, chat) = rig("call-guard", false).await;
+    let sdp = "v=0\r\n";
+    let bus = ActivityBus::default();
+    let eve = Chat::new(db.clone(), Arc::new(StaticKeySource::new().with(EVE)), into_db(&db, false), into_db(&db, false), bus.clone());
+    eve.signal(&hex(&EVE), &hex(&ALICE), &json!({ "type": "offer", "call": "deadbeef", "sdp": sdp })).await.unwrap();
+    chat.poll_once().await;
+    assert!(chat.conversations(&hex(&ALICE)).await.unwrap()["conversations"].as_array().unwrap().is_empty(), "une inconnue ne fait pas sonner, et ne laisse rien");
+    let (a, b) = (hex(&ALICE), hex(&BOB));
+    for bad in [
+        json!({ "type": "sonne", "call": "deadbeef" }),
+        json!({ "type": "offer", "call": "deadbeef" }),
+        json!({ "type": "hangup", "call": "deadbeef", "sdp": sdp }),
+        json!({ "type": "offer", "call": "pas-hex!", "sdp": sdp }),
+        json!({ "type": "offer", "call": "abc", "sdp": sdp }),
+        json!({ "type": "offer", "call": "deadbeef", "sdp": "x".repeat(70_000) }),
+    ] {
+        assert!(chat.signal(&a, &b, &bad).await.is_err(), "{bad}");
+    }
+    assert!(chat.signal(&a, &a, &json!({ "type": "offer", "call": "deadbeef", "sdp": sdp })).await.is_err(), "pas d'appel à soi-même");
+    // Station de l'ami injoignable : l'échec est dit.
+    let (dir2, _db2, down) = rig("call-down", true).await;
+    assert!(matches!(down.signal(&a, &b, &json!({ "type": "offer", "call": "deadbeef", "sdp": sdp })).await, Err(astroportd::chat::ChatError::Unreachable(_))));
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(dir2);
+}
+
+#[tokio::test]
+async fn the_call_relay_is_offered_only_to_station_members_and_mutual_friends() {
+    let dir = std::env::temp_dir().join(format!("astroportd-chat-turn-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = Arc::new(Db::open(&dir.join("u.db"), 2).unwrap());
+    for (s, email) in [(&ALICE, "alice@example.org"), (&BOB, "bob@example.org")] {
+        db.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, 'multipass', ?2, 1)", vec![hex(s).into(), email.to_owned().into()]).await.unwrap();
+    }
+    let bus = ActivityBus::default();
+    let keys = Arc::new(StaticKeySource::new().with(ALICE).with(BOB).with(EVE));
+    let chat = Chat::new(db.clone(), keys, into_db(&db, false), into_db(&db, false), bus.clone()).with_turn([7; 32], 443);
+    let (alice, bob, eve) = (hex(&ALICE), hex(&BOB), hex(&EVE));
+    let offer = |call: &str| json!({ "type": "offer", "call": call, "sdp": "v=0\r\n", "turn_host": "station.example.org" });
+    let ice_of = |call: &str| calls(&bus).into_iter().find(|(s, d)| s == "call:offer" && d["call"] == call).map(|(_, d)| d["ice"].clone());
+
+    // Bob est membre de la station : son offre emporte un accès au relais, fabriqué pour lui seul.
+    chat.signal(&alice, &bob, &offer("aaaa0001")).await.unwrap();
+    chat.poll_once().await;
+    let ice = ice_of("aaaa0001").unwrap();
+    assert_eq!(ice["urls"][0], "turn:station.example.org:443?transport=udp");
+    assert!(ice["username"].as_str().unwrap().ends_with(&format!("n1-{}", &bob[..16])) && ice["credential"].as_str().is_some_and(|c| !c.is_empty()));
+
+    // Eve (autre station) : Bob la suit, mais elle ne le suit pas → pas de relais ; l'appel part quand même.
+    db.writer().execute("INSERT INTO social_graph(owner_hex, pubkey, level, updated_at) VALUES (?1, ?2, 1, 0), (?2, ?1, 1, 0)", vec![bob.clone().into(), eve.clone().into()]).await.unwrap();
+    let wraps = |db: &Arc<Db>, to: &str| {
+        let (db, to) = (db.clone(), to.to_owned());
+        async move { db.readers().read(move |c| Ok(c.query_row("SELECT count(*) FROM nostr_events e JOIN nostr_tags t ON t.event_id = e.seq AND t.name = 'p' AND t.value = ?1 WHERE e.kind = 1059", [to], |r| r.get::<_, i64>(0))?)).await.unwrap() }
+    };
+    let before = wraps(&db, &eve).await;
+    chat.signal(&bob, &eve, &offer("bbbb0001")).await.unwrap();
+    assert_eq!(wraps(&db, &eve).await, before + 1, "l'appel est remis");
+    let opened = |call: &'static str| {
+        let db = db.clone();
+        let eve = eve.clone();
+        async move {
+            let evs: Vec<astro_nostr_proto::Event> = db.readers().read(move |c| {
+                let mut st = c.prepare("SELECT e.id, e.pubkey, e.kind, e.created_at, e.content, e.sig, e.tags FROM nostr_events e JOIN nostr_tags t ON t.event_id = e.seq AND t.name = 'p' AND t.value = ?1 WHERE e.kind = 1059")?;
+                let mut rows = st.query([eve])?;
+                let mut out = Vec::new();
+                while let Some(r) = rows.next()? { out.push(astro_db::events::row_to_event(r)?); }
+                Ok(out)
+            }).await.unwrap();
+            evs.iter().filter_map(|w| astro_crypto::nip59::unwrap(&EVE, w).ok()).map(|o| serde_json::from_str::<serde_json::Value>(&o.rumor.content).unwrap()).find(|v| v["call"] == call).unwrap()
+        }
+    };
+    assert!(opened("bbbb0001").await.get("ice").is_none(), "suivie d'un seul côté : pas d'accès au relais");
+    // Eve suit Bob en retour (sa liste kind 3) : amis réciproques, l'accès est joint.
+    let follow = astro_nostr_proto::UnsignedEvent { created_at: 1_800_000_000, kind: 3, tags: vec![vec!["p".into(), bob.clone()]], content: String::new() }.sign(&EVE).unwrap();
+    db.writer().transaction(move |tx| insert_event(tx, &follow).map(|_| ())).await.unwrap();
+    chat.signal(&bob, &eve, &offer("bbbb0002")).await.unwrap();
+    assert!(opened("bbbb0002").await["ice"]["username"].as_str().unwrap().ends_with(&format!("n1-{}", &eve[..16])));
+    // Un nom d'hôte piégé n'est jamais recopié.
+    chat.signal(&alice, &bob, &json!({ "type": "offer", "call": "aaaa0002", "sdp": "v=0\r\n", "turn_host": "x.org?transport=tcp&evil" })).await.unwrap();
+    chat.poll_once().await;
+    assert!(ice_of("aaaa0002").unwrap().is_null());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn in_a_group_call_a_friend_of_my_friend_reaches_me_only_inside_the_room_my_friend_opened() {
+    let dir = std::env::temp_dir().join(format!("astroportd-chat-room-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = Arc::new(Db::open(&dir.join("u.db"), 2).unwrap());
+    // Alice (hôte) et Bob vivent ici ; Bob ne suit pas Eve, mais suit Alice.
+    for (s, email) in [(&ALICE, "alice@example.org"), (&BOB, "bob@example.org")] {
+        db.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, 'multipass', ?2, 1)", vec![hex(s).into(), email.to_owned().into()]).await.unwrap();
+    }
+    db.writer().execute("INSERT INTO social_graph(owner_hex, pubkey, level, updated_at) VALUES (?1, ?2, 1, 0)", vec![hex(&BOB).into(), hex(&ALICE).into()]).await.unwrap();
+    let bus = ActivityBus::default();
+    let keys = Arc::new(StaticKeySource::new().with(ALICE).with(BOB).with(EVE));
+    let chat = Chat::new(db.clone(), keys, into_db(&db, false), into_db(&db, false), bus.clone());
+    let (alice, bob, eve) = (hex(&ALICE), hex(&BOB), hex(&EVE));
+    let got = |src: &str, from: &str, room: &str| calls(&bus).iter().any(|(s, d)| s == src && d["from"] == from && d["call"] == room);
+
+    // Eve, inconnue de Bob, ne peut ni le faire sonner ni rejoindre une salle qu'elle prétend ouvrir.
+    chat.signal(&eve, &bob, &json!({ "type": "offer", "call": "f00d0001", "sdp": "v=0\r\n", "roster": [eve, bob] })).await.unwrap();
+    chat.poll_once().await;
+    assert!(!got("call:offer", &eve, "f00d0001"), "une inconnue ne fait pas sonner");
+
+    // Alice invite Bob dans une salle où figure Eve : Eve peut alors joindre Bob, dans cette salle seulement.
+    chat.signal(&alice, &bob, &json!({ "type": "offer", "call": "f00d0002", "sdp": "v=0\r\n", "roster": [alice, bob, eve] })).await.unwrap();
+    chat.poll_once().await;
+    let offer = calls(&bus).into_iter().find(|(s, d)| s == "call:offer" && d["call"] == "f00d0002").unwrap().1;
+    assert_eq!((offer["friend"].as_bool(), offer["roster"].as_array().unwrap().len()), (Some(true), 3));
+    chat.signal(&eve, &bob, &json!({ "type": "offer", "call": "f00d0002", "sdp": "v=0\r\n" })).await.unwrap();
+    chat.poll_once().await;
+    let from_eve = calls(&bus).into_iter().find(|(s, d)| s == "call:offer" && d["from"] == eve.as_str() && d["call"] == "f00d0002").unwrap().1;
+    assert_eq!(from_eve["friend"], false, "le navigateur sait qu'il ne doit pas sonner pour elle : seulement l'accepter dans la salle en cours");
+    chat.signal(&eve, &bob, &json!({ "type": "join", "call": "f00d0003" })).await.unwrap();
+    chat.poll_once().await;
+    assert!(!got("call:join", &eve, "f00d0003"), "une autre salle : refusée");
+
+    // Seul l'hôte réécrit la liste : Eve ne peut pas y ajouter un complice.
+    let mallory = hex(&[0x77; 32]);
+    chat.signal(&eve, &bob, &json!({ "type": "roster", "call": "f00d0002", "roster": [alice, bob, eve, mallory] })).await.unwrap();
+    chat.signal(&alice, &bob, &json!({ "type": "roster", "call": "f00d0002", "roster": [alice, bob] })).await.unwrap();
+    chat.poll_once().await;
+    chat.signal(&eve, &bob, &json!({ "type": "join", "call": "f00d0002" })).await.unwrap();
+    chat.poll_once().await;
+    assert!(!got("call:join", &eve, "f00d0002"), "retirée de la liste par l'hôte : plus admise");
+
+    // Une liste invalide est refusée à l'envoi : plus de 4 participants, doublon, clé illisible.
+    let five: Vec<String> = (1..=5u8).map(|i| hex(&[i; 32])).collect();
+    for bad in [json!(five), json!([alice, alice]), json!(["pas-une-cle"]), json!([])] {
+        assert!(chat.signal(&alice, &bob, &json!({ "type": "roster", "call": "f00d0002", "roster": bad })).await.is_err(), "{bad}");
+    }
+    let _ = std::fs::remove_dir_all(dir);
 }

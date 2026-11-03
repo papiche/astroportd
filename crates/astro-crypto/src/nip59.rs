@@ -91,6 +91,19 @@ fn ephemeral_key() -> Result<Zeroizing<[u8; 32]>, Nip59Error> {
 
 /// Emballe `rumor` (dont `pubkey` doit être celle de `sender_secret`) pour `recipient_hex`.
 pub fn gift_wrap(sender_secret: &[u8; 32], recipient_hex: &str, rumor: &Rumor, now: u64) -> Result<Event, Nip59Error> {
+    wrap_with(sender_secret, recipient_hex, rumor, now, None)
+}
+
+/// Comme [`gift_wrap`], mais l'enveloppe porte une expiration (NIP-40) : le relai l'oublie passé `expires_at`. Pour les
+/// messages qui ne valent que sur le moment (signaux d'appel, qui contiennent des adresses réseau).
+///
+/// # Errors
+/// Comme [`gift_wrap`].
+pub fn gift_wrap_expiring(sender_secret: &[u8; 32], recipient_hex: &str, rumor: &Rumor, now: u64, expires_at: u64) -> Result<Event, Nip59Error> {
+    wrap_with(sender_secret, recipient_hex, rumor, now, Some(expires_at))
+}
+
+fn wrap_with(sender_secret: &[u8; 32], recipient_hex: &str, rumor: &Rumor, now: u64, expires_at: Option<u64>) -> Result<Event, Nip59Error> {
     if astro_nostr_proto::pubkey_of(sender_secret)? != rumor.pubkey {
         return Err(Nip59Error::Impersonation);
     }
@@ -98,7 +111,11 @@ pub fn gift_wrap(sender_secret: &[u8; 32], recipient_hex: &str, rumor: &Rumor, n
     let seal = UnsignedEvent { created_at: jitter(now)?, kind: kind::SEAL, tags: vec![], content: seal_content }.sign(sender_secret)?;
     let ephemeral = ephemeral_key()?;
     let wrap_content = nip44::encrypt(&nip44::conversation_key(&ephemeral, recipient_hex)?, &serde_json::to_string(&seal).map_err(|_| Nip59Error::Malformed("scellé non sérialisable"))?)?;
-    Ok(UnsignedEvent { created_at: jitter(now)?, kind: kind::GIFT_WRAP, tags: vec![vec!["p".into(), recipient_hex.to_owned()]], content: wrap_content }.sign(&ephemeral)?)
+    let mut tags = vec![vec!["p".into(), recipient_hex.to_owned()]];
+    if let Some(at) = expires_at {
+        tags.push(vec!["expiration".into(), at.to_string()]);
+    }
+    Ok(UnsignedEvent { created_at: jitter(now)?, kind: kind::GIFT_WRAP, tags, content: wrap_content }.sign(&ephemeral)?)
 }
 
 /// Ouvre une enveloppe adressée à `recipient_secret`.
@@ -156,9 +173,12 @@ mod tests {
         wrap.verify().unwrap();
         assert_eq!(wrap.tags, vec![vec!["p".to_owned(), bob_pk]]);
         assert_ne!(wrap.pubkey, astro_nostr_proto::pubkey_of(&alice).unwrap(), "clé jetable : l'expéditeur n'apparaît pas");
-        // Les octets chiffrés (pas leur écriture base64, où trois lettres tombent parfois sur « cid » par hasard).
+        // Les octets chiffrés ne contiennent rien du clair. Des marqueurs d'au moins 4 octets : trois octets d'un chiffré aléatoire
+        // tombent sur « cid » environ une fois sur dix mille (le test en était instable).
         let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &wrap.content).unwrap();
-        assert!(!raw.windows(4).any(|w| w == b"ipfs") && !raw.windows(3).any(|w| w == b"cid"));
+        for marker in [&b"ipfs"[..], b"bafkrei", b"\"cid\""] {
+            assert!(!raw.windows(marker.len()).any(|w| w == marker), "{}", String::from_utf8_lossy(marker));
+        }
         assert!(wrap.created_at <= NOW && NOW - wrap.created_at < JITTER_SECS, "horodatage brouillé vers le passé");
         let open = unwrap(&bob, &wrap).unwrap();
         assert_eq!(open.sender, astro_nostr_proto::pubkey_of(&alice).unwrap());

@@ -173,6 +173,8 @@ struct Candidate {
     score: f64,
     name: Option<String>,
     pubkey: Option<String>,
+    /// Fiche de contact (UID vCard) du visage voisin : un visage reconnu rejoint la même fiche.
+    contact: Option<String>,
 }
 
 /// Service FaceCloud.
@@ -259,11 +261,11 @@ impl<B: BlobStore, E: FaceEngine, O: Outbox> FaceCloud<B, E, O> {
             .readers()
             .read(move |c| {
                 let mut s = c.prepare(
-                    "SELECT v.distance, f.name, f.pubkey FROM \
+                    "SELECT v.distance, f.name, f.pubkey, f.contact_uid FROM \
                        (SELECT face_id, distance FROM face_vectors WHERE embedding MATCH ?1 AND owner_hex = ?2 AND k = ?3) v \
                      JOIN faces f ON f.face_id = v.face_id ORDER BY v.distance",
                 )?;
-                let rows = s.query_map(params![blob, o, k], |r| Ok(Candidate { score: 1.0 - r.get::<_, f64>(0)?, name: r.get(1)?, pubkey: r.get(2)? }))?;
+                let rows = s.query_map(params![blob, o, k], |r| Ok(Candidate { score: 1.0 - r.get::<_, f64>(0)?, name: r.get(1)?, pubkey: r.get(2)?, contact: r.get(3)? }))?;
                 Ok(rows.collect::<Result<Vec<_>, _>>()?)
             })
             .await?)
@@ -282,38 +284,38 @@ impl<B: BlobStore, E: FaceEngine, O: Outbox> FaceCloud<B, E, O> {
             return Ok(FaceReport { face_id: *face_id, name: name.clone(), pubkey: pubkey.clone(), decision: Decision::AlreadyKnown, det_score: face.det_score });
         }
 
-        let (name, pubkey, decision, suggest, reference) = if let Some((pk, nm)) = forced {
-            (nm.to_owned(), Some(pk.to_owned()), Decision::Recognized { score: 1.0 }, None, Some("contact"))
+        let (name, pubkey, contact, decision, suggest, reference) = if let Some((pk, nm)) = forced {
+            (nm.to_owned(), Some(pk.to_owned()), None, Decision::Recognized { score: 1.0 }, None, Some("contact"))
         } else {
             let best = self.nearest(owner, &face.embedding).await?.into_iter().next();
             match best {
                 Some(b) if b.score >= self.config.match_threshold => {
-                    (b.name.clone().unwrap_or_else(|| unknown_name(&hash)), b.pubkey.clone(), Decision::Recognized { score: b.score }, None, None)
+                    (b.name.clone().unwrap_or_else(|| unknown_name(&hash)), b.pubkey.clone(), b.contact.clone(), Decision::Recognized { score: b.score }, None, None)
                 }
                 Some(b) if b.score >= self.config.maybe_min => {
                     let decision = Decision::Suggestion { score: b.score, candidate: b.name.clone() };
-                    (unknown_name(&hash), None, decision, Some((b.pubkey.clone(), b.name.clone(), b.score)), None)
+                    (unknown_name(&hash), None, None, decision, Some((b.pubkey.clone(), b.name.clone(), b.score, b.contact.clone())), None)
                 }
-                _ => (unknown_name(&hash), None, Decision::Unknown, None, None),
+                _ => (unknown_name(&hash), None, None, Decision::Unknown, None, None),
             }
         };
 
         let blob = VectorTable::Face.encode(&face.embedding)?;
         let (o, p, cid, n, pk, h, bb, ds, rf) = (owner.to_owned(), path.to_owned(), photo.cid.clone(), name.clone(), pubkey.clone(), hash, face.bbox, f64::from(face.det_score), reference);
-        let sg = suggest;
+        let (sg, ct) = (suggest, contact);
         let face_id = self
             .db
             .writer()
             .transaction(move |tx| {
                 // Enrôlement d'une empreinte déjà vue : on met l'identité à jour plutôt que de dupliquer.
                 if let Some(id) = tx.query_row("SELECT face_id FROM faces WHERE owner_hex = ?1 AND embed_hash = ?2", params![o, h], |r| r.get::<_, i64>(0)).optional()? {
-                    tx.execute("UPDATE faces SET name = ?2, pubkey = ?3, ref = ?4, suggest_pubkey = NULL, suggest_name = NULL, suggest_score = NULL WHERE face_id = ?1", params![id, n, pk, rf])?;
+                    tx.execute("UPDATE faces SET name = ?2, pubkey = ?3, ref = ?4, suggest_pubkey = NULL, suggest_name = NULL, suggest_score = NULL, suggest_contact_uid = NULL WHERE face_id = ?1", params![id, n, pk, rf])?;
                     return Ok(id);
                 }
                 tx.execute(
-                    "INSERT INTO faces(owner_hex, cid, source_path, name, pubkey, ref, det_score, bbox_x1, bbox_y1, bbox_x2, bbox_y2, embed_hash, ts, ucloud_path, suggest_pubkey, suggest_name, suggest_score) \
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?3,?14,?15,?16)",
-                    params![o, cid, p, n, pk, rf, ds, f64::from(bb.x1), f64::from(bb.y1), f64::from(bb.x2), f64::from(bb.y2), h, now(), sg.as_ref().and_then(|s| s.0.clone()), sg.as_ref().and_then(|s| s.1.clone()), sg.as_ref().map(|s| s.2)],
+                    "INSERT INTO faces(owner_hex, cid, source_path, name, pubkey, ref, det_score, bbox_x1, bbox_y1, bbox_x2, bbox_y2, embed_hash, ts, ucloud_path, suggest_pubkey, suggest_name, suggest_score, contact_uid, suggest_contact_uid) \
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?3,?14,?15,?16,?17,?18)",
+                    params![o, cid, p, n, pk, rf, ds, f64::from(bb.x1), f64::from(bb.y1), f64::from(bb.x2), f64::from(bb.y2), h, now(), sg.as_ref().and_then(|s| s.0.clone()), sg.as_ref().and_then(|s| s.1.clone()), sg.as_ref().map(|s| s.2), ct, sg.as_ref().and_then(|s| s.3.clone())],
                 )?;
                 let id = tx.last_insert_rowid();
                 tx.execute("INSERT INTO face_vectors(face_id, owner_hex, embedding) VALUES (?1, ?2, ?3)", params![id, o, blob])?;

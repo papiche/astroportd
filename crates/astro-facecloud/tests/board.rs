@@ -55,6 +55,7 @@ async fn the_board_groups_unknown_faces_places_everyone_and_hides_references() {
     }
     add_face(&r, 20, "Inconnu_solitaire", None, None, "passant").await;
     add_face(&r, 30, "Contact", None, Some("contact"), "ref").await;
+    r.db.writer().execute("UPDATE faces SET contact_uid = 'fiche-marie' WHERE name = 'Marie'", vec![]).await.unwrap();
 
     let cache = BoardCache::new();
     let b = cache.board(&r.db, &alice, None).await.unwrap();
@@ -74,20 +75,28 @@ async fn the_board_groups_unknown_faces_places_everyone_and_hides_references() {
     // Mémoïsé : même résultat, même groupe.
     assert_eq!(cache.board(&r.db, &alice, None).await.unwrap().faces.iter().find(|f| f.face_id == 10).unwrap().group.as_ref().unwrap().0, g.0);
 
-    // Ranger le groupe dans « Léa » (nouvelle personne) puis un visage dans « Marie » (reprend la clé de Marie).
-    assert_eq!(name_faces(&r.db, &alice, &[10, 11, 12, 13], None, "  Léa ").await.unwrap(), 4);
-    assert_eq!(name_faces(&r.db, &alice, &[20], None, "Marie").await.unwrap(), 1);
+    // Ranger le groupe dans « Léa » (nouvelle fiche) puis un visage dans la fiche de Marie (reprend la clé de Marie).
+    assert_eq!(name_faces(&r.db, &alice, &[10, 11, 12, 13], Some("fiche-lea"), None, "  Léa ").await.unwrap(), 4);
+    assert_eq!(name_faces(&r.db, &alice, &[20], Some("fiche-marie"), None, "Marie").await.unwrap(), 1);
     let b2 = cache.board(&r.db, &alice, None).await.unwrap();
     assert_eq!(b2.unknown, 0);
     assert!(b2.faces.iter().all(|f| f.group.is_none()), "plus d'inconnus, plus de groupes : la révision a changé");
     let marie = b2.people.iter().find(|p| p.name == "Marie").unwrap();
-    assert_eq!((marie.faces, marie.pubkey.as_deref()), (4, Some(hex(&BOB).as_str())), "ranger dans Marie reprend sa clé");
+    assert_eq!((marie.faces, marie.pubkey.as_deref(), marie.contact.as_deref()), (4, Some(hex(&BOB).as_str()), Some("fiche-marie")), "ranger dans la fiche de Marie reprend sa clé");
     assert_eq!(b2.people.iter().find(|p| p.name == "Léa").unwrap().faces, 4);
+    assert!(b2.faces.iter().filter(|f| (10..=13).contains(&f.face_id)).all(|f| f.contact.as_deref() == Some("fiche-lea")));
+    // Homonyme : une autre « Marie » (autre fiche) ne reprend ni la clé ni les visages de la première ; renommer ne casse rien.
+    assert_eq!(name_faces(&r.db, &alice, &[13], Some("fiche-marie-2"), None, "Marie").await.unwrap(), 1);
+    let b3 = cache.board(&r.db, &alice, None).await.unwrap();
+    let maries: Vec<_> = b3.people.iter().filter(|p| p.name == "Marie").collect();
+    assert_eq!(maries.len(), 2, "deux fiches, deux personnes, même nom");
+    assert!(maries.iter().any(|p| p.contact.as_deref() == Some("fiche-marie-2") && p.pubkey.is_none() && p.faces == 1));
     // Validation.
-    assert!(name_faces(&r.db, &alice, &[], None, "x").await.is_err());
-    assert!(name_faces(&r.db, &alice, &[1], None, "   ").await.is_err());
-    assert!(name_faces(&r.db, &alice, &[1], Some("pas-une-cle"), "x").await.is_err());
-    assert_eq!(name_faces(&r.db, &alice, &[30], None, "Pirate").await.unwrap(), 0, "une référence n'est jamais rangée");
+    assert!(name_faces(&r.db, &alice, &[], None, None, "x").await.is_err());
+    assert!(name_faces(&r.db, &alice, &[1], None, None, "   ").await.is_err());
+    assert!(name_faces(&r.db, &alice, &[1], None, Some("pas-une-cle"), "x").await.is_err());
+    assert!(name_faces(&r.db, &alice, &[1], Some(""), None, "x").await.is_err());
+    assert_eq!(name_faces(&r.db, &alice, &[30], None, None, "Pirate").await.unwrap(), 0, "une référence n'est jamais rangée");
 
     // Oublier : le visage et son empreinte disparaissent, la photo reste ; la référence est intacte.
     assert_eq!(forget_faces(&r.db, &alice, &[20, 30, 999]).await.unwrap(), 1);

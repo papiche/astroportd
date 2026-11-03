@@ -14,6 +14,13 @@ export default async function chat(root, K, query) {
   root.replaceChildren(main);
 
   const initial = n => (n || '?')[0].toUpperCase();
+  // Présence visio des amis mutuels qui l'ont choisie : pastille sur l'avatar, statut en clair dans l'en-tête.
+  let pres = {}, reachable = true;
+  const PRES = { online: 'en ligne', visio: 'en appel' };
+  const dot = hex => (PRES[pres[hex]] ? h('span', { class: 'ch-dot ' + pres[hex], role: 'img', 'aria-label': t(PRES[pres[hex]]) }) : null);
+  const presText = h('small', { class: 'ch-pres' });
+  const paintPres = () => { presText.textContent = s.peer && PRES[pres[s.peer]] ? '● ' + t(PRES[pres[s.peer]]) : ''; presText.className = 'ch-pres ' + (pres[s.peer] || ''); };
+  const loadPres = () => api('/api/v1/presence').then(r => { pres = r.friends; reachable = r.reachable; paintPres(); loadList(); }, () => {});
   const day = at => new Date(at * 1000).toLocaleDateString('fr', { weekday: 'long', day: 'numeric', month: 'long' });
   const hour = at => new Date(at * 1000).toLocaleTimeString('fr', { hour: '2-digit', minute: '2-digit' });
 
@@ -21,7 +28,7 @@ export default async function chat(root, K, query) {
     try { const r = await api('/api/v1/chat'); s.convs = r.conversations; here = r.plane || ''; } catch (e) { list.replaceChildren(h('li', { class: 'err', role: 'alert' }, e.message)); return; }
     list.replaceChildren(...s.convs.map(c => h('li', { role: 'option', 'aria-selected': String(c.peer === s.peer), class: c.peer === s.peer ? 'on' : '' },
       h('button', { type: 'button', class: 'ab-item', onclick: () => openConv(c.peer, c.label) },
-        h('span', { class: 'ab-av' }, initial(c.label)),
+        h('span', { class: 'ab-av' }, initial(c.label), dot(c.peer)),
         h('span', { class: 'ab-name' }, h('strong', {}, c.label), h('small', { class: 'muted' }, (c.mine ? t('Vous : ') : '') + c.last),
           here && (c.channels.length > 1 || c.plane !== here) ? h('small', { class: 'ch-planes' }, [...new Set(c.channels.map(x => x.plane))].map(p => h('span', { class: 'pill' + (p === here ? ' ok' : '') }, p + (c.channels.some(x => x.plane === p && x.unread) ? ' ●' : '')))) : null),
         h('span', { class: 'ch-meta' }, h('small', { class: 'muted' }, hour(c.at)), c.unread ? h('span', { class: 'ch-badge', 'aria-label': t('{0} non lu(s)', c.unread) }, String(c.unread)) : null)))));
@@ -32,11 +39,14 @@ export default async function chat(root, K, query) {
     try { for (const f of (await api('/api/v1/friends')).friends) picker.append(h('option', { value: f.hex, 'data-label': f.label }, f.label)); } catch { /* sans proche, la liste reste vide */ }
     picker.onchange = () => { const o = picker.selectedOptions[0]; if (o.value) openConv(o.value, o.dataset.label); picker.value = ''; };
   }
+  // Visio : l'appel part de l'en-tête de la conversation ; un appel manqué (texte « 📹 … » rangé par la station) propose de rappeler.
+  const callBack = () => K.mod('m-call.js').then(m => m.call(K, s.peer, s.label), e => K.toast(e.message));
   function bubble(m, prev) {
-    const out = [];
+    const out = [], missed = m.text.startsWith('📹');
     if (!prev || day(prev.at) !== day(m.at)) out.push(h('div', { class: 'ch-day' }, day(m.at)));
     out.push(h('div', { class: 'ch-msg ' + (m.mine ? 'mine' : 'theirs') + (m.state === 'failed' ? ' failed' : '') },
-      h('p', {}, m.text), h('small', { class: 'muted' }, hour(m.at) + (m.state === 'failed' ? ' · ' + t('non remis') : ''))));
+      h('p', {}, missed ? t(m.text) : m.text), missed ? h('p', {}, h('button', { type: 'button', class: 'ghost', onclick: callBack }, t('Rappeler'))) : null,
+      h('small', { class: 'muted' }, hour(m.at) + (m.state === 'failed' ? ' · ' + t('non remis') : ''))));
     return out;
   }
   function paint(stick) {
@@ -70,12 +80,18 @@ export default async function chat(root, K, query) {
     s.peer = peer; s.label = label || peer.slice(0, 8); s.open = true; s.msgs = []; s.more = false;
     main.classList.add('open');
     detail.replaceChildren(h('div', { class: 'ch-head' }, h('button', { type: 'button', class: 'ab-back', onclick: () => { s.open = false; s.peer = null; main.classList.remove('open'); loadList(); } }, '← ' + t('Retour')),
-      h('span', { class: 'ab-av' }, initial(s.label)), h('strong', {}, s.label), h('small', { class: 'muted' }, t('Chiffré de bout en bout'))), thread, form);
+      h('span', { class: 'ab-av' }, initial(s.label)), h('span', { class: 'ab-name' }, h('strong', {}, s.label), presText), h('small', { class: 'muted' }, t('Chiffré de bout en bout')),
+      h('button', { type: 'button', class: 'ch-callbtn', title: t('Appeler en visio'), 'aria-label': t('Appeler {0} en visio', s.label), onclick: callBack }, '📹')), thread, form);
+    paintPres();
     await refresh(true); await loadList(); box.focus();
   }
-  K.listen(ev => { if (ev.source === 'chat:msg') { loadList(); if (ev.message === s.peer) refresh(true); } });
-  await Promise.all([loadList(), loadFriends()]);
+  K.listen(ev => {
+    if (ev.source === 'chat:msg') { loadList(); if (ev.message === s.peer) refresh(true); }
+    if (ev.kind === 'presence' && ev.data?.hex) { pres[ev.data.hex] = ev.data.status; paintPres(); loadList(); }
+  });
+  await Promise.all([loadList(), loadFriends(), loadPres()]);
   const want = new URLSearchParams(query || '').get('peer');
   if (want) { const c = s.convs.find(x => x.peer === want); openConv(want, c ? c.label : [...picker.options].find(o => o.value === want)?.dataset.label); }
-  else detail.replaceChildren(h('p', { class: 'muted ab-hint' }, t('Choisissez une conversation, ou commencez-en une avec un proche.')));
+  else detail.replaceChildren(h('p', { class: 'muted ab-hint' }, t('Choisissez une conversation, ou commencez-en une avec un proche.')),
+    reachable ? null : h('p', { class: 'muted ab-hint' }, t('Vos amis ne voient pas quand vous êtes là pour un appel visio.'), ' ', h('a', { href: '#/account' }, t('Être joignable'))));
 }

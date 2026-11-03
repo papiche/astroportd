@@ -1,6 +1,6 @@
 [package]
 name = "astroportd"
-version = "0.5.3-beta"
+version = "0.5.4-beta"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -48,6 +48,10 @@ clap.workspace = true
 hex.workspace = true
 sha2.workspace = true
 sha1.workspace = true
+hmac.workspace = true
+md-5.workspace = true
+crc32fast.workspace = true
+if-addrs.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "signal", "process"] }
 rustix.workspace = true
 
@@ -86,7 +90,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.3-beta"
+version = "0.5.4-beta"
 edition = "2024"
 rust-version = "1.85"
 license = "AGPL-3.0-only"
@@ -148,6 +152,9 @@ clap = { version = "4", features = ["derive"] }
 hkdf = "0.12"
 hmac = "0.12"
 sha1 = "0.10"
+md-5 = "0.10"
+crc32fast = "1"
+if-addrs = "0.15"
 chacha20 = "0.9"
 tokio-util = { version = "0.7", default-features = false, features = ["io", "compat"] }
 percent-encoding = "2"

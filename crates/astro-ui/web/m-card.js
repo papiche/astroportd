@@ -89,7 +89,9 @@ export default async function card(K, { path, me, blank, groups, onSaved, onClos
     h('div', { class: 'ab-pic' }, f.picture ? h('img', { src: f.picture, alt: '', width: 64, height: 64, referrerpolicy: 'no-referrer' }) : embedded(d.path, f.name), !isMe && d.path ? h('button', { type: 'button', class: 'ghost', onclick: () => photoEditor(K, pic, d.path, onSaved) }, t('Photo…')) : null),
     h('div', {}, h('h3', {}, f.name || t('Nouvelle fiche'), isMe ? h('span', { class: 'pill ok' }, t('Moi')) : null),
       isMe ? h('p', { class: 'muted' }, t('Votre profil Nostr et votre fiche sont réunis : ce que vous changez ici est publié (champs « public ») et enregistré dans votre fiche chiffrée (tout le reste, qui ne quitte jamais votre uCloud).'))
-        : d.pubkey ? h('p', {}, h('span', { class: 'pill ok' }, d.hosted_here ? t('MULTIPASS de la station') : t('Clé Nostr')), d.faces ? ` · ${d.faces} ${t('visage(s) reconnu(s)')}` : '') : h('p', { class: 'muted' }, t('Pas encore reliée à un MULTIPASS'), d.faces ? ` · ${d.faces} ${t('visage(s) reconnu(s)')}` : '')));
+        : d.pubkey ? [h('p', {}, h('span', { class: 'pill ok' }, d.hosted_here ? t('MULTIPASS de la station') : t('Clé Nostr')), d.faces ? ` · ${d.faces} ${t('visage(s) reconnu(s)')}` : ''),
+          // Visio : une personne reliée à un MULTIPASS s'appelle d'ici (la sonnerie ne passe que si elle vous suit aussi).
+          h('p', {}, h('button', { type: 'button', onclick: () => K.mod('m-call.js').then(m => m.call(K, d.pubkey, f.name), e => K.toast(e.message)) }, '📹 ' + t('Appeler en visio')))] : h('p', { class: 'muted' }, t('Pas encore reliée à un MULTIPASS'), d.faces ? ` · ${d.faces} ${t('visage(s) reconnu(s)')}` : '')));
 
   // Comparaison avec le profil Nostr de la personne : on prend chaque valeur, une par une.
   const compare = () => {
@@ -132,10 +134,17 @@ export default async function card(K, { path, me, blank, groups, onSaved, onClos
     try { await api('/api/v1/book/delete', { method: 'POST', body: { path: d.path } }); K.toast(t('Fiche supprimée'), 1); onSaved(null, true); } catch (e) { K.toast(e.message); }
   } }, t('Supprimer'));
 
-  box.append(head, pic, compare(),
+  // Ses visages, reliés à la fiche par son UID : un clic montre la photo d'origine, le visage entouré.
+  const seen = !blank && d.faces ? h('section', { class: 'ab-seen' }, h('h4', {}, t('Ses visages ({0})', d.faces)), h('div', { class: 'ab-faces' }, h('span', { class: 'muted' }, t('Chargement…')))) : null;
+  if (seen) (async () => {
+    const r = await api('/api/v1/book/photo-choices?path=' + encodeURIComponent(d.path)), th = (await api('/api/v1/faces/thumbs', { method: 'POST', body: { ids: r.photos.map(p => p.id), size: 96 } })).thumbs, fr = await K.mod('m-framed.js');
+    seen.lastChild.replaceChildren(...r.photos.map(p => h('button', { type: 'button', class: 'ab-face', title: t('Voir la photo'), onclick: () => fr.showFace(K, p, f.name + ' · ' + p.path) }, h('img', { src: th[p.id] || '', alt: '', width: 56, height: 56 }))),
+      r.total > r.photos.length ? h('a', { href: '#/people/tri' }, t('et {0} autre(s) sur la table de tri', r.total - r.photos.length)) : null);
+  })().catch(e => seen.lastChild.replaceChildren(h('span', { class: 'muted' }, e.message)));
+  box.append(head, pic, seen, compare(),
     h('fieldset', {}, h('legend', {}, t('Identité')), text('name', t('Nom affiché'), { public: true, max: 80 }), h('div', { class: 'ab-2' }, text('given', t('Prénom'), { max: 60 }), text('family', t('Nom de famille'), { max: 60 })), h('div', { class: 'ab-2' }, text('org', t('Société'), { max: 80 }), text('title', t('Fonction'), { max: 80 })), text('birthday', t('Anniversaire'), { type: 'date', max: 12 })),
     h('fieldset', {}, h('legend', {}, t('Joindre')), typedList('phones', t('Téléphones'), '+33 6 12 34 56 78', 'tel'), typedList('emails', t('Emails'), 'nom@exemple.org', 'email'), addresses(), urls(), link, keys),
-    h('fieldset', {}, h('legend', {}, pub ? t('Profil public (Nostr)') : t('À propos')), text('about', t('Présentation'), { area: true, max: 500, public: true }), text('picture', t('Image (https)'), { type: 'url', max: 256, public: true }), text('nip05', t('Identifiant NIP-05'), { ph: 'nom@domaine.org', max: 100, public: true }), text('lud16', t('Adresse Lightning'), { ph: 'nom@domaine.org', max: 100, public: true })),
+    h('fieldset', {}, h('legend', {}, pub ? t('Profil public (Nostr)') : t('À propos')), text('about', t('Présentation'), { area: true, max: 500, public: true }), text('picture', t('Image (https)'), { type: 'url', max: 256, public: true }), text('nip05', t('Adresse vérifiée (nom@domaine)'), { ph: 'nom@domaine.org', max: 100, public: true }), text('lud16', t('Adresse Lightning'), { ph: 'nom@domaine.org', max: 100, public: true })),
     h('fieldset', {}, h('legend', {}, t('Classement et notes privées')), groupsEditor(), text('note', t('Notes (privées)'), { area: true, max: 2000 })),
     h('div', { class: 'ab-actions' }, h('button', {}, isMe ? t('Publier et enregistrer') : t('Enregistrer')), remove));
   return box;

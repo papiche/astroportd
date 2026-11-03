@@ -75,7 +75,7 @@ export default async function library(root, K) {
 
   // ── Carte ──
   const mapSection = h('section', { class: 'card wide' }, h('h2', {}, t('Carte')), h('p', { class: 'muted' }, t('Vos photos géolocalisées, regroupées par la station : aucun service de carte extérieur n\'est appelé.')));
-  import('/ui/m-map.js').then(m => mapSection.append(m.default(K, grid)), e => mapSection.append(h('p', { class: 'err' }, e.message)));
+  K.mod('m-map.js').then(m => mapSection.append(m.default(K, grid)), e => mapSection.append(h('p', { class: 'err' }, e.message)));
 
   // ── Doublons ──
   const dupBox = h('div', {});

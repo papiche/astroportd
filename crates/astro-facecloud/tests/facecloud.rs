@@ -110,8 +110,14 @@ async fn thresholds_recognized_suggestion_unknown_and_deterministic_names() {
     let r = rig("thresholds", |_| {}).await;
     enroll_friends(&r).await;
     put_photo(&r, "p.jpg", "FACES:bob+x,bob~carol,mystere").await;
+    // Les références de Bob et Carol sont rangées dans leurs fiches : un visage reconnu (ou suggéré) suit la fiche, pas le nom.
+    r.db.writer().execute("UPDATE faces SET contact_uid = 'fiche-' || lower(name)", vec![]).await.unwrap();
     let rep = r.fc.process_photo(&hex(&ALICE), "/p.jpg").await.unwrap();
     assert_eq!(rep.status, "faces");
+    let contact_of = |id: i64| { let db = r.db.clone(); async move { db.readers().read(move |c| Ok(c.query_row("SELECT contact_uid, suggest_contact_uid FROM faces WHERE face_id = ?1", [id], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)))?)).await.unwrap() } };
+    assert_eq!(contact_of(rep.faces[0].face_id).await, (Some("fiche-bob".to_owned()), None), "reconnu : rejoint la fiche de Bob");
+    let (none, suggested) = contact_of(rep.faces[1].face_id).await;
+    assert!(none.is_none() && suggested.is_some_and(|c| c == "fiche-bob" || c == "fiche-carol"), "suggéré : la fiche attend la validation");
     // 1. Même personne, autre photo : reconnu (score ≥ 0,82).
     assert!(matches!(rep.faces[0].decision, Decision::Recognized { score } if score > 0.95), "{:?}", rep.faces[0]);
     assert_eq!(rep.faces[0].name, "Bob");
@@ -139,6 +145,7 @@ async fn thresholds_recognized_suggestion_unknown_and_deterministic_names() {
     assert!(!r.fc.accept_suggestion(&hex(&ALICE), id).await.unwrap(), "plus de suggestion en attente");
     let row = faces_of(&r, &ALICE).await.into_iter().find(|f| f.0 == "Bob" || f.0 == "Carol").unwrap();
     assert!(row.1.is_some());
+    assert!(contact_of(id).await.0.is_some_and(|c| c.starts_with("fiche-")), "validée : le visage rejoint la fiche suggérée");
     // Un inconnu nommé à la main devient un contact.
     let unknown_id = rep.faces[2].face_id;
     r.fc.name_face(&hex(&ALICE), unknown_id, Some(&hex(&DAVE)), "Dave bis").await.unwrap();

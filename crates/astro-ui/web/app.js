@@ -139,9 +139,9 @@ for (const b of picker.all) { if (!b.isConnected) { picker.all.delete(b); contin
 picker.change();
 }
 function togglePick(path) { if (picker.set.has(path)) picker.set.delete(path); else picker.set.add(path); mark(); }
-const photos = async () => (await import('/ui/m-photos.js')).default({ api, toast, t, h, blobs, del, picker, mark, viewer, cur: () => ({ items, at }), show });
+const photos = async () => (await mod('m-photos.js')).default({ api, toast, t, h, blobs, del, picker, mark, viewer, cur: () => ({ items, at }), show });
 $('#share-x').onclick = () => $('#share').close();
-const share = async paths => (await import('/ui/m-share.js')).default({ api, toast, h, $, when, b64 })(paths);
+const share = async paths => (await mod('m-share.js')).default({ api, toast, h, $, when, b64 })(paths);
 let cleanups = [];
 const every = (ms, fn) => { const t = setInterval(fn, ms); cleanups.push(() => clearInterval(t)); };
 const pill = s => h('span', { class: 'pill ' + s }, { ok: 'OK', degraded: 'Dégradé', down: 'Panne', disabled: 'Inactif' }[s] || s);
@@ -242,7 +242,7 @@ box.replaceChildren(h('p', { class: 'muted' }, `Compte ${r.login}. À transmettr
 }
 const price = z => z > 0 ? `${z} ẑ / ${t('semaine')}` : t('gratuit');
 // Réglage de l'hébergement d'un compte (ou du palier par défaut) : un panneau dans la page (m-hosting.js), sans fenêtre de saisie.
-async function hosting(a, hd) { const box = $('#hosting-edit'); box.hidden = false; (await import('/ui/m-hosting.js')).default(box, K, a, hd); box.scrollIntoView?.({ behavior: 'smooth' }); }
+async function hosting(a, hd) { const box = $('#hosting-edit'); box.hidden = false; (await mod('m-hosting.js')).default(box, K, a, hd); box.scrollIntoView?.({ behavior: 'smooth' }); }
 async function viewCloud(root, q) {
 const path = q.get('p') || '/', mode = q.get('m'), album = mode === 'album', sources = mode === 'sources', organize = mode === 'organize';
 const go = (p, m) => { location.hash = '#/cloud?' + new URLSearchParams({ p, ...(m && { m }) }); };
@@ -251,8 +251,8 @@ h('button', { class: album || sources || organize ? 'ghost' : '', onclick: () =>
 h('button', { class: album ? '' : 'ghost', onclick: () => go(path, 'album') }, 'Album'),
 h('button', { class: sources ? '' : 'ghost', onclick: () => go(path, 'sources') }, 'Sources'),
 h('button', { class: organize ? '' : 'ghost', onclick: () => go(path, 'organize') }, 'Ranger'));
-if (sources) return (await import('/ui/m-sources.js')).default(root, K, tabs);
-if (organize) return (await import('/ui/m-organize.js')).default(root, K, tabs);
+if (sources) return (await mod('m-sources.js')).default(root, K, tabs);
+if (organize) return (await mod('m-organize.js')).default(root, K, tabs);
 if (album) {
 const grid = h('div', { class: 'photos' }), more = h('button', { class: 'ghost' }, 'Plus de photos'), list = [];
 root.replaceChildren(tabs, grid, h('p', {}, more));
@@ -267,7 +267,7 @@ return load();
 }
 const r = await api('/api/v1/ucloud/list?path=' + encodeURIComponent(path));
 dav = r.dav || dav;
-const sel = new Set(), btn = h('button', { disabled: true, onclick: () => share([...sel]) }, 'Partager la sélection'), send = h('button', { disabled: true, class: 'ghost', onclick: () => import('/ui/m-send.js').then(m => m.default([...sel], K)) }, 'Envoyer à des proches'), pubBox = h('div', { class: 'card', hidden: '' }), pub = h('button', { disabled: true, class: 'ghost', onclick: () => { pubBox.hidden = false; import('/ui/m-publish.js').then(m => m.default(pubBox, [...sel], K, path, () => go(path))); } }, path.startsWith('/Public') ? 'Retirer de Public' : 'Publier');
+const sel = new Set(), btn = h('button', { disabled: true, onclick: () => share([...sel]) }, 'Partager la sélection'), send = h('button', { disabled: true, class: 'ghost', onclick: () => mod('m-send.js').then(m => m.default([...sel], K)) }, 'Envoyer à des proches'), pubBox = h('div', { class: 'card', hidden: '' }), pub = h('button', { disabled: true, class: 'ghost', onclick: () => { pubBox.hidden = false; mod('m-publish.js').then(m => m.default(pubBox, [...sel], K, path, () => go(path))); } }, path.startsWith('/Public') ? 'Retirer de Public' : 'Publier');
 const parts = path.split('/').filter(Boolean), crumbs = h('span', { class: 'crumbs' }, h('a', { href: '#/cloud' }, 'uCloud'));
 parts.forEach((n, i) => crumbs.append(' / ', h('a', { href: '#/cloud?p=' + encodeURIComponent('/' + parts.slice(0, i + 1).join('/')) }, n)));
 const media = r.entries.filter(x => x.type === 'file' && kindOf(x.mime) !== 'file');
@@ -299,6 +299,7 @@ function startLive() {
 startLive = () => {};
 live(ev => {
 if (ev.source === 'chat:msg') { refreshBadge(); if (!location.hash.startsWith('#/chat')) toast(t('Nouveau message'), 1); }
+if (ev.kind === 'call') mod('m-call.js').then(m => m.signal(K, ev.data), e => toast(e.message)); // visio
 feed.push(ev); if (feed.length > 200) feed.shift();
 listeners.forEach(l => l(ev));
 if (ev.at * 1000 > started - 5000) { if (ev.kind === 'economy') toast(ev.message, 1); else if (ev.source === 'bro:upload') toast(ev.message, 1); }
@@ -332,6 +333,9 @@ await new Promise(ok => setTimeout(ok, wait)); wait = Math.min(wait * 2, 30000);
 }
 // Multilingue : le français du code sert de clé ; m-lang-<lg>.js donne les textes exacts traduits (sinon le français reste).
 let dict = {};
+// Phrases propres à un écran : chargées avec lui (voir m-lang-<lg>.js).
+let PARTS = new Set(); const parts = new Set();
+const mod = async f => { const p = f.slice(2, -3); if (lang !== 'fr' && PARTS.has(p) && !parts.has(p)) { parts.add(p); try { Object.assign(dict, (await import(`/ui/m-lang-${lang}-${p}.js`)).default); tr(document.body); } catch (e) { toast(e.message); } } return import('/ui/' + f); };
 const LANGS = ['fr', 'en', 'es'], lsGet = () => { try { return localStorage.getItem('lang'); } catch { return null; } };
 const lang = LANGS.find(l => l === (lsGet() || navigator.language.slice(0, 2))) || 'fr';
 const t = (s, ...a) => a.reduce((r, v, i) => r.replace(`{${i}}`, v), dict[s] ?? s);
@@ -345,14 +349,16 @@ const setLang = l => { try { localStorage.setItem('lang', l); } catch { /* préf
 async function loadLang() {
 document.documentElement.lang = lang;
 if (lang === 'fr') return;
-try { dict = (await import(`/ui/m-lang-${lang}.js`)).default; } catch (e) { toast(e.message); return; }
+try { const m = await import(`/ui/m-lang-${lang}.js`); dict = m.default; PARTS = new Set(m.parts.split(' ')); } catch (e) { toast(e.message); return; }
 tr(document.body); new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(tr))).observe(document.body, { childList: true, subtree: true });
 }
 // Écrans lourds chargés à la demande (hors budget de la coque) : ils reçoivent la boîte à outils ci-dessous.
-const K = { t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, tiles, every, enc, del, picker, mark, photos, dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n), feed, listeners };
-const lazyView = f => async (root, q) => (await import('/ui/' + f)).default(root, K, q);
+const K = { mod, t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, blob: blobUrl, tiles, every, enc, del, picker, mark, photos, dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n), feed, listeners };
+const lazyView = f => async (root, q) => (await mod(f)).default(root, K, q);
 const views = { stats: viewHome, station: viewStation, cloud: viewCloud };
 for (const n of ['home', 'account', 'contacts', 'chat', 'people', 'replication', 'library', 'coop', 'constellation', 'billets', 'cockpit', 'options', 'planes', 'bro']) views[n] = lazyView(`m-${n}.js`);
+// Personnes = le carnet et les visages réunis (m-contacts.js) ; la table de tri en est une sous-vue (#/people/tri, ?grand : Trier en grand).
+views.people = views.contacts; views.sort = lazyView('m-people.js');
 let me = null;
 async function route() {
 cleanups.forEach(c => c()); cleanups = [];
@@ -362,13 +368,13 @@ blobs.forEach(p => p.then(URL.revokeObjectURL, () => {})); blobs.clear();
 const [p, qs] = (location.hash.slice(1) || '/').split('?'), main = h('main', { id: 'main', tabindex: '-1' }, h('p', { class: 'muted' }, 'Chargement…'));
 $('#main').replaceWith(main);
 try {
-if (!me) { me = await api('/api/v1/me'); import('/ui/m-nostr.js').then(m => m.default(me, api), () => {}); import('/ui/m-ux.js').then(m => m.default(me, api, t), () => {}); }
+if (!me) { me = await api('/api/v1/me'); mod('m-nostr.js').then(m => m.default(me, api), () => {}); mod('m-ux.js').then(m => m.default(me, api, t), () => {}); }
 document.querySelector('nav a[data-r=bro]').hidden = !me.ai; // BRO n'existe que pour un MULTIPASS qui a déclaré une IA (Mon compte)
 if (!me.ai && location.hash.startsWith('#/bro')) { toast(t('Déclarez une IA (Ollama ou clé d\'API) dans Mon compte pour utiliser BRO')); location.hash = '#/account'; return; }
 if (me.captain) planeSwitch();
 document.querySelector('nav a[data-r=station]').hidden = !me.captain; document.querySelector('nav a[data-r=station]').href = '#/cockpit'; // l'écran Capitaine n'existe pas pour un MULTIPASS
-const name = p.startsWith('/chiffres') ? 'stats' : ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts', 'chat', 'constellation', 'billets'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/planes') && me.captain ? 'planes' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/cockpit') && me.captain ? 'cockpit' : p.startsWith('/station') && me.captain ? 'station' : 'home');
-document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (name === 'coop' || name === 'options' || name === 'planes' || name === 'cockpit' ? 'station' : name === 'stats' ? 'home' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
+const name = p.startsWith('/chiffres') ? 'stats' : p.startsWith('/people/tri') ? 'sort' : ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts', 'chat', 'constellation', 'billets'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/planes') && me.captain ? 'planes' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/cockpit') && me.captain ? 'cockpit' : p.startsWith('/station') && me.captain ? 'station' : 'home');
+document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (name === 'coop' || name === 'options' || name === 'planes' || name === 'cockpit' ? 'station' : name === 'stats' ? 'home' : name === 'sort' || name === 'contacts' ? 'people' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
 await views[name](main, new URLSearchParams(qs || ''));
 $('#out').hidden = false;
 startLive(); refreshBadge();
