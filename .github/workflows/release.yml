@@ -40,11 +40,11 @@ jobs:
           # macOS : « au mieux » tant qu'une compilation n'a pas réussi sur ces cibles (voir docs/MACOS.md).
           - target: aarch64-apple-darwin
             apt: ''
-            os: macos-14
+            os: macos-15
             experimental: true
           - target: x86_64-apple-darwin
             apt: ''
-            os: macos-14
+            os: macos-15
             experimental: true
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +71,8 @@ jobs:
   publish:
     name: Publication
     needs: build
+    # Une cible « au mieux » qui échoue (ou dont la machine n'existe plus chez GitHub) ne doit pas empêcher de publier les autres.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4 # pour RELEASE_NOTES.md

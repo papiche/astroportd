@@ -44,7 +44,7 @@ jobs:
 
   macos:
     name: macOS (Apple Silicon)
-    runs-on: macos-14
+    runs-on: macos-15
     # Première CI macOS : le binaire n'avait jamais été compilé sur ce système. Non bloquante tant qu'elle n'a pas été
     # verte une fois ; retirer `continue-on-error` ensuite.
     continue-on-error: true
