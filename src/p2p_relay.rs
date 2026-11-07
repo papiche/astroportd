@@ -14,7 +14,7 @@ use astro_nostr_proto::{Event, Filter};
 use astro_p2p::tunnel::{Forward, forward};
 use astro_p2p::P2pHandle;
 use astro_sync::peers::{RELAY_SERVICE, parse_target};
-use astro_sync::{ClientError, RelayClient, WsClient};
+use astro_sync::{BoxFuture, ClientError, RelayClient, RelaySession, WsClient, WsSession};
 use astro_p2p::PeerId;
 
 /// Dernière voie empruntée vers une cible.
@@ -127,9 +127,75 @@ impl RelayClient for P2pRelayClient {
             }
         }
     }
+
+    async fn session<'a>(&'a self, relay: &'a str) -> Result<Box<dyn RelaySession + 'a>, ClientError> {
+        let inner = self.open(relay).await?;
+        Ok(Box::new(P2pSession { owner: self, relay, inner }))
+    }
+}
+
+/// Session du crawl sur la voie choisie à l'ouverture ; un échec en cours de route est noté dans l'état des routes.
+struct P2pSession<'a> {
+    owner: &'a P2pRelayClient,
+    relay: &'a str,
+    inner: WsSession<'a>,
+}
+
+impl RelaySession for P2pSession<'_> {
+    fn fetch<'s>(&'s mut self, filter: &'s Filter) -> BoxFuture<'s, Result<Vec<Event>, ClientError>> {
+        Box::pin(async move {
+            let got = self.inner.fetch(filter).await;
+            if let Err(e) = &got {
+                self.owner.note(self.relay, "down", Some(e.to_string()));
+            }
+            got
+        })
+    }
 }
 
 impl P2pRelayClient {
+    /// Session durable vers la cible : même choix de voie que [`RelayClient::fetch`], fait une fois à l'ouverture (la
+    /// connexion est établie tout de suite, le repli sur l'adresse publique reste donc possible).
+    async fn open(&self, relay: &str) -> Result<WsSession<'_>, ClientError> {
+        let target = parse_target(relay);
+        let Some(peer) = target.peer else {
+            let got = self.ws.open_session_as(relay, relay).await;
+            self.note(relay, if got.is_ok() { "direct" } else { "down" }, got.as_ref().err().map(ToString::to_string));
+            return got;
+        };
+        let primary = match &self.p2p {
+            None => Err(ClientError::Connection("maillage P2P inactif sur cette station".into())),
+            Some(handle) => match self.local_for(handle, peer).await {
+                Ok(addr) => self.ws.open_session_as(&format!("ws://{addr}"), target.url.unwrap_or(relay)).await,
+                Err(e) => Err(e),
+            },
+        };
+        match primary {
+            Ok(session) => {
+                self.note(relay, "p2p", None);
+                Ok(session)
+            }
+            Err(e) if transport(&e) && target.url.is_some() => {
+                let why = e.to_string();
+                let url = target.url.unwrap_or_default();
+                match self.ws.open_session_as(url, url).await {
+                    Ok(session) => {
+                        self.note(relay, "wss", Some(format!("tunnel : {why}")));
+                        Ok(session)
+                    }
+                    Err(e2) => {
+                        self.note(relay, "down", Some(format!("tunnel : {why} ; adresse publique : {e2}")));
+                        Err(e2)
+                    }
+                }
+            }
+            Err(e) => {
+                self.note(relay, "down", Some(e.to_string()));
+                Err(e)
+            }
+        }
+    }
+
     /// Publie `event` sur la cible `relay` (adresse ordinaire ou `p2p://<PeerID>[|url]`) : même choix de voie que pour la
     /// lecture (tunnel du maillage, adresse publique en repli après un échec de connexion). `(accepté, message)`.
     pub async fn publish(&self, relay: &str, event: &Event) -> Result<(bool, String), ClientError> {
@@ -179,5 +245,9 @@ pub struct SharedRelayClient(pub std::sync::Arc<P2pRelayClient>);
 impl RelayClient for SharedRelayClient {
     async fn fetch(&self, relay: &str, filter: &Filter) -> Result<Vec<Event>, ClientError> {
         self.0.fetch(relay, filter).await
+    }
+
+    async fn session<'a>(&'a self, relay: &'a str) -> Result<Box<dyn RelaySession + 'a>, ClientError> {
+        self.0.session(relay).await
     }
 }

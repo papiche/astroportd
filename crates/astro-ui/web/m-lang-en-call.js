@@ -33,5 +33,6 @@ export default {
 "Appel de groupe : {0} personnes au plus": "Group call: {0} people at most",
 "Appel…": "Calling…",
 "vous invite à un appel de groupe": "invites you to a group call",
-"{0} : pas de chemin entre vos réseaux": "{0}: no path between your networks"
+"{0} : pas de chemin entre vos réseaux": "{0}: no path between your networks",
+"Connexion faible : passage en voix seule pour garder le son. Touchez 📻 pour rendre l'image.": "Weak connection: switching to voice only to keep the sound. Tap 📻 to bring video back."
 };

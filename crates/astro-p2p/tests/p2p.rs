@@ -303,3 +303,25 @@ async fn a_peer_can_be_asked_whether_it_holds_a_blob_without_transferring_it() {
     let dest = FsBlobStore::open(dir.0.join("b")).unwrap();
     assert_eq!(fetch_from(&b.handle, a.handle.peer_id(), &cid, &dest, 1 << 20, FETCH).await.unwrap().cid, cid);
 }
+
+#[tokio::test]
+async fn a_station_answers_each_asker_according_to_who_asks() {
+    use astro_p2p::ask::{AnswerFn, MAX_ANSWER, answer, ask};
+    let (a, a_addr) = node(61, None, false).await;
+    let (b, _) = node(62, None, false).await;
+    let (c, _) = node(63, None, false).await;
+    b.handle.dial(a_addr.clone()).await.unwrap();
+    c.handle.dial(a_addr).await.unwrap();
+    let friend = b.handle.peer_id();
+    let f: AnswerFn = Arc::new(move |peer| Box::pin(async move { if peer == friend { b"bureau-vnc".to_vec() } else { Vec::new() } }));
+    let _answers = answer(&a.handle, "/test/ask/1", f).unwrap();
+    let t = std::time::Duration::from_secs(5);
+    assert_eq!(ask(&b.handle, a.handle.peer_id(), "/test/ask/1", t).await.unwrap(), b"bureau-vnc");
+    assert!(ask(&c.handle, a.handle.peer_id(), "/test/ask/1", t).await.unwrap().is_empty(), "C ne voit rien");
+    // Une réponse trop grande est tronquée par la station : le demandeur ne reçoit jamais plus que la borne.
+    let big: AnswerFn = Arc::new(|_| Box::pin(async { vec![7u8; MAX_ANSWER * 4] }));
+    let _big = answer(&a.handle, "/test/big/1", big).unwrap();
+    assert_eq!(ask(&b.handle, a.handle.peer_id(), "/test/big/1", t).await.unwrap().len(), MAX_ANSWER);
+    // Protocole inconnu chez la station : erreur claire, pas de blocage.
+    assert!(ask(&b.handle, a.handle.peer_id(), "/test/absent/1", t).await.is_err());
+}

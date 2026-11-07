@@ -56,7 +56,35 @@ pub struct DavConfig {
     pub propfind_infinity_cap: usize,
     /// Secret de la station dont dérivent les jetons Basic.
     pub station_secret: Zeroizing<Vec<u8>>,
+    /// Appelé quand la lecture d'un fichier échoue en cours d'envoi (blob altéré, disque) ; la station le relaie sur le
+    /// bus d'activité. Absent : le signalement va sur la sortie d'erreur. Une déconnexion du client n'est pas signalée.
+    pub on_read_failure: Option<ReadFailureHook>,
+    /// Appelé à chaque authentification réussie (jeton Basic, jeton d'appareil ou NIP-98) avec la clé (hex) du compte :
+    /// c'est la preuve que le membre a bien reçu et utilise ses clés. Doit rester bon marché (appelé à chaque requête).
+    pub on_login: Option<LoginHook>,
 }
+
+/// Rappel d'authentification réussie (voir [`DavConfig::on_login`]).
+pub type LoginHook = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Échec de lecture d'un fichier pendant son envoi.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadFailure {
+    /// Propriétaire (hex).
+    pub owner: String,
+    /// Chemin dans l'uCloud.
+    pub path: String,
+    /// CID du blob.
+    pub cid: String,
+    /// `true` : le blob ne se déchiffre pas (tag invalide, tronqué, en-tête illisible), c'est une atteinte à son
+    /// intégrité ; `false` : erreur d'entrée/sortie en lisant le blob.
+    pub integrity: bool,
+    /// Raison lisible.
+    pub reason: String,
+}
+
+/// Rappel d'échec de lecture (voir [`DavConfig::on_read_failure`]).
+pub type ReadFailureHook = Arc<dyn Fn(&ReadFailure) + Send + Sync>;
 
 impl DavConfig {
     /// Réglages par défaut : 1 Go / 4 Go par fichier, 10 Go / 128 Go de quota (valeurs du legacy).
@@ -70,6 +98,8 @@ impl DavConfig {
             quota_zencard: 128 * GIB,
             propfind_infinity_cap: 10_000,
             station_secret: Zeroizing::new(station_secret),
+            on_read_failure: None,
+            on_login: None,
         }
     }
 
@@ -191,6 +221,15 @@ impl Auth {
 // L'erreur est la réponse HTTP elle-même, renvoyée telle quelle : la boxer n'apporterait rien.
 #[allow(clippy::result_large_err)]
 async fn authenticate<B: BlobStore>(st: &DavState<B>, headers: &HeaderMap, method: &str, uri: &axum::http::Uri) -> Result<Auth, Response> {
+    let auth = authenticate_inner(st, headers, method, uri).await?;
+    if let Some(hook) = &st.config.on_login {
+        hook(&auth.account.owner);
+    }
+    Ok(auth)
+}
+
+#[allow(clippy::result_large_err)]
+async fn authenticate_inner<B: BlobStore>(st: &DavState<B>, headers: &HeaderMap, method: &str, uri: &axum::http::Uri) -> Result<Auth, Response> {
     let Some(value) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) else { return Err(unauthorized()) };
     let scheme = value.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
     match scheme.as_str() {
@@ -447,6 +486,7 @@ pub(crate) async fn get<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str,
 /// Sert le **clair** du fichier `path` de `owner` (Range, ETag, déchiffrement en flux). L'appelant décide qui a le droit de le lire :
 /// le serveur WebDAV après authentification, le site public de `/Public` sans.
 pub async fn get_owner<B: BlobStore>(st: &DavState<B>, owner: &str, path: &str, headers: &HeaderMap, head_only: bool) -> Response {
+    let (failure_owner, failure_path) = (owner.to_owned(), path.to_owned());
     let owner = owner.to_owned();
     let p = path.to_owned();
     let found = st
@@ -499,16 +539,78 @@ pub async fn get_owner<B: BlobStore>(st: &DavState<B>, owner: &str, path: &str, 
         return reply(StatusCode::INTERNAL_SERVER_ERROR, "CID invalide");
     }
     let Ok((mut reader, blob_len)) = st.blobs.open(&cid).await else { return reply(StatusCode::INTERNAL_SERVER_ERROR, "blob indisponible") };
+    let blob_cid = cid.clone();
     // Tuyau borné : seuls quelques chunks de 64 Kio sont en mémoire, quelle que soit la taille du fichier.
     let (mut writer, pipe) = tokio::io::duplex(128 * 1024);
+    let hook = st.config.on_read_failure.clone();
     tokio::spawn(async move {
         // Une erreur ferme le tuyau : le client reçoit moins d'octets que `Content-Length` et détecte la coupure.
-        let _ = match range {
-            Some((s, e)) => uenc::decrypt_range(&key, &mut reader, blob_len, s, e, &mut writer).await,
-            None => uenc::decrypt_stream(&key, &mut reader, &mut writer).await,
+        let mut out = TrackedWriter { inner: &mut writer, failed: false };
+        let outcome = match range {
+            Some((s, e)) => uenc::decrypt_range(&key, &mut reader, blob_len, s, e, &mut out).await,
+            None => uenc::decrypt_stream(&key, &mut reader, &mut out).await,
         };
+        if let Err(e) = outcome {
+            // Le client parti (tuyau fermé côté réponse) n'est pas une anomalie : seul l'échec côté blob est signalé.
+            if !out.failed {
+                report_read_failure(hook.as_ref(), ReadFailure { owner: failure_owner, path: failure_path, cid: blob_cid, integrity: is_integrity(&e), reason: e.to_string() });
+            }
+        }
     });
     builder.body(Body::from_stream(ReaderStream::new(pipe))).unwrap_or_else(|_| reply(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne"))
+}
+
+/// Erreurs qui disent que le blob lui-même est mauvais (et non le disque ou le réseau).
+fn is_integrity(e: &uenc::UencError) -> bool {
+    use uenc::UencError as U;
+    matches!(e, U::AuthFailed | U::Truncated | U::NotUenc | U::UnsupportedVersion(_) | U::UnsupportedCipher(_) | U::BadChunkSize(_) | U::TooManyChunks | U::V1TooLarge(_))
+}
+
+/// Signale un échec de lecture au rappel de la station, ou sur la sortie d'erreur sans rappel.
+fn report_read_failure(hook: Option<&ReadFailureHook>, failure: ReadFailure) {
+    match hook {
+        Some(h) => h(&failure),
+        None => eprintln!(
+            "uCloud : {} de {} ({}, blob {}) : {}",
+            if failure.integrity { "intégrité compromise" } else { "lecture impossible" },
+            failure.path,
+            failure.owner,
+            failure.cid,
+            failure.reason
+        ),
+    }
+}
+
+/// Écrivain qui retient si c'est lui qui a échoué : distingue le client parti d'un blob illisible.
+struct TrackedWriter<'a, W> {
+    inner: &'a mut W,
+    failed: bool,
+}
+
+impl<W: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for TrackedWriter<'_, W> {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        let r = Pin::new(&mut *self.inner).poll_write(cx, buf);
+        if matches!(r, Poll::Ready(Err(_))) {
+            self.failed = true;
+        }
+        r
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let r = Pin::new(&mut *self.inner).poll_flush(cx);
+        if matches!(r, Poll::Ready(Err(_))) {
+            self.failed = true;
+        }
+        r
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let r = Pin::new(&mut *self.inner).poll_shutdown(cx);
+        if matches!(r, Poll::Ready(Err(_))) {
+            self.failed = true;
+        }
+        r
+    }
 }
 
 async fn propfind<B: BlobStore>(st: &DavState<B>, auth: &Auth, path: &str, headers: &HeaderMap) -> Response {

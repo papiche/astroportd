@@ -274,3 +274,60 @@ async fn a_photo_gets_a_visual_hash_and_old_photos_are_backfilled_from_their_thu
     assert!((direct ^ again).count_ones() <= 6, "même image, miniature ou original : {direct:x} contre {again:x}");
     assert_eq!(astro_dav::thumb::backfill_phash(&b.db, &*b.blobs, 10).await.unwrap(), 0, "plus rien à rattraper");
 }
+
+/// JPEG `w × h` (moitié gauche rouge, moitié droite bleue, un peu de texture) portant l'orientation EXIF `orientation`.
+fn jpeg_oriented(w: u32, h: u32, orientation: u16) -> Vec<u8> {
+    let img = RgbImage::from_fn(w, h, |x, y| {
+        let t = ((x ^ y) % 17) as u8;
+        if x < w / 2 { Rgb([240 - t, t, t]) } else { Rgb([t, t, 240 - t]) }
+    });
+    let mut out = Cursor::new(Vec::new());
+    DynamicImage::ImageRgb8(img).write_to(&mut out, ImageFormat::Jpeg).unwrap();
+    let jpeg = out.into_inner();
+    let mut tiff = vec![b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0];
+    tiff.extend_from_slice(&orientation.to_le_bytes());
+    tiff.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+    let mut app1 = b"Exif\0\0".to_vec();
+    app1.extend_from_slice(&tiff);
+    let len = u16::try_from(app1.len() + 2).unwrap();
+    let mut res = vec![0xFF, 0xD8, 0xFF, 0xE1];
+    res.extend_from_slice(&len.to_be_bytes());
+    res.extend_from_slice(&app1);
+    res.extend_from_slice(&jpeg[2..]);
+    res
+}
+
+#[test]
+fn a_large_jpeg_gives_a_correct_thumbnail_dimensions_and_orientation_included() {
+    // 4000 × 3000 couché (EXIF 6 : tourner de 90° à droite) : l'original vu debout fait 3000 × 4000.
+    let src = jpeg_oriented(4000, 3000, 6);
+    let r = astro_dav::thumb::render(&src).unwrap();
+    assert_eq!((r.ow, r.oh), (3000, 4000), "dimensions de l'original, après rotation");
+    assert_eq!((r.w, r.h), (240, 320));
+    let img = image::load_from_memory(&r.webp).unwrap().to_rgb8();
+    assert_eq!(img.dimensions(), (240, 320));
+    // La moitié gauche (rouge) de l'image couchée se retrouve en haut une fois tournée.
+    let (top, bottom) = (img.get_pixel(120, 40), img.get_pixel(120, 280));
+    assert!(top[0] > 180 && top[2] < 80, "haut rouge : {top:?}");
+    assert!(bottom[2] > 180 && bottom[0] < 80, "bas bleu : {bottom:?}");
+    // Une petite image n'est pas agrandie, un PNG passe toujours par le décodeur général.
+    let small = astro_dav::thumb::render(&jpeg_oriented(200, 100, 1)).unwrap();
+    assert_eq!((small.w, small.h, small.ow, small.oh), (200, 100, 200, 100));
+    let mut png = Cursor::new(Vec::new());
+    DynamicImage::ImageRgb8(RgbImage::new(1000, 500)).write_to(&mut png, ImageFormat::Png).unwrap();
+    let p = astro_dav::thumb::render(&png.into_inner()).unwrap();
+    assert_eq!((p.w, p.h, p.ow, p.oh), (320, 160, 1000, 500));
+}
+
+/// Mesure (hors CI) : `cargo test --release -p astro-dav --test thumb measure_ -- --ignored --nocapture`.
+#[test]
+#[ignore = "mesure de performance"]
+fn measure_render_of_a_12_mpx_jpeg() {
+    let src = jpeg_oriented(4000, 3000, 6);
+    let _ = astro_dav::thumb::render(&src).unwrap();
+    let start = std::time::Instant::now();
+    for _ in 0..5 {
+        astro_dav::thumb::render(&src).unwrap();
+    }
+    println!("miniature d'un JPEG 12 Mpx : {:.1} ms en moyenne", start.elapsed().as_secs_f64() * 1000.0 / 5.0);
+}

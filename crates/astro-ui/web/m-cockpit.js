@@ -1,12 +1,13 @@
 'use strict';
-// Cockpit du Capitaine : un verdict unique, ce qui demande une action (3 au plus), les six étages de la station et l'essaim.
+// Cockpit du Capitaine : un verdict unique, ce qui demande une action (3 au plus), les six étages de la station et l'essaim résumé
+// (le détail des stations est dans l'onglet Essaim et pairs).
 // Les règles (`analyze`) sont une fonction pure : tests/cockpit_rules.mjs les rejoue sans navigateur.
 const RANK = { down: 0, degraded: 1, info: 2, ok: 3 };
 const FLOORS = [['machine', '🖥️', 'Machine', '#/station'], ['station', '📡', 'Station', '#/station'], ['mesh', '🌐', 'Constellation', '#/planes'], ['services', '🔌', 'Services et accès', '#/options'], ['members', '👥', 'Membres', '#/station'], ['economy', '🪙', 'Économie', '#/coop']];
 const worst = (a, b) => (RANK[a] <= RANK[b] ? a : b);
 
 export function analyze({ health, cs, ec, ac, tun, tk, dash, dns }) {
-  const todos = [], add = (level, floor, title, why, label, href) => todos.push({ level, floor, title, why, label, href });
+  const todos = [], add = (level, floor, title, why, label, href, post) => todos.push({ level, floor, title, why, label, href, post });
   const nodes = cs?.nodes || [], me = nodes.find(n => n.self), others = nodes.filter(n => !n.self);
   // Station
   for (const [name, v] of Object.entries(health?.subsystems || {})) {
@@ -28,8 +29,10 @@ export function analyze({ health, cs, ec, ac, tun, tk, dash, dns }) {
   // Membres
   const accounts = ac?.accounts || [], full = accounts.filter(a => !a.unlimited && a.quota_bytes && a.used_bytes / a.quota_bytes >= .9).length;
   if (full) add('degraded', 'members', `${full} MULTIPASS presque plein(s)`, 'Plus de 90 % du disque : leurs prochains envois seront refusés.', 'Voir les comptes', '#/station');
-  const locked = accounts.filter(a => a.pass_locked_until).length;
-  if (locked) add('degraded', 'members', `${locked} compte(s) verrouillé(s) après des PASS faux`, 'Un anti-bruteforce a joué : le membre a peut-être oublié son PASS, ou quelqu\'un essaie.', 'Voir les comptes', '#/station');
+  // PASS verrouillé : l'action se fait d'ici (un bouton par compte, 3 au plus), sans passer par la table des comptes.
+  const locked = accounts.filter(a => a.pass_locked_until);
+  for (const a of locked.slice(0, 3)) add('degraded', 'members', ['Le PASS de {0} est verrouillé', a.email || a.hex?.slice(0, 12)], 'Trop de PASS faux : le membre l\'a peut-être oublié, ou quelqu\'un essaie. Débloquez si c\'est bien lui qui vous le demande.', 'Débloquer', '#/station', `/api/v1/station/accounts/${a.hex}/unlock-pass`);
+  if (locked.length > 3) add('degraded', 'members', ['{0} autre(s) compte(s) verrouillé(s)', locked.length - 3], '', 'Voir les comptes', '#/station');
   const grace = accounts.filter(a => a.grace_ends_at).length;
   if (grace) add('degraded', 'members', `${grace} compte(s) en période de grâce`, 'Hébergement non réglé : passé le délai, le compte est suspendu.', 'Voir les comptes', '#/station');
   // Économie
@@ -92,17 +95,21 @@ export default async function cockpit(root, K) {
   const { h, t } = K, api = p => K.api(p), soft = p => K.api(p).catch(() => null);
   const link = h('link', { rel: 'stylesheet', href: '/ui/m-cockpit.css' }); document.head.append(link);
   // Carburant : le portefeuille maître à créditer pour ouvrir les portefeuilles coopératifs (transaction primale).
-  const fuelCard = f => (f?.needed_g1_cents > 0 ? h('section', { class: 'card ck-fuel' }, h('h2', {}, '⛽ ', t('Carburant de la station')),
-    h('p', {}, t('Pour ouvrir ses {0} portefeuilles coopératifs, la station envoie 1 Ğ1 à chacun depuis son portefeuille maître : il lui manque {1} Ğ1.', f.waiting, g1(f.needed_g1_cents))),
-    h('div', { class: 'ck-fuel-row' }, svgOf(f.qr_svg), h('div', {}, h('code', { class: 'ck-addr' }, f.master),
-      h('p', {}, h('button', { type: 'button', class: 'ghost', onclick: () => navigator.clipboard?.writeText(f.master).then(() => K.toast(t('Adresse copiée'), 1), e => K.toast(e.message)) }, t('Copier l\'adresse'))),
-      h('p', { class: 'muted' }, t('Disponible : {0} Ğ1 · vérifié le {1}', g1(f.spendable_g1_cents), K.when(f.at))))),
-    h('p', { class: 'muted' }, t('Virez-les depuis Cesium ou Ğecko. La station revérifie toutes les 6 h : les portefeuilles s\'ouvrent seuls dès que le dépôt arrive.'))) : null);
+  // Une jauge d'abord (réserve / besoin, en centimes entiers) ; l'adresse et son QR, repliés, ne servent qu'au moment du virement.
+  const fuelCard = f => (f?.needed_g1_cents > 0 ? h('section', { class: 'card ck-fuel' }, h('h2', {}, '⛽ ', t('Réserve de démarrage')),
+    h('p', {}, h('strong', {}, t('{0} Ğ1 sur {1}', g1(f.spendable_g1_cents), g1(f.spendable_g1_cents + f.needed_g1_cents)))),
+    h('progress', { max: f.spendable_g1_cents + f.needed_g1_cents, value: f.spendable_g1_cents, 'aria-label': t('Réserve de démarrage') }),
+    h('p', { class: 'muted' }, t('Pour ouvrir ses {0} portefeuilles coopératifs, la station envoie 1 Ğ1 à chacun depuis son portefeuille maître : il lui manque {1} Ğ1.', f.waiting, g1(f.needed_g1_cents))),
+    h('details', {}, h('summary', {}, t('Alimenter depuis Cesium ou Ğecko')),
+      h('div', { class: 'ck-fuel-row' }, svgOf(f.qr_svg), h('div', {}, h('code', { class: 'ck-addr' }, f.master),
+        h('p', {}, h('button', { type: 'button', class: 'ghost', onclick: () => navigator.clipboard?.writeText(f.master).then(() => K.toast(t('Adresse copiée'), 1), e => K.toast(e.message)) }, t('Copier l\'adresse'))),
+        h('p', { class: 'muted' }, t('Disponible : {0} Ğ1 · vérifié le {1}', g1(f.spendable_g1_cents), K.when(f.at))))),
+      h('p', { class: 'muted' }, t('Virez-les depuis Cesium ou Ğecko. La station revérifie toutes les 6 h : les portefeuilles s\'ouvrent seuls dès que le dépôt arrive.')))) : null);
   // Nom de domaine : vérifié (DNS, ports), enregistré dans station.conf, appliqué au redémarrage (systemd relance la station).
   const restartBlock = (r, out) => (r.restart
     ? h('button', { type: 'button', class: 'primary', onclick: async ev => {
-      ev.currentTarget.disabled = true;
-      try { await K.api('/api/v1/station/restart', { method: 'POST' }); out.replaceChildren(h('p', {}, t('Redémarrage en cours. Dans une minute, ouvrez :'), ' ', h('a', { href: r.url }, r.url)), h('p', { class: 'muted' }, t('Le certificat HTTPS s\'obtient au premier démarrage ; en cas d\'échec, le cockpit en donne la cause.'))); } catch (e) { K.toast(e.message); ev.currentTarget.disabled = false; }
+      const btn = ev.currentTarget; btn.disabled = true;
+      try { await K.api('/api/v1/station/restart', { method: 'POST' }); out.replaceChildren(h('p', {}, t('Redémarrage en cours. Dans une minute, ouvrez :'), ' ', h('a', { href: r.url }, r.url)), h('p', { class: 'muted' }, t('Le certificat HTTPS s\'obtient au premier démarrage ; en cas d\'échec, le cockpit en donne la cause.'))); } catch (e) { K.toast(e.message); btn.disabled = false; }
     } }, t('Redémarrer la station'))
     : h('p', {}, t('Puis redémarrez la station sur la machine :'), ' ', h('code', {}, r.restart_command)));
   const domainDialog = async () => {
@@ -135,7 +142,9 @@ export default async function cockpit(root, K) {
     const a = analyze({ health, cs, ec, ac, tun, tk, dash, dns }), st = dash.station, su = setup({ dash, cs, ac, dns });
     // Tant que la mise en service n'est pas finie, ses étapes disent déjà les informations (station seule, adresses) : pas de doublon.
     const todos = su.left ? a.todos.filter(x => x.level !== 'info') : a.todos;
-    const todo = x => h('li', { class: 'ck-todo ' + x.level }, h('div', {}, h('strong', {}, t(x.title)), h('p', { class: 'muted' }, t(x.why))), h('a', { class: 'ck-btn', href: x.href }, t(x.label)));
+    const todo = x => h('li', { class: 'ck-todo ' + x.level }, h('div', {}, h('strong', {}, t(...[x.title].flat())), h('p', { class: 'muted' }, t(x.why))), x.post
+      ? h('button', { type: 'button', class: 'ck-btn', onclick: async ev => { const b = ev.currentTarget; b.disabled = true; try { await K.api(x.post, { method: 'POST' }); K.toast(t('PASS déverrouillé'), 1); await draw(); } catch (e) { K.toast(e.message); b.disabled = false; } } }, t(x.label))
+      : h('a', { class: 'ck-btn', href: x.href }, t(x.label)));
     const floors = FLOORS.map(([k, icon, name, href]) => {
       const lv = a.floors[k], line = {
         machine: a.me ? `${TIER[a.me.tier] || ''} ${a.me.tier} · Power-Score ${a.me.power_score}` : '—',
@@ -147,12 +156,7 @@ export default async function cockpit(root, K) {
       }[k];
       return h('a', { class: 'card ck-floor ' + lv, href }, h('span', { class: 'ck-ico', 'aria-hidden': 'true' }, icon), h('div', {}, h('strong', {}, t(name)), h('p', { class: 'muted' }, line)), h('span', { class: 'ck-dot', role: 'img', 'aria-label': { ok: t('OK'), info: t('Info'), degraded: t('À regarder'), down: t('Panne') }[lv] }));
     });
-    const node = n => {
-      const net = n.services?.filter(s => s !== 'ssh') || [];
-      return h('div', { class: 'card ck-node' + (n.self ? ' self' : '') }, h('div', {}, h('strong', {}, n.node_id ? '…' + n.node_id.slice(-8) : '—'), n.self ? h('small', { class: 'muted' }, ' ' + t('(vous)')) : null, ' ', h('span', { class: 'ck-st ' + (n.status === 'known' ? 'off' : 'on'), title: n.status }, n.status === 'known' ? t('vue') : t('en ligne'))),
-        h('p', {}, `${TIER[n.tier] || ''} ${n.tier} · ${n.power_score}`, n.distance_km == null ? '' : ` · ${n.distance_km} km`), net.length ? h('p', {}, net.map(s => h('span', { class: 'ck-chip' }, s))) : h('p', { class: 'muted' }, t('aucun service partagé')));
-    };
-    const brains = a.nodes.filter(n => n.tier === 'Brain' && n.services?.includes('ollama')).length;
+    const online = a.others.filter(n => n.status === 'connected').length, brains = a.nodes.filter(n => n.tier === 'Brain' && n.services?.includes('ollama')).length;
     root.replaceChildren(...[
       h('section', { class: 'card ck-hero ' + a.level, 'aria-live': 'polite' }, h('span', { class: 'ck-big', 'aria-hidden': 'true' }, { ok: '✅', degraded: '🟠', down: '🔴' }[a.level]), h('div', {}, h('h2', {}, t(a.verdict)), h('p', { class: 'muted' }, todos.length ? t('Voici par quoi commencer :') : t('Rien ne demande votre attention. La page se met à jour toute seule.')))),
       fuelCard(fuel),
@@ -161,12 +165,13 @@ export default async function cockpit(root, K) {
         h('progress', { max: su.list.length, value: su.list.length - su.left, 'aria-label': t('Étapes terminées') }),
         h('ul', { class: 'ck-steps' }, su.list.map(x => h('li', { class: x.done ? 'done' : '' }, h('span', { 'aria-hidden': 'true' }, x.done ? '✅' : '⬜'), h('div', {}, x.done ? t(x.title) : h('a', { href: x.href, onclick: x.act ? ev => { ev.preventDefault(); x.act === 'domain' ? domainDialog() : welcome(); } : null }, h('strong', {}, t(x.title))), x.done ? null : h('p', { class: 'muted' }, t(x.why))))))) : null,
       h('h2', { class: 'ck-h' }, t('Les étages de la station')), h('div', { class: 'grid' }, floors),
-      h('h2', { class: 'ck-h' }, t('L\'essaim'), h('small', { class: 'muted' }, brains ? ` · ${brains} ${t('Brain(s) offrent Ollama')}` : '')), h('div', { class: 'grid' }, a.nodes.map(node)),
+      h('a', { class: 'card ck-floor ' + (online ? 'ok' : 'info'), href: '#/mesh' }, h('span', { class: 'ck-ico', 'aria-hidden': 'true' }, '🌐'), h('div', {}, h('strong', {}, t('L\'essaim')),
+        h('p', { class: 'muted' }, `${a.others.length} ${t('station(s) vue(s)')} · ${online} ${t('connectée(s)')}${brains ? ` · ${brains} ${t('Brain(s) offrent Ollama')}` : ''}`)), h('span', { class: 'ck-btn' }, t('Voir l\'essaim'))),
       dns?.configured ? h('section', { class: 'card' }, h('h2', {}, t('Adresses de la coopérative')),
         dns.station?.name ? h('p', {}, '📡 ', h('code', {}, dns.station.name), h('small', { class: 'muted' }, ' ' + t('cette station'))) : null,
         h('p', { class: 'muted' }, t('{0} adresse(s) à jour sur {1}', dns.unchanged + dns.written, dns.total), dns.pending ? ' · ' + t('{0} en attente', dns.pending) : '', dns.failed ? ' · ' + t('{0} en échec', dns.failed) : ''),
-        h('button', { onclick: async ev => { ev.currentTarget.disabled = true; try { await K.api('/api/v1/station/admin/dnslink', { method: 'POST', body: { action: 'sync' } }); await draw(); } catch (e) { K.toast(e.message); ev.currentTarget.disabled = false; } } }, t('Enregistrer maintenant'))) : null,
-      h('p', { class: 'muted' }, h('a', { href: '#/station' }, t('Détails techniques')), ' · ', h('a', { href: '#/options' }, t('Tunnels et accès')), ' · ', h('a', { href: '#/coop' }, t('Configuration coopérative')), ' · ', h('a', { href: '#/cockpit', onclick: ev => { ev.preventDefault(); welcome(); } }, t('Liens d\'accueil')))].filter(Boolean));
+        h('button', { onclick: async ev => { const btn = ev.currentTarget; btn.disabled = true; try { await K.api('/api/v1/station/admin/dnslink', { method: 'POST', body: { action: 'sync' } }); await draw(); } catch (e) { K.toast(e.message); btn.disabled = false; } } }, t('Enregistrer maintenant'))) : null,
+      h('p', { class: 'ck-acts' }, h('button', { class: 'primary', onclick: welcome }, '✉️ ' + t('Liens d\'accueil')), h('a', { class: 'ck-btn', href: '#/station' }, t('Détails techniques')))].filter(Boolean));
   };
   K.cleanup(() => link.remove());
   await draw();

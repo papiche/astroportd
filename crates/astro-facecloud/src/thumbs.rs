@@ -76,12 +76,28 @@ pub fn crop_square(bbox: [f64; 4], w: u32, h: u32) -> (u32, u32, u32) {
 }
 
 /// Décode `plain` et en tire une vignette JPEG carrée par cadre.
+///
+/// Une photo JPEG assez grande est décodée réduite (voir [`astro_dav::jpeg_scale`]) tant que le plus petit carré à
+/// recadrer garde au moins `size` pixels de côté (le double hors machine modeste) : la vignette n'y perd rien, la
+/// photo entière n'est jamais décodée en pleine résolution. Les cadres (`bbox`, repère de l'original tourné) sont
+/// ramenés à l'échelle de l'image réduite.
 fn crops(plain: &[u8], boxes: &[(i64, [f64; 4])], size: u32) -> Result<Vec<(i64, String)>, String> {
-    let rgb = crate::imageio::decode_oriented(plain)?;
+    let need = size * astro_dav::jpeg_scale::margin();
+    // Le côté d'un carré ne dépend que de la taille du cadre et du plus petit côté de l'image : invariant par rotation.
+    let pick = |w: u32, h: u32| boxes.iter().map(|(_, b)| crop_square(*b, w, h).2).min().map_or(1, |side| astro_dav::jpeg_scale::divisor_for(side, need));
+    let (rgb, (fx, fy)) = match astro_dav::jpeg_scale::decode_scaled(plain, crate::imageio::MAX_SIDE, pick) {
+        Ok(s) => {
+            let rgb = s.image.to_rgb8();
+            let f = (f64::from(rgb.width()) / f64::from(s.full.0), f64::from(rgb.height()) / f64::from(s.full.1));
+            (rgb, f)
+        }
+        Err(_) => (crate::imageio::decode_oriented(plain)?, (1.0, 1.0)),
+    };
     let (w, h) = rgb.dimensions();
     let mut out = Vec::with_capacity(boxes.len());
     for (id, bbox) in boxes {
-        let (x, y, side) = crop_square(*bbox, w, h);
+        let [x1, y1, x2, y2] = *bbox;
+        let (x, y, side) = crop_square([x1 * fx, y1 * fy, x2 * fx, y2 * fy], w, h);
         let part = image::imageops::crop_imm(&rgb, x, y, side.min(w - x), side.min(h - y)).to_image();
         let small = image::imageops::resize(&part, size, size, FilterType::Triangle);
         let mut jpeg = Vec::new();
@@ -206,6 +222,52 @@ mod tests {
             assert_eq!(image::load_from_memory(&jpeg).unwrap().dimensions_pair(), (48, 48));
         }
         assert!(crops(b"pas une image", &[(1, [0.0; 4])], 48).is_err());
+    }
+
+    /// Vignette de référence : décodage pleine résolution, recadrage, réduction (le chemin d'avant).
+    fn reference(plain: &[u8], bbox: [f64; 4], size: u32) -> image::RgbImage {
+        let rgb = crate::imageio::decode_oriented(plain).unwrap();
+        let (x, y, side) = crop_square(bbox, rgb.width(), rgb.height());
+        let part = image::imageops::crop_imm(&rgb, x, y, side, side).to_image();
+        image::imageops::resize(&part, size, size, FilterType::Triangle)
+    }
+
+    #[test]
+    fn a_large_jpeg_is_cropped_from_a_reduced_decode_without_visible_difference() {
+        // 4000 × 3000 couché (EXIF 6) : vu debout 3000 × 4000. Deux visages : un grand (réduction possible), un petit.
+        let raw = image::RgbImage::from_fn(4000, 3000, |x, y| {
+            let t = ((x / 7 + y / 5) % 64) as u8;
+            if x < 2000 { image::Rgb([200 - t, 40 + t, 30]) } else { image::Rgb([30, 60 + t, 210 - t]) }
+        });
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90).encode_image(&raw).unwrap();
+        let mut tiff = vec![b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0];
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.append(&mut tiff);
+        let mut src = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        src.extend_from_slice(&u16::try_from(app1.len() + 2).unwrap().to_be_bytes());
+        src.extend_from_slice(&app1);
+        src.extend_from_slice(&jpeg[2..]);
+        let boxes = [(1, [900.0, 1500.0, 1700.0, 2300.0]), (2, [2000.0, 3000.0, 2100.0, 3100.0])];
+        for size in [96, 320] {
+            let out = crops(&src, &boxes, size).unwrap();
+            for ((_, url), (_, bbox)) in out.iter().zip(boxes) {
+                let b64 = url.strip_prefix("data:image/jpeg;base64,").unwrap();
+                let got = image::load_from_memory(&base64::engine::general_purpose::STANDARD.decode(b64).unwrap()).unwrap().to_rgb8();
+                let want = reference(&src, bbox, size);
+                assert_eq!(got.dimensions(), (size, size));
+                let diff: f64 = got.pixels().zip(want.pixels()).map(|(a, b)| (0..3).map(|i| f64::from(a[i].abs_diff(b[i]))).sum::<f64>()).sum::<f64>() / f64::from(size * size * 3);
+                assert!(diff < 8.0, "écart moyen {diff:.1} (taille {size}, cadre {bbox:?})");
+            }
+        }
+        if std::env::var_os("ASTRO_MEASURE").is_some() {
+            let t = std::time::Instant::now();
+            crops(&src, &boxes[..1], 96).unwrap();
+            let reduced = t.elapsed();
+            let t = std::time::Instant::now();
+            reference(&src, boxes[0].1, 96);
+            println!("vignette de visage, JPEG 12 Mpx : réduit {reduced:?}, pleine résolution {:?}", t.elapsed());
+        }
     }
 
     trait Dim {

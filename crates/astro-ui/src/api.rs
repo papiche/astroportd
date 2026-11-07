@@ -21,6 +21,7 @@
 //! | `GET /api/v1/contacts` · `POST …/sync` · `…/from-person` · `…/link` | annuaire CardDAV : fiches, personnes sans fiche, rapprochement visage ↔ fiche ↔ MULTIPASS |
 //! | `GET /api/v1/friends` · `POST /api/v1/ucloud/send` | proches réciproques ; envoi de fichiers à des proches |
 //! | `GET`/`POST /api/v1/backup` · `POST /api/v1/backup/respond` | sauvegarde privée chez un ami : réglage, demandes reçues, réponse de l'hébergeur |
+//! | `POST /api/v1/backup/rescue` · `POST /api/v1/restore/ask` | secours par les gardiens : réponse du gardien ; demande depuis la carte imprimée (public) |
 //! | `POST /api/v1/ucloud/have` | parmi des SHA-256, ceux que le compte possède déjà (envoi sans doublon) |
 //! | `GET /api/v1/ucloud/memories` · `…/timeline[?ym=]` · `…/search` · `…/duplicates` | « ce jour-là », chronologie par mois, recherche à filtres, doublons exacts et visuels |
 //! | `GET /api/v1/replication` | où et par qui les données du compte sont répliquées (stations, amis, fichiers) |
@@ -610,6 +611,11 @@ pub trait Backend: Send + Sync + 'static {
     fn profile_image(&self, _hex: &str, _kind: &str) -> impl Future<Output = Option<Vec<u8>>> + Send {
         async { None }
     }
+    /// Position du membre (arrondie par la station à la maille UMAP de 0,01°) : la station la plus proche tient ses
+    /// informations de quartier. `{lat, lon}`, ou `{}` pour l'effacer.
+    fn account_position(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("position non disponible sur cette station")) }
+    }
     /// Modifie le profil (`name`, `about`, `picture`, `banner`, `lang`).
     fn account_profile(&self, _who: &Principal, _patch: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("Mon compte n'est pas disponible sur cette station")) }
@@ -625,6 +631,10 @@ pub trait Backend: Send + Sync + 'static {
     /// Le Capitaine lève le verrouillage du PASS d'un compte.
     fn pass_unlock(&self, _who: &Principal, _hex: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("connexion par PASS non disponible sur cette station")) }
+    }
+    /// Le Capitaine éjecte un MULTIPASS créé ici qui ne s'est jamais connecté en 24 h (aucune Ğ1 reçue).
+    fn account_eject(&self, _who: &Principal, _hex: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("éjection non disponible sur cette station")) }
     }
     /// Change le jeton WebDAV : l'ancien cesse de fonctionner.
     fn account_token_rotate(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
@@ -716,6 +726,10 @@ pub trait Backend: Send + Sync + 'static {
     fn backup_respond(&self, _who: &Principal, _owner: String, _accept: bool, _quota_bytes: u64) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("sauvegarde privée non disponible sur cette station")) }
     }
+    /// Secours, côté gardien : `accept` rend sa part de la clé de secours à la station où `owner` se rétablit, sinon refuse.
+    fn backup_rescue(&self, _who: &Principal, _owner: String, _accept: bool) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("sauvegarde privée non disponible sur cette station")) }
+    }
     /// Réplication des données du compte : où et par qui. `{ crawl, routes, mine, peers }`.
     fn replication(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("réplication non mesurée sur cette station")) }
@@ -740,6 +754,11 @@ pub trait Backend: Send + Sync + 'static {
     /// Rétablit sur cette station un MULTIPASS existant depuis sa carte secrète (public : la carte est la preuve). `ip` : limite de débit.
     fn restore(&self, _ip: Option<std::net::IpAddr>, _card: String, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("restauration non disponible sur cette station")) }
+    }
+    /// Secours par les gardiens (public : la carte imprimée P1 est le justificatif) : `send` prévient les gardiens, sinon
+    /// l'état seul. `{ status: none|searching|waiting|ready, sent?, by?, denied?, asks_left? }`.
+    fn restore_ask(&self, _card: String, _send: bool) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("secours par les gardiens non disponible sur cette station")) }
     }
     /// Crée une invitation à recevoir des photos (`{ paths | person, label?, email?, contact_path?, days? }`).
     fn invite_create(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
@@ -871,6 +890,7 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/me/footprint", get(footprint::<B>))
         .route("/api/v1/register", get(register_info::<B>).post(register::<B>))
         .route("/api/v1/restore", post(restore::<B>))
+        .route("/api/v1/restore/ask", post(restore_ask::<B>))
         .route("/api/v1/replication", get(replication::<B>))
         .route("/api/v1/invites", get(invites::<B>).post(invite_create::<B>))
         .route("/api/v1/invites/{token}", axum::routing::delete(invite_revoke::<B>))
@@ -886,6 +906,7 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/contacts/link", post(contacts_link::<B>))
         .route("/api/v1/account", get(account::<B>))
         .route("/api/v1/account/profile", post(account_profile::<B>))
+        .route("/api/v1/account/position", post(account_position::<B>))
         .route("/api/v1/account/image", post(account_image::<B>))
         .route("/api/v1/account/site", get(account_site::<B>))
         .route("/api/v1/account/site/example", post(account_site_example::<B>))
@@ -896,6 +917,7 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/account/unlock", post(account_unlock::<B>))
         .route("/api/v1/account/sign", post(account_sign::<B>))
         .route("/api/v1/station/accounts/{hex}/unlock-pass", post(pass_unlock::<B>))
+        .route("/api/v1/station/accounts/{hex}/eject", post(account_eject::<B>))
         .route("/api/v1/account/keys", post(account_keys::<B>))
         .route("/api/v1/station/admin/{section}", get(admin_get::<B>).post(admin_set::<B>))
         .route("/api/v1/station/console", get(console_ws::<B>))
@@ -914,6 +936,7 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/ucloud/send", post(ucloud_send::<B>))
         .route("/api/v1/backup", get(backup_status::<B>).post(backup_set::<B>))
         .route("/api/v1/backup/respond", post(backup_respond::<B>))
+        .route("/api/v1/backup/rescue", post(backup_rescue::<B>))
         .route("/api/v1/station/constellation", get(constellation::<B>))
         .route("/api/v1/station/economy", get(economy::<B>))
         .route("/api/v1/station/fuel", get(fuel::<B>))
@@ -1851,6 +1874,19 @@ struct RestoreBody {
     lang: String,
 }
 
+#[derive(Deserialize)]
+struct RestoreAskBody {
+    card: String,
+    #[serde(default)]
+    send: bool,
+}
+
+#[derive(Deserialize)]
+struct RescueBody {
+    owner: String,
+    accept: bool,
+}
+
 async fn coop_get<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
     reply(st.backend.coop_config(&p).await)
 }
@@ -2013,6 +2049,10 @@ async fn account_profile<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p
     reply(st.backend.account_profile(&p, body).await)
 }
 
+async fn account_position<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    reply(st.backend.account_position(&p, body).await)
+}
+
 async fn account_token_rotate<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
     reply(st.backend.account_token_rotate(&p).await)
 }
@@ -2039,6 +2079,17 @@ async fn pass_unlock<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: Hea
     match who(&st, &headers, &method, &uri).await {
         Ok(p) => match captain_only(&p) {
             Ok(()) if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) => reply(st.backend.pass_unlock(&p, hex.to_ascii_lowercase()).await),
+            Ok(()) => reply(Err(ApiError::bad_request("clé de compte invalide (64 hexadécimaux)"))),
+            Err(r) => r,
+        },
+        Err(r) => r,
+    }
+}
+
+async fn account_eject<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, method: Method, uri: Uri, Path(hex): Path<String>) -> Response {
+    match who(&st, &headers, &method, &uri).await {
+        Ok(p) => match captain_only(&p) {
+            Ok(()) if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) => reply(st.backend.account_eject(&p, hex.to_ascii_lowercase()).await),
             Ok(()) => reply(Err(ApiError::bad_request("clé de compte invalide (64 hexadécimaux)"))),
             Err(r) => r,
         },
@@ -2217,6 +2268,21 @@ async fn restore<B: Backend>(State(st): State<Arc<UiState<B>>>, req: axum::extra
     let Ok(bytes) = axum::body::to_bytes(req.into_body(), 2048).await else { return reply(Err(ApiError::bad_request("requête trop grande"))) };
     let Ok(body) = serde_json::from_slice::<RestoreBody>(&bytes) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"card\": \"astro-secret:v1|…\", \"lang\": \"fr\" }"))) };
     reply(st.backend.restore(ip, body.card, body.lang).await)
+}
+
+/// Secours par les gardiens depuis la carte imprimée (public). Réponse jamais mise en cache.
+async fn restore_ask<B: Backend>(State(st): State<Arc<UiState<B>>>, req: axum::extract::Request) -> Response {
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), 2048).await else { return reply(Err(ApiError::bad_request("requête trop grande"))) };
+    let Ok(body) = serde_json::from_slice::<RestoreAskBody>(&bytes) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"card\": \"astro-share:v1|…\", \"send\": true }"))) };
+    reply(st.backend.restore_ask(body.card, body.send).await)
+}
+
+/// Réponse du gardien à une demande de secours.
+async fn backup_rescue<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<RescueBody>) -> Response {
+    if body.owner.len() != 64 || !body.owner.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return reply(Err(ApiError::bad_request("clé de l'ami : 64 caractères hexadécimaux attendus")));
+    }
+    reply(st.backend.backup_rescue(&p, body.owner.to_ascii_lowercase(), body.accept).await)
 }
 
 /// Origine publique du lien : celle déclarée par la station, sinon l'en-tête `Host`.

@@ -106,6 +106,13 @@ pub type BackupSetFn = Arc<dyn Fn(String, bool, Option<String>) -> std::pin::Pin
 /// Réponse de l'hébergeur : `(hébergeur, propriétaire, accepte, volume demandé, volume maximal)`.
 pub type BackupRespondFn = Arc<dyn Fn(String, String, bool, u64, u64) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
 
+/// Secours, nouvelle station : `(carte imprimée P1, envoyer la demande ?)` → état de la demande.
+pub type RescueAskFn = Arc<dyn Fn(String, bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
+/// Secours, gardien : `(gardien, compte, c'est bien lui ?)`.
+pub type RescueAnswerFn = Arc<dyn Fn(String, String, bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
+/// Secours, nouvelle station : part P3 rendue pour un compte (`Some(part)`), ou fin de la demande (`None` : compte rétabli).
+pub type RescueShareFn = Arc<dyn Fn(String, bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>> + Send + Sync>;
+
 /// Sauvegarde privée : état, réglage `(compte, actif, ami)` et réponse de l'hébergeur `(hébergeur, propriétaire, accepte, volume, plafond)`.
 #[derive(Clone)]
 pub struct BackupFns {
@@ -115,6 +122,12 @@ pub struct BackupFns {
     pub set: BackupSetFn,
     /// Réponse de l'hébergeur.
     pub respond: BackupRespondFn,
+    /// Secours : demande aux gardiens depuis la carte imprimée.
+    pub rescue_ask: RescueAskFn,
+    /// Secours : réponse du gardien.
+    pub rescue_answer: RescueAnswerFn,
+    /// Secours : part rendue (`false`), ou effacement après restauration (`true`).
+    pub rescue_share: RescueShareFn,
 }
 
 /// Envoi de fichiers d'un titulaire à des proches : `(titulaire, chemins, proches)`.
@@ -471,13 +484,25 @@ impl<B: BlobStore> Backend for StationUi<B> {
 
     async fn restore(&self, ip: Option<std::net::IpAddr>, card: String, lang: String) -> Result<Value, ApiError> {
         let r = self.registrar.as_ref().ok_or_else(|| ApiError::unavailable("restauration non disponible sur cette station"))?;
-        let card = astro_lifecycle::share::Recovery::parse(&card).map_err(|e| ApiError::bad_request(e.to_string()))?;
+        // Carte imprimée seule : la part qu'un gardien a rendue (secours, 24 h) la complète, sans passer par le navigateur.
+        let single = astro_lifecycle::share::SecretShare::parse(card.trim()).ok().filter(|s| s.index == 1);
+        let rescued = match (&single, &self.backup) {
+            (Some(s), Some(b)) => (b.rescue_share)(s.hex.clone(), false).await,
+            _ => None,
+        };
+        let text = match &rescued {
+            Some(p3) => format!("{}\n{p3}", card.trim()),
+            None => card,
+        };
+        let card = astro_lifecycle::share::Recovery::parse(&text).map_err(|e| ApiError::bad_request(e.to_string()))?;
         let lang = if lang.is_empty() { "fr".to_owned() } else { lang };
-        r.recover(ip, &card, &lang).await.map(|reg| {
-            let mut out = registered_json(&reg);
-            out["restoring"] = json!(true);
-            out
-        }).map_err(register_error)
+        let reg = r.recover(ip, &card, &lang).await.map_err(register_error)?;
+        if let (Some(_), Some(b)) = (&rescued, &self.backup) {
+            (b.rescue_share)(card.card.hex.clone(), true).await;
+        }
+        let mut out = registered_json(&reg);
+        out["restoring"] = json!(true);
+        Ok(out)
     }
 
     async fn invite_create(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
@@ -1335,6 +1360,51 @@ impl<B: BlobStore> Backend for StationUi<B> {
         Ok(v)
     }
 
+    async fn account_position(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
+        let r = self.registrar.as_ref().ok_or_else(|| ApiError::unavailable("inscription non disponible sur cette station"))?;
+        let pos = match (body["lat"].as_f64(), body["lon"].as_f64()) {
+            (Some(lat), Some(lon)) => Some((lat, lon)),
+            (None, None) if body.get("lat").is_none() => None,
+            _ => return Err(ApiError::bad_request("position attendue : {lat, lon} en degrés")),
+        };
+        let umap = r.set_position(&who.hex, pos).await.map_err(register_error)?;
+        Ok(json!({ "umap": umap }))
+    }
+
+    async fn account_eject(&self, _who: &Principal, hex: String) -> Result<Value, ApiError> {
+        use astro_duniter::Chain;
+        let r = self.registrar.as_ref().ok_or_else(|| ApiError::unavailable("inscription non disponible sur cette station"))?;
+        let email = r.ejectable(&hex).await.map_err(register_error)?;
+        // Ẑen éventuels (reçus d'un ami, d'un don…) : reversés au portefeuille primal UPLANETNAME_G1 avant l'éjection, comme
+        // le « CASH-BACK » de nostr_DESTROY_TW.sh ; ils seront restitués si le membre revient. Solde illisible = pas d'éjection.
+        let dunikey = r.nostr_root().join(&email).join(".secret.dunikey");
+        let mut cashback = 0u64;
+        if let Ok(text) = std::fs::read_to_string(&dunikey) {
+            let chain = self.services.chain.clone().ok_or_else(|| ApiError::unavailable("station non reliée à la Ğ1 : impossible de vérifier le solde du compte avant de l'éjecter"))?;
+            let key = astro_lifecycle::dunikey::Dunikey::parse(&text).map_err(|e| ApiError::internal(format!("portefeuille du compte illisible : {e}")))?;
+            let signer = astro_duniter::Ed25519Signer::from_seed(*key.ed25519_seed());
+            let balance = chain.balance(&signer.account()).await.map_err(|e| ApiError::unavailable(format!("solde du compte illisible ({e}) : éjection reportée")))?;
+            if balance.total.0 > 0 {
+                let master = crate::coop_wallets::Wallets::new(r.uplanet_name().to_owned(), self.services.db.clone()).master().await.map_err(ApiError::internal)?;
+                let user = email.split('@').next().unwrap_or(&email);
+                let memo = format!("MULTIPASS:{user}:PRIMAL:CASH-BACK");
+                match chain.transfer(&signer, &master.account(), balance.total, astro_duniter::TransferMode::AllowDeath, Some(&memo)).await {
+                    Ok(out) => {
+                        cashback = balance.total.0;
+                        let record = json!({ "hex": hex, "email": email, "from": signer.account().ss58(), "to": master.account().ss58(), "g1_cents": cashback, "block": hex::encode(out.block_hash) });
+                        let _ = self.services.db.writer().execute("INSERT INTO journal(stream, at, data) VALUES ('eject_cashback', ?1, ?2)", vec![now_secs().into(), record.to_string().into()]).await;
+                    }
+                    Err(e) => return Err(ApiError::unavailable(format!("reversement des {} Ğ1 du compte impossible ({e}) : éjection annulée, rien n'a changé", balance.total))),
+                }
+            }
+        }
+        let email = r.eject(&hex).await.map_err(register_error)?;
+        if cashback > 0 {
+            self.services.activity.publish_to(astro_core::Audience::Captain, "system", "register", format!("{email} : {} Ğ1 reversés au portefeuille primal (CASH-BACK) avant l'éjection", Amount(cashback)), None);
+        }
+        Ok(json!({ "ejected": email, "cashback_g1_cents": cashback }))
+    }
+
     async fn account_token_rotate(&self, who: &Principal) -> Result<Value, ApiError> {
         let v = self.account_service()?.rotate_token(&who.hex).await.map_err(account_error)?;
         self.services.activity.publish_to(astro_core::Audience::Owner(who.hex.clone()), "system", "ui:token", "jeton de connexion changé : l'ancien ne fonctionne plus".to_owned(), None);
@@ -1439,6 +1509,16 @@ impl<B: BlobStore> Backend for StationUi<B> {
             eprintln!("interface : sauvegarde privée : {e}");
             ApiError::internal("état de la sauvegarde indisponible")
         })
+    }
+
+    async fn backup_rescue(&self, who: &Principal, owner: String, accept: bool) -> Result<Value, ApiError> {
+        let b = self.backup.as_ref().ok_or_else(|| ApiError::unavailable("sauvegarde privée non activée"))?;
+        (b.rescue_answer)(who.hex.clone(), owner, accept).await.map_err(ApiError::bad_request)
+    }
+
+    async fn restore_ask(&self, card: String, send: bool) -> Result<Value, ApiError> {
+        let b = self.backup.as_ref().ok_or_else(|| ApiError::unavailable("secours par les gardiens non disponible sur cette station"))?;
+        (b.rescue_ask)(card, send).await.map_err(ApiError::bad_request)
     }
 
     async fn backup_set(&self, who: &Principal, enabled: bool, host: Option<String>) -> Result<Value, ApiError> {
@@ -1702,8 +1782,9 @@ impl<B: BlobStore> Backend for StationUi<B> {
                 .await
                 .map_err(db_err)?;
             let issuer: bool = self.services.db.readers().read({ let h = hex.clone(); move |c| Ok(rusqlite::OptionalExtension::optional(c.query_row("SELECT 1 FROM kv WHERE scope = 'billet_issuer' AND key = ?1", [&h], |_| Ok(())))?.is_some()) }).await.unwrap_or(false);
+            let onboarding: Value = self.services.db.readers().read({ let h = hex.clone(); move |c| Ok(crate::member_primo::onboarding(c, &h)?) }).await.ok().flatten().map_or(Value::Null, |o| o.to_json(now_secs()));
             out.push(json!({
-                "billet_issuer": issuer, "own_quota_bytes": own_quota, "own_weekly_zen": own_price, "weekly_zen": price, "fee": fee,
+                "onboarding": onboarding, "billet_issuer": issuer, "own_quota_bytes": own_quota, "own_weekly_zen": own_price, "weekly_zen": price, "fee": fee,
                 "pass_locked_until": pass_locked_until,
                 "hex": hex, "role": role, "email": email, "contract": contract, "status": status, "tracked": !life.is_null(),
                 "last_ok_at": life["last_ok_at"], "status_since": life["status_since"], "grace_ends_at": grace_ends,

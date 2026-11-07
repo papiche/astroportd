@@ -133,23 +133,34 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
     acc.iter().sum::<f32>() + tail
 }
 
+/// Fils de calcul au plus pour les voisins (au-delà, la bande passante mémoire sature et la station a d'autres tâches).
+const KNN_MAX_THREADS: usize = 8;
+/// En dessous de ce nombre de visages, un seul fil : lancer des fils coûterait plus que le calcul.
+const KNN_PARALLEL_MIN: usize = 512;
+
+/// Fils à employer pour `n` visages : un sur les petites entrées, sinon les cœurs disponibles bornés à
+/// [`KNN_MAX_THREADS`] (une machine modeste à un ou deux cœurs reste à un ou deux fils).
+fn knn_threads(n: usize) -> usize {
+    if n < KNN_PARALLEL_MIN {
+        return 1;
+    }
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get).clamp(1, KNN_MAX_THREADS)
+}
+
 /// Groupes de visages probablement identiques parmi les lignes `idx` de `vecs` (n × `dim`, vecteurs unitaires).
 pub fn mutual_knn_groups(vecs: &[f32], dim: usize, idx: &[usize], threshold: f32) -> Vec<Vec<usize>> {
-    let n = idx.len();
-    if n < 2 {
-        return vec![idx.to_vec()];
-    }
-    let k = GROUP_KNN.min(n - 1);
-    let row = |i: usize| &vecs[idx[i] * dim..(idx[i] + 1) * dim];
-    // Les k meilleurs voisins de chacun, au-dessus du seuil. Calcul par tuiles de lignes : une tuile (16 visages, 32 Ko)
-    // reste dans le cache pendant qu'on y confronte chaque autre visage, au lieu de relire toute la matrice par visage
-    // (le calcul est limité par la mémoire, pas par l'arithmétique).
-    let mut best: Vec<Vec<(f32, usize)>> = vec![Vec::with_capacity(k + 1); n];
-    for i0 in (0..n).step_by(TILE) {
-        let i1 = (i0 + TILE).min(n);
+    mutual_knn_groups_with(vecs, dim, idx, threshold, knn_threads(idx.len()))
+}
+
+/// Les `k` meilleurs voisins (au-dessus du seuil) des lignes `first..first + best.len()`, tuile par tuile. Chaque ligne
+/// ne dépend que d'elle-même : découper les lignes entre fils donne exactement le même résultat qu'un seul fil.
+fn knn_rows<'v, F: Fn(usize) -> &'v [f32] + Sync>(row: &F, n: usize, k: usize, threshold: f32, first: usize, best: &mut [Vec<(f32, usize)>]) {
+    for (t, tile) in best.chunks_mut(TILE).enumerate() {
+        let i0 = first + t * TILE;
         for j in 0..n {
             let b = row(j);
-            for (i, top) in best.iter_mut().enumerate().take(i1).skip(i0) {
+            for (off, top) in tile.iter_mut().enumerate() {
+                let i = i0 + off;
                 if i == j {
                     continue;
                 }
@@ -162,6 +173,34 @@ pub fn mutual_knn_groups(vecs: &[f32], dim: usize, idx: &[usize], threshold: f32
                 top.truncate(k);
             }
         }
+    }
+}
+
+/// [`mutual_knn_groups`] sur `threads` fils (1 : calcul séquentiel). Le résultat ne dépend pas du nombre de fils.
+pub fn mutual_knn_groups_with(vecs: &[f32], dim: usize, idx: &[usize], threshold: f32, threads: usize) -> Vec<Vec<usize>> {
+    let n = idx.len();
+    if n < 2 {
+        return vec![idx.to_vec()];
+    }
+    let k = GROUP_KNN.min(n - 1);
+    let row = |i: usize| &vecs[idx[i] * dim..(idx[i] + 1) * dim];
+    // Les k meilleurs voisins de chacun, au-dessus du seuil. Calcul par tuiles de lignes : une tuile (16 visages, 32 Ko)
+    // reste dans le cache pendant qu'on y confronte chaque autre visage, au lieu de relire toute la matrice par visage
+    // (le calcul est limité par la mémoire, pas par l'arithmétique). Les tuiles se répartissent en blocs contigus
+    // entre les fils, qui ne partagent que la lecture des vecteurs.
+    let mut best: Vec<Vec<(f32, usize)>> = vec![Vec::with_capacity(k + 1); n];
+    let tiles = n.div_ceil(TILE);
+    let threads = threads.clamp(1, tiles);
+    if threads == 1 {
+        knn_rows(&row, n, k, threshold, 0, &mut best);
+    } else {
+        let block = tiles.div_ceil(threads) * TILE;
+        std::thread::scope(|scope| {
+            for (b, part) in best.chunks_mut(block).enumerate() {
+                let row = &row;
+                scope.spawn(move || knn_rows(row, n, k, threshold, b * block, part));
+            }
+        });
     }
     let mut parent: Vec<usize> = (0..n).collect();
     fn find(p: &mut [usize], mut x: usize) -> usize {
@@ -191,7 +230,7 @@ pub fn mutual_knn_groups(vecs: &[f32], dim: usize, idx: &[usize], threshold: f32
     comps.sort_by_key(|c| c[0]);
     for members in comps {
         if members.len() > GROUP_MAX && threshold < 0.8 {
-            out.extend(mutual_knn_groups(vecs, dim, &members, threshold + 0.05));
+            out.extend(mutual_knn_groups_with(vecs, dim, &members, threshold + 0.05, knn_threads(members.len()).min(threads)));
         } else {
             out.push(members);
         }
@@ -482,6 +521,36 @@ mod tests {
     }
 
     #[test]
+    fn the_parallel_neighbour_search_gives_exactly_the_sequential_result() {
+        // Données aléatoires déterministes (xorshift) : nuages de visages proches et visages dispersés, taille non
+        // multiple d'une tuile ni du nombre de fils.
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut rnd = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f32 / (1u64 << 53) as f32 - 0.5
+        };
+        let n = 1_237;
+        let centers: Vec<Vec<f32>> = (0..40).map(|_| (0..DIM).map(|_| rnd()).collect()).collect();
+        let mut flat = Vec::with_capacity(n * DIM);
+        for i in 0..n {
+            let mut v: Vec<f32> = centers[i % centers.len()].iter().map(|x| x + 0.2 * rnd()).collect();
+            unit(&mut v);
+            flat.extend(v);
+        }
+        let idx: Vec<usize> = (0..n).rev().collect();
+        let one = mutual_knn_groups_with(&flat, DIM, &idx, GROUP_MIN_SIM, 1);
+        assert!(one.iter().any(|g| g.len() > 1), "des groupes se forment");
+        for threads in [2, 3, 7, 8, 64] {
+            assert_eq!(mutual_knn_groups_with(&flat, DIM, &idx, GROUP_MIN_SIM, threads), one, "{threads} fils");
+        }
+        assert_eq!(mutual_knn_groups(&flat, DIM, &idx, GROUP_MIN_SIM), one);
+        assert_eq!(knn_threads(10), 1, "petite entrée : un seul fil");
+        assert!((1..=KNN_MAX_THREADS).contains(&knn_threads(5_000)));
+    }
+
+    #[test]
     fn pca_separates_two_clusters_along_the_first_axis_and_stays_in_the_unit_square() {
         let mut rows = Vec::new();
         for i in 0..20 {
@@ -509,7 +578,7 @@ mod tests {
             state ^= state << 17;
             (state >> 11) as f32 / (1u64 << 53) as f32 - 0.5
         };
-        for n in [1_000usize, 2_000, 4_000, 8_000, 20_000] {
+        for n in [1_000usize, 2_000, 4_000, 5_000, 8_000, 20_000] {
             // 5 % de « personnes » : des nuages de ~20 visages proches, le reste dispersé.
             let centers: Vec<Vec<f32>> = (0..n / 20).map(|_| (0..DIM).map(|_| rnd()).collect()).collect();
             let mut flat = Vec::with_capacity(n * DIM);
@@ -525,7 +594,12 @@ mod tests {
             let (groups, knn) = if n <= GROUP_CAP {
                 let t = std::time::Instant::now();
                 let g = mutual_knn_groups(&flat, DIM, &(0..n).collect::<Vec<_>>(), GROUP_MIN_SIM);
-                (g.iter().filter(|x| x.len() > 1).count(), t.elapsed())
+                let multi = t.elapsed();
+                let t = std::time::Instant::now();
+                let one = mutual_knn_groups_with(&flat, DIM, &(0..n).collect::<Vec<_>>(), GROUP_MIN_SIM, 1);
+                eprintln!("        un fil : {:>10.1?} ; {} fils : {multi:>10.1?}", t.elapsed(), knn_threads(n));
+                assert_eq!(g, one);
+                (g.iter().filter(|x| x.len() > 1).count(), multi)
             } else {
                 (0, std::time::Duration::ZERO)
             };

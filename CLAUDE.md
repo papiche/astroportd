@@ -115,7 +115,7 @@ Ton rôle est d'analyser, maintenir, sécuriser et faire évoluer ce codebase av
 1. **Zéro dépendance lourde & CSP Ultra-Stricte :**
    - Vanilla HTML5 / modern CSS / Vanilla JS modulaire (`m-*.js`, `m-*.css`).
    - Aucun framework externe (pas de React, Vue, Tailwind CDN, etc.).
-   - Budgets compressés (gzip) servis via `rust-embed`, vérifiés par la CI (`crates/astro-ui/src/web.rs`) : **coque < 20 Ko, écrans à la demande < 128 Ko au cumul (toutes les parts de la langue la plus lourde comprises), chaque écran < 12 Ko**. Relever un budget est une décision : garder l'historique dans le message du test (« X Ko avant telle fonctionnalité »).
+   - Budgets compressés (gzip) servis via `rust-embed`, vérifiés par la CI (`crates/astro-ui/src/web.rs`) : **coque < 20 Ko, écrans à la demande < 144 Ko au cumul (toutes les parts de la langue la plus lourde comprises), chaque écran < 12 Ko**. Relever un budget est une décision : garder l'historique dans le message du test (« X Ko avant telle fonctionnalité »).
 2. **Humain d'abord, Technique invisible :**
    - Ne JAMAIS afficher de jargon cryptographique à un membre (proscrire de ses écrans les termes : CID, IPNS, NIP, kind, Hex 64, SS58, Opex/Capex, SSSS, STREAM). **Seule exception : l'espace Capitaine** (cockpit, Options, Station), écran d'administration où le vocabulaire technique est toléré.
    - Les clés privées sont encapsulées. Les liens de partage avec fragment `#key` sont explicités comme des *"Liens sécurisés privés"*.

@@ -11,3 +11,8 @@
 .hm-steps li { display: flex; gap: .6rem; align-items: flex-start; }
 .hm-steps li.done { color: var(--muted); }
 .hm-steps p { margin: .1rem 0 0; }
+.hm-news { border-left: 6px solid var(--accent); }
+.hm-news ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+.hm-news li { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; }
+.hm-news li > span:nth-child(2) { flex: 1; min-width: 12rem; }
+.hm-news .hm-ico { font-size: 1.6rem; }

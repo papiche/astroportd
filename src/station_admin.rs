@@ -336,6 +336,10 @@ pub struct Admin {
     pub assist: Option<AdminFn>,
     /// Base, pour la santé de la file de tâches.
     pub tasks: Option<Arc<Db>>,
+    /// Maillage P2P : stations jointes, ajout à chaud, bootstrap gardé.
+    pub mesh: Option<AdminFn>,
+    /// Capitaines : suivre, services des amis réciproques, accès à chaud.
+    pub captains: Option<AdminFn>,
 }
 
 /// Un service local répond-il ? Une connexion TCP qui s'établit en 600 ms. Ne dit rien de ce qu'il y a derrière (un port
@@ -362,6 +366,29 @@ async fn annotate_services(view: &mut Value, targets: &[(String, String)]) {
         s["target"] = json!(target);
         s["up"] = json!(up);
     }
+}
+
+/// Services courants qu'un Capitaine peut vouloir partager : nom proposé, port local, description (affichée telle quelle).
+/// Le bureau à distance passe par un serveur VNC (`wayvnc` sous Wayland, `x11vnc` sous X11) ou RDP (GNOME Remote Desktop,
+/// `xrdp`) : la station ne capture pas l'écran elle-même, elle transporte le flux TCP derrière la politique des tunnels.
+const SUGGESTIONS: [(&str, u16, &str); 6] = [
+    ("bureau-vnc", 5900, "Bureau à distance (VNC)"),
+    ("bureau-rdp", 3389, "Bureau à distance (RDP)"),
+    ("jellyfin", 8096, "Films et musique (Jellyfin)"),
+    ("home-assistant", 8123, "Maison (Home Assistant)"),
+    ("open-webui", 3000, "IA en discussion (Open WebUI)"),
+    ("imprimante", 631, "Imprimantes (CUPS)"),
+];
+
+/// Ajoute à la vue les services courants qui répondent sur cette machine et ne sont pas encore offerts (`suggest`).
+async fn suggest_services(view: &mut Value) {
+    let taken: Vec<String> = view["services"].as_array().into_iter().flatten().flat_map(|s| [s["name"].as_str().map(str::to_owned), s["target"].as_str().map(str::to_owned)]).flatten().collect();
+    let probes = SUGGESTIONS.iter().map(|(name, port, label)| {
+        let target = format!("127.0.0.1:{port}");
+        async move { service_is_up(&target).await.then(|| json!({ "name": name, "target": target, "label": label })) }
+    });
+    let found: Vec<Value> = futures_util::future::join_all(probes).await.into_iter().flatten().filter(|s| !taken.iter().any(|t| Some(t.as_str()) == s["name"].as_str() || Some(t.as_str()) == s["target"].as_str())).collect();
+    view["suggest"] = json!(found);
 }
 
 /// Santé de la file `tasks` : par genre de tâche, combien attendent, tournent, ont réussi ou ont été abandonnées, et les
@@ -406,6 +433,14 @@ impl Admin {
                     ("face", Some(b)) => me.face.set(&b).await,
                     ("kinds", None) => Ok(me.kinds.view().await),
                     ("kinds", Some(b)) => me.kinds.set(&b).await,
+                    ("mesh", body) => match &me.mesh {
+                        Some(f) => f(section, body).await,
+                        None => Err("maillage non câblé sur cette station".to_owned()),
+                    },
+                    ("captains", body) => match &me.captains {
+                        Some(f) => f(section, body).await,
+                        None => Err("écran des Capitaines non câblé sur cette station".to_owned()),
+                    },
                     ("assist", body) => match &me.assist {
                         Some(f) => f(section, body).await,
                         None => Err("assistance non activée sur cette station".to_owned()),
@@ -429,15 +464,18 @@ impl Admin {
                     ("tunnels", body) => {
                         let (policy, exposed) = me.tunnels.as_ref().ok_or("tunnels P2P non activés sur cette station")?;
                         let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+                        let targets = || me.targets.iter().cloned().chain(policy.shared_targets()).collect::<Vec<_>>();
                         match body {
                             None => {
                                 let mut v = policy.view(exposed, at).await;
-                                annotate_services(&mut v, &me.targets).await;
+                                annotate_services(&mut v, &targets()).await;
+                                suggest_services(&mut v).await;
                                 Ok(v)
                             }
                             Some(b) => {
                                 let mut v = policy.set(&b, exposed, at).await?;
-                                annotate_services(&mut v, &me.targets).await;
+                                annotate_services(&mut v, &targets()).await;
+                                suggest_services(&mut v).await;
                                 Ok(v)
                             }
                         }

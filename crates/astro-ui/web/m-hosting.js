@@ -30,7 +30,7 @@ export default function hosting(box, K, a, hd) {
     h('div', { class: 'ho-form' },
       h('label', { for: 'ho-q' }, a ? t('Quota de {0}, en Go (vide : palier par défaut)', who) : t('Quota par défaut des MULTIPASS, en Go (vide : celui de leur formule)')), quota,
       h('label', { for: 'ho-z' }, a ? t('Prix de {0}, en ẑ par semaine (0 : gratuit ; vide : prix par défaut)', who) : t('Prix par défaut, en ẑ par semaine (vide ou 0 : gratuit)')), zen),
-    issuer ? h('p', {}, h('label', { for: 'ho-b' }, issuer, ' ', t('Peut créer des Ğ1Billets (l’option apparaît dans son interface)'))) : null,
+    ...(issuer ? [h('p', {}, h('label', { for: 'ho-b' }, issuer, ' ', t('Peut créer des Ğ1Billets (l’option apparaît dans son interface)')))] : []),
     err, h('p', { class: 'row' }, save, ' ', cancel));
   (quota.focus && quota.focus());
 }

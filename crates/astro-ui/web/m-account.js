@@ -230,6 +230,17 @@ export default async function account(root, K) {
       backup.append(h('hr'), h('p', {}, h('strong', {}, r.label), r.status === 'pending' ? ' demande à vous confier sa sauvegarde chiffrée.' : ` : ${gb(r.used_bytes)} / ${gb(r.quota_bytes)} hébergés pour lui.`),
         r.status === 'pending' ? h('p', {}, 'Volume mis à disposition (Go) : ', size, ' ', h('button', { onclick: () => post('/api/v1/backup/respond', { owner: r.owner, accept: true, quota_bytes: Math.round(Number(size.value) * 2 ** 30) }) }, 'Accepter'), ' ', h('button', { class: 'ghost', onclick: () => post('/api/v1/backup/respond', { owner: r.owner, accept: false }) }, 'Refuser'))
           : h('p', {}, h('button', { class: 'ghost', onclick: () => confirm(t('Révoquer : sa sauvegarde sera supprimée de votre espace.')) && post('/api/v1/backup/respond', { owner: r.owner, accept: false }) }, 'Révoquer et libérer l\'espace')));
+      // Secours : cet ami dit avoir perdu sa station. Je confirme seulement après lui avoir parlé : sa part part alors seule.
+      if (r.rescue) {
+        const ok = h('input', { type: 'checkbox' }), answer = accept => post('/api/v1/backup/rescue', { owner: r.owner, accept });
+        const yes = h('button', { disabled: true, onclick: () => answer(true) }, t('Rendre son compte à {0}', r.label));
+        ok.onchange = () => { yes.disabled = !ok.checked; };
+        backup.append(h('div', { class: 'warn', role: 'alert' },
+          h('p', {}, h('strong', {}, t('🆘 {0} dit avoir perdu sa station', r.label)), ' ', t('et veut retrouver son compte sur « {0} ».', r.rescue.station)),
+          h('p', {}, t('Appelez {0} avant de confirmer. Si vous ne reconnaissez pas sa voix, refusez : votre Capitaine sera prévenu.', r.label)),
+          h('p', {}, h('label', {}, ok, ' ', t('J\'ai parlé à {0} et je l\'ai reconnu(e)', r.label))),
+          h('p', {}, yes, ' ', h('button', { class: 'ghost danger', onclick: () => answer(false) }, t('Ce n\'est pas {0}', r.label)))));
+      }
       // « J'appelle un ami » : cet ami me confie une part de sa clé de secours ; je la lui montre au téléphone (texte ou QR).
       if (r.share) {
         const shown = h('div', { hidden: true });
@@ -248,5 +259,26 @@ export default async function account(root, K) {
   const title = a.profile.name || a.email || 'Mon compte';
   const hero = h('div', { class: 'hero' }, h('div', { class: 'avatar', 'aria-hidden': 'true' }, [...title][0].toUpperCase()),
     h('div', { class: 'who' }, h('h2', {}, title), a.email && a.email !== title ? h('div', { class: 'sub' }, a.email) : null, h('span', { class: 'pill' }, ROLE[a.role] || a.role), a.guest ? h('span', { class: 'pill' }, 'Invité') : null));
-  root.replaceChildren(...[hero, guest, h('div', { class: 'grid' }, idCard, profile, sitebox, visio, ai, planes, dav, devices, backup, keys)].filter(Boolean));
+  // « Si je perds tout » : la procédure de la clé de secours (3 morceaux, 2 suffisent), dite sans cryptographie.
+  const rescue = h('section', { class: 'card' }, h('h2', {}, t('Si je perds tout')),
+    h('p', {}, t('Votre clé est découpée en 3 morceaux ; 2 suffisent pour tout retrouver : la carte de secours imprimée chez vous, la station, et l\'ami qui garde votre sauvegarde.')),
+    h('details', { class: 'fold' }, h('summary', {}, t('J\'ai oublié mon code PASS')), h('p', {}, t('Votre station marche toujours : demandez à son Capitaine un code de secours. Rien n\'est perdu.'))),
+    h('details', { class: 'fold' }, h('summary', {}, t('Ma station est détruite, ou je déménage')), h('ol', {},
+      h('li', {}, t('Sur une autre station de la même UPlanet, ouvrez la page « Rétablir mon compte » (adresse /restore).')),
+      h('li', {}, t('Scannez votre carte de secours imprimée.')),
+      h('li', {}, t('Appuyez sur « Prévenir mes gardiens », puis appelez l\'ami qui garde votre sauvegarde : il confirme d\'un geste dans Mon compte › Ma sécurité. Reconnaître votre voix est la seule vérification.')),
+      h('li', {}, t('Dès qu\'il confirme, votre compte renaît tout seul. Notez le nouveau code PASS affiché.')),
+      h('li', {}, t('Vos amis, vos contacts et vos fichiers reviennent d\'eux-mêmes au fil des heures.')))));
+  // Trois onglets plutôt qu'une colonne de dix cartes : l'onglet ouvert se garde dans l'adresse (#/account?tab=securite).
+  const TABS = [['moi', t('Moi'), [profile, sitebox, visio, ai, planes]], ['appareils', t('Mes appareils'), [dav, devices]], ['securite', t('Ma sécurité'), [rescue, backup, idCard, keys]]];
+  const want = new URLSearchParams(location.hash.split('?')[1] || '').get('tab'), cur = TABS.some(x => x[0] === want) ? want : 'moi';
+  const panels = TABS.map(([k, , cards]) => h('div', { class: 'grid', role: 'tabpanel', id: 'ac-p-' + k, 'aria-labelledby': 'ac-t-' + k, hidden: k !== cur }, cards));
+  const tabs = TABS.map(([k, label], i) => h('button', { type: 'button', class: 'link', role: 'tab', id: 'ac-t-' + k, 'aria-controls': 'ac-p-' + k, 'aria-selected': String(k === cur), tabIndex: k === cur ? 0 : -1, onclick: () => pick(i),
+    onkeydown: ev => { const d = { ArrowRight: 1, ArrowLeft: -1 }[ev.key]; if (d) { ev.preventDefault(); pick((i + d + TABS.length) % TABS.length, true); } } }, label));
+  const pick = (i, focus) => {
+    tabs.forEach((b, j) => { b.setAttribute('aria-selected', String(i === j)); b.tabIndex = i === j ? 0 : -1; panels[j].hidden = i !== j; });
+    if (focus) tabs[i].focus();
+    history.replaceState(null, '', '#/account?tab=' + TABS[i][0]);
+  };
+  root.replaceChildren(...[hero, guest, h('div', { class: 'ac-tabs', role: 'tablist', 'aria-label': t('Mon compte') }, tabs), ...panels].filter(Boolean));
 }

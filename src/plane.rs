@@ -139,6 +139,17 @@ pub fn plan(file: &PlanesFile, home: &Path) -> Result<Vec<Plane>, PlaneError> {
     let (mut names, mut dbs, mut games, mut ports, mut keys) = (HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new());
     let mut out = Vec::new();
     let mut origins = 0;
+    // Maillage actif par défaut : un plan sans écoute libp2p reçoit le premier port libre à partir de 4101, jamais celui
+    // d'un autre plan (deux plans ne partagent ni réseau privé ni port).
+    let mut p2p_used: HashSet<u16> = HashSet::new();
+    for s in &file.planes {
+        for port in s.p2p_listen.iter().filter_map(|l| port_of(l)) {
+            if !p2p_used.insert(port) {
+                return Err(rule(&s.name, format!("le port libp2p {port} sert déjà un autre plan")));
+            }
+        }
+    }
+    let mut next_p2p = 4_101u16;
     for (rank, s) in file.planes.iter().enumerate() {
         if !valid_name(&s.name) {
             return Err(rule(&s.name, "nom invalide (lettres minuscules, chiffres et tirets, 32 caractères au plus)"));
@@ -183,6 +194,13 @@ pub fn plan(file: &PlanesFile, home: &Path) -> Result<Vec<Plane>, PlaneError> {
         }
         for l in &s.p2p_listen {
             args.extend(["--p2p-listen".into(), l.clone()]);
+        }
+        if s.p2p_listen.is_empty() && !s.args.iter().any(|x| x == "--no-p2p") {
+            while p2p_used.contains(&next_p2p) {
+                next_p2p = next_p2p.checked_add(1).ok_or_else(|| rule(&s.name, "aucun port libp2p libre"))?;
+            }
+            p2p_used.insert(next_p2p);
+            args.extend(["--p2p-listen".into(), format!("/ip4/0.0.0.0/tcp/{next_p2p}")]);
         }
         args.extend(s.args.iter().cloned());
         out.push(Plane { name: s.name.clone(), origin, db, game, http, args });
@@ -473,7 +491,17 @@ mod tests {
         assert_eq!(arg_of(o, "--http-listen"), ["127.0.0.1:18080"]);
         assert_eq!((arg_of(o, "--kubo").len(), arg_of(z, "--kubo").len()), (1, 0));
         assert_eq!(arg_of(z, "--p2p-listen"), ["/ip4/0.0.0.0/tcp/4101"]);
+        assert_eq!(arg_of(o, "--p2p-listen"), ["/ip4/0.0.0.0/tcp/4102"], "maillage actif par défaut, sur un port que nul autre plan ne prend");
         assert_eq!(arg_of(z, "--swarm-key"), ["/home/fred/.zen/game/zen1/swarm.key"]);
+    }
+
+    #[test]
+    fn each_plane_gets_its_own_mesh_port_unless_it_opts_out() {
+        let planes = plan(&file(r#"{ "planes": [ { "name": "origin" }, { "name": "zen1", "swarm_key": "/k1" }, { "name": "zen2", "swarm_key": "/k2", "args": ["--no-p2p"] }, { "name": "zen3", "swarm_key": "/k3", "p2p_listen": ["/ip4/0.0.0.0/tcp/4102"] } ] }"#), &home()).unwrap();
+        let ports: Vec<Vec<String>> = planes.iter().map(|p| arg_of(p, "--p2p-listen")).collect();
+        assert_eq!(ports, [vec!["/ip4/0.0.0.0/tcp/4101".to_owned()], vec!["/ip4/0.0.0.0/tcp/4103".to_owned()], vec![], vec!["/ip4/0.0.0.0/tcp/4102".to_owned()]]);
+        let e = plan(&file(r#"{ "planes": [ { "name": "origin", "p2p_listen": ["/ip4/0.0.0.0/tcp/4101"] }, { "name": "zen1", "swarm_key": "/k1", "p2p_listen": ["/ip4/0.0.0.0/tcp/4101"] } ] }"#), &home()).unwrap_err().to_string();
+        assert!(e.contains("4101"), "{e}");
     }
 
     #[test]

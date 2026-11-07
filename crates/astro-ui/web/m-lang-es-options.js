@@ -93,5 +93,13 @@ export default {
 "Relancer": "Relanzar",
 "Aucune tâche pour le moment.": "Ninguna tarea por ahora.",
 "Dernières abandonnées": "Últimas abandonadas",
-"Dépôts demandés à BRO": "Subidas pedidas a BRO"
+"Dépôts demandés à BRO": "Subidas pedidas a BRO",
+"Partage retiré": "Compartición retirada",
+"Retirer le partage": "Dejar de compartir",
+"Nom du service": "Nombre del servicio",
+"Adresse et port": "Dirección y puerto",
+"Partager un service de cette machine": "Compartir un servicio de esta máquina",
+"Détectés :": "Detectados:",
+"{0} partagé": "{0} compartido",
+"Cette machine ou le réseau local seulement. Bureau à distance : serveur VNC (wayvnc, x11vnc) ou RDP, puis un ami nommé, pour une durée limitée.": "Solo esta máquina o la red local. Escritorio remoto: servidor VNC (wayvnc, x11vnc) o RDP, luego un amigo concreto, por tiempo limitado."
 };

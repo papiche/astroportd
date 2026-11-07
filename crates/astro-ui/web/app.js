@@ -191,9 +191,8 @@ every(30000, () => draw().catch(() => {}));
 }
 async function viewStation(root) {
 const draw = async () => {
-const [d, z, cs, ec, ac, hd] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()), api('/api/v1/station/constellation'), api('/api/v1/station/economy'), api('/api/v1/station/accounts'), api('/api/v1/station/hosting')]);
-const s = d.station, r = d.relay, p = d.p2p, sub = z.subsystems || {};
-const love = ec.love, sh = ec.shares;
+const [d, z, ac, hd] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()), api('/api/v1/station/accounts'), api('/api/v1/station/hosting')]);
+const s = d.station, r = d.relay, sub = z.subsystems || {};
 root.replaceChildren(h('div', { class: 'grid' },
 h('section', { class: 'card' }, h('h2', {}, 'Station ', pill(z.status)),
 h('dl', {}, row('Nœud', s.node), row('PeerID', s.peer_id || '—'), row('Domaine', s.domain || '—'), row('Version', s.version), row('Disponibilité', span(s.uptime_secs)))),
@@ -201,29 +200,15 @@ h('section', { class: 'card' }, h('h2', {}, 'Relais Nostr ', pill(sub.relay?.sta
 h('p', { class: 'big' }, String(r.events ?? '—'), h('small', { class: 'muted' }, ' événements')),
 h('dl', {}, row('Dernier événement', when(r.last_event_at)), row('Base de données', bytes(r.db_bytes)))),
 h('section', { class: 'card' }, h('h2', {}, 'Sous-systèmes'), h('dl', {}, Object.entries(sub).flatMap(([n, v]) => row(n, [pill(v.status), ' ', v.detail])))),
-h('section', { class: 'card wide' }, h('h2', {}, 'Constellation ', h('small', {}, `${cs.nodes.length} nœud(s)${p.enabled ? ` · ${p.peers} pair(s) connecté(s)` : ''}`)),
-table('Nœuds de l\'essaim, du plus puissant au moins puissant', ['Nœud', 'Power-Score', 'Distance', 'Statut', 'Services'],
-cs.nodes.map(n => [[h('code', {}, n.node_id ? n.node_id.slice(-8) : '—'), n.self ? ' (ce nœud)' : ''], `${n.power_score} · ${n.tier}`, n.distance_km == null ? '—' : `${n.distance_km} km`, (n.status === 'connected' || n.self) ? pill('ok') : h('span', { class: 'pill disabled' }, t('Non connecté')), n.services.join(', ') || '—'])),
-cs.swarm_dir_configured ? null : h('p', { class: 'muted' }, 'Aucun dossier de pairs configuré (--swarm-dir) : seule cette station est listée.')),
-h('section', { class: 'card wide' }, h('h2', {}, 'Régie coopérative 3×1/3 ', h('small', {}, ec.week ? `semaine ${ec.week}` : '')),
-ec.kind === 'split' ? [
-h('div', { class: 'shares' }, sh.map(x => h('div', {}, h('strong', {}, x.name), h('progress', { max: 100, value: x.pct, 'aria-label': `${x.name} ${x.pct} %` }), h('span', { class: 'muted' }, `${zen(x.cents)} Ẑ · ${x.pct} %`)))),
-h('dl', {}, row('Surplus réparti', `${zen(ec.allocation.surplus_cents)} Ẑ`), row('Provision fiscale (IS)', `${zen(ec.allocation.is_provision_cents)} Ẑ`), row('Prime du Capitaine', `${zen(ec.allocation.captain_bonus_cents)} Ẑ`))]
-: ec.kind === 'none' ? h('p', { class: 'muted' }, 'Aucune clôture hebdomadaire enregistrée.')
-: h('p', { class: 'degraded' }, ec.kind === 'drawdown' ? `Semaine ${ec.week} : trésorerie entamée (${zen(ec.gap_cents)} Ẑ).` : `Semaine ${ec.week} : bénévolat actif, apport du Capitaine de ${zen(ec.gap_cents)} Ẑ.`),
-h('h3', {}, 'Love Ledger'), h('p', {}, h('strong', {}, `${zen(love.total_cents)} Ẑ`), ` donnés sur ${love.weeks} semaine(s)`),
-love.recent.length ? h('ul', { class: 'muted' }, love.recent.map(x => h('li', {}, `${day(x.at)} : ${zen(x.amount_cents)} Ẑ${x.detail?.week ? ` (semaine ${x.detail.week})` : ''}`))) : null),
+h('section', { class: 'card wide' }, h('h2', {}, t('Économie')), h('p', { class: 'muted' }, t('Régie 3×1/3, Love Ledger et vigilance des portefeuilles : onglet Économie.')), h('a', { class: 'ck-btn', href: '#/constellation' }, t('Ouvrir'))),
 h('section', { class: 'card wide', id: 'hosting-edit', hidden: '' }),
 h('section', { class: 'card wide' }, h('h2', {}, 'Comptes hébergés ', h('small', {}, `${ac.accounts.length}`)),
 h('p', { class: 'muted' }, `${t('Palier par défaut des MULTIPASS')} : ${hd.default_quota_bytes == null ? t('quota de leur formule') : bytes(hd.default_quota_bytes)} · ${price(hd.default_weekly_zen)} `, h('button', { class: 'ghost', onclick: () => hosting(null, hd) }, 'Modifier')),
 ac.accounts.length ? table('MULTIPASS et ZenCards de la station', ['Compte', 'Cycle de vie', 'Disque', 'Hébergement', 'Fichiers', 'Secours'],
-ac.accounts.map(a => [a.email || a.hex.slice(0, 12), [pill(tone(a.status)), ' ', LIFE[a.status] || a.status || 'inconnu', a.grace_ends_at ? ` (jusqu'au ${day(a.grace_ends_at)})` : ''],
+ac.accounts.map(a => [a.email || a.hex.slice(0, 12), [pill(tone(a.status)), ' ', LIFE[a.status] || a.status || 'inconnu', a.grace_ends_at ? ` (jusqu'au ${day(a.grace_ends_at)})` : '', a.onboarding ? ` · ${a.onboarding.proved_at ? 'clés reçues' : 'jamais connecté'}${a.onboarding.primo === 'paid' ? ' · 1 Ğ1 reçu' : ''}` : ''],
 [h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: a.quota_bytes ? Math.min(a.used_bytes / a.quota_bytes, 1) : 0, 'aria-label': 'Disque' }), ` ${bytes(a.used_bytes)} / ${a.unlimited ? t('illimité') : bytes(a.quota_bytes)}`], a.unlimited ? '—' : `${price(a.weekly_zen)}${a.billet_issuer ? ' 🎫' : ''}${a.fee?.status === 'grace_period' ? ` · ${t('période de grâce')}` : a.fee?.status === 'suspended' ? ` · ${t('suspendu')}` : ''}`, String(a.files),
-[h('button', { class: 'ghost', onclick: () => token(a) }, 'Jeton de secours'), a.unlimited ? null : [' ', h('button', { class: 'ghost', onclick: () => hosting(a) }, 'Hébergement')], a.pass_locked_until ? [' ', h('button', { onclick: async () => { await api(`/api/v1/station/accounts/${a.hex}/unlock-pass`, { method: 'POST' }); toast('PASS déverrouillé', 1); draw(); } }, 'Déverrouiller le PASS')] : null]]))
-: h('p', { class: 'muted' }, 'Aucun compte hébergé.')),
-h('section', { class: 'card wide' }, h('h2', {}, 'Configuration coopérative'), h('p', { class: 'muted' }, 'Paramètres partagés par toute la constellation (OpenCollective, Mailjet, règle 3×1/3…). Les secrets sont chiffrés et ne s\'affichent jamais.'), h('button', { onclick: () => { location.hash = '#/coop'; } }, 'Modifier la configuration')),
-h('section', { class: 'card wide' }, h('h2', {}, t('Plans (UPlanet)')), h('p', { class: 'muted' }, t('ORIGIN et les UPlanet privées de cette station : en fonder une, en rejoindre une avec sa swarm.key.')), h('button', { onclick: () => { location.hash = '#/planes'; } }, t('Gérer les plans'))),
-h('section', { class: 'card wide' }, h('h2', {}, 'Options de la station'), h('p', { class: 'muted' }, 'Moteur de reconnaissance des visages (local, Brain GPU ou arrêt) et règles du relai par kind, sans redémarrer.'), h('button', { onclick: () => { location.hash = '#/options'; } }, 'Ouvrir les options'))));
+[h('button', { class: 'ghost', onclick: () => token(a) }, 'Jeton de secours'), a.unlimited ? null : [' ', h('button', { class: 'ghost', onclick: () => hosting(a) }, 'Hébergement')], a.pass_locked_until ? [' ', h('button', { onclick: async () => { await api(`/api/v1/station/accounts/${a.hex}/unlock-pass`, { method: 'POST' }); toast('PASS déverrouillé', 1); draw(); } }, 'Déverrouiller le PASS')] : null, a.onboarding?.ejectable ? [' ', h('button', { class: 'ghost', title: 'Aucune connexion en 24 h, aucune Ğ1 reçue : ses clés sont rangées, l’adresse pourra se réinscrire', onclick: async ev => { const b = ev.target; if (!b.dataset.armed) { b.dataset.armed = 1; b.textContent = 'Confirmer l’éjection ?'; return; } b.disabled = true; try { await api(`/api/v1/station/accounts/${a.hex}/eject`, { method: 'POST' }); toast('MULTIPASS éjecté', 1); draw(); } catch (e) { toast(e.message); b.disabled = false; } } }, 'Éjecter')] : null]]))
+: h('p', { class: 'muted' }, 'Aucun compte hébergé.'))));
 };
 await draw();
 every(30000, () => draw().catch(() => {}));
@@ -356,10 +341,11 @@ tr(document.body); new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEa
 const K = { mod, t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, blob: blobUrl, tiles, every, enc, del, picker, mark, photos, dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n), feed, listeners };
 const lazyView = f => async (root, q) => (await mod(f)).default(root, K, q);
 const views = { stats: viewHome, station: viewStation, cloud: viewCloud };
-for (const n of ['home', 'account', 'contacts', 'chat', 'people', 'replication', 'library', 'coop', 'constellation', 'billets', 'cockpit', 'options', 'planes', 'bro']) views[n] = lazyView(`m-${n}.js`);
+for (const n of ['home', 'account', 'contacts', 'chat', 'people', 'replication', 'library', 'coop', 'constellation', 'billets', 'cockpit', 'options', 'mesh', 'planes', 'bro']) views[n] = lazyView(`m-${n}.js`);
 // Personnes : carnet + visages (m-contacts.js), tri en sous-vue (#/people/tri).
 views.people = views.contacts; views.sort = lazyView('m-people.js');
 let me = null;
+const CAP = ['options', 'mesh', 'planes', 'coop', 'cockpit', 'station']; // écrans du Capitaine (onglet Station)
 async function route() {
 cleanups.forEach(c => c()); cleanups = [];
 blobs.forEach(p => p.then(URL.revokeObjectURL, () => {})); blobs.clear();
@@ -373,8 +359,8 @@ $('nav a[data-r=bro]').hidden = !me.ai; // BRO n'existe que pour un MULTIPASS qu
 if (!me.ai && location.hash.startsWith('#/bro')) { toast(t('Déclarez une IA (Ollama ou clé d\'API) dans Mon compte pour utiliser BRO')); location.hash = '#/account'; return; }
 if (me.captain) planeSwitch();
 document.querySelector('nav a[data-r=station]').hidden = !me.captain; document.querySelector('nav a[data-r=station]').href = '#/cockpit'; // l'écran Capitaine n'existe pas pour un MULTIPASS
-const name = p.startsWith('/chiffres') ? 'stats' : p.startsWith('/people/tri') ? 'sort' : ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts', 'chat', 'constellation', 'billets'].find(n => p.startsWith('/' + n)) || (p.startsWith('/options') && me.captain ? 'options' : p.startsWith('/planes') && me.captain ? 'planes' : p.startsWith('/coop') && me.captain ? 'coop' : p.startsWith('/cockpit') && me.captain ? 'cockpit' : p.startsWith('/station') && me.captain ? 'station' : 'home');
-document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (name === 'coop' || name === 'options' || name === 'planes' || name === 'cockpit' ? 'station' : name === 'stats' ? 'home' : name === 'sort' || name === 'contacts' ? 'people' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
+const name = p.startsWith('/chiffres') ? 'stats' : p.startsWith('/people/tri') ? 'sort' : ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts', 'chat', 'constellation', 'billets'].find(n => p.startsWith('/' + n)) || me.captain && CAP.find(n => p.startsWith('/' + n)) || 'home';
+document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (CAP.includes(name) ? 'station' : name === 'stats' ? 'home' : name === 'sort' || name === 'contacts' ? 'people' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
 await views[name](main, new URLSearchParams(qs || ''));
 $('#out').hidden = false;
 startLive(); refreshBadge();

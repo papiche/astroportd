@@ -4,6 +4,10 @@
 //! l'ami est donc cherchée d'abord (`home_station` de son DID, répliqué par le crawl N¹/N²), puis jointe par le maillage
 //! (`/x/strfry-<PeerID>`, adresse publique en repli) ; les relais de `--relay` passent ensuite. L'envoi réussit dès qu'un
 //! relai accepte l'enveloppe : celui de l'ami accepte un gift wrap adressé à un MULTIPASS qu'il héberge, sans authentification.
+//!
+//! Station d'accueil inconnue (un compte jamais croisé, la station NODE d'un inconnu qui se rétablit) : les stations de l'essaim
+//! sont essayées à la suite ([`MAX_SWARM_TRIES`] au plus). Seule celle qui héberge le destinataire accepte l'enveloppe ; les autres
+//! la refusent sans la garder, et elle reste illisible pour toutes.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,6 +18,9 @@ use astro_nostr_proto::Event;
 use rusqlite::OptionalExtension;
 
 use crate::p2p_relay::P2pRelayClient;
+
+/// Stations de l'essaim essayées au plus quand la station d'accueil du destinataire est inconnue.
+pub const MAX_SWARM_TRIES: usize = 32;
 
 /// Boîte d'envoi par le maillage.
 pub struct MeshOutbox {
@@ -34,9 +41,19 @@ impl MeshOutbox {
         let hex = recipient.to_owned();
         let home: Option<String> = self.db.readers().read(move |c| Ok(c.query_row("SELECT home_station FROM identities WHERE hex = ?1", [hex], |r| r.get::<_, Option<String>>(0)).optional()?.flatten())).await.ok().flatten();
         let mut out = Vec::new();
-        if let (Some(home), Some(dir)) = (home, self.swarm_dir.clone()) {
+        let dir = self.swarm_dir.clone();
+        let peers = match dir {
+            Some(dir) => tokio::task::spawn_blocking(move || astro_sync::read_peers(&dir)).await.unwrap_or_default(),
+            None => Vec::new(),
+        };
+        // Une station de l'essaim se reconnaît aussi à sa clé NODE (`NODEHEX` de son 12345.json) : réponse adressée à la station même.
+        let node = peers.iter().find(|p| p.node_hex.as_deref() == Some(recipient));
+        let known = home.is_some() || node.is_some();
+        if let Some(p) = node {
+            out.push(p.target());
+        }
+        if let (Some(home), true) = (home, self.swarm_dir.is_some()) {
             let node_id = home.split(':').next().unwrap_or_default().to_owned();
-            let peers = tokio::task::spawn_blocking(move || astro_sync::read_peers(&dir)).await.unwrap_or_default();
             // La station est connue du maillage par son PeerID même quand son 12345.json manque : le tunnel suffit.
             out.push(peers.iter().find(|p| p.node_id == node_id).map_or_else(|| format!("p2p://{node_id}"), astro_sync::Peer::target));
         }
@@ -49,6 +66,13 @@ impl MeshOutbox {
         for fixed in &self.fixed {
             if !out.contains(fixed) {
                 out.push(fixed.clone());
+            }
+        }
+        if !known {
+            for target in peers.iter().take(MAX_SWARM_TRIES).map(astro_sync::Peer::target) {
+                if !out.contains(&target) {
+                    out.push(target);
+                }
             }
         }
         out
@@ -85,6 +109,25 @@ mod tests {
     use astro_nostr_proto::UnsignedEvent;
 
     use super::*;
+
+    #[tokio::test]
+    async fn an_unknown_recipient_is_tried_on_the_swarm_and_a_node_key_reaches_its_own_station() {
+        let dir = std::env::temp_dir().join(format!("astroportd-swarm-try-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for (peer, node) in [("12D3KooWAaaa", "a1"), ("12D3KooWBbbb", "b2")] {
+            std::fs::create_dir_all(dir.join("swarm").join(peer)).unwrap();
+            std::fs::write(dir.join("swarm").join(peer).join("12345.json"), format!(r#"{{"NODEHEX":"{}"}}"#, node.repeat(32))).unwrap();
+        }
+        let db = Arc::new(Db::open(&dir.join("u.db"), 2).unwrap());
+        let client = Arc::new(P2pRelayClient::new(astro_sync::WsClient::new(std::time::Duration::from_secs(1)), None));
+        let outbox = MeshOutbox::new(db.clone(), client, vec!["wss://fixe.example".into()], Some(dir.join("swarm")));
+        assert_eq!(outbox.targets(&"cc".repeat(32)).await, ["wss://fixe.example", "p2p://12D3KooWAaaa", "p2p://12D3KooWBbbb"], "inconnu : le relai fixe, puis l'essaim");
+        assert_eq!(outbox.targets(&"b2".repeat(32)).await, ["p2p://12D3KooWBbbb", "wss://fixe.example"], "clé NODE : sa station, sans balayer l'essaim");
+        // Station d'accueil connue : pas de balayage.
+        db.writer().execute("INSERT INTO identities(hex, role, hosted, home_station) VALUES (?1, 'multipass', 0, ?2)", vec!["dd".repeat(32).into(), format!("12D3KooWAaaa:{}", "a1".repeat(32)).into()]).await.unwrap();
+        assert_eq!(outbox.targets(&"dd".repeat(32)).await, ["p2p://12D3KooWAaaa", "wss://fixe.example"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[tokio::test]
     async fn the_latest_nip65_list_gives_the_read_relays_only() {

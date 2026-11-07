@@ -51,3 +51,28 @@ pub(super) fn assist_admin(assist: &Arc<astroportd::assist::Assist<astroportd::m
         })
     })
 }
+
+/// Fonctions à donner à `station_admin::Admin` pour les sections `mesh` (stations, bootstrap) et `captains`.
+pub(super) fn mesh_admins(mesh: &Arc<astroportd::mesh_admin::Mesh>, captains: &Arc<astroportd::captains::Captains>) -> (astroportd::ui_backend::AdminFn, astroportd::ui_backend::AdminFn) {
+    let mesh = mesh.clone();
+    let m: astroportd::ui_backend::AdminFn = Arc::new(move |_section, body| {
+        let mesh = mesh.clone();
+        Box::pin(async move {
+            match body {
+                None => Ok(mesh.view().await),
+                Some(b) => mesh.act(&b).await,
+            }
+        })
+    });
+    let captains = captains.clone();
+    let c: astroportd::ui_backend::AdminFn = Arc::new(move |_section, body| {
+        let captains = captains.clone();
+        Box::pin(async move {
+            match body {
+                None => captains.view().await,
+                Some(b) => captains.act(&b).await,
+            }
+        })
+    });
+    (m, c)
+}

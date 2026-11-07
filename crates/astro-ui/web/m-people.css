@@ -83,3 +83,10 @@ body.pe-reviewing { overflow: hidden; }
   .pe-rv-photo .fr-framed img { max-height: 40vh; }
   .pe-rv-keys { display: none; }
 }
+/* Trier en grand au pouce : la photo suit le doigt, se teinte au-delà du seuil ; l'aide tactile remplace celle du clavier. */
+.pe-rv-left { touch-action: pan-y; border-radius: 1rem; }
+.pe-rv-left:not([data-sw]) { transition: transform .15s ease-out; }
+.pe-rv-left[data-sw=yes] { box-shadow: 0 0 0 4px var(--ok, #2a8a4a); }
+.pe-rv-left[data-sw=no] { box-shadow: 0 0 0 4px var(--bad, #c0392b); }
+.pe-rv-touch { display: none; font-size: .85rem; }
+@media (pointer: coarse) { .pe-rv-keys { display: none; } .pe-rv-touch { display: inline; } }

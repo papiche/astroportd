@@ -139,7 +139,7 @@ export default async function card(K, { path, me, blank, groups, onSaved, onClos
   if (seen) (async () => {
     const r = await api('/api/v1/book/photo-choices?path=' + encodeURIComponent(d.path)), th = (await api('/api/v1/faces/thumbs', { method: 'POST', body: { ids: r.photos.map(p => p.id), size: 96 } })).thumbs, fr = await K.mod('m-framed.js');
     seen.lastChild.replaceChildren(...r.photos.map(p => h('button', { type: 'button', class: 'ab-face', title: t('Voir la photo'), onclick: () => fr.showFace(K, p, f.name + ' · ' + p.path) }, h('img', { src: th[p.id] || '', alt: '', width: 56, height: 56 }))),
-      r.total > r.photos.length ? h('a', { href: '#/people/tri' }, t('et {0} autre(s) sur la table de tri', r.total - r.photos.length)) : null);
+      ...(r.total > r.photos.length ? [h('a', { href: '#/people/tri' }, t('et {0} autre(s) sur la table de tri', r.total - r.photos.length))] : []));
   })().catch(e => seen.lastChild.replaceChildren(h('span', { class: 'muted' }, e.message)));
   box.append(head, pic, seen, compare(),
     h('fieldset', {}, h('legend', {}, t('Identité')), text('name', t('Nom affiché'), { public: true, max: 80 }), h('div', { class: 'ab-2' }, text('given', t('Prénom'), { max: 60 }), text('family', t('Nom de famille'), { max: 60 })), h('div', { class: 'ab-2' }, text('org', t('Société'), { max: 80 }), text('title', t('Fonction'), { max: 80 })), text('birthday', t('Anniversaire'), { type: 'date', max: 12 })),

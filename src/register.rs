@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -372,6 +372,141 @@ impl Registrar {
         Ok(Registered { account, token, constellation: self.constellation(), guest: false, card })
     }
 
+    /// Enregistre (ou efface, `None`) la position d'un compte hébergé, **arrondie à la maille UMAP** (0,01°, ≈ 1 km, comme `makecoord` d'Astroport.ONE) : la
+    /// station ne garde jamais la position exacte. Écrit aussi les fichiers `GPS` et `ZUMAP` du compte, au format
+    /// d'Astroport.ONE (`NOSTR.UMAP.refresh.sh` les lit encore). Renvoie la maille (`_43.60_1.44`).
+    pub async fn set_position(&self, hex: &str, pos: Option<(f64, f64)>) -> Result<Option<String>, RegisterError> {
+        let cell = match pos {
+            Some((lat, lon)) => {
+                if !(lat.is_finite() && lon.is_finite() && (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon)) {
+                    return Err(RegisterError::Invalid("position hors du globe".into()));
+                }
+                // Maille UMAP : arrondi à 0,01° comme `makecoord` (`printf %.2f`) d'Astroport.ONE.
+                let umap = crate::geo_lease::cells_of(lat, lon)[0].clone();
+                let (la, lo) = crate::geo_lease::center(&umap).ok_or_else(|| RegisterError::Invalid("position hors du globe".into()))?;
+                Some((la, lo, umap))
+            }
+            None => None,
+        };
+        let h = hex.to_owned();
+        let email: Option<String> = self
+            .db
+            .readers()
+            .read(move |c| Ok(rusqlite::OptionalExtension::optional(c.query_row("SELECT email FROM identities WHERE hex = ?1 AND hosted = 1", [&h], |r| r.get::<_, Option<String>>(0)))?.flatten()))
+            .await
+            .map_err(|e| RegisterError::Internal(e.to_string()))?;
+        let (h, c2) = (hex.to_owned(), cell.clone());
+        self.db
+            .writer()
+            .transaction(move |tx| {
+                match &c2 {
+                    Some((la, lo, u)) => tx.execute("UPDATE identities SET lat = ?2, lon = ?3, umap = ?4 WHERE hex = ?1 AND hosted = 1", rusqlite::params![h, la, lo, u])?,
+                    None => tx.execute("UPDATE identities SET lat = NULL, lon = NULL, umap = NULL WHERE hex = ?1 AND hosted = 1", [&h])?,
+                };
+                Ok(())
+            })
+            .await
+            .map_err(|e| RegisterError::Internal(e.to_string()))?;
+        if let Some(email) = email {
+            let dir = self.nostr_root.join(&email);
+            let c3 = cell.clone();
+            tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+                if !dir.is_dir() {
+                    return Ok(());
+                }
+                match c3 {
+                    Some((la, lo, u)) => {
+                        std::fs::write(dir.join("GPS"), format!("LAT={la:.2}; LON={lo:.2};\n"))?;
+                        std::fs::write(dir.join("ZUMAP"), format!("{u}\n"))?;
+                    }
+                    None => {
+                        for f in ["GPS", "ZUMAP"] {
+                            match std::fs::remove_file(dir.join(f)) {
+                                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|e| RegisterError::Internal(e.to_string()))?
+            .map_err(|e| RegisterError::Internal(format!("position non écrite dans le dossier du compte : {e}")))?;
+        }
+        Ok(cell.map(|c| c.2))
+    }
+
+    /// Éjecte un MULTIPASS **créé ici** qui n'a jamais prouvé la réception de ses clés (aucune connexion) en 24 h, et n'a
+    /// donc jamais reçu de transaction primale. Le dossier des clés n'est pas effacé mais rangé dans la corbeille
+    /// (`~/.zen/game/trash/ejected/<email>.<date>`, effacée après 30 jours, voir [`crate::trash`]) ; le compte cesse d'être
+    /// hébergé ici et l'adresse peut se réinscrire.
+    pub async fn eject(&self, hex: &str) -> Result<String, RegisterError> {
+        let at = i64::try_from(now()).unwrap_or(0);
+        let email = self.ejectable(hex).await?;
+        let dir = self.nostr_root.join(&email);
+        let game = self.nostr_root.parent().map_or_else(|| self.nostr_root.clone(), Path::to_path_buf);
+        let (dir2, name) = (dir.clone(), email.clone());
+        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            if dir2.is_dir() {
+                crate::trash::put(&game, "ejected", &name, &dir2, at)?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| RegisterError::Internal(e.to_string()))?
+        .map_err(|e| RegisterError::Internal(format!("dossier {} non rangé : {e}", dir.display())))?;
+        let h = hex.to_owned();
+        self.db
+            .writer()
+            .transaction(move |tx| {
+                tx.execute("DELETE FROM identities WHERE hex = ?1 AND hosted = 1", [&h])?;
+                tx.execute("DELETE FROM kv WHERE key = ?1 AND scope IN ('member_born', 'member_proof', 'member_primo', 'token_epoch', 'guest', 'lifecycle')", [&h])?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| RegisterError::Internal(e.to_string()))?;
+        if let Some(bus) = &self.activity {
+            bus.publish_to(astro_core::Audience::Captain, "system", "register", format!("MULTIPASS {email} éjecté (aucune connexion en 24 h) ; clés dans la corbeille (trash/ejected, 30 jours)"), None);
+        }
+        Ok(email)
+    }
+
+    /// Dossier des comptes (`~/.zen/game/nostr`).
+    pub fn nostr_root(&self) -> &Path {
+        &self.nostr_root
+    }
+
+    /// Nom de la constellation (`UPLANETNAME`).
+    pub fn uplanet_name(&self) -> &str {
+        &self.uplanet_name
+    }
+
+    /// Le compte peut-il être éjecté ? Renvoie son email. Voir [`Self::eject`].
+    pub async fn ejectable(&self, hex: &str) -> Result<String, RegisterError> {
+        let at = i64::try_from(now()).unwrap_or(0);
+        let h = hex.to_owned();
+        let (role, email, onboarding) = self
+            .db
+            .readers()
+            .read(move |c| {
+                let row = rusqlite::OptionalExtension::optional(c.query_row("SELECT role, email FROM identities WHERE hex = ?1 AND hosted = 1", [&h], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))))?;
+                let ob = crate::member_primo::onboarding(c, &h)?;
+                Ok(row.map(|(role, email)| (role, email, ob)))
+            })
+            .await
+            .map_err(|e| RegisterError::Internal(e.to_string()))?
+            .ok_or_else(|| RegisterError::Invalid("compte non hébergé ici".into()))?;
+        if role != "multipass" {
+            return Err(RegisterError::Invalid("seul un MULTIPASS peut être éjecté".into()));
+        }
+        let Some(ob) = onboarding else { return Err(RegisterError::Invalid("compte antérieur à cette station : il ne s'éjecte pas d'ici".into())) };
+        if !ob.ejectable(at) {
+            return Err(RegisterError::Invalid(if ob.proved_at.is_some() || ob.primo.is_some() { "ce compte s'est déjà connecté : il ne s'éjecte pas".into() } else { "attendez 24 h après la création : le membre n'a peut-être pas encore ouvert son espace".into() }));
+        }
+        email.ok_or_else(|| RegisterError::Internal("compte sans email".into()))
+    }
+
     /// Domaine des adresses générées : la zone OVH (`OVH_ZONE`) de la configuration coopérative, sinon le domaine de la station
     /// (`--domain`), sinon `uplanet.local`.
     pub async fn mail_domain(&self) -> String {
@@ -460,6 +595,9 @@ impl Registrar {
                 if guest {
                     tx.execute("INSERT OR REPLACE INTO kv(scope, key, value, updated_at) VALUES ('guest', ?1, '1', ?2)", rusqlite::params![hex, i64::try_from(now()).unwrap_or(0)])?;
                 }
+                // Naissance ici : la transaction primale attendra la première connexion (crate::member_primo).
+                let born = i64::try_from(now()).unwrap_or(0);
+                tx.execute("INSERT OR REPLACE INTO kv(scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?3)", rusqlite::params![crate::member_primo::BORN_SCOPE, hex, born])?;
                 for e in &events {
                     astro_db::events::insert_event(tx, e)?;
                     astro_db::apply_statements(tx, &Projector::plan(e).map_err(|err| astro_db::DbError::Corrupt(err.to_string()))?)?;
@@ -482,6 +620,32 @@ mod tests {
         let db = Arc::new(Db::open(&dir.join("u.db"), 2).unwrap());
         let r = Registrar::new(db.clone(), dir.join("nostr"), "0".repeat(64), Arc::new(|hex| format!("jeton-{}", &hex[..8])), limits).with_captain(Some("cd".repeat(32)));
         (dir, db, r)
+    }
+
+    #[tokio::test]
+    async fn the_neighbourhood_is_rounded_and_an_account_never_used_can_be_ejected_after_a_day() {
+        let (dir, db, r) = setup("eject", Limits::default());
+        let reg = r.register(None, "bob@exemple.org", "fr").await.unwrap();
+        let hex = reg.account.hex.clone();
+        // Position arrondie à la maille UMAP, jamais exacte ; fichiers du legacy écrits.
+        assert_eq!(r.set_position(&hex, Some((43.60789, 1.44321))).await.unwrap().as_deref(), Some("_43.61_1.44"));
+        assert_eq!(std::fs::read_to_string(dir.join("nostr/bob@exemple.org/ZUMAP")).unwrap().trim(), "_43.61_1.44");
+        assert!(r.set_position(&hex, Some((123.0, 0.0))).await.is_err(), "hors du globe");
+        // Trop tôt : refusé.
+        assert!(matches!(r.eject(&hex).await, Err(RegisterError::Invalid(_))));
+        // 25 h plus tard, sans aucune connexion : éjecté, clés rangées, adresse libre.
+        let old = i64::try_from(now()).unwrap() - 25 * 3600;
+        db.writer().execute("UPDATE kv SET value = ?2 WHERE scope = 'member_born' AND key = ?1", vec![hex.clone().into(), old.to_string().into()]).await.unwrap();
+        assert_eq!(r.eject(&hex).await.unwrap(), "bob@exemple.org");
+        assert!(!dir.join("nostr/bob@exemple.org").exists());
+        assert_eq!(std::fs::read_dir(dir.join("trash/ejected")).unwrap().count(), 1);
+        assert!(r.register(None, "bob@exemple.org", "fr").await.is_ok(), "l'adresse se réinscrit");
+        // Un compte qui s'est connecté ne s'éjecte pas.
+        let hex2 = r.register(None, "carol@exemple.org", "fr").await.unwrap().account.hex;
+        db.writer().execute("UPDATE kv SET value = ?2 WHERE scope = 'member_born' AND key = ?1", vec![hex2.clone().into(), old.to_string().into()]).await.unwrap();
+        db.writer().execute("INSERT INTO kv(scope, key, value, updated_at) VALUES ('member_proof', ?1, '1', 0)", vec![hex2.clone().into()]).await.unwrap();
+        assert!(r.eject(&hex2).await.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

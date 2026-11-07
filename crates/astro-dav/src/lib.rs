@@ -19,6 +19,7 @@ pub mod parse;
 pub mod pool;
 pub mod server;
 pub mod share;
+pub mod jpeg_scale;
 pub mod thumb;
 pub mod vcard;
 pub mod vfs;
@@ -26,4 +27,4 @@ pub mod xml;
 
 pub use blob::{AutoBlobStore, BlobError, BlobMeta, BlobStore, BlobWriter, FsBlobStore, KuboBlobStore};
 pub use manifest::{ManifestError, ManifestPublisher};
-pub use server::{DavConfig, DavState, UploadHook, get_owner, router};
+pub use server::{DavConfig, DavState, ReadFailure, LoginHook, ReadFailureHook, UploadHook, get_owner, router};

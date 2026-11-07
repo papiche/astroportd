@@ -92,10 +92,37 @@ impl Wallets {
         Self { uplanet_name: String::new(), db, tech: t, coop: c, master: OnceCell::new(), targets: g }
     }
 
+    /// Ajoute un portefeuille coopératif nommé (tests : `INTRUSION`, `SOCIETY`…).
+    pub fn with_target(mut self, name: &str, account: Account) -> Self {
+        let mut list = self.targets.get().map(|t| t.as_ref().clone()).unwrap_or_default();
+        list.push((name.to_owned(), account));
+        self.targets = OnceCell::new();
+        let _ = self.targets.set(Arc::new(list));
+        self
+    }
+
     /// Portefeuille maître déjà connu (tests).
     pub fn with_master(self, master: Ed25519Signer) -> Self {
         let _ = self.master.set(Arc::new(master));
         self
+    }
+
+    /// Signataire d'un portefeuille coopératif par son nom (`SOCIETY`, `ASSETS`, `UPLANETNAME`…, ou `HOSTING`) : sert à
+    /// corriger une intrusion reçue par ce portefeuille. Jamais `INTRUSION` ni le maître `G1`.
+    pub async fn signer_of(&self, label: &str) -> Result<Arc<Ed25519Signer>, String> {
+        if label == "HOSTING" {
+            return self.tech().await;
+        }
+        let (_, suffix) = PRIMAL_SUFFIXES.iter().find(|(l, _)| *l == label && *l != "INTRUSION").ok_or_else(|| format!("portefeuille coopératif inconnu : {label}"))?;
+        let (name, suffix) = (self.uplanet_name.clone(), suffix.map(str::to_owned));
+        let signer = tokio::task::spawn_blocking(move || -> Result<Ed25519Signer, String> {
+            let input = FormulaInput { salt: "", pepper: "", uplanet_name: &name, coop_suffix: suffix.as_deref() };
+            let seed = KeyFormula::CoopPrefix.credentials(&input).map_err(|e| e.to_string())?.seed().map_err(|e| e.to_string())?;
+            Ok(Ed25519Signer::from_seed(*seed.ed25519_secret_seed()))
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        Ok(Arc::new(signer))
     }
 
     /// Portefeuille maître `UPLANETNAME_G1` : il finance les transactions primales.

@@ -78,7 +78,7 @@ function screen() {
     h('div', { class: 'call-bar' }, ctl(mic, t('Micro')), ctl(cam, t('Caméra')), ctl(radio, t('Voix seule')), add, ctl(h('button', { type: 'button', class: 'call-btn call-end call-hang', 'aria-label': t('Raccrocher'), onclick: hangup }, '✆'), t('Raccrocher'))));
   document.body.append(el); document.body.classList.add('in-call');
   local.srcObject = C.stream;
-  C.ui = { el, grid, title, add, status: statusEl };
+  C.ui = { el, grid, title, add, status: statusEl, radio, cam };
   layout();
 }
 function toggle(kind, btn) {
@@ -98,6 +98,19 @@ function voiceOnly(btn, cam) {
   btn.setAttribute('aria-pressed', String(C.radio)); btn.classList.toggle('off', C.radio);
   C.ui?.grid.classList.toggle('radio', C.radio);
   for (const hex of C.peers.keys()) send(hex, { type: 'media', call: C.id, video: !C.radio }).catch(() => {});
+}
+// Réseau faible : plus de 15 % des paquets reçus perdus sur deux relevés de suite (5 s) → voix seule, une fois par appel.
+// Le bouton reste maître : qui rallume l'image ne sera plus basculé d'office.
+async function loss() {
+  if (!C?.ui || C.radio || C.autoRadio) return;
+  let lost = 0, got = 0;
+  for (const p of C.peers.values()) for (const r of (await p.pc?.getStats().catch(() => null))?.values() || []) if (r.type === 'inbound-rtp') { lost += r.packetsLost || 0; got += r.packetsReceived || 0; }
+  const [l0, g0] = C.lossAt || [lost, got], dl = lost - l0, n = dl + got - g0;
+  C.lossAt = [lost, got];
+  C.lossBad = n > 50 && dl * 100 > n * 15 ? (C.lossBad || 0) + 1 : 0;
+  if (C.lossBad < 2) return;
+  C.autoRadio = true; voiceOnly(C.ui.radio, C.ui.cam);
+  K.toast(K.t('Connexion faible : passage en voix seule pour garder le son. Touchez 📻 pour rendre l\'image.'), 1);
 }
 // Un pair passe en voix seule : je cesse de lui envoyer ma vidéo (ou je la reprends).
 function sendVideo(p, on) {
@@ -122,7 +135,7 @@ async function addPeer(hex, label) {
     if (C?.peers.get(hex) !== p) return;
     if (pc.connectionState === 'connected' && !p.since) {
       p.since = Date.now(); clearTimeout(p.timers.ring); state.textContent = '';
-      if (!C.since) { C.since = Date.now(); inCall(true); C.timers.clock = setInterval(() => { const s = Math.floor((Date.now() - C.since) / 1000); status(K.t('En ligne · {0}', `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`)); }, 1000); }
+      if (!C.since) { C.since = Date.now(); inCall(true); C.timers.loss = setInterval(loss, 2500); C.timers.clock = setInterval(() => { const s = Math.floor((Date.now() - C.since) / 1000); status(K.t('En ligne · {0}', `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`)); }, 1000); }
     } else if (pc.connectionState === 'disconnected') state.textContent = K.t('Connexion perdue, reconnexion…');
     else if (pc.connectionState === 'failed') {
       send(hex, { type: 'hangup', call: C.id }).catch(() => {});

@@ -284,3 +284,112 @@ async fn the_continuous_loop_discovers_relays_each_pass_records_its_status_and_r
     let status: String = db.readers().read(|c| Ok(c.query_row("SELECT value FROM kv WHERE scope = 'crawl_status' AND key = 'last'", [], |r| r.get(0))?)).await.unwrap();
     assert!(status.contains("\"errors\"") && status.contains("injoignable"), "{status}");
 }
+
+/// Mandataire TCP devant un relai : compte les connexions ouvertes (une par poignée de main WebSocket).
+async fn counting_proxy(upstream: &str) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    let target = upstream.trim_start_matches("ws://").to_owned();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    let opened = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = opened.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut inbound, _)) = listener.accept().await else { return };
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let target = target.clone();
+            tokio::spawn(async move {
+                let mut outbound = tokio::net::TcpStream::connect(target).await.unwrap();
+                let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+            });
+        }
+    });
+    (url, opened)
+}
+
+#[tokio::test]
+async fn many_keys_on_one_relay_share_a_single_connection_per_pass() {
+    // Huit auteurs : sept notes chacun, dont la moitié avant 1000 ; plus de quoi forcer plusieurs pages.
+    let authors: Vec<[u8; 32]> = (1u8..=8).map(|i| [i; 32]).collect();
+    let mut events = Vec::new();
+    for (n, a) in authors.iter().enumerate() {
+        for j in 0..7u64 {
+            events.push(ev(a, 1, 900 + j * 50 + n as u64, vec![], &format!("note {n}-{j}")));
+        }
+    }
+    let (relay_url, _src_dir, src) = source_relay(&events).await;
+    let (url, opened) = counting_proxy(&relay_url).await;
+    let dir = TempDir::new("one-conn");
+    let db = open_db(&dir);
+    let seeds: Vec<String> = authors.iter().map(hex).collect();
+    let client = WsClient::new(Duration::from_secs(10)).with_signer(Signer::new(STATION));
+    // Pages de 10 : le lot de 8 clés (56 événements) remonte le temps sur plusieurs pages, sur la même connexion.
+    let cfg = CrawlConfig { page_size: 10, ..config(&url) };
+    let crawler = Crawler::new(db.clone(), client, cfg);
+    let stats = crawler.run_once(&seeds).await.unwrap();
+    assert!(stats.errors.is_empty(), "{:?}", stats.errors);
+    assert_eq!(stats.inserted, 56, "aucun événement manqué : {stats:?}");
+    assert_eq!(opened.load(std::sync::atomic::Ordering::SeqCst), 1, "8 clés vers un relai = 1 connexion");
+    assert_eq!(count(&db, "SELECT count(*) FROM kv WHERE scope = 'crawl_cursor'").await, 8, "un curseur par clé et par relai");
+
+    // Passage suivant : curseurs différents selon les clés, un nouvel événement pour l'une d'elles ; toujours une seule
+    // connexion, et rien de manqué.
+    ingest(&src, &ev(&authors[3], 1, 5000, vec![], "nouvelle")).await;
+    let next = crawler.run_once(&seeds).await.unwrap();
+    assert!(next.errors.is_empty(), "{:?}", next.errors);
+    assert_eq!(next.inserted, 1, "{next:?}");
+    assert_eq!(opened.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn batches_are_bounded_and_each_cursor_only_follows_its_own_key() {
+    // Lots de 2 clés au plus (borne `batch_keys`) : 5 clés → 3 lots, toujours une seule session.
+    let authors: Vec<[u8; 32]> = (11u8..=15).map(|i| [i; 32]).collect();
+    let events: Vec<Event> = authors.iter().enumerate().map(|(n, a)| ev(a, 1, 1000 + n as u64 * 100, vec![], "x")).collect();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    struct Spy {
+        inner: MemoryRelay,
+        seen: Arc<std::sync::Mutex<Vec<usize>>>,
+    }
+    impl RelayClient for Spy {
+        async fn fetch(&self, relay: &str, filter: &Filter) -> Result<Vec<Event>, ClientError> {
+            self.seen.lock().unwrap().push(filter.authors.as_ref().map_or(0, Vec::len));
+            self.inner.fetch(relay, filter).await
+        }
+    }
+    let dir = TempDir::new("lots");
+    let db = open_db(&dir);
+    let seeds: Vec<String> = authors.iter().map(hex).collect();
+    let cfg = CrawlConfig { relays: vec!["mem".into()], batch_keys: 2, overlap_secs: 0, ..CrawlConfig::default() };
+    let crawler = Crawler::new(db.clone(), Spy { inner: MemoryRelay { events, extra: vec![] }, seen: seen.clone() }, cfg);
+    let stats = crawler.run_once(&seeds).await.unwrap();
+    assert_eq!(stats.inserted, 5);
+    let mut sizes = seen.lock().unwrap().clone();
+    sizes.sort_unstable();
+    assert_eq!(sizes, [1, 2, 2]);
+    let cursors: Vec<String> = db
+        .readers()
+        .read(|c| {
+            let mut s = c.prepare("SELECT value FROM kv WHERE scope = 'crawl_cursor' ORDER BY value")?;
+            Ok(s.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(cursors, ["1000", "1100", "1200", "1300", "1400"], "chaque clé garde son propre curseur");
+}
+
+#[tokio::test]
+async fn a_wanted_key_is_crawled_until_it_expires() {
+    // Personne n'est hébergé ici : seules les clés demandées (`crawl_wanted`) sont synchronisées, celles non expirées.
+    let (url, _src_dir, _src) = source_relay(&constellation()).await;
+    let dir = TempDir::new("crawler-wanted");
+    let db = open_db(&dir);
+    let now = i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()).unwrap();
+    for (key, until) in [(hex(&ALICE), now + 3600), (hex(&CAROL), now - 1), ("pas-une-clé".to_owned(), now + 3600)] {
+        db.writer().execute("INSERT INTO kv(scope, key, value, updated_at) VALUES (?1, ?2, ?3, 0)", vec![astro_sync::WANTED_SCOPE.to_owned().into(), key.into(), until.to_string().into()]).await.unwrap();
+    }
+    let client = WsClient::new(Duration::from_secs(10)).with_signer(Signer::new(STATION));
+    let crawler = Crawler::new(db.clone(), client, config(&url));
+    assert_eq!(crawler.targets().await.unwrap(), [hex(&ALICE)], "Carol a expiré, la clé mal formée est ignorée");
+    crawler.run_once(&[]).await.unwrap();
+    assert_eq!(count(&db, "SELECT count(*) FROM nostr_events WHERE kind = 3").await, 1, "la liste de contacts d'Alice est rapatriée");
+}

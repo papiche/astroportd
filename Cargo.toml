@@ -1,6 +1,6 @@
 [package]
 name = "astroportd"
-version = "0.5.5-beta"
+version = "0.5.6-beta"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -90,7 +90,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.5-beta"
+version = "0.5.6-beta"
 edition = "2024"
 rust-version = "1.85"
 license = "AGPL-3.0-only"
@@ -172,6 +172,8 @@ libp2p = { version = "0.56", default-features = false, features = ["tokio", "tcp
 libp2p-stream = "0.4.0-alpha"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+# Décodage JPEG à échelle réduite (IDCT 1/2, 1/4, 1/8) pour les miniatures et les vignettes de visages ; sans `rayon`.
+jpeg-decoder = { version = "0.3", default-features = false }
 kamadak-exif = "0.6"
 # ONNX Runtime chargé À L'EXÉCUTION (libonnxruntime.so) : aucune bibliothèque téléchargée à la compilation, la compilation croisée reste simple.
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "load-dynamic"] }

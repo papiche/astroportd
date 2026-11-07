@@ -4,7 +4,7 @@
 //! - [`Projector`] traduit un événement en requêtes SQL (réseau social, identités, registre Ğ1-N², économie).
 //! - [`replay_local`] reconstruit toutes les tables de projection depuis `nostr_events` ; [`replay_with_ucloud`]
 //!   y ajoute le VFS et le trousseau uCloud, depuis les manifestes chiffrés (Nostr + IPFS).
-//! - [`Crawler`] récupère, clef par clef, les événements des membres N1 et N2 sur les relais de la constellation.
+//! - [`Crawler`] récupère, par lots de clés sur une connexion par relai, les événements des membres N1 et N2.
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
@@ -17,8 +17,8 @@ pub mod projector;
 pub mod replication;
 pub mod replay;
 
-pub use client::{ClientError, RelayClient, Signer, WsClient};
-pub use crawl::{CrawlConfig, CrawlStats, Crawler, PassHook, PassReport, RelaySource};
+pub use client::{BoxFuture, ClientError, RelayClient, RelaySession, Signer, WsClient, WsSession};
+pub use crawl::{CrawlConfig, CrawlStats, Crawler, PassHook, PassReport, RelaySource, WANTED_SCOPE};
 pub use ingest::{Ingested, ingest_event};
 pub use outbox::RelayOutbox;
 pub use peers::{Peer, read_peers};

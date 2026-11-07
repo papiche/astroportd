@@ -21,6 +21,8 @@ pub(super) struct Parts<'a> {
     pub node_hex: String,
     pub node_secret: Option<[u8; 32]>,
     pub node_publisher: Option<Arc<EventPublisher>>,
+    /// Réveil du crawl (clés demandées par un autre module).
+    pub crawl_nudge: Arc<tokio::sync::Notify>,
 }
 
 type Background = Vec<tokio::task::JoinHandle<()>>;
@@ -105,7 +107,7 @@ pub(super) fn exif_backfill(p: &Parts<'_>, background: &mut Background) {
 /// Synchronisation continue N¹/N² : les profils et événements des amis et de leurs amis, depuis les relais des stations de
 /// la constellation (joints par le maillage P2P, adresse publique en repli), et mesure de leur réplication.
 pub(super) fn crawl(p: &Parts<'_>, relay_client: &Arc<astroportd::p2p_relay::P2pRelayClient>, background: &mut Background) {
-    let Parts { a, db, activity, stop_watch, services_peer, uplanet_name, p2p_handle, .. } = p;
+    let Parts { a, db, activity, stop_watch, services_peer, uplanet_name, p2p_handle, crawl_nudge, .. } = p;
     if !a.no_crawl {
         let client = astroportd::p2p_relay::SharedRelayClient(relay_client.clone());
         let swarm = a.swarm_dir.clone().or_else(default_swarm_dir);
@@ -140,7 +142,7 @@ pub(super) fn crawl(p: &Parts<'_>, relay_client: &Arc<astroportd::p2p_relay::P2p
         });
         let config = astro_sync::CrawlConfig { relays: a.relays.clone(), ..astro_sync::CrawlConfig::default() };
         let coop_keys: Vec<String> = astroportd::coop_config::coop_keys(uplanet_name).map(|(_, hex)| vec![hex]).unwrap_or_default();
-        let crawler = Arc::new(astro_sync::Crawler::new(db.clone(), client.clone(), config).with_relay_source(source).with_hook(hook).with_extra_keys(coop_keys));
+        let crawler = Arc::new(astro_sync::Crawler::new(db.clone(), client.clone(), config).with_relay_source(source).with_hook(hook).with_extra_keys(coop_keys).with_nudge(crawl_nudge.clone()));
         // Mesure de la réplication des données des membres hébergés : où et par qui (événements ; fichiers si kubo est joint).
         {
             let swarm = a.swarm_dir.clone().or_else(default_swarm_dir);
@@ -245,19 +247,24 @@ pub(super) fn funds(p: &Parts<'_>, funds_chain: Option<Arc<RpcPool<SubxtConnecto
                 {
                     let wallets = Arc::new(astroportd::coop_wallets::Wallets::new(uplanet_name.to_string(), db.clone()));
                     // D'abord la transaction primale : les portefeuilles coopératifs (dont le compte technique) sont marqués par le maître.
-                    if a.primal_init {
+                    if !a.no_primal_init {
                         let primal = Arc::new(astroportd::primal_init::PrimalInit::new(db.clone(), chain.clone(), wallets.clone(), activity.clone()));
                         background.push(tokio::spawn(primal.run(stop_watch.clone())));
-                        println!("Transactions primales : actives (1 Ğ1 du portefeuille maître à chaque portefeuille coopératif vide)");
+                        let members = Arc::new(astroportd::member_primo::MemberPrimo::new(db.clone(), chain.clone(), wallets.clone(), activity.clone()));
+                        background.push(tokio::spawn(members.run(stop_watch.clone())));
+                        println!("Transactions primales : actives (1 Ğ1 du portefeuille maître à chaque portefeuille coopératif vide, et à chaque nouveau MULTIPASS après sa première connexion)");
                     } else {
-                        println!("Transactions primales : inactives (--primal-init pour marquer les portefeuilles coopératifs, comme UPLANET.init.sh)");
+                        println!("Transactions primales : coupées (--no-primal-init) : ni les portefeuilles coopératifs ni les nouveaux MULTIPASS ne reçoivent leur 1 Ğ1");
                     }
                     let fees = Arc::new(astroportd::hosting_fee::HostingFees::new(db.clone(), chain.clone(), secrets_dir.clone(), wallets.clone(), activity.clone(), notify.clone()));
                     background.push(tokio::spawn(fees.run(stop_watch.clone())));
                     let settle = Arc::new(astroportd::settlement::Settlement::new(db.clone(), chain.clone(), wallets, activity.clone(), astro_core::Amount(a.weekly_costs)));
                     background.push(tokio::spawn(settle.run(stop_watch.clone())));
                 }
-                let watch = Arc::new(astroportd::funds::FundsWatch::new(db.clone(), activity.clone(), master, indexer, notify.clone(), nostr_dir.clone()));
+                // Correction des intrusions prouvées (primale étrangère, deux indexeurs d'accord) : renvoi vers INTRUSION.
+                let guard_wallets = Arc::new(astroportd::coop_wallets::Wallets::new(uplanet_name.to_string(), db.clone()));
+                let guard = Arc::new(astroportd::intrusion_guard::IntrusionGuard::new(db.clone(), chain.clone(), guard_wallets.clone(), activity.clone()));
+                let watch = Arc::new(astroportd::funds::FundsWatch::new(db.clone(), activity.clone(), master, indexer, notify.clone(), nostr_dir.clone()).with_guard(guard_wallets, guard.hook()));
                 background.push(tokio::spawn(watch.run(chain, stop_watch.clone())));
             }
             Err(e) => eprintln!("Ğ1 : portefeuille maître de la constellation introuvable ({e}) : écoute des virements inactive"),

@@ -11,9 +11,6 @@ use std::sync::{Arc, Mutex};
 use astro_p2p::tunnel::{Forward, forward};
 use astro_p2p::{P2pHandle, PeerId};
 
-/// Services qu'une demande d'assistance peut cibler.
-const SERVICES: [&str; 3] = ["ssh", "comfyui", "ollama"];
-
 struct Open {
     fwd: Forward,
     until: i64,
@@ -38,7 +35,9 @@ impl Forwards {
     /// Ouvre (ou retrouve) l'accès local à `service` de la station `peer` pour la demande `id`, jusqu'à `until` (secondes Unix).
     pub async fn open(&self, id: &str, peer: &str, service: &str, until: i64, now: i64) -> Result<SocketAddr, String> {
         self.sweep(now);
-        if !SERVICES.contains(&service) {
+        // Tout nom de service bien formé : c'est la politique de la station aidée qui décide (SSH, ComfyUI, Ollama, ou un
+        // service que son Capitaine partage à chaud, comme un bureau à distance).
+        if service.is_empty() || service.len() > 32 || !service.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-') {
             return Err(format!("service « {service} » non pris en charge"));
         }
         let peer: PeerId = peer.parse().map_err(|_| "identifiant de station invalide".to_owned())?;
@@ -85,9 +84,13 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn refuses_unknown_services_bad_peers_and_missing_mesh() {
+    async fn refuses_malformed_services_bad_peers_and_missing_mesh() {
         let f = Forwards::new(None);
-        assert!(f.open("a", "12D3KooWx", "redis", 100, 0).await.unwrap_err().contains("non pris en charge"));
+        for bad in ["../ssh", "Bureau", "", "a b", &"x".repeat(33)] {
+            assert!(f.open("a", "12D3KooWx", bad, 100, 0).await.unwrap_err().contains("non pris en charge"), "{bad}");
+        }
+        // Un service partagé à chaud par l'ami (ex. son bureau) est un nom bien formé : c'est sa politique qui tranchera.
+        assert!(f.open("a", "12D3KooWx", "bureau-vnc", 100, 0).await.unwrap_err().contains("invalide"), "seul le PeerID bloque ici");
         assert!(f.open("a", "pas-un-peer", "ssh", 100, 0).await.unwrap_err().contains("invalide"));
         let peer = astro_p2p::keypair_from_seed(&[1; 32]).unwrap().public().to_peer_id().to_string();
         assert!(f.open("a", &peer, "ssh", 100, 0).await.unwrap_err().contains("P2P inactif"));

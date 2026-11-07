@@ -58,7 +58,7 @@ export default async function options(root, K) {
     const apply = async (body, msg) => { try { await post('tunnels', body); K.toast(msg, 1); options(root, K); } catch (e) { K.toast(e.message); } };
     const when = u => u ? new Date(u * 1000).toLocaleString() : t('sans limite');
     // Pas de carte pour un service qui ne répond pas, sauf SSH, réglé ou avec pairs nommés.
-    const idle = sv => sv.up === false && sv.name !== 'ssh' && !sv.customized && !sv.grants.length;
+    const idle = sv => sv.up === false && sv.name !== 'ssh' && !sv.shared && !sv.customized && !sv.grants.length;
     const absent = tun.services.filter(idle);
     const svc = tun.services.filter(sv => !idle(sv)).map(sv => {
       const mode = h('select', { 'aria-label': t('Accès à {0}', sv.name) }, tun.modes.map(m => h('option', { value: m, selected: m === sv.mode }, t(TMODE[m]) + (m === sv.default_mode ? ' ' + t('(défaut)') : ''))));
@@ -75,12 +75,20 @@ export default async function options(root, K) {
         h('label', {}, t('Qui peut ouvrir ce service')), mode,
         sv.grants.length ? h('ul', {}, sv.grants.map(g => h('li', {}, h('strong', {}, g.label || g.peer.slice(0, 12)), ` — ${g.expired ? t('expiré') : t('jusqu\'à {0}', when(g.until))} `, h('button', { class: 'ghost', onclick: () => apply({ service: sv.name, revoke: g.peer }, t('Accès retiré')) }, t('Retirer'))))) : h('p', { class: 'muted' }, t(t('Aucun pair nommé.'))),
         h('fieldset', { class: 'coop-s' }, h('legend', {}, t('Laisser un ami m\'aider')), who, ' ', peer, ' ', hours, ' ', add),
-        sv.customized ? h('p', {}, h('button', { class: 'ghost', onclick: () => apply({ service: sv.name, reset: true }, t('Réglage par défaut rétabli')) }, t('Rétablir le défaut'))) : null);
+        sv.customized ? h('p', {}, h('button', { class: 'ghost', onclick: () => apply({ service: sv.name, reset: true }, t('Réglage par défaut rétabli')) }, t('Rétablir le défaut'))) : null,
+        sv.shared ? h('p', { class: 'muted' }, sv.target, ' ', h('button', { class: 'ghost', onclick: () => apply({ unshare: sv.name }, t('Partage retiré')) }, t('Retirer le partage'))) : null);
     });
+    // Partager à chaud un autre service de la machine (un bureau à distance, un NAS du réseau local…).
+    const nm = h('input', { placeholder: 'bureau-vnc', autocomplete: 'off', 'aria-label': t('Nom du service') }), tg = h('input', { placeholder: '127.0.0.1:5900', autocomplete: 'off', 'aria-label': t('Adresse et port') });
+    const md = h('select', { 'aria-label': t('Qui peut ouvrir ce service') }, tun.modes.map(m => h('option', { value: m, selected: m === 'listed' }, t(TMODE[m]))));
+    const shareForm = h('fieldset', { class: 'coop-s' }, h('legend', {}, t('Partager un service de cette machine')),
+      tun.suggest?.length ? h('p', {}, t('Détectés :'), ' ', tun.suggest.map(sg => h('button', { class: 'ghost', onclick: () => { nm.value = sg.name; tg.value = sg.target; md.focus(); } }, `${sg.name} · ${sg.target.split(':').pop()}`))) : null,
+      nm, ' ', tg, ' ', md, ' ', h('button', { onclick: () => nm.value.trim() && tg.value.trim() ? apply({ share: { name: nm.value.trim(), target: tg.value.trim(), mode: md.value } }, t('{0} partagé', nm.value.trim())) : K.toast(t('Nom du service') + ' ?') }, t('Partager')),
+      h('p', { class: 'muted' }, t('Cette machine ou le réseau local seulement. Bureau à distance : serveur VNC (wayvnc, x11vnc) ou RDP, puis un ami nommé, pour une durée limitée.')));
     tunnelsCard = h('section', { class: 'card wide' }, h('h2', {}, t('Tunnels et accès des autres Capitaines')),
       h('p', { class: 'muted' }, tun.origin ? t('UPlanet ORIGIN : le SSH est ouvert par défaut aux Capitaines amis (suivi réciproque).') : t('UPlanet ẐEN : le SSH est fermé par défaut. Vous le rouvrez pour un ami le temps qu\'il vous aide, ou pour tous vos Capitaines amis.')),
       h('p', { class: 'muted' }, t('Le réglage s\'applique tout de suite, y compris aux sessions déjà ouvertes (vérifié chaque minute).')),
-      absent.length ? h('p', { class: 'muted', role: 'note' }, t('Non détectés : {0}.', absent.map(sv => `${sv.name} (${sv.target})`).join(', '))) : null, svc);
+      absent.length ? h('p', { class: 'muted', role: 'note' }, t('Non détectés : {0}.', absent.map(sv => `${sv.name} (${sv.target})`).join(', '))) : null, svc, shareForm);
   }
 
   // ── Assistance entre Capitaines amis ──
@@ -137,7 +145,7 @@ export default async function options(root, K) {
     const KIND = { facecloud: 'Reconnaissance des visages', 'bro.upload': 'Dépôts demandés à BRO' };
     const failed = tk.kinds.reduce((n, k) => n + k.failed, 0), waiting = tk.kinds.reduce((n, k) => n + k.pending + k.running, 0);
     tasksSummary = t('{0} en cours ou en attente · {1} abandonnée(s)', waiting, failed);
-    const retry = async (kind, ev) => { ev.currentTarget.disabled = true; try { const r = await post('tasks', { action: 'retry', kind }); K.toast(t('{0} tâche(s) relancée(s)', r.retried), 1); options(root, K); } catch (e) { K.toast(e.message); ev.currentTarget.disabled = false; } };
+    const retry = async (kind, ev) => { const btn = ev.currentTarget; btn.disabled = true; try { const r = await post('tasks', { action: 'retry', kind }); K.toast(t('{0} tâche(s) relancée(s)', r.retried), 1); options(root, K); } catch (e) { K.toast(e.message); btn.disabled = false; } };
     tasksCard = h('section', { class: 'card wide' }, h('h2', {}, t('File de traitement')),
       h('p', { class: 'muted' }, t('Les tâches en arrière-plan (reconnaissance des visages, dépôts demandés à BRO). Une tâche abandonnée après plusieurs essais reste ici jusqu\'à ce que vous la relanciez.')),
       tk.kinds.length ? h('table', {}, h('thead', {}, h('tr', {}, ['Tâche', 'En attente', 'En cours', 'Terminées', 'Abandonnées'].map(x => h('th', { scope: 'col' }, t(x))))),

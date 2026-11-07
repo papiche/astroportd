@@ -139,7 +139,37 @@ pub fn open(path: &Path) -> Result<Connection, DbError> {
     let conn = Connection::open(path)?;
     apply_schema(&conn)?;
     migrate(&conn)?;
+    tune_connection(&conn)?;
     Ok(conn)
+}
+
+/// Réglages de performance propres à chaque connexion (écrivain et lecteurs) : tables temporaires (tris, `DISTINCT`,
+/// `GROUP BY` sans index) en mémoire plutôt que dans des fichiers, et lecture du fichier principal par projection
+/// mémoire quand la machine s'y prête (voir [`mmap_budget`]).
+pub(crate) fn tune_connection(conn: &Connection) -> Result<(), DbError> {
+    conn.execute_batch(&format!("PRAGMA temp_store = MEMORY; PRAGMA mmap_size = {};", mmap_budget()))?;
+    Ok(())
+}
+
+/// Projection mémoire (`PRAGMA mmap_size`) accordée à chaque connexion : 64 Mo sur une machine 64 bits d'au moins
+/// 4 Go de RAM, rien ailleurs. Sur 32 bits, l'espace d'adressage est trop court pour plusieurs connexions ; sur une
+/// petite machine, les pages projetées concurrencent le cache du système. La RAM se lit dans `/proc/meminfo` : si
+/// elle est inconnue (autre système, lecture impossible), la projection reste désactivée, comme avant.
+pub fn mmap_budget() -> u64 {
+    static BUDGET: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *BUDGET.get_or_init(|| mmap_budget_for(cfg!(target_pointer_width = "64"), total_ram_bytes()))
+}
+
+fn mmap_budget_for(is_64_bit: bool, ram: Option<u64>) -> u64 {
+    if is_64_bit && ram.is_some_and(|r| r >= 4 << 30) { 64 << 20 } else { 0 }
+}
+
+/// RAM totale de la machine (`MemTotal` de `/proc/meminfo`, Linux) ; `None` ailleurs ou si illisible.
+pub fn total_ram_bytes() -> Option<u64> {
+    let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = info.lines().find(|l| l.starts_with("MemTotal:"))?;
+    let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    kib.checked_mul(1024)
 }
 
 /// Applique le schéma, en faisant d'abord passer une base d'avant 0.5.0-beta à la nouvelle table d'événements.
@@ -434,6 +464,28 @@ mod tests {
         drop(conn);
         drop(open(&path).unwrap()); // seconde ouverture : rien à refaire
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn every_connection_keeps_temporary_tables_in_memory_and_maps_the_file_only_on_roomy_machines() {
+        let tmp = testutil::TempDir::new("tuning");
+        let path = tmp.path().join("uplanet.db");
+        let writer = open(&path).unwrap();
+        let readers = ReaderPool::open(&path, 2).unwrap();
+        let pragmas = |c: &Connection| -> (i64, i64) { (c.query_row("PRAGMA temp_store", [], |r| r.get(0)).unwrap(), c.query_row("PRAGMA mmap_size", [], |r| r.get(0)).unwrap()) };
+        let expected = (2, i64::try_from(mmap_budget()).unwrap()); // 2 = MEMORY
+        assert_eq!(pragmas(&writer), expected, "écrivain");
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        for _ in 0..2 {
+            let got = rt.block_on(readers.read(move |c| Ok((c.query_row("PRAGMA temp_store", [], |r| r.get::<_, i64>(0))?, c.query_row("PRAGMA mmap_size", [], |r| r.get::<_, i64>(0))?)))).unwrap();
+            assert_eq!(got, expected, "lecteur");
+        }
+        // Projection mémoire : seulement 64 bits et au moins 4 Go ; RAM inconnue = désactivée.
+        assert_eq!(mmap_budget_for(true, Some(8 << 30)), 64 << 20);
+        assert_eq!(mmap_budget_for(true, Some(4 << 30)), 64 << 20);
+        assert_eq!(mmap_budget_for(true, Some((4 << 30) - 1)), 0);
+        assert_eq!(mmap_budget_for(false, Some(16 << 30)), 0);
+        assert_eq!(mmap_budget_for(true, None), 0);
     }
 
     #[test]

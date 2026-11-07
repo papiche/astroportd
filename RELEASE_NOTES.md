@@ -1,3 +1,39 @@
+## astroportd 0.5.6-beta
+
+Cette version rend l'interface **plus simple à prendre en main**, pour le membre comme pour le Capitaine, et transforme **« J'appelle un ami »** : le membre qui a perdu sa station prévient ses gardiens, l'ami confirme d'un geste après l'avoir appelé, et le compte renaît tout seul, sans QR à lire au téléphone. Elle ouvre aussi le **maillage entre Capitaines amis** (stations ajoutées à chaud, services partagés à la demande) et rend l'économie plus sûre (primale vérifiée par deux indexeurs, intrusions corrigées).
+
+### « J'appelle un ami » sans QR : le secours par les gardiens
+- Sur la nouvelle station, `/restore` : le membre scanne sa **carte imprimée** et appuie sur **« Prévenir mes gardiens »**. La station retrouve ses contacts sur le réseau (le crawl va chercher sa clé, réveillé tout de suite) et leur envoie une demande, **depuis sa clé NODE**.
+- Seule la station d'un ami qui garde sa part y donne suite ; les autres contacts ne voient rien. L'ami est prévenu (accueil › *Pour vous*, *Mon compte › Ma sécurité*, message de BRO) ; il appelle, coche **« je l'ai reconnu(e) »** et confirme.
+- Sa part arrive **directement** sur la nouvelle station, qui l'assemble à la carte : personne ne lit ni ne recopie rien. La page de restauration attend (relevé toutes les 10 s) et rétablit le compte d'elle-même ; la demande vit 24 h.
+- Même sécurité qu'au téléphone (la carte + l'accord de l'ami) ; débit borné (3 demandes par jour et par compte, 10 comptes par heure et par station) ; un refus (« ce n'est pas lui ») **alerte le Capitaine** de l'ami. L'ancienne méthode reste en repli.
+- Boîte d'envoi : une station d'accueil inconnue est cherchée dans l'essaim (seule la bonne station accepte l'enveloppe), et une clé NODE est routée vers sa station. Crawl : clés demandées par un module (`crawl_wanted`, avec expiration) et réveil immédiat.
+
+### Membres : moins de technique, plus de gestes
+- **Inscription** : l'écran final ne montre plus que l'identifiant, le **code PASS en grand** et la **carte de secours** (« 3 morceaux, 2 suffisent ») ; les clés sont repliées dans « Détails techniques ». L'impression ne porte plus ni identifiant ni PASS : une feuille volée n'ouvre pas le compte.
+- **Mon compte en trois onglets** : *Moi*, *Mes appareils*, *Ma sécurité* (lien direct `#/account?tab=…`). *Ma sécurité* explique **« Si je perds tout »** pas à pas.
+- **Accueil « Pour vous »** : ce qui attend un geste aujourd'hui (un ami en secours, des photos à confirmer avant envoi, des visages à confirmer ou à nommer), à un tap.
+- **Trier en grand au pouce** : glisser la photo → oui, ← non.
+- **Visio** : passage automatique en **voix seule** quand plus de 15 % des paquets se perdent pendant 5 s (une fois par appel ; 📻 rend l'image).
+- **Quartier** (facultatif, à l'inscription) : la station ne garde qu'une position approchée (maille UMAP, ≈ 1 km).
+
+### Capitaine
+- Cockpit : un bouton **« Débloquer »** par PASS verrouillé ; le carburant devient une **« Réserve de démarrage »** en jauge, l'adresse et le QR repliés.
+- **Espace Capitaine en quatre onglets** (Cockpit, Essaim et pairs, Économie, Options et tunnels).
+- **Maillage et Capitaines amis** (`#/mesh`) : maillage actif par défaut, stations ajoutées **à chaud** (gardées ou non comme bootstrap), Capitaines suivis ou non, et pour chaque ami réciproque les services **que sa station nous ouvre** (question posée par le maillage, rien n'est publié) avec « Se connecter ».
+- **Partage à chaud de services** de la machine (Options › Tunnels : nom et port, machine ou réseau local seulement), par exemple un bureau à distance VNC/RDP pour un ami nommé.
+- **Bail géographique** : une seule station d'une UPlanet tient les clés d'un quartier (UMAP, SECTOR, REGION) — la plus proche, le PeerID départageant.
+
+### Économie
+- **Primale vérifiée par deux indexeurs** : un désaccord ou un retard vaut « non vérifié », jamais un mouvement de fonds.
+- **Correction des intrusions** : un virement reçu d'un émetteur à primale étrangère **prouvée** repart vers le portefeuille `INTRUSION` ; la vigilance (Économie) ne montre que ces émetteurs.
+- **Transaction primale après preuve** : le 1 Ğ1 d'un MULTIPASS part à sa première connexion authentifiée ; un compte jamais connecté en 24 h peut être éjecté (fonds reversés, clés dans la **corbeille** de la station).
+
+### Interface et performances
+- Miniatures JPEG décodées à échelle réduite (≈ 1,5 Mo de mémoire au lieu de 36 Mo pour une photo de 12 Mpx).
+- Boutons qui restaient grisés après une erreur (redémarrage, adresses DNS, relance de tâches) : corrigés.
+- Budget des écrans : 144 Ko gzip (136 Ko avant cette version).
+
 ## astroportd 0.5.5-beta
 
 Cette version rend la station **robuste** sur ses points sensibles (argent, sonnerie, mises à jour de l'application) et transforme **l'arrivée d'un Capitaine** : plus de terminal une fois la station démarrée. Elle inclut aussi la 0.5.4-beta, jamais publiée (Personnes et Contacts réunis, visio sans tiers).

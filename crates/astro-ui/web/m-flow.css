@@ -12,6 +12,7 @@
 .fl-members { stroke: #ffd84a; }
 .fl-outside { stroke: #ff6a3d; }
 .fl-billets { stroke: #b6ff4a; }
+.fl-intrus { stroke: #ff3b3b; stroke-width: 3; }
 .fl-label { fill: #9fb4d9; font: 11px ui-monospace, monospace; paint-order: stroke; stroke: #060912; stroke-width: 3px; }
 @keyframes fl-flow { to { stroke-dashoffset: -24; } }
 @media (prefers-reduced-motion: reduce) { .fl-pipe { animation: none; } }
@@ -23,8 +24,16 @@
 .cs-wallets th, .cs-wallets td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--panel2); }
 .cs-wallets td.n, .cs-wallets th.n { text-align: right; }
 .cs-charter p { margin: .5rem 0; max-width: 60ch; }
-.fl-lg-wallet { border-color: #18e0ff; } .fl-lg-master { border-color: #ff2bd6; } .fl-lg-members { border-color: #ffd84a; } .fl-lg-outside { border-color: #ff6a3d; } .fl-lg-billets { border-color: #b6ff4a; }
+.fl-lg-wallet { border-color: #18e0ff; } .fl-lg-master { border-color: #ff2bd6; } .fl-lg-members { border-color: #ffd84a; } .fl-lg-outside { border-color: #ff6a3d; } .fl-lg-billets { border-color: #b6ff4a; } .fl-lg-intrus { border-color: #ff3b3b; }
 .cs-sign { list-style: none; padding: 0; margin: .4rem 0; display: grid; gap: .3rem; }
 .cs-bil { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: .6rem; margin: .6rem 0; }
 .cs-bil div { background: var(--panel2); border-radius: var(--r); padding: .6rem .8rem; }
 .cs-bil b { display: block; font-size: 1.6rem; line-height: 1.1; }
+/* Vigilance du Capitaine : alerte fixe (jamais clignotante), ligne suspecte teintée. */
+.cs-alert { border: 2px solid var(--bad); }
+.cs-bad td { background: color-mix(in srgb, var(--bad) 10%, transparent); }
+.cs-intr { list-style: none; padding: 0; display: grid; gap: .6rem; }
+.cs-intr > li { padding: .6rem .8rem; border: 1px solid var(--line); border-left: 4px solid var(--bad); border-radius: 8px; }
+.cs-intr > li.on { background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.cs-intr code { overflow-wrap: anywhere; }
+.cs-chain { display: flex; flex-wrap: wrap; gap: .3rem .5rem; align-items: center; margin: .3rem 0 0; font-size: .85rem; }

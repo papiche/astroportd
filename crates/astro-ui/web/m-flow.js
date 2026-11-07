@@ -1,22 +1,25 @@
 'use strict';
-// Carte animée d'une UPlanet : l'économie comme un fluide dans des tuyaux. SVG seul, sans bibliothèque (CSP stricte, budget de
-// taille) ; la disposition est fixe : le portefeuille maître au centre, les autres en couronne, « membres » à gauche et
-// « extérieur » à droite. Un virement = une impulsion qui court dans le tuyau, du payeur au bénéficiaire.
+// Carte animée d'une UPlanet (SVG seul, CSP stricte). Disposition = la boucle circulaire de ZEN.ECONOMY v3, en sens horaire
+// depuis le Ğ1 maître en haut : CASH → NODE → membres → HOSTING → IMPOT → RnD/ASSETS → SOCIETY → CAPITAL/AMORTISSEMENT.
+// Extérieur en haut à droite (près de CASH) ; INTRUSION et les intrus (vue du Capitaine) à part, en bas à droite.
 const NS = 'http://www.w3.org/2000/svg';
 export const W = 960, H = 520;
 const el = (tag, attrs = {}, ...kids) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); e.append(...kids); return e; };
+const RING = ['UPLANETNAME_G1', 'TREASURY', 'NODE', 'membres', 'HOSTING', 'IMPOT', 'RND', 'ASSETS', 'SOCIETY', 'CAPITAL', 'AMORTISSEMENT', 'UPLANETNAME'];
+export const short = a => a.length > 16 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
+export const label = n => n.kind === 'intrus' ? short(n.id) : n.id === 'UPLANETNAME_G1' ? 'Ğ1 maître' : n.id === 'TREASURY' ? 'CASH' : n.id.replace('UPLANETNAME_', '');
 
-// Positions des nœuds : maître au centre, portefeuilles sur une ellipse, membres et extérieur aux deux bords.
 export function layout(nodes) {
-  const wallets = nodes.map((n, i) => [n, i]).filter(([n]) => n.kind === 'wallet'), ring = wallets.length - 1;
+  const rank = i => { const r = RING.indexOf(nodes[i].id); return r < 0 ? 50 + i : r; };
+  const ring = nodes.map((_, i) => i).filter(i => nodes[i].kind === 'members' || (nodes[i].kind === 'wallet' && nodes[i].id !== 'INTRUSION')).sort((a, b) => rank(a) - rank(b));
+  const intr = nodes.map((_, i) => i).filter(i => nodes[i].kind === 'intrus');
   return nodes.map((n, i) => {
-    if (n.kind === 'members') return { x: 70, y: H / 2 };
-    if (n.kind === 'billets') return { x: 90, y: 70 };
-    if (n.kind === 'outside') return { x: W - 70, y: H / 2 };
-    const k = wallets.findIndex(([, j]) => j === i);
-    if (k === 0) return { x: W / 2, y: H / 2 };
-    const a = -Math.PI / 2 + (2 * Math.PI * (k - 1)) / Math.max(1, ring);
-    return { x: W / 2 + 290 * Math.cos(a), y: H / 2 + 185 * Math.sin(a) };
+    if (n.kind === 'billets') return { x: 100, y: H - 50 };
+    if (n.kind === 'outside') return { x: W - 70, y: 70 };
+    if (n.id === 'INTRUSION') return { x: W - 110, y: H - 45 };
+    if (n.kind === 'intrus') { const k = intr.indexOf(i); return { x: W - 40 - 70 * Math.floor(k / 6), y: H - 95 - 34 * (k % 6) }; }
+    const a = -Math.PI / 2 + (2 * Math.PI * ring.indexOf(i)) / Math.max(1, ring.length);
+    return { x: W / 2 - 40 + 300 * Math.cos(a), y: H / 2 + 200 * Math.sin(a) };
   });
 }
 
@@ -38,7 +41,7 @@ export function balancesAt(events, count, at) {
   return bal;
 }
 
-export function flow(host, { nodes, events }, { reduced = false } = {}) {
+export function flow(host, { nodes, events }, { reduced = false, onEvent = null } = {}) {
   const pos = layout(nodes), svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', class: 'fl paused', 'aria-label': 'Carte animée des virements de la coopérative' });
   const defs = el('defs', {}, el('filter', { id: 'fl-glow', x: '-50%', y: '-50%', width: '200%', height: '200%' }, el('feGaussianBlur', { stdDeviation: '3', result: 'b' }), el('feMerge', {}, el('feMergeNode', { in: 'b' }), el('feMergeNode', { in: 'SourceGraphic' }))),
     el('pattern', { id: 'fl-grid', width: 40, height: 40, patternUnits: 'userSpaceOnUse' }, el('path', { d: 'M40 0H0V40', class: 'fl-gridl' })));
@@ -53,9 +56,9 @@ export function flow(host, { nodes, events }, { reduced = false } = {}) {
     paths.set(p.a + '-' + p.b, { hit: pipe, a: p.a });
   }
   const dots = nodes.map((n, i) => {
-    const c = el('circle', { cx: pos[i].x, cy: pos[i].y, r: 8, class: `fl-n fl-${n.kind}${i === 0 ? ' fl-master' : ''}` });
+    const c = el('circle', { cx: pos[i].x, cy: pos[i].y, r: 8, class: `fl-n fl-${n.kind}${i === 0 ? ' fl-master' : ''}${n.id === 'INTRUSION' ? ' fl-intrus' : ''}` });
     nodeLayer.append(c);
-    labelLayer.append(el('text', { x: pos[i].x, y: pos[i].y + (pos[i].y > H / 2 + 20 ? 26 : -16), class: 'fl-label', 'text-anchor': 'middle' }, n.id.slice(0, 16)));
+    labelLayer.append(el('text', { x: pos[i].x, y: pos[i].y + (pos[i].y > H / 2 + 20 ? 26 : -16), class: 'fl-label', 'text-anchor': 'middle' }, label(n)));
     return c;
   });
   host.replaceChildren(svg);
@@ -67,6 +70,7 @@ export function flow(host, { nodes, events }, { reduced = false } = {}) {
   const paint = () => { dots.forEach((c, i) => c.setAttribute('r', radius(i).toFixed(1))); listeners.forEach(f => f(st)); };
   const apply = ([, f, to, c], visible) => {
     st.bal[f] -= c; st.bal[to] += c; st.vol[f] += c; st.vol[to] += c;
+    if (visible && onEvent) onEvent(nodes[f], nodes[to], c);
     if (visible && st.pulses.length < 70 && f !== to) {
       const k = Math.min(f, to) + '-' + Math.max(f, to), p = paths.get(k);
       if (p) { const dot = el('circle', { r: 2.5 + 3.5 * Math.sqrt(c / maxVol), class: 'fl-pulse' }); pulseLayer.append(dot); st.pulses.push({ dot, p: p.hit, len: p.hit.getTotalLength(), born: performance.now(), rev: f !== p.a }); }

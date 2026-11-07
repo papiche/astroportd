@@ -1,6 +1,6 @@
 # Guide pas à pas : démarrer sa station astroportd
 
-> Version texte du [guide illustré](index.html). Préversion **0.5.5-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
+> Version texte du [guide illustré](index.html). Préversion **0.5.6-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
 
 **Sommaire** : [0. Avant de commencer](#etape-0) · [1. Installer astroportd](#etape-1) · [2. Activer Y-Level](#etape-2) · [3. Choisir sa constellation](#etape-3) · [4. Démarrer la station](#etape-4) · [5. Créer mon MULTIPASS](#etape-5) · [6. Vérifier que tout va bien](#etape-6) · [7. Entrer dans l'interface web](#etape-7) · [7 bis. Le cockpit du Capitaine](#etape-7b) · [8. FaceCloud](#etape-8) · [8 bis. Contacts, agenda (CardDAV, CalDAV) et Mon compte](#etape-8b) · [8 bis-b. Mon coffre de mots de passe (KeePass)](#etape-8bis-b) · [8 bis-c. Reprendre son uCloud d'Astroport.ONE](#etape-8bis-c) · [8 bis-d. Remplir son uCloud depuis un autre serveur (Nextcloud, ownCloud…)](#etape-8bis-d) · [8 bis-e. Ranger son uCloud par type](#etape-8bis-e) · [8 bis-f. Un jeton par appareil (téléphones, tablettes, ordinateurs)](#etape-8bis-f) · [8 bis-g. Hébergement facturé, compte technique et règlement hebdomadaire](#etape-8bis-g) · [8 bis-h. Plusieurs astroportd sur une machine (ORIGIN + ZEN*)](#etape-8bis-h) · [8 bis-i. Plusieurs UPlanet dans un seul processus](#etape-8bis-i) · [8 bis-j. Messages privés et une personne dans plusieurs UPlanet](#etape-8bis-j) · [8 bis-k. Ma UPlanet](#etape-8c) · [8 bis-l. Ğ1Billet](#etape-8bis-l) · [8 bis-m. Mon site public](#etape-8bis-m) · [8 ter. Options du Capitaine](#etape-8ter) · [8 quater. Inviter quelqu'un à recevoir des photos](#etape-8quater) · [8 quinquies. Sans email, connexion par PASS, signature déléguée](#etape-8quinquies) · [9. Relier sa station aux autres Capitaines](#etape-9) · [9 bis. Une adresse pour chaque station et chaque MULTIPASS (DNSLink)](#etape-9b) · [10. En cas de problème](#etape-10) · [Sur un smartphone](#sur-un-smartphone)
 
@@ -33,7 +33,7 @@ date       # l'année doit être 2026 ou plus
 
 Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.
 
-> **À savoir.** astroportd est en **préversion 0.5.5-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
+> **À savoir.** astroportd est en **préversion 0.5.6-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
 
 Vous aurez aussi besoin d'un compte **MULTIPASS** (votre identité Nostr) : astroportd le crée pour vous à l'étape 5.
 
@@ -49,7 +49,7 @@ Le plus simple : l'installeur. Il choisit le bon fichier pour votre machine et *
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 ```
 
-Options utiles : `--version v0.5.5-beta`, `--static` (binaire statique, x86_64 et aarch64), `--prefix DIR`, `--no-init`, `--yes`.
+Options utiles : `--version v0.5.6-beta`, `--static` (binaire statique, x86_64 et aarch64), `--prefix DIR`, `--no-init`, `--yes`.
 
 **Mettre à jour** : relancez simplement le même `install.sh`. Il montre l'installation en place (version, constellation, domaine, Capitaine, service), installe la nouvelle version, garde vos modèles et votre station, puis redémarre le service. Il ne relance jamais `init`, qui changerait l'identité de la station. `--force` réinstalle la même version.
 
@@ -112,7 +112,7 @@ L'assistant `init` fait ce rituel pour vous (c'est sa première étape) :
 astroportd init
 ```
 
-Il part de `~/.ssh/id_ed25519` (il en crée une si elle n'existe pas). **Votre ancienne clé SSH n'est pas détruite** : elle est conservée sous `~/.ssh/origin.key` et `~/.ssh/origin.pub`. Les secrets de la station sont écrits en `0600` dans `~/.zen/game`.
+Il part de `~/.ssh/id_ed25519` (il en crée une si elle n'existe pas). L'assistant demande aussi la position de la station, l'email du Capitaine, le domaine et la **visio** : STUN + relais d'appel (recommandé), STUN seul ou aucune, plus d'éventuels serveurs STUN/TURN extérieurs (`--visio relais|stun|aucune`, `--ice-server stun:hôte:port`). Ouvrez alors le port de l'interface **en UDP** sur votre box (443 avec un domaine, sinon 18080). **Votre ancienne clé SSH n'est pas détruite** : elle est conservée sous `~/.ssh/origin.key` et `~/.ssh/origin.pub`. Les secrets de la station sont écrits en `0600` dans `~/.zen/game`.
 
 Pour voir la correspondance, ou la vérifier plus tard :
 
@@ -268,7 +268,7 @@ Options : `--lang fr|en|es`, `--relay ws://…` (publier les événements de nai
 
 Ce que la création écrit : un dossier `~/.zen/game/nostr/<email>/` (`.secret.nostr`, `.secret.dunikey`, `.keyformula`, `.pass`, `.multipass.json` en `0600`, plus `HEX`, `NPUB`, `G1PUBNOSTR`, `LANG`, `NOSTRNS`) et trois événements signés par le compte : son **profil** (kind 0), le **suivi du Capitaine** (kind 3) et son **DID** (kind 30800).
 
-> **À savoir.** **Limites.** La création reprend l'essentiel de `make_NOSTRCARD.sh` d'Astroport.ONE, mais pas : l'import de la clé IPNS dans Kubo, l'envoi du zine par email, la ZenCard ni la primo-transaction du compte. Le découpage SSSS du DISCO envoyé chiffré au Capitaine n'est pas repris tel quel : il est remplacé par la **clé de secours en trois parts** (voir plus bas), avec son QR (`astroportd multipass card <email> --svg`). Retrouver un compte repose donc sur cette clé de secours ; le SALT/PEPPER et le `nsec` ne sont affichés qu'une fois à la création (ils restent dans le dossier du compte et dans `--json`).
+> **À savoir.** **Limites.** La création reprend l'essentiel de `make_NOSTRCARD.sh` d'Astroport.ONE, mais pas : l'import de la clé IPNS dans Kubo, l'envoi du zine par email ni la ZenCard. La **primo-transaction** (1 Ğ1 du portefeuille maître) n'est plus envoyée à la création : elle part à la **première connexion** du membre (navigateur, WebDAV ou NIP-98), preuve qu'il a bien reçu ses clés — au plus 20 par jour (`--no-primal-init` coupe toutes les transactions primales). Un MULTIPASS créé ici qui ne s'est jamais connecté en 24 h peut être **éjecté** depuis l'écran Station (bouton « Éjecter ») : si quelqu'un lui a tout de même envoyé des Ğ1, elles sont d'abord reversées au portefeuille primal `UPLANETNAME_G1` (mémo `MULTIPASS:<nom>:PRIMAL:CASH-BACK`, comme `nostr_DESTROY_TW.sh`) ; ses clés vont dans la **corbeille** de la station (`~/.zen/game/trash/ejected/`, vidée à 20h12 après 30 jours, comme `trash/moved/` pour les comptes partis vers une autre station) et l'adresse peut se réinscrire. À l'inscription, le membre peut aussi **indiquer son quartier** : la station n'en garde que la maille UMAP (0,01°, ≈ 1 km), écrite aussi dans les fichiers `GPS` et `ZUMAP` du compte comme le faisait Astroport.ONE. Le découpage SSSS du DISCO envoyé chiffré au Capitaine n'est pas repris tel quel : il est remplacé par la **clé de secours en trois parts** (voir plus bas), avec son QR (`astroportd multipass card <email> --svg`). Retrouver un compte repose donc sur cette clé de secours ; le SALT/PEPPER et le `nsec` ne sont affichés qu'une fois à la création (ils restent dans le dossier du compte et dans `--json`).
 
 ### 🌐 Navigateur (Web)
 
@@ -289,11 +289,19 @@ L'inscription web est **ouverte par défaut**, avec des garde-fous réglables au
 À la création, la carte d'identité contient une **clé de secours** : le secret de votre compte est découpé en **trois parts, dont deux suffisent**. Vous recevez la **part 1** (une ligne `astro-share:v1|…` et son **QR**). **Seule, elle ne révèle rien** : une photo ou une carte volée ne donne pas accès à votre compte. Imprimez-la et gardez-la hors ligne.
 
 - **Part 2** : gardée par votre station (dossier du compte, `0600`).
-- **Part 3** : confiée **automatiquement** aux amis qui hébergent votre sauvegarde (message chiffré pour chacun, une seule fois). Chacun la voit dans *Compte › Sauvegarde privée* (bouton *Montrer sa part de secours*), en texte et en QR.
+- **Part 3** : confiée **automatiquement** aux amis qui hébergent votre sauvegarde (message chiffré pour chacun, une seule fois). Chacun la voit dans *Mon compte › Ma sécurité* (bouton *Montrer sa part de secours*), en texte et en QR.
 
-**« J'appelle un ami ».** Station détruite, ou déménagement chez un Capitaine plus proche : sur la nouvelle station, ouvrez `/restore`, scannez votre QR (part 1), puis appelez un ami qui héberge votre sauvegarde : il vous montre sa part (part 3), vous la scannez ou la tapez. Ces deux parts rétablissent **le même compte** : mêmes amis, mêmes contacts, mêmes fichiers. La voix de l'ami est la vérification : ne lui demandez rien d'autre. Le SALT et le PEPPER ne sont plus jamais affichés. L'ancienne carte complète (`astro-secret:v1|…`) reste acceptée.
+**« J'appelle un ami ».** Station détruite, ou déménagement chez un Capitaine plus proche : sur la nouvelle station, ouvrez `/restore`, scannez votre QR (part 1) et appuyez sur **Prévenir mes gardiens**. La station retrouve vos contacts sur le réseau et leur envoie une demande, depuis sa propre clé NODE ; seule la station d'un ami qui garde votre part 3 y donne suite. Cet ami est prévenu (accueil, *Pour vous*, et *Mon compte › Ma sécurité*) : il vous appelle, ou vous l'appelez, puis il coche « je l'ai reconnu(e) » et confirme. Sa part arrive alors **directement** sur la nouvelle station, qui l'assemble à votre carte : personne ne lit ni ne recopie rien. La demande vit 24 h (revenir sur `/restore` avec la carte la reprend) ; trois demandes par jour au plus. S'il ne vous reconnaît pas, il refuse et son Capitaine est alerté. **En repli**, l'ancienne méthode reste : il vous montre sa part (*Montrer sa part de secours*), vous la scannez ou la tapez sous votre carte. Ces deux parts rétablissent **le même compte** : mêmes amis, mêmes contacts, mêmes fichiers. La voix de l'ami est la vérification : ne lui demandez rien d'autre. Le SALT et le PEPPER ne sont plus jamais affichés. L'ancienne carte complète (`astro-secret:v1|…`) reste acceptée.
 
-Tant qu'aucun ami n'a accepté d'héberger votre sauvegarde, la part 3 n'existe nulle part ailleurs que chez votre station : demandez à un proche d'héberger votre sauvegarde (*Compte › Sauvegarde privée*) pour que la clé de secours soit complète.
+**Pas à pas, tel que le membre le lit** (*Mon compte › Ma sécurité › Si je perds tout*) :
+
+| Situation | Morceaux réunis | Ce que fait le membre |
+|---|---|---|
+| PASS oublié, station en marche | station + Capitaine | Il demande un code de secours au Capitaine (cockpit : *Débloquer*, ou écran Station : *Jeton de secours*). Rien n'est perdu. |
+| Carte imprimée perdue | station + ami | Rien d'urgent : le compte marche. Il demande au Capitaine de lui réimprimer sa carte (`astroportd multipass card <email> --svg`). |
+| Station détruite ou déménagement | carte + ami | 1. Sur une autre station de la même UPlanet, il ouvre `/restore`. 2. Il scanne sa carte imprimée et appuie sur *Prévenir mes gardiens*. 3. Il appelle l'ami qui garde sa sauvegarde ; l'ami, prévenu, confirme d'un geste dans *Mon compte › Ma sécurité*. Reconnaître sa voix est la seule vérification. 4. Le compte renaît tout seul et un **nouveau PASS** s'affiche, à noter. 5. Amis, contacts et fichiers reviennent seuls au fil des heures (voir ci-dessous). |
+
+Tant qu'aucun ami n'a accepté d'héberger votre sauvegarde, la part 3 n'existe nulle part ailleurs que chez votre station : demandez à un proche d'héberger votre sauvegarde (*Mon compte › Ma sécurité*) pour que la clé de secours soit complète.
 
 **Ce qui se passe, sans que vos amis aient quoi que ce soit à faire.** Chaque nuit, votre station range chez l'ami qui héberge votre sauvegarde vos fichiers privés **et le manifeste de votre uCloud** (la liste de vos fichiers et leurs clés, chiffrée). Après un rétablissement, la nouvelle station :
 
@@ -583,7 +591,9 @@ Le Capitaine fixe, par MULTIPASS hébergé, un **quota** et un **prix hebdomadai
 
 1. **Prélèvement** : la machine d'états du cycle de vie décide ; tous les 7 jours depuis le dernier prélèvement réussi, le prix part du MULTIPASS sur la Ğ1 vers le **compte technique d'hébergement** (`<UPLANETNAME>.HOSTING.<PeerID du NODE>` : indépendant de l'email du Capitaine). Un prix tout juste fixé ne débite que dans une semaine. Solde insuffisant : *période de grâce* de 7 jours puis *suspension* — un **statut et un message**, jamais une coupure du service, jamais une suppression.
 2. **Règlement hebdomadaire** (avec `--weekly-costs` = 3×PAF, en centimes de ẑ ; `0` désactive) : une fois la semaine clôturée à 20h12, si le montant reçu le permet, le compte technique vire 1×PAF au NODE, 2×PAF au MULTIPASS du Capitaine, puis le surplus ventilé par la clôture (`IMPOT`, prime de 1 %, `TREASURY`, `RND`, `ASSETS`).
-3. **Transaction primale** : le portefeuille maître `UPLANETNAME_G1` envoie **1 Ğ1** à chaque portefeuille coopératif vide (`UPLANETNAME`, `SOCIETY`, `TREASURY`, `RND`, `ASSETS`, `IMPOT`, `INTRUSION`, `CAPITAL`, `AMORTISSEMENT`), au compte technique et au NODE : c'est leur *primal*, qui les marque comme appartenant à cette UPlanet (équivalent de `UPLANET.init.sh`). **Désactivé par défaut (`--primal-init` pour l'activer) : cela dépense de vrais Ğ1.** Le maître doit détenir au moins 1 Ğ1 par portefeuille en plus de son propre dépôt ; sinon la station le dit une fois par jour et reprend seule.
+3. **Transaction primale** : le portefeuille maître `UPLANETNAME_G1` envoie **1 Ğ1** à chaque portefeuille coopératif vide (`UPLANETNAME`, `SOCIETY`, `TREASURY`, `RND`, `ASSETS`, `IMPOT`, `INTRUSION`, `CAPITAL`, `AMORTISSEMENT`), au compte technique et au NODE : c'est leur *primal*, qui les marque comme appartenant à cette UPlanet (équivalent de `UPLANET.init.sh`). **Actif par défaut : c'est ce qui rend une UPlanet officielle** (`--no-primal-init` pour le couper ; cela dépense de vrais Ğ1). Le maître doit détenir au moins 1 Ğ1 par portefeuille en plus de son propre dépôt ; sinon la station le dit une fois par jour et reprend seule.
+
+> **À savoir.** **Correction des intrusions.** Un virement reçu par un compte de la station (MULTIPASS, Capitaine) ou par un portefeuille coopératif (sauf `INTRUSION`, le maître et le NODE), dont l'émetteur a une primale **prouvée** étrangère (deux indexeurs d'accord), n'est pas compté en Ẑen et il est **renvoyé vers `INTRUSION`** dès le bloc, avec le mémo de `primal_wallet_control.sh` (`…:INTRUSION:<émetteur>:ID:<bloc>_<émetteur>`). Jamais sur une primale inconnue ou non vérifiée, jamais la réserve de 1 Ğ1 (ce qui a déjà été dépensé est signalé au Capitaine), une seule fois par virement. Les virements reçus pendant un arrêt de la station ne sont pas rattrapés : l'écran Économie (vigilance) les montre.
 
 Chaque virement est noté **avant** d'être signé ; une issue inconnue n'est jamais rejouée (alerte au Capitaine : vérifier le solde du compte concerné).
 
@@ -747,6 +757,7 @@ Chaque membre a un **site web** : tout ce qui se trouve dans le dossier **`/Publ
 L'écran **Station → Options de la station** change sans redémarrer :
 
 - **Tunnels et accès des autres Capitaines** : pour chaque service offert (SSH, ComfyUI, Ollama, plus ceux de `--p2p-expose`), *qui peut l'ouvrir* — fermé, la liste seulement, les Capitaines amis, ou tout le réseau — et la liste nominative avec une durée (« laisser un ami m'aider »). Un service qui ne répond pas sur la machine n'a pas de carte : une ligne *Non détectés* le nomme, jusqu'à ce qu'il démarre. Un réglage s'applique tout de suite, sessions ouvertes comprises.
+- **Partager un service de cette machine** : le Capitaine ajoute à chaud un autre port (nom + `IP:port`), sans redémarrer — par exemple un bureau à distance (serveur VNC `wayvnc`/`x11vnc` ou RDP), Jellyfin, Home Assistant ; les services courants qui répondent sont proposés (*Détectés*). La cible est cette machine ou le réseau local privé, jamais une adresse publique. Un service ajouté est fermé à tous tant que le Capitaine ne nomme personne (« Seulement la liste ») ; *Retirer le partage* coupe aussi les sessions ouvertes. Le partage passe par le maillage P2P (`--p2p-listen`) ; l'ami s'y connecte depuis l'assistance (« Se connecter ») ou avec `--p2p-forward`.
 - **Assistance entre Capitaines amis** : demander de l'aide pour un service, pour une durée ; rien ne s'ouvre avant qu'un ami accepte.
 - **File de traitement** : les tâches en attente, en cours ou abandonnées, avec relance.
 
@@ -829,12 +840,21 @@ Qui fait quoi ? Le **suivi automatique** entre Capitaines (lecture des rapports 
 
 ### 🖥️ Terminal (CLI)
 
+**Le maillage est actif par défaut** : sans `--p2p-listen`, la station écoute sur `/ip4/0.0.0.0/tcp/4101` (ou le premier port libre après) ; `--no-p2p` le coupe. Avec `astroportd planes`, chaque UPlanet reçoit son propre port (4101, 4102…) et son propre réseau privé : une station d'une autre UPlanet ne peut pas être jointe.
+
+L'écran du Capitaine **Maillage et Capitaines amis** (`#/mesh`, lien « Capitaines amis » du cockpit) réunit :
+- *Ma station* : l'UPlanet servie, le nombre de stations connectées et l'adresse à donner aux autres Capitaines ;
+- *Stations* : joindre une station à chaud par son adresse (`/ip4/…/tcp/4101/p2p/12D3Koo…`), et la **garder comme bootstrap** (rejointe à chaque démarrage et rappelée toutes les 5 minutes si la liaison tombe) ;
+- *Capitaines* : les Capitaines connus, qui suit qui, **Suivre / Ne plus suivre** (liste de contacts du Capitaine, signée par la station et publiée). Pour un ami réciproque, l'écran demande à **sa** station les services qu'elle nous ouvre ; elle ne répond qu'avec ceux que sa politique de tunnels nous permet, rien n'est publié. *Se connecter* ouvre un accès local à chaud (`127.0.0.1:<port>`, 8 heures) : commande `ssh` toute prête, client de bureau à distance, ou adresse web.
+
+**Bail géographique.** Par le maillage, chaque station dit aux autres stations de son UPlanet sa position (`--lat`/`--lon`) et ses cases de quartier : UMAP (0,01°), SECTOR (0,1°) et REGION (1°), les siennes et celles de ses membres qui ont indiqué leur quartier. Toutes calculent le même propriétaire de chaque case : **la station la plus proche de son centre**, le PeerID départageant deux distances égales. Seule celle-là publiera avec les clés du quartier, si bien que deux stations voisines n'écrivent jamais deux versions concurrentes. Une station muette depuis 36 h sort du calcul et la suivante reprend. L'API `mesh` du Capitaine en donne l'état (champ `geo` : cases tenues, cases cédées et à qui). Les noms de cases sont ceux d'Astroport.ONE (`_43.61_1.44`, `_43.6_1.4`, `_43_1`).
+
 Quand le maillage P2P est actif, la station **offre aussi son relai Nostr** aux autres stations (service `strfry`, tunnel `/x/strfry-<PeerID>`) : c'est par là que la synchronisation N¹/N² et l'écran « Réplication » joignent les relais des autres stations, sans port public.
 
 Sur la station qui **offre** son accès SSH :
 
 ```bash
-astroportd serve ... --p2p-listen /ip4/0.0.0.0/tcp/4101 [--swarm-key ./swarm.key]   # le SSH est offert par défaut, mais fermé : le Capitaine l'ouvre dans Options › Tunnels
+astroportd serve ... [--swarm-key ./swarm.key]   # maillage actif sur 4101 par défaut ; le SSH est offert par défaut, mais fermé : le Capitaine l'ouvre dans Options › Tunnels
 ```
 
 Sur la station qui **rejoint** (le PeerID est celui de l'hôte, visible avec `astroportd ylevel`) :

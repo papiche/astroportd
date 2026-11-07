@@ -16,14 +16,18 @@ h1{font-size:1.6rem;margin:.2rem 0 .6rem}
 .skip{position:absolute;left:-999px}.skip:focus{left:8px;top:8px;background:var(--bg);padding:.4rem .7rem;z-index:2}
 .err{color:var(--err);min-height:1.5em}
 .warn{background:var(--wbg);color:var(--warn);padding:.8rem 1rem;border-radius:.5rem}
-dl{margin:1rem 0}
+dl{display:block;margin:1rem 0}
 dt{font-weight:600;margin-top:.8rem}
 dd{margin:.15rem 0 0;padding:.5rem .7rem;background:var(--card);border:1px solid var(--bd);border-radius:.4rem;font-family:ui-monospace,monospace;font-size:.85rem;overflow-wrap:anywhere}
-.row{display:flex;flex-wrap:wrap;gap:.6rem}
+.row{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center}
+.geo{border:1px solid var(--bd);border-radius:.5rem;padding:.4rem 1rem .8rem;margin:1rem 0}.geo legend{font-weight:600;padding:0 .3rem}.geo button{margin-top:0}
 
 .check{display:flex;gap:.5rem;align-items:center;font-weight:400;margin:.9rem 0 .3rem}.check input{width:auto}
 
 textarea{font-family:ui-monospace,monospace;font-size:.85rem;resize:vertical}
 #cam{width:100%;max-height:18rem;margin-top:.8rem;border-radius:.5rem;background:#000}
-#qr{margin:1rem 0;text-align:center}#qr svg{width:min(18rem,100%);height:auto;background:#fff;border-radius:.5rem}
-@media print{.skip,#save,#open,#print,#guest,.small{display:none}body{background:#fff;color:#000}}
+#qr{margin:1rem 0;text-align:center}#qr p{text-align:left}#qr svg{width:min(18rem,100%);height:auto;background:#fff;border-radius:.5rem}
+.key2 dd{font-size:1.1rem}.key2 .pass{font:700 2rem/1.2 ui-monospace,monospace;letter-spacing:.4em;text-align:center}
+.tech{margin:1rem 0}.tech summary{cursor:pointer;color:var(--mut)}
+#qr h3{margin:.4rem 0}
+@media print{.skip,#save,#open,#print,#guest,.small,.geo,.tech,.login{display:none}body{background:#fff;color:#000}}

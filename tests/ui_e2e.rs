@@ -955,7 +955,7 @@ async fn the_secret_card_given_at_registration_restores_the_account_on_another_s
     // La page, son script et la route sont publics ; la page n'est jamais indexée.
     let (s, h, body) = call(&fresh.app, Method::GET, "/restore", None, &[], vec![]).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(String::from_utf8_lossy(&body).contains("clé de secours") && h["x-robots-tag"].to_str().unwrap().contains("noindex"));
+    assert!(String::from_utf8_lossy(&body).contains("carte de secours") && h["x-robots-tag"].to_str().unwrap().contains("noindex"));
     assert_eq!(call(&fresh.app, Method::GET, "/ui/restore.js", None, &[], vec![]).await.0, StatusCode::OK);
 
     // Autre station : même compte, nouveau PASS, aucune clé ni secret redonné.

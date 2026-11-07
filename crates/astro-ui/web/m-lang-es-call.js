@@ -33,5 +33,6 @@ export default {
 "Appel de groupe : {0} personnes au plus": "Llamada de grupo: {0} personas como máximo",
 "Appel…": "Llamando…",
 "vous invite à un appel de groupe": "le invita a una llamada de grupo",
-"{0} : pas de chemin entre vos réseaux": "{0}: no hay camino entre sus redes"
+"{0} : pas de chemin entre vos réseaux": "{0}: no hay camino entre sus redes",
+"Connexion faible : passage en voix seule pour garder le son. Touchez 📻 pour rendre l'image.": "Conexión débil: se pasa a solo voz para conservar el sonido. Toque 📻 para recuperar la imagen."
 };

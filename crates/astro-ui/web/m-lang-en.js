@@ -1,6 +1,6 @@
 'use strict';
 // Dictionnaire en, phrases communes. Les écrans de `parts` ont aussi m-lang-en-<écran>.js, chargé avec eux (K.mod).
-export const parts = 'account billets call contacts options sync';
+export const parts = 'account billets call contacts mesh options sync';
 export default {
 "Aller au contenu": "Skip to content",
 "Tableau de bord": "Dashboard",
@@ -314,5 +314,27 @@ export default {
 "Quelle « {0} » ?": "Which “{0}”?",
 "{0} fiches portent ce nom. Choisissez la bonne personne : ses visages la rejoindront, pas les autres.": "{0} cards have this name. Pick the right person: the faces go to them, not to the others.",
 "aucun visage encore": "no face yet",
-"Une nouvelle personne": "A new person"
+"Une nouvelle personne": "A new person",
+"Capitaines amis": "Friend Captains",
+"Espace Capitaine": "Captain area",
+"Cockpit": "Cockpit",
+"Essaim et pairs": "Swarm and peers",
+"Économie": "Economy",
+"Options et tunnels": "Options and tunnels",
+"Pour vous": "For you",
+"{0} photo(s) de {1} attendent votre accord pour lui être envoyées": "{0} photo(s) of {1} await your consent to be sent to them",
+"{0} visage(s) à confirmer": "{0} face(s) to confirm",
+"{0} visage(s) à nommer": "{0} face(s) to name",
+"Trier en 1 clic": "Sort in 1 tap",
+"Décider": "Decide",
+"Le PASS de {0} est verrouillé": "{0}'s PASS is locked",
+"Trop de PASS faux : le membre l'a peut-être oublié, ou quelqu'un essaie. Débloquez si c'est bien lui qui vous le demande.": "Too many wrong PASS codes: the member may have forgotten it, or someone is trying. Unlock if they are the one asking you.",
+"Débloquer": "Unlock",
+"{0} autre(s) compte(s) verrouillé(s)": "{0} other locked account(s)",
+"Réserve de démarrage": "Start-up reserve",
+"{0} Ğ1 sur {1}": "{0} Ğ1 of {1}",
+"Alimenter depuis Cesium ou Ğecko": "Top up from Cesium or Ğecko",
+"Glissez la photo : → oui, ← non": "Swipe the photo: → yes, ← no",
+"{0} a perdu sa station et vous demande de l'aide": "{0} lost their station and asks for your help",
+"Répondre": "Answer"
 };

@@ -1,14 +1,21 @@
-//! Crawl N² : synchronise, clef par clef, les événements des membres N1 et N2 depuis les relais de la constellation.
+//! Crawl N² : synchronise les événements des membres N1 et N2 depuis les relais de la constellation.
+//!
+//! Une connexion par relai et par passage ; les clés y sont demandées par lots (`authors` de `batch_keys` clés au
+//! plus, borné par [`MAX_LIST_LEN`]), page par page en remontant le temps avec `until`. Le curseur de reprise reste
+//! par couple `relai|clé` : un lot regroupe des clés aux curseurs voisins, part du plus ancien (`since` = minimum du
+//! lot, la déduplication absorbe le surplus) et chaque curseur n'avance qu'avec les événements de sa propre clé.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use astro_db::Db;
-use astro_nostr_proto::{Event, Filter, is_hex64};
+use astro_nostr_proto::filter::MAX_LIST_LEN;
+use astro_nostr_proto::{Filter, is_hex64};
 use futures_util::StreamExt;
 use tokio::sync::watch;
 
-use crate::client::RelayClient;
+use crate::client::{RelayClient, RelaySession};
 use crate::ingest::{Ingested, ingest_event, purge_claimed};
 use crate::SyncError;
 
@@ -16,6 +23,10 @@ use crate::SyncError;
 const CLAIM_OWNER: &str = "crawl";
 /// Rétention des réclamations.
 const CLAIM_RETENTION_SECS: u64 = 7 * 24 * 3600;
+/// Plafond `limit` le plus bas qu'on prête à un relai : certains relais bornent `limit` en dessous de `page_size`. Une
+/// page d'au moins ce nombre d'événements est traitée comme pleine (on remonte le temps), pour qu'un lot de clés ne
+/// perde pas ce qu'une requête par clé aurait reçu.
+const RELAY_CAP_FLOOR: usize = 100;
 
 /// Réglages du crawl.
 #[derive(Debug, Clone)]
@@ -26,14 +37,16 @@ pub struct CrawlConfig {
     pub kinds: Vec<u32>,
     /// Événements demandés par page.
     pub page_size: usize,
-    /// Pages au plus par clé et par relai.
+    /// Pages au plus par clé et par relai (un lot de `n` clés dispose de `n × max_pages` pages).
     pub max_pages: usize,
     /// Marge relue avant le dernier `created_at` connu (rattrape les événements tardifs ; la déduplication absorbe le reste).
     pub overlap_secs: u64,
     /// Délai de grâce par page.
     pub fetch_timeout: Duration,
-    /// Synchronisations `(clé, relai)` menées de front. Le curseur reste par couple : rien ne change pour la reprise.
+    /// Relais interrogés de front (une connexion chacun). Le curseur reste par couple : rien ne change pour la reprise.
     pub concurrency: usize,
+    /// Clés par requête (`authors`), ramené entre 1 et [`MAX_LIST_LEN`].
+    pub batch_keys: usize,
 }
 
 impl Default for CrawlConfig {
@@ -46,6 +59,7 @@ impl Default for CrawlConfig {
             overlap_secs: 3600,
             fetch_timeout: Duration::from_secs(30),
             concurrency: 8,
+            batch_keys: MAX_LIST_LEN,
         }
     }
 }
@@ -109,7 +123,7 @@ pub const STATUS_SCOPE: &str = "crawl_status";
 /// Clé du dernier passage.
 pub const STATUS_KEY: &str = "last";
 
-/// Moteur de crawl (couples clé × relai en parallèle borné).
+/// Moteur de crawl (relais en parallèle borné, clés groupées par lots sur une connexion par relai).
 pub struct Crawler<C: RelayClient> {
     db: Arc<Db>,
     client: C,
@@ -117,12 +131,17 @@ pub struct Crawler<C: RelayClient> {
     source: Option<RelaySource>,
     hook: Option<PassHook>,
     extra_keys: Vec<String>,
+    nudge: Option<Arc<tokio::sync::Notify>>,
 }
+
+/// Scope `kv` des clés demandées au crawl par un autre module (clé = hex, valeur = date UNIX d'expiration) : par exemple le
+/// compte d'un membre qui se rétablit ici et dont il faut retrouver les contacts. Chaque passage les synchronise jusqu'à expiration.
+pub const WANTED_SCOPE: &str = "crawl_wanted";
 
 impl<C: RelayClient> Crawler<C> {
     /// Crée un crawler.
     pub fn new(db: Arc<Db>, client: C, config: CrawlConfig) -> Self {
-        Self { db, client, config, source: None, hook: None, extra_keys: Vec::new() }
+        Self { db, client, config, source: None, hook: None, extra_keys: Vec::new(), nudge: None }
     }
 
     /// Ajoute aux relais fixes ceux que `source` donne à chaque passage.
@@ -135,6 +154,12 @@ impl<C: RelayClient> Crawler<C> {
     /// configuration de la constellation) : chaque passage de la boucle continue les synchronise.
     pub fn with_extra_keys(mut self, keys: Vec<String>) -> Self {
         self.extra_keys = keys;
+        self
+    }
+
+    /// Réveil : un `notify_one` sur `nudge` lance tout de suite le passage suivant de la boucle continue (sans attendre `every`).
+    pub fn with_nudge(mut self, nudge: Arc<tokio::sync::Notify>) -> Self {
+        self.nudge = Some(nudge);
         self
     }
 
@@ -155,7 +180,7 @@ impl<C: RelayClient> Crawler<C> {
         all
     }
 
-    /// Clés à synchroniser : MULTIPASS hébergés ∪ N1 ∪ N2, triées.
+    /// Clés à synchroniser : MULTIPASS hébergés ∪ N1 ∪ N2 ∪ clés demandées non expirées ([`WANTED_SCOPE`]), triées.
     pub async fn targets(&self) -> Result<Vec<String>, SyncError> {
         Ok(self
             .db
@@ -164,6 +189,7 @@ impl<C: RelayClient> Crawler<C> {
                 let mut stmt = c.prepare(
                     "SELECT hex FROM identities WHERE hosted = 1 \
                      UNION SELECT pubkey FROM social_graph WHERE level IN (1, 2) \
+                     UNION SELECT key FROM kv WHERE scope = 'crawl_wanted' AND length(key) = 64 AND CAST(value AS INTEGER) > CAST(strftime('%s','now') AS INTEGER) \
                      ORDER BY 1",
                 )?;
                 Ok(stmt.query_map([], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?)
@@ -171,7 +197,7 @@ impl<C: RelayClient> Crawler<C> {
             .await?)
     }
 
-    /// Un passage complet : chaque clé sur chaque relai, `concurrency` couples à la fois. `extra` ajoute des clés d'amorçage.
+    /// Un passage complet : chaque clé sur chaque relai, `concurrency` relais à la fois. `extra` ajoute des clés d'amorçage.
     pub async fn run_once(&self, extra: &[String]) -> Result<CrawlStats, SyncError> {
         let mut keys = self.targets().await?;
         for k in extra {
@@ -182,18 +208,9 @@ impl<C: RelayClient> Crawler<C> {
         let mut stats = CrawlStats::default();
         let relays = self.current_relays();
         stats.keys = keys.len();
-        // Ordre clé par clé : les premières places sont réparties entre les relais plutôt que tout sur un seul.
-        let pairs: Vec<(String, String)> = keys.iter().flat_map(|key| relays.iter().map(move |relay| (relay.clone(), key.clone()))).collect();
-        let mut running = futures_util::stream::iter(pairs).map(|pair| self.sync_pair(pair)).buffer_unordered(self.config.concurrency.max(1));
-        while let Some((relay, key, outcome)) = running.next().await {
-            match outcome {
-                Ok(s) => stats.merge(s),
-                Err(e) => {
-                    if stats.errors.len() < 20 {
-                        stats.errors.push((relay, key, e.to_string()));
-                    }
-                }
-            }
+        let mut running = futures_util::stream::iter(relays).map(|relay| self.sync_relay(relay, &keys)).buffer_unordered(self.config.concurrency.max(1));
+        while let Some(s) = running.next().await {
+            stats.merge(s);
         }
         drop(running);
         purge_claimed(self.db.writer(), CLAIM_RETENTION_SECS).await?;
@@ -215,48 +232,128 @@ impl<C: RelayClient> Crawler<C> {
         Ok(total)
     }
 
-    /// `sync_key` avec son couple rendu : fonction nommée pour que le futur reste utilisable dans `tokio::spawn`.
-    async fn sync_pair(&self, (relay, key): (String, String)) -> (String, String, Result<CrawlStats, SyncError>) {
-        let outcome = self.sync_key(&relay, &key).await;
-        (relay, key, outcome)
+    /// Toutes les clés sur un relai, par lots, sur une seule session. Les échecs sont dans le bilan, par lot.
+    async fn sync_relay(&self, relay: String, keys: &[String]) -> CrawlStats {
+        let mut stats = CrawlStats::default();
+        if keys.is_empty() {
+            return stats;
+        }
+        let cursors = match self.cursors(&relay).await {
+            Ok(c) => c,
+            Err(e) => {
+                stats.errors.push((relay, lot_label(keys), e.to_string()));
+                return stats;
+            }
+        };
+        let mut session: Option<Box<dyn RelaySession + '_>> = None;
+        for lot in self.lots(keys, &cursors) {
+            if session.is_none() {
+                match tokio::time::timeout(self.config.fetch_timeout, self.client.session(&relay)).await {
+                    Ok(Ok(s)) => session = Some(s),
+                    Ok(Err(e)) => {
+                        stats.errors.push((relay.clone(), lot_label(&lot.keys), relay_error(e.to_string()).to_string()));
+                        continue;
+                    }
+                    Err(_) => {
+                        stats.errors.push((relay.clone(), lot_label(&lot.keys), relay_error("délai dépassé".into()).to_string()));
+                        continue;
+                    }
+                }
+            }
+            let Some(open) = session.as_mut() else { continue };
+            match self.sync_lot(open.as_mut(), &relay, &lot, &cursors).await {
+                Ok(s) => stats.merge(s),
+                Err(e) => {
+                    if stats.errors.len() < 20 {
+                        stats.errors.push((relay.clone(), lot_label(&lot.keys), e.to_string()));
+                    }
+                    // Connexion d'état incertain : le lot suivant en ouvre une neuve.
+                    session = None;
+                }
+            }
+        }
+        stats
     }
 
-    /// Synchronise une clé sur un relai, de façon incrémentale.
+    /// Lots de clés : d'abord les clés jamais synchronisées sur ce relai (sans `since`), puis les autres triées par
+    /// curseur, pour qu'un lot rassemble des curseurs voisins.
+    fn lots(&self, keys: &[String], cursors: &HashMap<String, u64>) -> Vec<Lot> {
+        let size = self.config.batch_keys.clamp(1, MAX_LIST_LEN);
+        let (mut fresh, mut known) = (Vec::new(), Vec::new());
+        for k in keys {
+            match cursors.get(k).copied().unwrap_or(0) {
+                0 => fresh.push(k.clone()),
+                c => known.push((c, k.clone())),
+            }
+        }
+        known.sort();
+        let mut lots: Vec<Lot> = fresh.chunks(size).map(|c| Lot { keys: c.to_vec(), since: None }).collect();
+        for chunk in known.chunks(size) {
+            let oldest = chunk.iter().map(|(c, _)| *c).min().unwrap_or(0);
+            lots.push(Lot { keys: chunk.iter().map(|(_, k)| k.clone()).collect(), since: Some(oldest.saturating_sub(self.config.overlap_secs)) });
+        }
+        lots
+    }
+
+    /// Synchronise une clé sur un relai, de façon incrémentale (une session, un lot d'une clé).
     pub async fn sync_key(&self, relay: &str, key: &str) -> Result<CrawlStats, SyncError> {
-        let cursor_key = format!("{relay}|{key}");
-        let cursor = self.cursor(&cursor_key).await?;
-        let since = (cursor > 0).then(|| cursor.saturating_sub(self.config.overlap_secs));
+        let cursors = self.cursors(relay).await?;
+        let lot = self.lots(&[key.to_owned()], &cursors).pop().unwrap_or(Lot { keys: vec![key.to_owned()], since: None });
+        let mut session = match tokio::time::timeout(self.config.fetch_timeout, self.client.session(relay)).await {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => return Err(relay_error(e.to_string())),
+            Err(_) => return Err(relay_error("délai dépassé".into())),
+        };
+        self.sync_lot(session.as_mut(), relay, &lot, &cursors).await
+    }
+
+    /// Un lot de clés sur une session : pages remontant le temps, puis curseurs avancés clé par clé.
+    async fn sync_lot(&self, session: &mut (dyn RelaySession + '_), relay: &str, lot: &Lot, cursors: &HashMap<String, u64>) -> Result<CrawlStats, SyncError> {
+        let authors: HashSet<&str> = lot.keys.iter().map(String::as_str).collect();
+        let mut newest: HashMap<&str, u64> = HashMap::new();
         let mut stats = CrawlStats::default();
         let mut until: Option<u64> = None;
-        let mut newest = cursor;
-        for _ in 0..self.config.max_pages {
+        let full = self.config.page_size.clamp(1, RELAY_CAP_FLOOR);
+        for _ in 0..self.config.max_pages.saturating_mul(lot.keys.len()) {
             let filter = Filter {
-                authors: Some(vec![key.to_owned()]),
+                authors: Some(lot.keys.clone()),
                 kinds: Some(self.config.kinds.clone()),
-                since,
+                since: lot.since,
                 until,
                 limit: Some(self.config.page_size),
                 ..Filter::default()
             };
-            let page = match tokio::time::timeout(self.config.fetch_timeout, self.client.fetch(relay, &filter)).await {
+            let page = match tokio::time::timeout(self.config.fetch_timeout, session.fetch(&filter)).await {
                 Ok(Ok(page)) => page,
                 Ok(Err(e)) => return Err(relay_error(e.to_string())),
                 Err(_) => return Err(relay_error("délai dépassé".into())),
             };
-            let full_page = page.len() >= self.config.page_size;
+            let full_page = page.len() >= full;
             let oldest = page.iter().map(|e| e.created_at).min();
             for event in page {
                 stats.fetched += 1;
-                newest = newest.max(event.created_at);
-                match self.accept(&event, key) {
-                    Err(_) => stats.rejected += 1,
-                    Ok(()) => match ingest_event(self.db.writer(), event, CLAIM_OWNER).await? {
-                        Ingested::Inserted => stats.inserted += 1,
-                        Ingested::Duplicate => stats.duplicates += 1,
-                        Ingested::Superseded => stats.superseded += 1,
-                        Ingested::Rejected(_) => stats.rejected += 1,
-                    },
+                let Some(author) = authors.get(event.pubkey.as_str()).copied() else {
+                    stats.rejected += 1;
+                    continue;
+                };
+                if !self.config.kinds.contains(&event.kind) {
+                    stats.rejected += 1;
+                    continue;
                 }
+                let at = event.created_at;
+                // Seul un événement valide de la clé fait avancer son curseur : un faux daté du futur ne peut pas
+                // geler la reprise de cette clé.
+                match ingest_event(self.db.writer(), event, CLAIM_OWNER).await? {
+                    Ingested::Inserted => stats.inserted += 1,
+                    Ingested::Duplicate => stats.duplicates += 1,
+                    Ingested::Superseded => stats.superseded += 1,
+                    Ingested::Rejected(_) => {
+                        stats.rejected += 1;
+                        continue;
+                    }
+                }
+                let slot = newest.entry(author).or_insert(0);
+                *slot = (*slot).max(at);
             }
             // Page pleine : remonter dans le temps ; `until` inclusif, la déduplication absorbe le chevauchement.
             match (full_page, oldest) {
@@ -264,33 +361,27 @@ impl<C: RelayClient> Crawler<C> {
                 _ => break,
             }
         }
-        if newest > cursor {
-            self.set_cursor(&cursor_key, newest).await?;
+        for (key, at) in newest {
+            if at > cursors.get(key).copied().unwrap_or(0) {
+                self.set_cursor(&format!("{relay}|{key}"), at).await?;
+            }
         }
         Ok(stats)
     }
 
-    /// Un relai ne peut pas nous imposer d'autres auteurs ni d'autres kinds que ceux demandés.
-    fn accept(&self, e: &Event, key: &str) -> Result<(), &'static str> {
-        if e.pubkey != key {
-            return Err("auteur inattendu");
-        }
-        if !self.config.kinds.contains(&e.kind) {
-            return Err("kind non demandé");
-        }
-        Ok(())
-    }
-
-    async fn cursor(&self, key: &str) -> Result<u64, SyncError> {
-        let key = key.to_owned();
-        let v: Option<String> = self
+    /// Curseurs de toutes les clés pour `relay` (clés `relai|clé` : intervalle `[relai|, relai})`, `}` suivant `|`).
+    async fn cursors(&self, relay: &str) -> Result<HashMap<String, u64>, SyncError> {
+        let (low, high) = (format!("{relay}|"), format!("{relay}}}"));
+        let rows: Vec<(String, String)> = self
             .db
             .readers()
             .read(move |c| {
-                Ok(rusqlite::OptionalExtension::optional(c.query_row("SELECT value FROM kv WHERE scope = 'crawl_cursor' AND key = ?1", [&key], |r| r.get(0)))?)
+                let mut stmt = c.prepare("SELECT key, value FROM kv WHERE scope = 'crawl_cursor' AND key >= ?1 AND key < ?2")?;
+                Ok(stmt.query_map([&low, &high], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<Result<Vec<_>, _>>()?)
             })
             .await?;
-        Ok(v.and_then(|s| s.parse().ok()).unwrap_or(0))
+        let prefix = format!("{relay}|");
+        Ok(rows.into_iter().filter_map(|(k, v)| Some((k.strip_prefix(&prefix)?.to_owned(), v.parse().ok()?))).collect())
     }
 
     async fn set_cursor(&self, key: &str, value: u64) -> Result<(), SyncError> {
@@ -345,8 +436,16 @@ impl<C: RelayClient> Crawler<C> {
     pub async fn run_forever_after(self: Arc<Self>, first: Duration, every: Duration, mut shutdown: watch::Receiver<bool>) {
         let mut wait = first;
         loop {
+            let nudge = self.nudge.clone();
+            let nudged = async move {
+                match nudge {
+                    Some(n) => n.notified().await,
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
                 () = tokio::time::sleep(wait) => {}
+                () = nudged => {}
                 changed = shutdown.changed() => {
                     if changed.is_err() || *shutdown.borrow() {
                         return;
@@ -364,6 +463,21 @@ impl<C: RelayClient> Crawler<C> {
             }
             wait = every;
         }
+    }
+}
+
+/// Clés d'un lot et borne basse commune.
+struct Lot {
+    keys: Vec<String>,
+    since: Option<u64>,
+}
+
+/// Désignation d'un lot dans le bilan : la clé seule, ou la première et le nombre des autres.
+fn lot_label(keys: &[String]) -> String {
+    match keys {
+        [one] => one.clone(),
+        [first, rest @ ..] => format!("{first} (+{} clés)", rest.len()),
+        [] => String::new(),
     }
 }
 

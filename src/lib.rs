@@ -3,6 +3,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+pub mod captains;
 pub mod account;
 pub mod address_book;
 pub mod agents;
@@ -51,12 +52,17 @@ pub mod charter_accept;
 pub mod hosting_fee;
 pub mod plane;
 pub mod presence;
+pub mod geo_lease;
+pub mod intrusion_guard;
+pub mod member_primo;
 pub mod primal_init;
 pub mod settlement;
 pub mod zen_react;
 pub mod station;
 pub mod stun;
 pub mod turn;
+pub mod mesh_admin;
+pub mod trash;
 pub mod tunnel_policy;
 pub mod ui_backend;
 

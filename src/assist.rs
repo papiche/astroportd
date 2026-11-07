@@ -101,7 +101,7 @@ impl<O: Outbox> Assist<O> {
     /// Demande de l'aide pour `service` pendant `hours` heures à tous les Capitaines amis, ou au seul `to`.
     /// `exclusive` : seul le premier qui accepte reçoit l'accès.
     pub async fn request(&self, service: &str, hours: i64, note: &str, to: Option<&str>, exclusive: bool) -> Result<Value, String> {
-        if !valid_service(service) || !self.exposed.iter().any(|s| s == service) {
+        if !valid_service(service) || !self.policy.services(&self.exposed).iter().any(|s| s == service) {
             return Err(format!("« {service} » n'est pas un service que cette station offre"));
         }
         if !(1..=MAX_HOURS).contains(&hours) {
@@ -229,7 +229,7 @@ impl<O: Outbox> Assist<O> {
                 outgoing.push(json!({ "id": id, "service": service, "hours": hours, "note": note, "exclusive": exclusive == 1, "created_at": created_at, "recipients": [{ "label": label(&other), "status": status }] }));
             }
         }
-        Ok(json!({ "services": self.exposed, "friends": friends.iter().map(|f| json!({ "hex": f.0, "label": f.2 })).collect::<Vec<_>>(), "incoming": incoming, "outgoing": outgoing }))
+        Ok(json!({ "services": self.policy.services(&self.exposed), "friends": friends.iter().map(|f| json!({ "hex": f.0, "label": f.2 })).collect::<Vec<_>>(), "incoming": incoming, "outgoing": outgoing }))
     }
 
     /// Un passage de réception sur les demandes et réponses adressées au Capitaine.

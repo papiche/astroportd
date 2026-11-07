@@ -28,6 +28,7 @@ impl ReaderPool {
                 OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
             )?;
             conn.execute_batch("PRAGMA busy_timeout = 30000; PRAGMA query_only = ON;")?;
+            crate::tune_connection(&conn)?;
             conns.push(conn);
         }
         Ok(Self { conns: Arc::new(Mutex::new(conns)), permits: Arc::new(Semaphore::new(count)) })

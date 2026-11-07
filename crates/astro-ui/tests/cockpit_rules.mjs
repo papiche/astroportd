@@ -47,6 +47,11 @@ r = analyze({ ...healthy, tun: { services: [svc({ up: false })] } }); assert.equ
 const acc = (o) => ({ quota_bytes: 100, used_bytes: 10, ...o });
 r = analyze({ ...healthy, ac: { accounts: [acc({ used_bytes: 95 }), acc({ used_bytes: 99, unlimited: true }), acc({ pass_locked_until: 1 }), acc({ grace_ends_at: 1 })] } });
 assert.equal(r.todos.length, 3); assert.equal(r.floors.members, 'degraded');
+// PASS verrouillé : un bouton par compte qui débloque directement (3 au plus, puis un renvoi vers la table).
+r = analyze({ ...healthy, ac: { accounts: [acc({ pass_locked_until: 1, hex: 'aa', email: 'lea@x' })] } });
+assert.deepEqual(r.todos[0].title, ['Le PASS de {0} est verrouillé', 'lea@x']); assert.equal(r.todos[0].post, '/api/v1/station/accounts/aa/unlock-pass');
+r = analyze({ ...healthy, ac: { accounts: [1, 2, 3, 4, 5].map(i => acc({ pass_locked_until: 1, hex: 'h' + i })) } });
+assert.equal(r.todos.filter(x => x.post).length, 3); assert.deepEqual(r.todos[3].title, ['{0} autre(s) compte(s) verrouillé(s)', 2]);
 
 // 8. Tâches abandonnées et économie.
 r = analyze({ ...healthy, tk: { kinds: [{ failed: 2 }, { failed: 1 }] } }); assert.match(r.todos[0].title, /^3 tâche/);

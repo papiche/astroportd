@@ -26,6 +26,15 @@
 //! - **déménagement** : la nouvelle station écrit à l'ancienne Home un message `moved`, signé de la clé du compte (le seul message
 //!   qu'un compte s'adresse à lui-même). L'ancienne station, si elle tourne encore, cesse d'héberger ce compte : il passe à
 //!   « non hébergé », pointe vers la nouvelle Home, et son dossier est mis de côté dans `.moved/` (rien n'est effacé).
+//!
+//! **Secours par les gardiens** (« J'appelle un ami », sans QR à lire) : sur la nouvelle station, le membre scanne sa carte
+//! imprimée (part P1) et demande de l'aide. La station retrouve sa liste de contacts (crawl de sa clé, [`astro_sync::WANTED_SCOPE`])
+//! et envoie à chacun, **depuis sa clé NODE**, un message `rescue`. Seule la station d'un ami qui garde sa part P3 y donne
+//! suite : l'ami est prévenu (« Léa dit avoir perdu sa station »), l'appelle, puis confirme d'un geste. Sa station renvoie alors
+//! la part P3 (`rescued`) à la clé NODE de la nouvelle station, qui la garde 24 h pour ce compte : la restauration assemble P1 et
+//! P3 sans que personne ne lise ni ne recopie la part. La sécurité est celle de l'appel téléphonique : P3 ne sert à rien sans
+//! la carte P1, et l'ami ne la rend qu'après avoir reconnu son ami. Débit borné des deux côtés (3 demandes par jour et par
+//! compte, 10 comptes par heure et par station) ; un refus (« ce n'est pas lui ») alerte le Capitaine de l'ami.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -78,10 +87,42 @@ const SHARE_SENT: &str = "backup_share_sent";
 /// Côté hébergeur : la part P3 qu'un ami lui a confiée (`<host>:<owner>` → texte de la part).
 const SHARE_HELD: &str = "backup_share_held";
 const JOB: &str = "backup_restore_job";
+/// Secours, côté nouvelle station : `<hex du compte>` → [`RescueOut`] (JSON).
+const RESCUE_OUT: &str = "backup_rescue_out";
+/// Secours, côté gardien : `<gardien>:<compte>` → demande en attente (JSON : `from`, `station`, `at`).
+const RESCUE_IN: &str = "backup_rescue_in";
+/// Secours, côté gardien : `<gardien>:<compte>` → dates des dernières demandes (débit).
+const RESCUE_ASKED: &str = "backup_rescue_asked";
+/// Durée de vie d'une demande de secours.
+pub const RESCUE_SECS: i64 = 24 * 3600;
+/// Demandes de secours au plus par compte et par jour (des deux côtés).
+const RESCUE_MAX_ASKS: usize = 3;
+/// Comptes différents pour lesquels une station envoie des demandes, au plus par heure (anti-amplification).
+const RESCUE_MAX_PER_HOUR: usize = 10;
+/// Contacts sollicités au plus par demande.
+const RESCUE_MAX_FRIENDS: usize = 50;
+
+/// Demande de secours suivie par la nouvelle station (état local, 24 h).
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+struct RescueOut {
+    /// Ouverture de la demande.
+    at: i64,
+    /// Dates des envois (débit).
+    asks: Vec<i64>,
+    /// Contacts déjà sollicités.
+    sent: Vec<String>,
+    /// Part P3 reçue d'un gardien.
+    share: Option<String>,
+    /// Nom du gardien qui l'a rendue.
+    by: Option<String>,
+    /// Gardiens qui n'ont pas reconnu la demande.
+    denied: Vec<String>,
+}
 /// Délai avant de retirer chez l'ami le blob d'un fichier disparu chez le propriétaire (suppression ou remplacement).
 pub const GRACE_SECS: i64 = 7 * 24 * 3600;
 
-fn now() -> i64 {
+/// Secondes UNIX de l'horloge de la station.
+pub fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
 }
 
@@ -137,12 +178,18 @@ pub struct PrivateBackup<O: Outbox, B: BlobStore> {
     activity: ActivityBus,
     notify: Option<Notify>,
     prefetch: Option<Prefetch>,
+    /// Clé NODE de la station (hex, secret) : expéditrice et destinataire des messages de secours.
+    node: Option<(String, astro_crypto::SecretBytes)>,
+    /// Nom de la station montré au gardien (« sur la station … »).
+    label: Option<String>,
+    /// Réveil du crawl, pour retrouver tout de suite les contacts d'un compte en secours.
+    crawl_nudge: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
     /// `sharing` fournit la liste des proches réciproques ; `station_peer` est indiqué à l'hébergeur pour rapatrier les blobs.
     pub fn new(db: Arc<Db>, keys: Arc<dyn KeySource>, outbox: Arc<O>, blobs: Arc<B>, sharing: Arc<Sharing<O>>, activity: ActivityBus) -> Self {
-        Self { db, keys, outbox, blobs, sharing, publisher: None, station_peer: None, home: None, publish: None, accounts_dir: None, activity, notify: None, prefetch: None }
+        Self { db, keys, outbox, blobs, sharing, publisher: None, station_peer: None, home: None, publish: None, accounts_dir: None, activity, notify: None, prefetch: None, node: None, label: None, crawl_nudge: None }
     }
 
     /// Republie le manifeste de l'hébergeur après chaque rangement, et indique la station aux amis.
@@ -162,6 +209,14 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
     /// Dossier des comptes, pour mettre de côté celui d'un membre qui a déménagé.
     pub fn with_accounts_dir(mut self, dir: Option<std::path::PathBuf>) -> Self {
         self.accounts_dir = dir;
+        self
+    }
+
+    /// Secours par les gardiens : clé NODE de la station, son nom montré aux gardiens, et le réveil du crawl.
+    pub fn with_rescue(mut self, node_secret: Option<[u8; 32]>, label: Option<String>, crawl_nudge: Option<Arc<tokio::sync::Notify>>) -> Self {
+        self.node = node_secret.and_then(|s| astro_nostr_proto::pubkey_of(&s).ok().map(|h| (h, zeroize::Zeroizing::new(s))));
+        self.label = label;
+        self.crawl_nudge = crawl_nudge;
         self
     }
 
@@ -256,13 +311,18 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
     }
 
     /// Message de contrôle (kind 14) ou blob (kind 15) emballé pour `to`.
-    async fn send_to(&self, from: &str, to: &str, k: u32, mut tags: Vec<Vec<String>>, content: &str) -> Result<(), String> {
+    async fn send_to(&self, from: &str, to: &str, k: u32, tags: Vec<Vec<String>>, content: &str) -> Result<(), String> {
         let secret = self.keys.secret(from).ok_or("clé du compte indisponible")?;
+        self.send_with(&secret, from, to, k, tags, content).await
+    }
+
+    /// Comme [`Self::send_to`], avec une clé donnée (la clé NODE pour les messages de secours).
+    async fn send_with(&self, secret: &[u8; 32], from: &str, to: &str, k: u32, mut tags: Vec<Vec<String>>, content: &str) -> Result<(), String> {
         tags.insert(0, vec!["t".into(), TAG.into()]);
         tags.insert(0, vec!["p".into(), to.to_owned()]);
         let at = u64::try_from(now()).unwrap_or(0);
         let rumor = Rumor { pubkey: from.to_owned(), created_at: at, kind: k, tags, content: content.to_owned() };
-        let wrap = gift_wrap(&secret, to, &rumor, at).map_err(|_| "emballage NIP-59 impossible".to_owned())?;
+        let wrap = gift_wrap(secret, to, &rumor, at).map_err(|_| "emballage NIP-59 impossible".to_owned())?;
         self.outbox.send(to, wrap).await.map_err(|e| e.to_string())
     }
 
@@ -312,6 +372,10 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
                     entry["share_svg"] = astro_ui::qr::svg(&share).into();
                     entry["share"] = share.into();
                 }
+                // Une demande de secours attend la confirmation de l'ami (24 h).
+                if let Some(req) = self.rescue_request(owner, &who).await {
+                    entry["rescue"] = json!({ "station": req["station"], "at": req["at"] });
+                }
             }
             hosting_json.push(entry);
         }
@@ -353,7 +417,7 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
         if must_ask {
             let label = self.label_of(owner).await;
             if self.hosted_here(&host).await {
-                self.tell(&host, format!("🗄️ {label} vous demande d'héberger sa sauvegarde privée (chiffrée, illisible pour vous). Acceptez ou refusez dans Compte › Sauvegarde privée.")).await;
+                self.tell(&host, format!("🗄️ {label} vous demande d'héberger sa sauvegarde privée (chiffrée, illisible pour vous). Acceptez ou refusez dans Mon compte › Ma sécurité.")).await;
             } else {
                 self.control(owner, &host, "request", vec![]).await?;
             }
@@ -650,8 +714,13 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
             })
             .await
             .unwrap_or_default();
-        for me in owners {
-            let Some(secret) = self.keys.secret(&me) else { continue };
+        // La clé NODE reçoit les réponses des gardiens (secours) ; un compte, tout le reste.
+        let mut inboxes: Vec<(String, astro_crypto::SecretBytes)> = owners.into_iter().filter_map(|me| self.keys.secret(&me).map(|s| (me, s))).collect();
+        if let Some((hex, secret)) = &self.node {
+            inboxes.push((hex.clone(), secret.clone()));
+        }
+        self.rescue_step(at).await;
+        for (me, secret) in inboxes {
             let (m, since) = (me.clone(), at - LOOKBACK_SECS);
             let wraps: Vec<Event> = self
                 .db
@@ -702,7 +771,24 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
             self.claim(&wrap.id, at).await; // pas une sauvegarde : le partage entre amis s'en occupe
             return;
         }
-        if !self.mutual(me, &sender).await {
+        // Secours : l'expéditeur n'est pas (encore) un ami connu ici ; chaque cas porte son propre contrôle.
+        let to_node = self.node.as_ref().is_some_and(|(h, _)| h == me);
+        match tag(&rumor.tags, "op") {
+            Some(op @ ("rescue" | "rescue-closed")) if !to_node => {
+                self.rescue_in(me, &sender, op, &rumor, at).await;
+                self.claim(&wrap.id, at).await;
+                stats.control += 1;
+                return;
+            }
+            Some(op @ ("rescued" | "rescue-denied")) if to_node => {
+                self.rescue_reply(&sender, op, &rumor).await;
+                self.claim(&wrap.id, at).await;
+                stats.control += 1;
+                return;
+            }
+            _ => {}
+        }
+        if to_node || !self.mutual(me, &sender).await {
             self.claim(&wrap.id, at).await;
             stats.ignored += 1;
             return;
@@ -722,7 +808,7 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
                     )
                     .await;
                 self.claim(&wrap.id, at).await;
-                self.tell(me, format!("🗄️ {label} vous demande d'héberger sa sauvegarde privée (chiffrée, illisible pour vous). Acceptez ou refusez dans Compte › Sauvegarde privée.")).await;
+                self.tell(me, format!("🗄️ {label} vous demande d'héberger sa sauvegarde privée (chiffrée, illisible pour vous). Acceptez ou refusez dans Mon compte › Ma sécurité.")).await;
                 stats.control += 1;
             }
             // Mon hébergeur répond.
@@ -771,7 +857,7 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
                 match astro_lifecycle::share::SecretShare::parse(&rumor.content) {
                     Ok(share) if accepted && share.index == 3 && share.hex == sender => {
                         self.kv_put(SHARE_HELD, &format!("{me}:{sender}"), &share.to_text(), at).await;
-                        self.tell(me, format!("🔑 {label} vous a confié une part de sa clé de secours. Seule, elle ne sert à rien : s'il perd son compte, il vous appellera et vous la lui montrerez (Compte › Sauvegarde privée).")).await;
+                        self.tell(me, format!("🔑 {label} vous a confié une part de sa clé de secours. Seule, elle ne sert à rien : s'il perd sa station, il vous la demandera : vous confirmerez d'un geste après lui avoir parlé (Mon compte › Ma sécurité).")).await;
                     }
                     _ => stats.ignored += 1,
                 }
@@ -1114,9 +1200,10 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
         let label = email.clone().unwrap_or_else(|| me.chars().take(8).collect());
         let mut aside = String::new();
         if let (Some(dir), Some(email)) = (self.accounts_dir.clone(), email) {
-            let target = dir.join(".moved").join(format!("{email}-{at}"));
+            // Dossier rangé dans la corbeille de la station (`trash/moved/<email>.<date>`, effacée après 30 jours).
+            let game = dir.parent().map_or_else(|| dir.clone(), std::path::Path::to_path_buf);
             let from = dir.join(&email);
-            let moved = tokio::task::spawn_blocking(move || std::fs::create_dir_all(target.parent().unwrap_or(&target)).and_then(|()| std::fs::rename(&from, &target)).map(|()| target)).await;
+            let moved = tokio::task::spawn_blocking(move || crate::trash::put(&game, "moved", &email, &from, at)).await;
             match moved {
                 Ok(Ok(target)) => aside = format!(" ; dossier mis de côté dans {}", target.display()),
                 Ok(Err(e)) => {
@@ -1392,32 +1479,261 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
         }
         let dropped = self.gc_night(now()).await;
         let moved = self.purge_moved(now()).await?;
-        Ok(format!("{total} fichier(s) privé(s) sauvegardé(s) chez des amis, {dropped} ancien(s) blob(s) retiré(s) ; {moved} compte(s) déménagé(s) effacé(s) de `.moved`"))
+        Ok(format!("{total} fichier(s) privé(s) sauvegardé(s) chez des amis, {dropped} ancien(s) blob(s) retiré(s) ; {moved} élément(s) de plus de 30 jours effacé(s) de la corbeille"))
     }
 
-    /// Efface de `.moved/` les comptes déménagés depuis plus de [`MOVED_KEEP_SECS`] (l'âge est lu dans le nom du dossier,
-    /// `<email>-<horodatage>` : le déplacement conserve la date de modification d'origine). Une erreur est dite, jamais avalée.
+    /// Vide la corbeille de la station (comptes déménagés, comptes éjectés… : voir [`crate::trash`]) de ce qui y dort depuis
+    /// plus de [`MOVED_KEEP_SECS`]. Une erreur est dite, jamais avalée.
     async fn purge_moved(&self, now: i64) -> Result<usize, String> {
-        let Some(dir) = self.accounts_dir.clone().map(|d| d.join(".moved")) else { return Ok(0) };
-        tokio::task::spawn_blocking(move || {
-            let entries = match std::fs::read_dir(&dir) {
-                Ok(e) => e,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-                Err(e) => return Err(format!("lecture de {} : {e}", dir.display())),
+        let Some(game) = self.accounts_dir.clone().and_then(|d| d.parent().map(std::path::Path::to_path_buf)) else { return Ok(0) };
+        tokio::task::spawn_blocking(move || crate::trash::purge(&game, now, MOVED_KEEP_SECS)).await.map_err(|e| format!("corbeille : {e}"))?
+    }
+
+    // ───────────────── Secours par les gardiens ─────────────────
+
+    /// Efface une entrée d'état local.
+    async fn kv_del(&self, scope: &'static str, key: &str) {
+        let _ = self.db.writer().execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", vec![scope.to_owned().into(), key.to_owned().into()]).await;
+    }
+
+    /// Contacts (kind 3) de `owner` tels que le crawl les a rapatriés, bornés.
+    async fn follows_of(&self, owner: &str) -> Vec<String> {
+        let o = owner.to_owned();
+        self.db
+            .readers()
+            .read(move |c| {
+                let mut stmt = c.prepare(
+                    "SELECT DISTINCT t.value FROM nostr_tags t WHERE t.name = 'p' AND length(t.value) = 64 \
+                     AND t.event_id = (SELECT seq FROM nostr_events WHERE pubkey = ?1 AND kind = 3 ORDER BY created_at DESC LIMIT 1) LIMIT ?2",
+                )?;
+                Ok(stmt.query_map(rusqlite::params![o, RESCUE_MAX_FRIENDS as i64], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|h| is_hex64(h) && h != owner)
+            .collect()
+    }
+
+    async fn rescue_session(&self, owner: &str, at: i64) -> Option<RescueOut> {
+        let (v, _) = self.kv_get(RESCUE_OUT, owner).await?;
+        serde_json::from_str::<RescueOut>(&v).ok().filter(|r| at - r.at < RESCUE_SECS)
+    }
+
+    async fn save_session(&self, owner: &str, r: &RescueOut, at: i64) {
+        self.kv_put(RESCUE_OUT, owner, &json!(r).to_string(), at).await;
+    }
+
+    /// Côté gardien : demande en attente pour `owner` (moins de 24 h).
+    async fn rescue_request(&self, me: &str, owner: &str) -> Option<Value> {
+        let (v, _) = self.kv_get(RESCUE_IN, &format!("{me}:{owner}")).await?;
+        serde_json::from_str::<Value>(&v).ok().filter(|r| now() - r["at"].as_i64().unwrap_or(0) < RESCUE_SECS)
+    }
+
+    /// Nouvelle station : le membre a scanné sa carte imprimée (part P1). `send` ouvre (ou relance) la demande auprès de ses
+    /// gardiens ; sinon l'état de la demande seulement. La carte sert de justificatif : sans elle, rien ne part ni ne se lit.
+    pub async fn rescue_ask(&self, card: &str, send: bool, at: i64) -> Result<Value, String> {
+        let share = astro_lifecycle::share::SecretShare::parse(card.trim()).map_err(|_| "carte de secours illisible : scannez le QR imprimé, ou collez sa ligne".to_owned())?;
+        if share.index != 1 {
+            return Err("c'est la carte imprimée (part 1) qu'il faut ici".into());
+        }
+        if self.node.is_none() {
+            return Err("cette station ne peut pas joindre vos gardiens (clé NODE absente) : demandez la part de votre ami par téléphone".into());
+        }
+        if self.hosted_here(&share.hex).await {
+            return Err("ce compte est déjà hébergé sur cette station : connectez-vous".into());
+        }
+        let mut r = self.rescue_session(&share.hex, at).await.unwrap_or(RescueOut { at, ..RescueOut::default() });
+        if send {
+            r.asks.retain(|t| at - t < RESCUE_SECS);
+            if r.asks.len() >= RESCUE_MAX_ASKS {
+                return Err("trois demandes par jour au plus : patientez, ou appelez directement un de vos gardiens".into());
+            }
+            if self.rescue_sessions_last_hour(at).await >= RESCUE_MAX_PER_HOUR && !r.asks.iter().any(|t| at - t < 3600) {
+                return Err("trop de demandes de secours sur cette station pour l'instant : réessayez dans une heure".into());
+            }
+            r.asks.push(at);
+            r.sent.clear(); // relance : chaque gardien est sollicité de nouveau
+            r.denied.clear();
+            self.save_session(&share.hex, &r, at).await;
+            // Retrouver ses contacts (et, par eux, ses gardiens) : crawl de sa clé pendant 24 h, réveillé tout de suite.
+            self.kv_put(astro_sync::WANTED_SCOPE, &share.hex, &(at + RESCUE_SECS).to_string(), at).await;
+            if let Some(n) = &self.crawl_nudge {
+                n.notify_one();
+            }
+            self.rescue_step(at).await;
+            r = self.rescue_session(&share.hex, at).await.unwrap_or(r);
+        }
+        Ok(Self::rescue_view(self.rescue_session(&share.hex, at).await.filter(|x| !x.asks.is_empty()).as_ref().or(Some(&r).filter(|x| !x.asks.is_empty()))))
+    }
+
+    fn rescue_view(r: Option<&RescueOut>) -> Value {
+        match r {
+            None => json!({ "status": "none" }),
+            Some(r) if r.share.is_some() => json!({ "status": "ready", "by": r.by, "denied": r.denied }),
+            Some(r) => json!({ "status": if r.sent.is_empty() { "searching" } else { "waiting" }, "sent": r.sent.len(), "denied": r.denied, "asks_left": RESCUE_MAX_ASKS.saturating_sub(r.asks.len()) }),
+        }
+    }
+
+    async fn rescue_sessions_last_hour(&self, at: i64) -> usize {
+        let since = at - 3600;
+        self.db
+            .readers()
+            .read(move |c| {
+                let mut stmt = c.prepare("SELECT value FROM kv WHERE scope = ?1 AND updated_at >= ?2")?;
+                Ok(stmt.query_map(rusqlite::params![RESCUE_OUT, since], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|v| serde_json::from_str::<RescueOut>(v).ok())
+            .filter(|r| r.asks.iter().any(|t| *t >= since))
+            .count()
+    }
+
+    /// Nouvelle station : sollicite les contacts pas encore joints des demandes ouvertes (dès que le crawl les a trouvés).
+    pub async fn rescue_step(&self, at: i64) -> usize {
+        let Some((node_hex, node_secret)) = self.node.clone() else { return 0 };
+        let owners: Vec<String> = self
+            .db
+            .readers()
+            .read(|c| {
+                let mut stmt = c.prepare("SELECT key FROM kv WHERE scope = ?1")?;
+                Ok(stmt.query_map([RESCUE_OUT], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap_or_default();
+        let mut sent = 0;
+        for owner in owners {
+            let Some(mut r) = self.rescue_session(&owner, at).await else {
+                self.kv_del(RESCUE_OUT, &owner).await;
+                continue;
             };
-            let mut gone = 0;
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                let Some(at) = name.rsplit_once('-').and_then(|(_, ts)| ts.parse::<i64>().ok()) else { continue };
-                if now.saturating_sub(at) >= MOVED_KEEP_SECS {
-                    std::fs::remove_dir_all(entry.path()).map_err(|e| format!("effacement de {} : {e}", entry.path().display()))?;
-                    gone += 1;
+            if r.share.is_some() || r.asks.is_empty() {
+                continue;
+            }
+            let mut changed = false;
+            for friend in self.follows_of(&owner).await {
+                if r.sent.contains(&friend) {
+                    continue;
+                }
+                let mut tags = vec![vec!["op".to_owned(), "rescue".to_owned()], vec!["owner".into(), owner.clone()]];
+                if let Some(l) = &self.label {
+                    tags.push(vec!["station".into(), l.clone()]);
+                }
+                match self.send_with(&node_secret, &node_hex, &friend, kind::CHAT, tags, "secours").await {
+                    Ok(()) => {
+                        r.sent.push(friend);
+                        sent += 1;
+                        changed = true;
+                    }
+                    // Station du contact injoignable d'ici : il sera retenté au passage suivant.
+                    Err(e) => {
+                        self.activity.publish("ucloud", "backup", format!("secours : contact …{} injoignable pour l'instant ({e})", &friend[..8]), None);
+                    }
                 }
             }
-            Ok(gone)
-        })
-        .await
-        .map_err(|e| format!("effacement de .moved : {e}"))?
+            if changed {
+                self.save_session(&owner, &r, at).await;
+            }
+        }
+        sent
+    }
+
+    /// Côté gardien : une demande de secours (ou sa clôture) arrive d'une station NODE inconnue.
+    async fn rescue_in(&self, me: &str, from: &str, op: &str, rumor: &Rumor, at: i64) {
+        let Some(owner) = tag(&rumor.tags, "owner").filter(|h| is_hex64(h)).map(str::to_ascii_lowercase) else { return };
+        let key = format!("{me}:{owner}");
+        if op == "rescue-closed" {
+            if self.rescue_request(me, &owner).await.is_some_and(|r| r["from"] == from) {
+                self.kv_del(RESCUE_IN, &key).await;
+            }
+            return;
+        }
+        // Silence complet si je ne garde pas de part pour ce compte : un ami qui n'est pas gardien ne voit rien.
+        if self.kv_get(SHARE_HELD, &key).await.is_none() {
+            return;
+        }
+        let mut asked: Vec<i64> = self.kv_get(RESCUE_ASKED, &key).await.and_then(|(v, _)| serde_json::from_str(&v).ok()).unwrap_or_default();
+        asked.retain(|t| at - t < RESCUE_SECS);
+        if asked.len() >= RESCUE_MAX_ASKS {
+            return;
+        }
+        asked.push(at);
+        self.kv_put(RESCUE_ASKED, &key, &json!(asked).to_string(), at).await;
+        let station: String = tag(&rumor.tags, "station").unwrap_or("une autre station").chars().filter(|c| !c.is_control()).take(80).collect();
+        self.kv_put(RESCUE_IN, &key, &json!({ "from": from, "station": station, "at": at }).to_string(), at).await;
+        let label = self.label_of(&owner).await;
+        self.tell(me, format!("🆘 {label} dit avoir perdu sa station et veut retrouver son compte sur « {station} ». Appelez-le avant de confirmer : Mon compte › Ma sécurité.")).await;
+    }
+
+    /// Côté gardien : `accept` rend la part P3 à la station qui la demande ; sinon la demande est refusée et le Capitaine alerté.
+    pub async fn rescue_answer(&self, me: &str, owner: &str, accept: bool) -> Result<Value, String> {
+        let req = self.rescue_request(me, owner).await.ok_or("aucune demande de secours en attente pour ce compte")?;
+        let from = req["from"].as_str().filter(|h| is_hex64(h)).ok_or("demande illisible")?.to_owned();
+        let key = format!("{me}:{owner}");
+        let tags = vec![vec!["op".to_owned(), if accept { "rescued" } else { "rescue-denied" }.to_owned()], vec!["owner".into(), owner.to_owned()]];
+        if accept {
+            let (share, _) = self.kv_get(SHARE_HELD, &key).await.ok_or("vous ne gardez plus de part pour ce compte")?;
+            self.send_to(me, &from, kind::CHAT, tags, &share).await?;
+        } else {
+            // Le refus est dit à la station qui demande ; l'échec de cet envoi n'empêche pas de clore la demande.
+            if let Err(e) = self.send_to(me, &from, kind::CHAT, tags, "").await {
+                self.activity.publish_to(Audience::Owner(me.to_owned()), "ucloud", "backup", format!("refus non transmis ({e})"), None);
+            }
+            let (who, station) = (self.label_of(owner).await, req["station"].as_str().unwrap_or("?").to_owned());
+            let me_label = self.label_of(me).await;
+            self.activity.publish_to(Audience::Captain, "alert", "backup", format!("🆘 {me_label} n'a pas reconnu une demande de secours pour le compte de {who} (station « {station} ») : tentative d'usurpation possible."), None);
+        }
+        self.kv_del(RESCUE_IN, &key).await;
+        self.status(me).await
+    }
+
+    /// Nouvelle station : réponse d'un gardien, reçue sur la clé NODE.
+    async fn rescue_reply(&self, from: &str, op: &str, rumor: &Rumor) {
+        let at = now();
+        let Some(owner) = tag(&rumor.tags, "owner").filter(|h| is_hex64(h)).map(str::to_ascii_lowercase) else { return };
+        let Some(mut r) = self.rescue_session(&owner, at).await else { return };
+        // Seul un contact sollicité pour ce compte peut répondre.
+        if r.share.is_some() || !r.sent.iter().any(|s| s == from) {
+            return;
+        }
+        let label = self.label_of(from).await;
+        if op == "rescue-denied" {
+            if !r.denied.contains(&label) {
+                r.denied.push(label);
+            }
+            self.save_session(&owner, &r, at).await;
+            return;
+        }
+        match astro_lifecycle::share::SecretShare::parse(&rumor.content) {
+            Ok(share) if share.index == 3 && share.hex == owner => {
+                r.share = Some(share.to_text());
+                r.by = Some(label);
+                self.save_session(&owner, &r, at).await;
+                // Les autres gardiens n'ont plus rien à faire : leur demande est close.
+                if let Some((node_hex, node_secret)) = self.node.clone() {
+                    for other in r.sent.iter().filter(|s| s.as_str() != from) {
+                        let tags = vec![vec!["op".to_owned(), "rescue-closed".to_owned()], vec!["owner".into(), owner.clone()]];
+                        let _ = self.send_with(&node_secret, &node_hex, other, kind::CHAT, tags, "").await;
+                    }
+                }
+            }
+            _ => {
+                self.activity.publish_to(Audience::Captain, "alert", "backup", format!("secours : réponse illisible de …{} pour …{}", &from[..8], &owner[..8]), None);
+            }
+        }
+    }
+
+    /// Nouvelle station : part P3 rendue par un gardien pour `owner` (moins de 24 h), à joindre à la carte P1 à la restauration.
+    pub async fn rescued_share(&self, owner: &str) -> Option<String> {
+        self.rescue_session(owner, now()).await.and_then(|r| r.share)
+    }
+
+    /// Nouvelle station : le compte est rétabli, la demande et la part reçue sont effacées.
+    pub async fn rescue_done(&self, owner: &str) {
+        self.kv_del(RESCUE_OUT, owner).await;
+        self.kv_del(astro_sync::WANTED_SCOPE, owner).await;
     }
 
     /// Travailleur de fond : réception des demandes, réponses et blobs jusqu'au signal d'arrêt. L'**envoi** n'a lieu
@@ -1742,6 +2058,122 @@ mod tests {
         let _ = std::fs::remove_dir_all(n.dir);
     }
 
+    // ───────────────── Secours par les gardiens : la part P3 revient seule ─────────────────
+
+    const NODE_NEW: [u8; 32] = [0x0D; 32]; // clé NODE de la station où Alice se rétablit
+    const DAVE: [u8; 32] = [0xD4; 32]; // un autre compte, dont Carol ne garde rien
+
+    fn rescue_rumor(from: &[u8; 32], to: &str, tags: Vec<Vec<String>>, content: &str) -> Event {
+        let mut all = vec![vec!["p".to_owned(), to.to_owned()], vec!["t".into(), TAG.into()]];
+        all.extend(tags);
+        let r = Rumor { pubkey: hex(from), created_at: u64::try_from(now()).unwrap(), kind: kind::CHAT, tags: all, content: content.to_owned() };
+        gift_wrap(from, to, &r, r.created_at).unwrap()
+    }
+
+    async fn inject(n: &Node, wrap: Event) {
+        n.db.writer().transaction(move |tx| insert_event(tx, &wrap).map(|_| ())).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_guardian_confirms_and_the_third_share_reaches_the_new_station_without_anyone_reading_it() {
+        let (alice, bob, carol, node_hex) = (hex(&ALICE), hex(&BOB), hex(&CAROL), hex(&NODE_NEW));
+        // La station d'Alice a brûlé ; Carol (station H) garde sa part P3 ; Bob est un contact qui ne garde rien.
+        let old = std::env::temp_dir().join(format!("astroportd-rescue-old-{}", std::process::id()));
+        let shares = write_rescue_shares(&old, &ALICE, "alice@example.org");
+        let (p1, p3) = (shares[0].to_text(), shares[2].to_text());
+        let host = node("rescue-guard", &[(&CAROL, "carol@example.org")], &[(&ALICE, "alice@example.org")], "12D3KooWGuard", None, None).await;
+        accept_pact(&host.db, &ALICE, &CAROL).await;
+        host.backup.kv_put(SHARE_HELD, &format!("{carol}:{alice}"), &p3, now()).await;
+        let mut fresh = node("rescue-new", &[], &[(&CAROL, "carol@example.org")], "12D3KooWNew", None, None).await;
+        fresh.backup = fresh.backup.with_rescue(Some(NODE_NEW), Some("station du village".into()), None);
+
+        // Seule la carte imprimée (P1) ouvre une demande ; pas encore de contacts connus : on les cherche (crawl de la clé d'Alice).
+        assert!(fresh.backup.rescue_ask(&p3, true, now()).await.is_err(), "P3 n'est pas une carte imprimée");
+        assert!(fresh.backup.rescue_ask("n'importe quoi", true, now()).await.is_err());
+        assert_eq!(fresh.backup.rescue_ask(&p1, false, now()).await.unwrap()["status"], "none", "lire l'état n'ouvre rien");
+        assert_eq!(fresh.backup.rescue_ask(&p1, true, now()).await.unwrap()["status"], "searching");
+        assert_eq!(count(&fresh.db, "SELECT COUNT(*) FROM kv WHERE scope = 'crawl_wanted' AND key = ?1", alice.clone()).await, 1, "le crawl doit chercher Alice");
+
+        // Le crawl a rapporté ses contacts : chacun est sollicité, depuis la clé NODE de la station.
+        give(&fresh.db, follows(&ALICE, &[&BOB, &CAROL])).await;
+        assert_eq!(fresh.backup.rescue_step(now()).await, 2);
+        assert_eq!(fresh.backup.rescue_step(now()).await, 0, "une seule sollicitation par contact");
+        let asked = fresh.outbox.0.lock().unwrap().clone();
+        let to_carol = asked.iter().find(|(to, _)| *to == carol).unwrap();
+        let opened = nip59::unwrap(&CAROL, &to_carol.1).unwrap();
+        assert_eq!((opened.sender.as_str(), tag(&opened.rumor.tags, "op"), tag(&opened.rumor.tags, "owner")), (node_hex.as_str(), Some("rescue"), Some(alice.as_str())));
+        assert!(!opened.rumor.content.contains("astro-share"), "la carte P1 ne quitte jamais la nouvelle station");
+        assert_eq!(fresh.backup.rescue_ask(&p1, false, now()).await.unwrap()["status"], "waiting");
+
+        // Chez Carol : la demande attend sa confirmation (Ma sécurité), avec le nom de la station.
+        pump(&fresh, &host).await;
+        host.backup.poll_once(now()).await;
+        let seen = host.backup.status(&carol).await.unwrap();
+        assert_eq!(seen["hosting"][0]["rescue"]["station"], "station du village");
+
+        // Hostile : demande pour un compte dont Carol ne garde rien → silence ; au-delà de 3 demandes par jour → ignorées.
+        inject(&host, rescue_rumor(&NODE_NEW, &carol, vec![vec!["op".into(), "rescue".into()], vec!["owner".into(), hex(&DAVE)]], "")).await;
+        host.backup.poll_once(now()).await;
+        assert!(host.backup.rescue_request(&carol, &hex(&DAVE)).await.is_none());
+        host.db.writer().execute("DELETE FROM kv WHERE scope = ?1", vec![RESCUE_IN.to_owned().into()]).await.unwrap();
+        for _ in 0..3 {
+            inject(&host, rescue_rumor(&NODE_NEW, &carol, vec![vec!["op".into(), "rescue".into()], vec!["owner".into(), alice.clone()]], "")).await;
+        }
+        host.backup.poll_once(now()).await;
+        let asked_n: Vec<i64> = serde_json::from_str(&host.backup.kv_get(RESCUE_ASKED, &format!("{carol}:{alice}")).await.unwrap().0).unwrap();
+        assert_eq!(asked_n.len(), 3, "trois demandes par jour au plus");
+        assert!(host.backup.rescue_request(&carol, &alice).await.is_some());
+
+        // Avant la confirmation, la nouvelle station n'a rien ; un inconnu ne peut pas répondre à la place du gardien.
+        assert!(fresh.backup.rescued_share(&alice).await.is_none());
+        inject(&fresh, rescue_rumor(&DAVE, &node_hex, vec![vec!["op".into(), "rescued".into()], vec!["owner".into(), alice.clone()]], &p3)).await;
+        fresh.backup.poll_once(now()).await;
+        assert!(fresh.backup.rescued_share(&alice).await.is_none(), "Dave n'a pas été sollicité : sa réponse est ignorée");
+
+        // Carol a appelé Alice et confirme : la part part vers la clé NODE ; Carol n'a rien eu à lire ni recopier.
+        fresh.outbox.0.lock().unwrap().clear();
+        host.backup.rescue_answer(&carol, &alice, true).await.unwrap();
+        assert!(host.backup.rescue_request(&carol, &alice).await.is_none(), "la demande est close chez Carol");
+        assert_eq!(host.outbox.0.lock().unwrap()[0].0, node_hex, "la réponse va à la station qui demande");
+        pump(&host, &fresh).await;
+        fresh.backup.poll_once(now()).await;
+        let st = fresh.backup.rescue_ask(&p1, false, now()).await.unwrap();
+        assert_eq!((st["status"].as_str(), st["by"].as_str()), (Some("ready"), Some("carol")));
+        let got = fresh.backup.rescued_share(&alice).await.unwrap();
+        let recovered = astro_lifecycle::share::Recovery::parse(&format!("{p1}\n{got}")).unwrap();
+        assert_eq!((recovered.card.salt.as_str(), recovered.card.pepper.as_str(), recovered.card.hex.as_str()), ("Sel123", "Poivre456", alice.as_str()), "P1 + P3 rendue = le compte d'Alice");
+        // Bob, sollicité aussi, est prévenu que c'est réglé.
+        let closed = fresh.outbox.0.lock().unwrap().iter().any(|(to, w)| *to == bob && tag(&nip59::unwrap(&BOB, w).unwrap().rumor.tags, "op") == Some("rescue-closed"));
+        assert!(closed);
+        fresh.backup.rescue_done(&alice).await;
+        assert!(fresh.backup.rescued_share(&alice).await.is_none());
+        for n in [host, fresh] {
+            let _ = std::fs::remove_dir_all(n.dir);
+        }
+        let _ = std::fs::remove_dir_all(old);
+    }
+
+    #[tokio::test]
+    async fn a_guardian_who_does_not_recognise_the_caller_refuses_and_his_captain_is_warned() {
+        let (alice, carol, node_hex) = (hex(&ALICE), hex(&CAROL), hex(&NODE_NEW));
+        let old = std::env::temp_dir().join(format!("astroportd-rescue-old2-{}", std::process::id()));
+        let shares = write_rescue_shares(&old, &ALICE, "alice@example.org");
+        let host = node("rescue-deny", &[(&CAROL, "carol@example.org")], &[(&ALICE, "alice@example.org")], "12D3KooWDeny", None, None).await;
+        accept_pact(&host.db, &ALICE, &CAROL).await;
+        host.backup.kv_put(SHARE_HELD, &format!("{carol}:{alice}"), &shares[2].to_text(), now()).await;
+        inject(&host, rescue_rumor(&NODE_NEW, &carol, vec![vec!["op".into(), "rescue".into()], vec!["owner".into(), alice.clone()], vec!["station".into(), "station louche".into()]], "")).await;
+        host.backup.poll_once(now()).await;
+        host.backup.rescue_answer(&carol, &alice, false).await.unwrap();
+        let sent = host.outbox.0.lock().unwrap().clone();
+        let r = nip59::unwrap(&NODE_NEW, &sent[0].1).unwrap().rumor;
+        assert_eq!((sent[0].0.as_str(), tag(&r.tags, "op"), r.content.as_str()), (node_hex.as_str(), Some("rescue-denied"), ""), "un refus, sans la part");
+        let (log, _) = host.backup.activity.subscribe(0);
+        assert!(log.iter().any(|a| a.message.contains("usurpation") && a.audience == Audience::Captain), "le Capitaine de Carol est alerté");
+        assert!(host.backup.rescue_answer(&carol, &alice, true).await.is_err(), "la demande refusée est close");
+        let _ = std::fs::remove_dir_all(host.dir);
+        let _ = std::fs::remove_dir_all(old);
+    }
+
     // ───────────────── Restauration de bout en bout : trois stations, une panne ─────────────────
 
     struct Node {
@@ -2036,12 +2468,12 @@ mod tests {
         let (hosted, home): (i64, String) = old.db.readers().read({ let a = alice.clone(); move |c| Ok(c.query_row("SELECT hosted, COALESCE(home_station, '') FROM identities WHERE hex = ?1", [a], |r| Ok((r.get(0)?, r.get(1)?)))?) }).await.unwrap();
         assert_eq!((hosted, home.as_str()), (0, new_home.as_str()));
         assert!(!folder.exists(), "plus de clé du compte dans le dossier lu par la station");
-        let aside: Vec<_> = std::fs::read_dir(old.dir.join("nostr/.moved")).unwrap().flatten().collect();
+        let aside: Vec<_> = std::fs::read_dir(old.dir.join("trash/moved")).unwrap().flatten().collect();
         assert_eq!(aside.len(), 1);
         assert!(aside[0].path().join(".secret.nostr").is_file(), "mis de côté, jamais effacé");
         assert_eq!(old.backup.kv_get("moved", &alice).await.map(|v| v.0), Some(new_home.clone()));
-        // `.moved` garde le compte 30 jours (il contient encore ses clés), puis la nuit l'efface ; un nom inattendu est laissé.
-        let stray = old.dir.join("nostr/.moved/pas-de-date");
+        // La corbeille garde le compte 30 jours (il contient encore ses clés), puis la nuit l'efface ; un nom inattendu est laissé.
+        let stray = old.dir.join("trash/moved/pas-de-date");
         std::fs::create_dir_all(&stray).unwrap();
         assert_eq!(old.backup.purge_moved(now() + MOVED_KEEP_SECS - 3600).await.unwrap(), 0, "trop tôt");
         assert!(aside[0].path().exists());

@@ -1,9 +1,10 @@
 'use strict';
 const $ = s => document.querySelector(s);
+// Seuls l'identifiant et le PASS sont mis en avant ; le reste (clés) est replié dans « Détails techniques » et dans le .txt.
 const FIELDS = [
   ['email', 'Identifiant de connexion (email)'],
+  ['pass', 'Code PASS (connexion : identifiant + PASS)'],
   ['token', 'Jeton de connexion web (avec l’email)'],
-  ['pass', 'Code PASS (connexion sur téléphone : email + PASS)'],
   ['card', 'Clé de secours, part 1 sur 3 (seule, elle ne révèle rien ; avec la part d’un ami qui héberge votre sauvegarde, elle rétablit le compte sur une autre station)'],
   ['nsec', 'Clé secrète Nostr (nsec) : ne la montrez à personne'],
   ['npub', 'Clé publique Nostr (npub)'],
@@ -48,8 +49,11 @@ $('#f').onsubmit = async ev => {
     card = j;
     const dl = $('#card');
     dl.replaceChildren();
+    $('#k-email').textContent = j.email || '';
+    $('#k-pass').textContent = j.pass || '';
+    $('#k-pass').parentElement.querySelectorAll('dt')[1].hidden = $('#k-pass').hidden = !j.pass;
     for (const [k, label] of FIELDS) {
-      if (!j[k]) continue;
+      if (!j[k] || k === 'email' || k === 'pass') continue;
       const dt = document.createElement('dt'), dd = document.createElement('dd');
       dt.textContent = label; dd.textContent = j[k];
       dl.append(dt, dd);
@@ -61,6 +65,20 @@ $('#f').onsubmit = async ev => {
     if (svg && svg.nodeName === 'svg') { qr.append(document.importNode(svg, true)); qr.hidden = false; }
     $('#f').hidden = true; $('#done').hidden = false; $('#done-t').focus();
   } catch { $('#err').textContent = 'Station injoignable.'; } finally { b.disabled = false; }
+};
+// Quartier : la position du navigateur, arrondie par la station à 0,01° (≈ 1 km). Rien n'est envoyé sans ce geste.
+$('#geo-go').onclick = () => {
+  const st = $('#geo-st'), b = $('#geo-go');
+  if (!card || !navigator.geolocation) { st.textContent = 'Position indisponible sur cet appareil.'; return; }
+  b.disabled = true; st.textContent = 'Recherche de votre position…';
+  navigator.geolocation.getCurrentPosition(async p => {
+    try {
+      const r = await fetch('/api/v1/account/position', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json', Authorization: 'Basic ' + btoa(card.email + ':' + card.token) }, body: JSON.stringify({ lat: p.coords.latitude, lon: p.coords.longitude }) });
+      const j = await r.json().catch(() => ({}));
+      st.textContent = r.ok ? 'Quartier enregistré ✓' : (j.error || 'Échec de l’enregistrement.');
+      if (!r.ok) b.disabled = false;
+    } catch { st.textContent = 'Station injoignable.'; b.disabled = false; }
+  }, e => { st.textContent = e.code === 1 ? 'Vous avez refusé la position : vous pourrez l’indiquer plus tard.' : 'Position introuvable.'; b.disabled = false; }, { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 });
 };
 $('#print').onclick = () => window.print();
 $('#save').onclick = () => {

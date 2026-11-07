@@ -10,6 +10,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+pub mod ask;
 pub mod blob;
 mod identity;
 mod node;
@@ -21,7 +22,7 @@ pub use identity::keypair_from_seed;
 pub use node::{P2pConfig, P2pHandle, P2pNode};
 pub use psk::{fingerprint, generate_swarm_key, parse_swarm_key};
 
-pub use libp2p::{Multiaddr, PeerId, pnet::PreSharedKey};
+pub use libp2p::{Multiaddr, PeerId, multiaddr, pnet::PreSharedKey};
 
 /// Erreurs du réseau P2P.
 #[derive(Debug, thiserror::Error)]

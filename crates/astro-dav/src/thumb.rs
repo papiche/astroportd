@@ -108,19 +108,18 @@ pub fn is_thumbable(mime: &str) -> bool {
 /// Décode `src`, applique l'orientation EXIF, réduit à [`MAX_EDGE`] et encode en WebP. Synchrone et coûteux :
 /// à appeler depuis `spawn_blocking`.
 pub fn render(src: &[u8]) -> Result<Rendered, ThumbError> {
-    let img_err = |e: &dyn std::fmt::Display| ThumbError::Image(e.to_string());
-    let mut reader = ImageReader::new(Cursor::new(src)).with_guessed_format().map_err(|e| img_err(&e))?;
-    let mut limits = Limits::default();
-    limits.max_image_width = Some(20_000);
-    limits.max_image_height = Some(20_000);
-    limits.max_alloc = Some(512 << 20);
-    reader.limits(limits);
-    let mut decoder = reader.into_decoder().map_err(|e| img_err(&e))?;
-    let orientation = decoder.orientation().map_err(|e| img_err(&e))?;
-    let mut img = DynamicImage::from_decoder(decoder).map_err(|e| img_err(&e))?;
-    img.apply_orientation(orientation);
-    let (ow, oh) = (img.width(), img.height());
-    let small = if ow.max(oh) > MAX_EDGE { img.thumbnail(MAX_EDGE, MAX_EDGE) } else { img };
+    // JPEG réduit dès le décodage (IDCT 1/2 à 1/8) quand l'original est assez grand ; sinon, ou si ce décodeur ne sait
+    // pas le lire, voie générale ci-dessous.
+    let need = MAX_EDGE * crate::jpeg_scale::margin();
+    let (img, ow, oh) = match crate::jpeg_scale::decode_scaled(src, MAX_DECODE_SIDE, |w, h| crate::jpeg_scale::divisor_for(w.max(h), need)) {
+        Ok(s) => (s.image, s.full.0, s.full.1),
+        Err(_) => {
+            let img = decode_full(src)?;
+            let (w, h) = (img.width(), img.height());
+            (img, w, h)
+        }
+    };
+    let small = if img.width().max(img.height()) > MAX_EDGE { img.thumbnail(MAX_EDGE, MAX_EDGE) } else { img };
     let (w, h) = (small.width(), small.height());
     let phash = dhash(&small);
     let rgba = small.to_rgba8();
@@ -129,6 +128,25 @@ pub fn render(src: &[u8]) -> Result<Rendered, ThumbError> {
         return Err(ThumbError::Encode("sortie vide"));
     }
     Ok(Rendered { webp, w, h, ow, oh, phash })
+}
+
+/// Côté maximal d'une image décodée (au-delà : refusée, décompression piégée).
+const MAX_DECODE_SIDE: u32 = 20_000;
+
+/// Décodage général (tous formats), pleine résolution, orientation EXIF appliquée.
+fn decode_full(src: &[u8]) -> Result<DynamicImage, ThumbError> {
+    let img_err = |e: &dyn std::fmt::Display| ThumbError::Image(e.to_string());
+    let mut reader = ImageReader::new(Cursor::new(src)).with_guessed_format().map_err(|e| img_err(&e))?;
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_DECODE_SIDE);
+    limits.max_image_height = Some(MAX_DECODE_SIDE);
+    limits.max_alloc = Some(512 << 20);
+    reader.limits(limits);
+    let mut decoder = reader.into_decoder().map_err(|e| img_err(&e))?;
+    let orientation = decoder.orientation().map_err(|e| img_err(&e))?;
+    let mut img = DynamicImage::from_decoder(decoder).map_err(|e| img_err(&e))?;
+    img.apply_orientation(orientation);
+    Ok(img)
 }
 
 /// Ligne lue pour un fichier : CID, type MIME, taille, clé de fichier.

@@ -143,7 +143,7 @@ impl<C: Chain> PrimalInit<C> {
                 }
             }
         }
-        // Bilan lisible par le cockpit (carte « Carburant de la station ») sans appel au réseau Ğ1.
+        // Bilan lisible par le cockpit (carte « Réserve de démarrage ») sans appel au réseau Ğ1.
         let needed = u64::from(report.waiting).saturating_mul(INIT_G1_CENTS).saturating_sub(master_spendable);
         let status = json!({ "master": master.account().ss58(), "spendable_g1_cents": master_spendable, "needed_g1_cents": needed, "waiting": report.waiting, "ready": report.already + report.initialised, "total": targets.len(), "unknown": report.unknown, "at": at });
         self.set_marker(STATUS_KEY, &status.to_string()).await;

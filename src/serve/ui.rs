@@ -27,7 +27,7 @@ pub(super) fn wire<B: astro_dav::BlobStore>(mut ui: StationUi<B>, db: &Arc<Db>, 
             Box::pin(async move {
                 match ledger {
                     None => c.overview(&viewer).await,
-                    Some((since, limit)) => c.ledger(since, limit).await,
+                    Some((since, limit)) => c.ledger(&viewer, since, limit).await,
                 }
             })
         }),
@@ -49,7 +49,7 @@ pub(super) fn wire<B: astro_dav::BlobStore>(mut ui: StationUi<B>, db: &Arc<Db>, 
         Box::pin(async move { sharing.send(&owner, &paths, &to).await })
     });
     ui = ui.with_sharing(friends, send);
-    let (b1, b2, b3) = (backup.clone(), backup.clone(), backup.clone());
+    let (b1, b2, b3, b4, b5, b6) = (backup.clone(), backup.clone(), backup.clone(), backup.clone(), backup.clone(), backup.clone());
     ui = ui.with_backup(astroportd::ui_backend::BackupFns {
         status: Arc::new(move |owner: String| {
             let b = b1.clone();
@@ -62,6 +62,25 @@ pub(super) fn wire<B: astro_dav::BlobStore>(mut ui: StationUi<B>, db: &Arc<Db>, 
         respond: Arc::new(move |host: String, owner: String, accept: bool, quota: u64, max: u64| {
             let b = b3.clone();
             Box::pin(async move { b.respond(&host, &owner, accept, quota, max).await })
+        }),
+        rescue_ask: Arc::new(move |card: String, send: bool| {
+            let b = b4.clone();
+            Box::pin(async move { b.rescue_ask(&card, send, astroportd::private_backup::now()).await })
+        }),
+        rescue_answer: Arc::new(move |me: String, owner: String, accept: bool| {
+            let b = b5.clone();
+            Box::pin(async move { b.rescue_answer(&me, &owner, accept).await })
+        }),
+        rescue_share: Arc::new(move |owner: String, done: bool| {
+            let b = b6.clone();
+            Box::pin(async move {
+                if done {
+                    b.rescue_done(&owner).await;
+                    None
+                } else {
+                    b.rescued_share(&owner).await
+                }
+            })
         }),
     });
 

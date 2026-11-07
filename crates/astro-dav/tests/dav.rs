@@ -460,3 +460,45 @@ async fn deleting_a_photo_or_a_folder_takes_its_faces_and_pending_analysis_with_
     assert_eq!(call(&b.app, "DELETE", "/dav/autre.jpg", Some(&alice()), &[], Body::empty()).await.status(), 204);
     assert_eq!(left(&b.db).await, (vec!["ref".to_owned()], 0), "le visage de référence d'un contact n'est jamais emporté");
 }
+
+/// Un blob altéré sur le disque est signalé (atteinte à l'intégrité) ; un client qui part en cours de lecture ne l'est pas.
+#[tokio::test]
+async fn a_tampered_blob_is_reported_but_a_client_hanging_up_is_not() {
+    let seen: std::sync::Arc<std::sync::Mutex<Vec<astro_dav::ReadFailure>>> = std::sync::Arc::default();
+    let sink = seen.clone();
+    let b = bench_with("tamper", move |c| c.on_read_failure = Some(std::sync::Arc::new(move |f: &astro_dav::ReadFailure| sink.lock().unwrap().push(f.clone())))).await;
+    let plain = sample(300_000, 3);
+    assert_eq!(call(&b.app, "PUT", "/dav/abime.bin", Some(&alice()), &[], Body::from(plain.clone())).await.status(), 201);
+    let big = sample(4 << 20, 5);
+    assert_eq!(call(&b.app, "PUT", "/dav/gros.bin", Some(&alice()), &[], Body::from(big)).await.status(), 201);
+
+    // Client parti : la réponse est abandonnée après les en-têtes, le tuyau se ferme.
+    let r = call(&b.app, "GET", "/dav/gros.bin", Some(&alice()), &[], Body::empty()).await;
+    assert_eq!(r.status(), 200);
+    drop(r);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(seen.lock().unwrap().is_empty(), "une déconnexion n'est pas une alerte : {:?}", seen.lock().unwrap());
+
+    // Un octet du deuxième chunk est modifié : le tag AEAD ne passe plus.
+    let r = call(&b.app, "GET", "/dav/abime.bin", Some(&alice()), &[], Body::empty()).await;
+    let cid = r.headers()["etag"].to_str().unwrap().trim_matches('"').to_owned();
+    drop(r);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    seen.lock().unwrap().clear();
+    let path = b.blobs.root().join(&cid);
+    let mut raw = std::fs::read(&path).unwrap();
+    raw[100_000] ^= 0x55;
+    std::fs::write(&path, raw).unwrap();
+    let (status, _, body) = bytes(call(&b.app, "GET", "/dav/abime.bin", Some(&alice()), &[], Body::empty()).await).await;
+    assert_eq!(status, 200);
+    assert!(body.len() < plain.len(), "le client reçoit moins que Content-Length");
+    let mut waited = 0;
+    while seen.lock().unwrap().is_empty() && waited < 50 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        waited += 1;
+    }
+    let got = seen.lock().unwrap().clone();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(got[0].integrity, "{got:?}");
+    assert_eq!((got[0].path.as_str(), got[0].cid.as_str(), got[0].owner.clone()), ("/abime.bin", cid.as_str(), hex(&ALICE)));
+}

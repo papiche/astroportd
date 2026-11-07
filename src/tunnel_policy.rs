@@ -11,23 +11,35 @@
 //! ouvertes. L'accès SSH n'est jamais ouvert sans consentement visible : le Capitaine le règle ici, chaque ouverture de
 //! session SSH est journalisée, et `~/.ssh/authorized_keys` n'est touché que dans un bloc balisé `astroportd`.
 //!
+//! Le Capitaine peut aussi **partager à chaud** d'autres services de sa machine (`nom` → `hôte:port`, ex. un bureau VNC sur
+//! `127.0.0.1:5900`) : ils sont gardés en base, exposés dans le maillage sans redémarrage et fermés à tous par défaut
+//! (`listed` sans personne). La cible est la machine elle-même ou le réseau local privé, jamais une adresse publique : la
+//! station ne doit pas devenir un relais vers Internet. Retirer un service coupe aussi ses sessions ouvertes.
+//!
 //! Les pairs « amis » se déduisent du graphe Nostr (suivi réciproque) et du DID de chaque Capitaine (`home_station`) : aucun
 //! `12345.json` n'est lu.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use astro_core::{ActivityBus, Audience};
 use astro_db::Db;
 use astro_lifecycle::ylevel::peer_id_to_ssh_pub;
-use astro_p2p::PeerId;
-use astro_p2p::tunnel::{GateFuture, StreamGate};
+use astro_p2p::tunnel::{ExposeOpts, Exposed, GateFuture, StreamGate, expose};
+use astro_p2p::{P2pHandle, PeerId};
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 
 const SCOPE: &str = "options";
 const KEY: &str = "tunnels";
+/// Clé des services partagés par le Capitaine (`{ nom: "hôte:port" }`), état local de la machine.
+const KEY_SHARED: &str = "tunnel_services";
+/// Services partagés à chaud au plus.
+const MAX_SHARED: usize = 16;
+/// Noms pris par la station elle-même (le relai est offert au maillage sous son nom DRAGON).
+const RESERVED: [&str; 1] = [astro_sync::peers::RELAY_SERVICE];
 /// Repères du bloc géré dans `authorized_keys`.
 const BEGIN: &str = "# BEGIN astroportd (accès des Capitaines autorisés : ne pas modifier à la main)";
 const END: &str = "# END astroportd";
@@ -117,6 +129,40 @@ pub struct TunnelPolicy {
     ssh_dir: Option<PathBuf>,
     activity: ActivityBus,
     rules: Mutex<BTreeMap<String, Rule>>,
+    /// Services partagés à chaud : nom → cible `hôte:port`.
+    shared: Mutex<BTreeMap<String, String>>,
+    /// Services retirés pendant cette exécution : leurs sessions encore ouvertes sont coupées par le watchdog.
+    retired: Mutex<BTreeSet<String>>,
+    /// Maillage P2P (posé par [`TunnelPolicy::attach`]) et services partagés qui y sont exposés.
+    mesh: Mutex<Option<P2pHandle>>,
+    live: Mutex<BTreeMap<String, Exposed>>,
+    /// Services offerts au démarrage (`--p2p-ssh`, `--p2p-expose`…), retenus par [`TunnelPolicy::attach`].
+    fixed: Mutex<Vec<String>>,
+    /// Réponses à « quels services puis-je ouvrir chez toi ? » ([`SERVICES_PROTOCOL`]).
+    answers: Mutex<Option<astro_p2p::ask::Answers>>,
+}
+
+/// Question d'un pair : « quels services puis-je ouvrir chez toi ? ». La réponse (`{"services":[…]}`) ne nomme que ceux
+/// que la politique lui ouvre maintenant : un pair ne découvre jamais ce qui ne lui est pas destiné.
+pub const SERVICES_PROTOCOL: &str = "/astroport/services/1";
+
+/// Vérifie la cible d'un service partagé : `IP:port` (ou `localhost:port`) de cette machine ou du réseau local privé.
+/// Pas de nom d'hôte (résolution détournable) ni d'adresse publique.
+pub fn check_target(target: &str) -> Result<String, String> {
+    let t = target.trim();
+    let t = t.strip_prefix("localhost:").map_or_else(|| t.to_owned(), |port| format!("127.0.0.1:{port}"));
+    let addr: SocketAddr = t.parse().map_err(|_| format!("cible « {target} » : attendu IP:port, par exemple 127.0.0.1:5900"))?;
+    let local = match addr.ip() {
+        IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
+        IpAddr::V6(ip) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+    };
+    if !local {
+        return Err(format!("cible « {target} » : seulement cette machine (127.0.0.1) ou le réseau local privé"));
+    }
+    if addr.port() == 0 {
+        return Err("port 0 invalide".into());
+    }
+    Ok(addr.to_string())
 }
 
 impl TunnelPolicy {
@@ -125,7 +171,142 @@ impl TunnelPolicy {
     pub async fn load(db: Arc<Db>, origin: bool, ssh_dir: Option<PathBuf>, activity: ActivityBus) -> Arc<Self> {
         let raw: Option<String> = db.readers().read(|c| Ok(c.query_row("SELECT value FROM kv WHERE scope = ?1 AND key = ?2", [SCOPE, KEY], |r| r.get(0)).optional()?)).await.ok().flatten();
         let rules = raw.and_then(|t| serde_json::from_str::<Value>(&t).ok()).map(|v| parse_rules(&v)).unwrap_or_default();
-        Arc::new(Self { db, origin, ssh_dir, activity, rules: Mutex::new(rules) })
+        let raw: Option<String> = db.readers().read(|c| Ok(c.query_row("SELECT value FROM kv WHERE scope = ?1 AND key = ?2", [SCOPE, KEY_SHARED], |r| r.get(0)).optional()?)).await.ok().flatten();
+        let shared = raw
+            .and_then(|t| serde_json::from_str::<BTreeMap<String, String>>(&t).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(n, t)| valid_service(n) && check_target(t).is_ok())
+            .take(MAX_SHARED)
+            .collect();
+        Arc::new(Self { db, origin, ssh_dir, activity, rules: Mutex::new(rules), shared: Mutex::new(shared), retired: Mutex::default(), mesh: Mutex::new(None), live: Mutex::default(), fixed: Mutex::default(), answers: Mutex::new(None) })
+    }
+
+    /// Services partagés à chaud, avec leur cible.
+    pub fn shared_targets(&self) -> Vec<(String, String)> {
+        self.shared.lock().unwrap_or_else(PoisonError::into_inner).iter().map(|(n, t)| (n.clone(), t.clone())).collect()
+    }
+
+    /// Tous les services offerts : ceux du démarrage (`fixed`), puis ceux partagés à chaud.
+    pub fn services(&self, fixed: &[String]) -> Vec<String> {
+        let mut all = fixed.to_vec();
+        for (name, _) in self.shared_targets() {
+            if !all.contains(&name) {
+                all.push(name);
+            }
+        }
+        all
+    }
+
+    /// Branche la politique sur le maillage et y expose les services partagés gardés (sauf ceux que `fixed` offre déjà).
+    pub fn attach(self: &Arc<Self>, handle: &P2pHandle, fixed: &[String]) {
+        *self.mesh.lock().unwrap_or_else(PoisonError::into_inner) = Some(handle.clone());
+        fixed.clone_into(&mut self.fixed.lock().unwrap_or_else(PoisonError::into_inner));
+        let me = self.clone();
+        let f: astro_p2p::ask::AnswerFn = Arc::new(move |peer| {
+            let me = me.clone();
+            Box::pin(async move { json!({ "services": me.offered_to(&peer.to_string(), now()).await }).to_string().into_bytes() })
+        });
+        match astro_p2p::ask::answer(handle, SERVICES_PROTOCOL, f) {
+            Ok(a) => *self.answers.lock().unwrap_or_else(PoisonError::into_inner) = Some(a),
+            Err(e) => self.audit(format!("services : les amis ne pourront pas voir ce qui leur est partagé ({e})")),
+        }
+        for (name, target) in self.shared_targets() {
+            if fixed.contains(&name) {
+                self.audit(format!("{name} : déjà offert au démarrage, le partage à chaud est ignoré"));
+                continue;
+            }
+            match self.go_live(handle, &name, &target) {
+                Ok(()) => println!("P2P : {name} partagé ({target}), accès « {:?} »", self.rule(&name).mode),
+                Err(e) => self.audit(format!("{name} : non partagé ({e})")),
+            }
+        }
+    }
+
+    /// Services que `peer` peut ouvrir ici maintenant (offerts au démarrage ou partagés à chaud).
+    pub async fn offered_to(&self, peer: &str, at: i64) -> Vec<String> {
+        let fixed = self.fixed.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let mut out = Vec::new();
+        for name in self.services(&fixed) {
+            if self.permits(peer, &name, at).await {
+                out.push(name);
+            }
+        }
+        out
+    }
+
+    /// Expose `name` → `target` derrière la politique (remplace une exposition précédente du même nom).
+    fn go_live(self: &Arc<Self>, handle: &P2pHandle, name: &str, target: &str) -> Result<(), String> {
+        self.live.lock().unwrap_or_else(PoisonError::into_inner).remove(name);
+        let opts = ExposeOpts { gate: Some(Arc::new(PolicyGate::new(self.clone()))), ..ExposeOpts::default() };
+        let exposed = expose(handle, name, target.to_owned(), opts).map_err(|e| e.to_string())?;
+        self.live.lock().unwrap_or_else(PoisonError::into_inner).insert(name.to_owned(), exposed);
+        Ok(())
+    }
+
+    async fn store_shared(&self) -> Result<(), String> {
+        let value = serde_json::to_string(&*self.shared.lock().unwrap_or_else(PoisonError::into_inner)).map_err(|e| e.to_string())?;
+        self.db
+            .writer()
+            .execute("INSERT INTO kv(scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", vec![SCOPE.to_owned().into(), KEY_SHARED.to_owned().into(), value.into(), now().into()])
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("partage non enregistré : {e}"))
+    }
+
+    /// Partage (ou re-cible) un service de la machine : `{ name, target, mode? }`. Le mode par défaut est `listed`.
+    async fn share(self: &Arc<Self>, s: &Value, fixed: &[String]) -> Result<String, String> {
+        let name = s["name"].as_str().map(str::trim).filter(|n| valid_service(n)).ok_or("nom : minuscules, chiffres, - ou _ (32 au plus)")?.to_owned();
+        if RESERVED.contains(&name.as_str()) || fixed.contains(&name) {
+            return Err(format!("« {name} » est déjà un service de la station"));
+        }
+        let target = check_target(s["target"].as_str().unwrap_or_default())?;
+        let mode = s["mode"].as_str().map(Mode::parse).transpose()?;
+        {
+            let mut shared = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
+            if !shared.contains_key(&name) && shared.len() >= MAX_SHARED {
+                return Err(format!("{MAX_SHARED} services partagés au plus"));
+            }
+            shared.insert(name.clone(), target.clone());
+        }
+        self.retired.lock().unwrap_or_else(PoisonError::into_inner).remove(&name);
+        if let Some(mode) = mode {
+            let mut rule = self.rule(&name);
+            rule.mode = mode;
+            self.rules.lock().unwrap_or_else(PoisonError::into_inner).insert(name.clone(), rule);
+            self.store().await?;
+        }
+        self.store_shared().await?;
+        let handle = self.mesh.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let live = match handle {
+            Some(h) => {
+                // L'ancienne écoute du même nom se libère quand sa tâche s'arrête : quelques essais suffisent.
+                let mut last = Ok(());
+                for _ in 0..20 {
+                    last = self.go_live(&h, &name, &target);
+                    if last.is_ok() {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                }
+                last.map(|()| "")?
+            }
+            None => " (maillage P2P inactif : il sera offert à son démarrage)",
+        };
+        Ok(format!("{name} partagé ({target}), accès « {} »{live}", self.rule(&name).mode.name()))
+    }
+
+    /// Retire un service partagé : il n'est plus offert et ses sessions ouvertes sont coupées.
+    async fn unshare(&self, name: &str) -> Result<String, String> {
+        if self.shared.lock().unwrap_or_else(PoisonError::into_inner).remove(name).is_none() {
+            return Err(format!("« {name} » n'est pas un service partagé"));
+        }
+        self.live.lock().unwrap_or_else(PoisonError::into_inner).remove(name);
+        self.retired.lock().unwrap_or_else(PoisonError::into_inner).insert(name.to_owned());
+        self.rules.lock().unwrap_or_else(PoisonError::into_inner).remove(name);
+        self.store_shared().await?;
+        self.store().await?;
+        Ok(format!("{name} : partage retiré"))
     }
 
     /// Mode par défaut d'un service.
@@ -133,6 +314,8 @@ impl TunnelPolicy {
         match service {
             "ssh" if self.origin => Mode::Friends,
             "ssh" => Mode::Off,
+            // Un service ajouté par le Capitaine n'est ouvert à personne tant qu'il ne choisit pas qui.
+            _ if self.shared.lock().unwrap_or_else(PoisonError::into_inner).contains_key(service) => Mode::Listed,
             _ => Mode::Friends,
         }
     }
@@ -194,6 +377,9 @@ impl TunnelPolicy {
 
     /// `peer` peut-il ouvrir `service` maintenant ?
     pub async fn permits(&self, peer: &str, service: &str, at: i64) -> bool {
+        if self.retired.lock().unwrap_or_else(PoisonError::into_inner).contains(service) {
+            return false;
+        }
         match self.rule(service).mode {
             Mode::Off => false,
             Mode::Swarm => true,
@@ -218,10 +404,11 @@ impl TunnelPolicy {
         self.activity.publish_to(Audience::Captain, "system", "tunnels", text, None);
     }
 
-    /// Vue pour l'écran du Capitaine. `exposed` : services que la station offre.
+    /// Vue pour l'écran du Capitaine. `exposed` : services offerts au démarrage (les services partagés à chaud s'y ajoutent).
     pub async fn view(&self, exposed: &[String], at: i64) -> Value {
         let mut services = Vec::new();
-        for name in exposed {
+        let shared = self.shared_targets();
+        for name in &self.services(exposed) {
             let rule = self.rule(name);
             let named = self.named_peers(name, at).await.len();
             services.push(json!({
@@ -231,6 +418,7 @@ impl TunnelPolicy {
                 "customized": self.rules.lock().unwrap_or_else(PoisonError::into_inner).contains_key(name.as_str()),
                 "grants": rule.grants.iter().map(|g| json!({ "peer": g.peer, "label": g.label, "until": g.until, "expired": !g.valid(at) })).collect::<Vec<_>>(),
                 "named": named,
+                "shared": shared.iter().any(|(n, _)| n == name),
             }));
         }
         let friends = self.friends().await.into_iter().map(|(peer, label)| json!({ "peer": peer, "label": label })).collect::<Vec<_>>();
@@ -240,14 +428,26 @@ impl TunnelPolicy {
             "services": services,
             "friends": friends,
             "ssh_managed": self.ssh_dir.is_some(),
+            "max_shared": MAX_SHARED,
         })
     }
 
     /// Applique une modification : `{ service, mode }`, `{ service, grant: { peer, label?, hours? } }`,
-    /// `{ service, revoke: <peer> }` ou `{ service, reset: true }`. Rend la nouvelle vue.
-    pub async fn set(&self, body: &Value, exposed: &[String], at: i64) -> Result<Value, String> {
+    /// `{ service, revoke: <peer> }`, `{ service, reset: true }`, `{ share: { name, target, mode? } }` ou `{ unshare: <nom> }`.
+    /// Rend la nouvelle vue.
+    pub async fn set(self: &Arc<Self>, body: &Value, exposed: &[String], at: i64) -> Result<Value, String> {
+        if let Some(s) = body.get("share").filter(|s| s.is_object()) {
+            let note = self.share(s, exposed).await?;
+            self.audit(note);
+            return Ok(self.view(exposed, at).await);
+        }
+        if let Some(name) = body["unshare"].as_str() {
+            let note = self.unshare(name).await?;
+            self.audit(note);
+            return Ok(self.view(exposed, at).await);
+        }
         let service = body["service"].as_str().filter(|s| valid_service(s)).ok_or("service inconnu")?.to_owned();
-        if !exposed.contains(&service) {
+        if !self.services(exposed).contains(&service) {
             return Err(format!("« {service} » n'est pas un service exposé par cette station"));
         }
         let mut rule = self.rule(&service);
@@ -478,6 +678,35 @@ mod tests {
         assert_eq!(again.rule("ollama").mode, Mode::Swarm);
         let v = p.set(&json!({ "service": "ollama", "reset": true }), &exposed(), 0).await.unwrap();
         assert_eq!(v["services"][2]["customized"], false);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_shared_target_is_this_machine_or_the_private_lan_never_the_internet() {
+        assert_eq!(check_target("localhost:5900").unwrap(), "127.0.0.1:5900");
+        assert_eq!(check_target(" 192.168.1.20:8096 ").unwrap(), "192.168.1.20:8096");
+        assert_eq!(check_target("[::1]:3389").unwrap(), "[::1]:3389");
+        assert!(check_target("10.0.0.2:22").is_ok() && check_target("[fd00::1]:80").is_ok());
+        for bad in ["1.1.1.1:53", "8.8.8.8:443", "example.org:80", "nas.local:5000", "169.254.169.254:80", "[2001:db8::1]:80", "127.0.0.1:0", "127.0.0.1", "", "127.0.0.1:99999", "0.0.0.0:22"] {
+            assert!(check_target(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn sharing_rejects_hostile_names_reserved_names_and_too_many_services() {
+        let (dir, _, p) = policy("share", false).await;
+        for bad in [json!({ "share": { "name": "../etc", "target": "127.0.0.1:1" } }), json!({ "share": { "name": "Bureau", "target": "127.0.0.1:1" } }), json!({ "share": { "name": "ssh", "target": "127.0.0.1:1" } }), json!({ "share": { "name": "strfry", "target": "127.0.0.1:1" } }), json!({ "share": { "name": "x", "target": "8.8.8.8:53" } }), json!({ "share": { "name": "x", "target": "127.0.0.1:1", "mode": "tous" } }), json!({ "unshare": "jamais-vu" })] {
+            assert!(p.set(&bad, &exposed(), 0).await.is_err(), "{bad}");
+        }
+        assert!(p.shared_targets().is_empty(), "rien de gardé après un refus");
+        for i in 0..MAX_SHARED {
+            p.set(&json!({ "share": { "name": format!("s{i}"), "target": format!("127.0.0.1:{}", 2000 + i) } }), &exposed(), 0).await.unwrap();
+        }
+        assert!(p.set(&json!({ "share": { "name": "un-de-trop", "target": "127.0.0.1:9" } }), &exposed(), 0).await.is_err());
+        // Re-cibler un service existant reste permis à la limite ; régler son accès passe par le même chemin que les autres.
+        p.set(&json!({ "share": { "name": "s0", "target": "127.0.0.1:9" } }), &exposed(), 0).await.unwrap();
+        let v = p.set(&json!({ "service": "s0", "mode": "friends" }), &exposed(), 0).await.unwrap();
+        assert!(v["services"].as_array().unwrap().iter().any(|s| s["name"] == "s0" && s["mode"] == "friends" && s["shared"] == true));
         let _ = std::fs::remove_dir_all(dir);
     }
 

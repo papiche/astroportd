@@ -6,8 +6,11 @@
 //!
 //! **Contrôle primal** (équivalent de `tools/primal_wallet_control.sh`) : le « primal » d'un portefeuille est l'émetteur
 //! de son tout premier virement reçu. Un virement est de **cette UPlanet** quand son expéditeur, ou le primal de celui-ci,
-//! est le portefeuille maître `UPLANETNAME_G1`. Sinon il vient de l'extérieur : il est signalé au titulaire et au
-//! Capitaine, **sans être crédité en Ẑen ni renvoyé automatiquement** (déplacer des fonds est une décision humaine).
+//! est le portefeuille maître `UPLANETNAME_G1` (ou un portefeuille coopératif de la station). Sinon il vient de l'extérieur :
+//! il n'est pas crédité en Ẑen, il est signalé au titulaire et au Capitaine et, quand la primale étrangère est **prouvée**
+//! (accord de deux indexeurs), il est **renvoyé vers `INTRUSION`** ([`crate::intrusion_guard`], branché par
+//! [`FundsWatch::with_guard`]) pour que les comptes en Ẑen restent justes. Les portefeuilles coopératifs de la station
+//! (sauf `INTRUSION`, le maître et le NODE) sont surveillés aussi.
 //! L'historique d'un portefeuille n'est pas dans le nœud Duniter : le primal se lit auprès d'un indexeur (squid,
 //! `--squid-url`). Sans indexeur, le virement est annoncé « origine non vérifiée », jamais déclaré valide.
 
@@ -75,37 +78,65 @@ impl SquidPrimal {
 /// Corps de la requête : la première transaction reçue par `wallet`.
 pub fn primal_query(wallet: &str) -> String {
     json!({
-        "query": "query($w:String!){transfers(condition:{toId:$w},orderBy:BLOCK_NUMBER_ASC,first:1){nodes{fromId blockNumber}}}",
+        // Deux virements : s'ils sont dans le même bloc et viennent de deux émetteurs, la primale est ambiguë.
+        "query": "query($w:String!){transfers(condition:{toId:$w},orderBy:BLOCK_NUMBER_ASC,first:2){nodes{fromId blockNumber}}}",
         "variables": { "w": wallet },
     })
     .to_string()
 }
 
-/// Lit la réponse de l'indexeur. Une erreur GraphQL est une erreur, pas « aucun primal ».
+/// Cache des primales **vérifiées par accord d'indexeurs** (immuables : l'émetteur d'un premier virement ne change jamais).
+/// L'ancien cache `primal`, rempli sur la foi d'un seul indexeur, n'est plus cru.
+pub const PRIMAL_SCOPE: &str = "primal_q";
+
+/// Lit la réponse de l'indexeur. Une erreur GraphQL est une erreur, pas « aucun primal » ; deux émetteurs différents dans le
+/// premier bloc rendent la primale ambiguë (erreur : jamais tranché au hasard).
 pub fn parse_primal(body: &[u8]) -> Result<Option<String>, String> {
     let v: serde_json::Value = serde_json::from_slice(body).map_err(|e| format!("réponse illisible : {e}"))?;
     if let Some(msg) = v["errors"][0]["message"].as_str() {
         return Err(format!("erreur de l'indexeur : {msg}"));
     }
     let nodes = v["data"]["transfers"]["nodes"].as_array().ok_or("réponse sans data.transfers.nodes")?;
-    Ok(nodes.first().and_then(|n| n["fromId"].as_str()).filter(|s| !s.is_empty()).map(str::to_owned))
+    let first = nodes.first().and_then(|n| n["fromId"].as_str()).filter(|s| !s.is_empty()).map(str::to_owned);
+    if let (Some(a), Some(b)) = (nodes.first(), nodes.get(1)) {
+        if a["blockNumber"] == b["blockNumber"] && a["fromId"] != b["fromId"] {
+            return Err(format!("primale ambiguë : deux émetteurs dans le premier bloc ({})", a["blockNumber"]));
+        }
+    }
+    Ok(first)
+}
+
+/// Primale de `wallet` tenue pour sûre : **au moins deux indexeurs** donnent la même réponse et aucun ne la contredit (un seul
+/// suffit s'il n'y en a qu'un de configuré). Un indexeur en retard (« aucun virement ») ou incomplet contredit les autres : le
+/// résultat est alors une erreur — « non vérifié » —, jamais une primale fausse gardée pour toujours.
+pub async fn primal_consensus(urls: &[String], limits: &FetchLimits, wallet: &str) -> Result<Option<String>, String> {
+    if urls.is_empty() {
+        return Err("aucun indexeur disponible".into());
+    }
+    let need = if urls.len() == 1 { 1 } else { 2 };
+    let query = primal_query(wallet);
+    let (mut answers, mut errors): (Vec<Option<String>>, Vec<String>) = (Vec::new(), Vec::new());
+    for url in urls {
+        match post_json(url, &query, limits).await.map_err(|e| e.to_string()).and_then(|b| parse_primal(&b)) {
+            Ok(a) => {
+                if answers.iter().any(|x| *x != a) {
+                    return Err(format!("indexeurs en désaccord sur la primale de {} : {:?} / {:?}", wallet.chars().take(8).collect::<String>(), answers[0], a));
+                }
+                answers.push(a);
+                if answers.len() >= need {
+                    return Ok(answers.swap_remove(0));
+                }
+            }
+            Err(e) => errors.push(format!("{url} : {e}")),
+        }
+    }
+    Err(format!("primale non confirmée : {} réponse(s) sur {need} exigées ({})", answers.len(), errors.join(" ; ")))
 }
 
 impl PrimalSource for SquidPrimal {
     async fn primal_of(&self, ss58: &str) -> Result<Option<String>, String> {
         let urls = self.urls.read().unwrap_or_else(|e| e.into_inner()).clone();
-        if urls.is_empty() {
-            return Err("aucun indexeur disponible".into());
-        }
-        let query = primal_query(ss58);
-        let mut errors = Vec::new();
-        for url in &urls {
-            match post_json(url, &query, &self.limits).await.map_err(|e| e.to_string()).and_then(|b| parse_primal(&b)) {
-                Ok(primal) => return Ok(primal),
-                Err(e) => errors.push(format!("{url} : {e}")),
-            }
-        }
-        Err(format!("aucun indexeur n'a répondu ({})", errors.join(" ; ")))
+        primal_consensus(&urls, &self.limits, ss58).await
     }
 }
 
@@ -155,6 +186,8 @@ pub struct FundsWatch<P: PrimalSource> {
     notify: Option<Notify>,
     nostr_dir: Option<std::path::PathBuf>,
     bad_wallets: Mutex<usize>,
+    guard: Option<(Arc<crate::coop_wallets::Wallets>, crate::intrusion_guard::FixFn)>,
+    coop: RwLock<HashMap<Account, String>>,
 }
 
 fn now() -> i64 {
@@ -173,7 +206,14 @@ fn short(ss58: &str) -> String {
 impl<P: PrimalSource> FundsWatch<P> {
     /// Surveillance pour `master` (portefeuille `UPLANETNAME_G1`). `primal` : indexeur, s'il est configuré.
     pub fn new(db: Arc<Db>, activity: ActivityBus, master: String, primal: Option<Arc<P>>, notify: Option<Notify>, nostr_dir: Option<std::path::PathBuf>) -> Self {
-        Self { db, activity, notifier: Arc::new(FundsNotifier::new([])), holders: RwLock::new(HashMap::new()), master, primal, notify, nostr_dir, bad_wallets: Mutex::new(0) }
+        Self { db, activity, notifier: Arc::new(FundsNotifier::new([])), holders: RwLock::new(HashMap::new()), master, primal, notify, nostr_dir, bad_wallets: Mutex::new(0), guard: None, coop: RwLock::new(HashMap::new()) }
+    }
+
+    /// Surveille aussi les portefeuilles coopératifs de `wallets` et renvoie vers `INTRUSION`, par `fix`, tout virement dont
+    /// la primale étrangère est prouvée.
+    pub fn with_guard(mut self, wallets: Arc<crate::coop_wallets::Wallets>, fix: crate::intrusion_guard::FixFn) -> Self {
+        self.guard = Some((wallets, fix));
+        self
     }
 
     /// Titulaires actuellement surveillés.
@@ -219,6 +259,25 @@ impl<P: PrimalSource> FundsWatch<P> {
             }
             *last = bad;
         }
+        // Portefeuilles coopératifs : surveillés comme les comptes (INTRUSION reçoit par construction de l'extérieur ; le
+        // NODE n'a pas de signataire ici ; le maître n'est jamais dans la liste).
+        let mut coop = HashMap::new();
+        if let Some((wallets, _)) = &self.guard {
+            match wallets.targets().await {
+                Ok(targets) => {
+                    for (label, account) in targets.iter() {
+                        coop.insert(*account, label.clone());
+                        if label != "INTRUSION" && label != "NODE" {
+                            map.entry(*account).or_insert_with(|| Holder { hex: String::new(), email: Some(label.clone()), role: "coop".into() });
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.activity.publish_to(Audience::Captain, "alert", "funds", format!("portefeuilles coopératifs illisibles : {e} ; leurs virements ne sont pas surveillés"), None);
+                }
+            }
+        }
+        *self.coop.write().unwrap_or_else(|e| e.into_inner()) = coop;
         let n = map.len();
         self.notifier.set_accounts(map.keys().copied());
         *self.holders.write().unwrap_or_else(|e| e.into_inner()) = map;
@@ -229,6 +288,9 @@ impl<P: PrimalSource> FundsWatch<P> {
     pub async fn classify(&self, from: &Account, amount_cents: u64) -> Verdict {
         if amount_cents == WOT_VALIDATION_CENTS {
             return Verdict::WotValidation;
+        }
+        if self.coop.read().unwrap_or_else(|e| e.into_inner()).contains_key(from) {
+            return Verdict::SameUplanet; // virement interne à la coopérative
         }
         let from = from.ss58();
         if from == self.master {
@@ -258,14 +320,14 @@ impl<P: PrimalSource> FundsWatch<P> {
 
     async fn cached_primal(&self, who: &str) -> Option<String> {
         let who = who.to_owned();
-        self.db.readers().read(move |c| Ok(rusqlite::OptionalExtension::optional(c.query_row("SELECT value FROM kv WHERE scope = 'primal' AND key = ?1", [&who], |r| r.get::<_, String>(0)))?)).await.ok().flatten()
+        self.db.readers().read(move |c| Ok(rusqlite::OptionalExtension::optional(c.query_row("SELECT value FROM kv WHERE scope = ?1 AND key = ?2", [PRIMAL_SCOPE, who.as_str()], |r| r.get::<_, String>(0)))?)).await.ok().flatten()
     }
 
     async fn cache_primal(&self, who: &str, primal: &str) {
         let _ = self
             .db
             .writer()
-            .execute("INSERT INTO kv(scope, key, value, updated_at) VALUES ('primal', ?1, ?2, ?3) ON CONFLICT(scope, key) DO NOTHING", vec![who.to_owned().into(), primal.to_owned().into(), now().into()])
+            .execute("INSERT INTO kv(scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(scope, key) DO NOTHING", vec![PRIMAL_SCOPE.to_owned().into(), who.to_owned().into(), primal.to_owned().into(), now().into()])
             .await;
     }
 
@@ -300,6 +362,27 @@ impl<P: PrimalSource> FundsWatch<P> {
             Verdict::Foreign(_) => (format!("⚠️ {g1} Ğ1 reçus de {}, un portefeuille extérieur à cette UPlanet : non comptés en Ẑen. Le Capitaine en est informé.", short(&from)), true),
         };
         let data = json!({ "g1_cents": cents, "zen_cents": zen_cents, "from": from, "block": funds.block_number, "verdict": verdict.label() });
+        // Primale étrangère PROUVÉE : renvoi vers INTRUSION (jamais sur une primale inconnue ou non vérifiée).
+        if let (Verdict::Foreign(Some(primal)), Some((wallets, fix))) = (&verdict, &self.guard) {
+            let label = holder.email.clone().unwrap_or_else(|| holder.hex.chars().take(12).collect());
+            let signer = match holder.role.as_str() {
+                "coop" => wallets.signer_of(&label).await,
+                "zencard" => Err("clé de la ZenCard non tenue par astroportd".to_owned()),
+                _ => self.member_signer(holder.email.as_deref(), &to),
+            };
+            match signer {
+                Ok(signer) => fix(crate::intrusion_guard::Fix { label, signer, from: from.clone(), primal: primal.clone(), cents, block: funds.block_number }).await,
+                Err(why) => {
+                    self.activity.publish_to(Audience::Captain, "alert", "intrusion", format!("intrusion reçue par {label} ({g1} Ğ1 de {from}) : renvoi impossible ({why}), à faire à la main"), None);
+                }
+            }
+        }
+        if holder.role == "coop" {
+            if alert {
+                self.activity.publish_to(Audience::Captain, "alert", "funds:in", format!("portefeuille coopératif {} : virement {} de {g1} Ğ1 de {}", holder.email.as_deref().unwrap_or("?"), verdict.label(), short(&from)), Some(data));
+            }
+            return;
+        }
         self.activity.publish_to(Audience::Owner(holder.hex.clone()), "economy", "funds:in", text.clone(), Some(data.clone()));
         if alert {
             let who = holder.email.clone().unwrap_or_else(|| holder.hex.chars().take(8).collect());
@@ -310,6 +393,18 @@ impl<P: PrimalSource> FundsWatch<P> {
                 n(holder.hex, text).await;
             }
         }
+    }
+
+    /// Clé Ğ1 d'un MULTIPASS hébergé (`<nostr>/<email>/.secret.dunikey`), vérifiée contre l'adresse qui a reçu.
+    fn member_signer(&self, email: Option<&str>, wallet: &str) -> Result<Arc<astro_duniter::Ed25519Signer>, String> {
+        let path = self.nostr_dir.as_ref().zip(email).map(|(d, e)| d.join(e).join(".secret.dunikey")).ok_or("dossier du compte inconnu")?;
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("{} : {e}", path.display()))?;
+        let key = astro_lifecycle::dunikey::Dunikey::parse(&text).map_err(|e| e.to_string())?;
+        let signer = astro_duniter::Ed25519Signer::from_seed(*key.ed25519_seed());
+        if signer.account().ss58() != wallet {
+            return Err("la clé du compte ne correspond pas au portefeuille qui a reçu".into());
+        }
+        Ok(Arc::new(signer))
     }
 
     /// Une sonde du nœud Duniter : le pool réessaie en silence une connexion qui échoue, la station ne le saurait pas. Le
@@ -394,6 +489,43 @@ impl<P: PrimalSource> FundsWatch<P> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Faux indexeur : répond `body` (JSON) à chaque requête HTTP.
+    async fn fake_indexer(body: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1/graphql", l.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = l.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 8192];
+                    let _ = s.read(&mut buf).await;
+                    let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await;
+                });
+            }
+        });
+        url
+    }
+
+    #[tokio::test]
+    async fn a_primal_is_only_trusted_when_two_indexers_agree() {
+        let mut limits = FetchLimits::new(64 * 1024);
+        limits.allow_private = true;
+        const A: &str = r#"{"data":{"transfers":{"nodes":[{"fromId":"g1maitre","blockNumber":48203}]}}}"#;
+        const B: &str = r#"{"data":{"transfers":{"nodes":[{"fromId":"g1autre","blockNumber":90000}]}}}"#;
+        const EMPTY: &str = r#"{"data":{"transfers":{"nodes":[]}}}"#;
+        let (a1, a2, b, empty) = (fake_indexer(A).await, fake_indexer(A).await, fake_indexer(B).await, fake_indexer(EMPTY).await);
+        assert_eq!(primal_consensus(&[a1.clone(), a2.clone()], &limits, "g1x").await.unwrap(), Some("g1maitre".into()));
+        // Un indexeur incomplet (historique partiel) ou menteur contredit : non vérifié, jamais une primale gardée à tort.
+        assert!(primal_consensus(&[a1.clone(), b], &limits, "g1x").await.unwrap_err().contains("désaccord"));
+        // Un indexeur en retard (« aucun virement ») contredit aussi.
+        assert!(primal_consensus(&[empty, a1.clone()], &limits, "g1x").await.unwrap_err().contains("désaccord"));
+        // Un seul répond sur deux configurés : pas assez.
+        assert!(primal_consensus(&[a1.clone(), "http://127.0.0.1:9/v1/graphql".into()], &limits, "g1x").await.unwrap_err().contains("non confirmée"));
+        // Un seul indexeur configuré : sa réponse suffit (rien de mieux possible).
+        assert_eq!(primal_consensus(&[a2], &limits, "g1x").await.unwrap(), Some("g1maitre".into()));
+    }
+
     use std::collections::HashMap as Map;
 
     use astro_duniter::Amount;
@@ -443,6 +575,38 @@ mod tests {
         bus.recent(50).into_iter().filter(|a| &a.audience == audience).map(|a| a.message.clone()).collect()
     }
 
+    #[tokio::test]
+    async fn a_proven_foreign_transfer_is_sent_to_the_guard_and_a_coop_sender_is_internal() {
+        let dir = std::env::temp_dir().join(format!("astroportd-funds-guard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("nostr/alice@exemple.org")).unwrap();
+        let db = Arc::new(Db::open(&dir.join("u.db"), 2).unwrap());
+        let seed = [0x61; 32];
+        std::fs::write(dir.join("nostr/alice@exemple.org/.secret.dunikey"), astro_lifecycle::dunikey::render(&seed)).unwrap();
+        let alice = astro_duniter::Ed25519Signer::from_seed(seed).account();
+        db.writer().execute("INSERT INTO identities(hex, role, email, g1pub_nostr, hosted) VALUES (?1, 'multipass', 'alice@exemple.org', ?2, 1)", vec!["ab".repeat(32).into(), alice.ss58().into()]).await.unwrap();
+        let coop = crate::coop_wallets::Coop { node: acct(21), captain: acct(22), impot: acct(23), treasury: acct(24), rnd: acct(25), assets: acct(26) };
+        let wallets = Arc::new(crate::coop_wallets::Wallets::fixed(db.clone(), astro_duniter::Ed25519Signer::from_seed([0x44; 32]), coop).with_target("INTRUSION", acct(29)));
+        let fixes: Arc<Mutex<Vec<(String, String, u64)>>> = Arc::default();
+        let log = fixes.clone();
+        let fix: crate::intrusion_guard::FixFn = Arc::new(move |f| {
+            let log = log.clone();
+            Box::pin(async move { log.lock().unwrap().push((f.label, f.from, f.cents)) })
+        });
+        let primals = Map::from([(acct(9).ss58(), Ok(Some(acct(8).ss58()))), (acct(10).ss58(), Ok(None)), (acct(11).ss58(), Err("indexeurs en désaccord".into()))]);
+        let source = Arc::new(Primals(Mutex::new(primals), Mutex::new(0)));
+        let w = FundsWatch::new(db.clone(), ActivityBus::new(), acct(1).ss58(), Some(source), None, Some(dir.join("nostr"))).with_guard(wallets, fix);
+        assert!(w.refresh_accounts().await.unwrap() > 1, "les portefeuilles coopératifs sont surveillés aussi");
+        let incoming = |from: u8, cents: u64, block: u64| IncomingFunds { account: alice, from: acct(from), amount: Amount(cents), block_number: block, block_hash: [0; 32] };
+        w.handle(incoming(9, 3_700, 1)).await; // primale étrangère prouvée → renvoi
+        w.handle(incoming(10, 500, 2)).await; // primale inconnue → rien
+        w.handle(incoming(11, 500, 3)).await; // non vérifiée → rien
+        w.handle(incoming(26, 500, 4)).await; // ASSETS → interne
+        assert_eq!(fixes.lock().unwrap().clone(), vec![("alice@exemple.org".to_owned(), acct(9).ss58(), 3_700)]);
+        assert_eq!(w.classify(&acct(26), 500).await, Verdict::SameUplanet);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_master_wallet_is_the_cooperative_g1_key() {
         // Vecteur de astro-core (tests/legacy_keygen.rs : coop_g1, UPLANETNAME « UPlanetTestName »).
@@ -456,6 +620,9 @@ mod tests {
         assert!(parse_primal(br#"{"errors":[{"message":"boom"}]}"#).unwrap_err().contains("boom"), "une erreur GraphQL n'est pas « aucun primal »");
         assert!(parse_primal(b"<html>").is_err() && parse_primal(br#"{"data":{}}"#).is_err());
         assert!(primal_query("g1x").contains("\"w\":\"g1x\""));
+        // Deux émetteurs dans le premier bloc : ambigu, jamais tranché au hasard ; le même émetteur deux fois : sans ambiguïté.
+        assert!(parse_primal(br#"{"data":{"transfers":{"nodes":[{"fromId":"g1a","blockNumber":4},{"fromId":"g1b","blockNumber":4}]}}}"#).unwrap_err().contains("ambiguë"));
+        assert_eq!(parse_primal(br#"{"data":{"transfers":{"nodes":[{"fromId":"g1a","blockNumber":4},{"fromId":"g1b","blockNumber":9}]}}}"#).unwrap(), Some("g1a".into()));
     }
 
     #[tokio::test]

@@ -62,11 +62,13 @@ function draw() {
 }
 
 function question() {
-  const h = K.h, it = item(), n = active().length, right = el.querySelector('.pe-rv-right'), who = n > 1 ? `ces ${n} visages` : 'ce visage';
+  const h = K.h, it = item(), n = active().length, who = n > 1 ? `ces ${n} visages` : 'ce visage';
+  // replaceChildren (DOM) écrirait « null » et un tableau en texte : on aplatit et on écarte les absents, comme h().
+  const box = el.querySelector('.pe-rv-right'), put = (...k) => box.replaceChildren(...k.flat().filter(x => x != null && x !== false));
   const minor = h('div', { class: 'pe-rv-minor' }, h('button', { class: 'ghost', onclick: next }, h('kbd', {}, 'Espace'), ' Passer'), h('button', { class: 'ghost danger', onclick: forget }, 'Pas à reconnaître'));
   if (S.rv.mode === 'ask') {
     const s = it.sug, refs = S.faces.filter(f => f.named && (s.contact ? f.contact === s.contact : f.name === s.name)).slice(0, 6), imgs = refs.map(() => h('img', { alt: '', width: 72, height: 72 }));
-    right.replaceChildren(h('h2', {}, n > 1 ? `Ces ${n} visages sont-ils ` : 'Est-ce ', h('strong', {}, s.name), ' ?'),
+    put(h('h2', {}, n > 1 ? `Ces ${n} visages sont-ils ` : 'Est-ce ', h('strong', {}, s.name), ' ?'),
       refs.length ? h('div', { class: 'pe-rv-refs' }, refs.map((f, i) => h('button', { type: 'button', title: 'Voir la photo', onclick: () => X.photo(f.id) }, imgs[i]))) : null,
       h('p', { class: 'muted' }, `${s.name}${refs.length ? ' tel que vous l\'avez déjà rangé' : ''} · ressemblance ${Math.round(s.score * 100)} %`),
       h('div', { class: 'pe-rv-act' }, h('button', { class: 'ghost pe-rv-big', onclick: no }, h('kbd', {}, 'N'), ' Non'), h('button', { class: 'pe-rv-big', onclick: yes }, h('kbd', {}, 'O'), ` Oui, c'est ${s.name}`)), minor);
@@ -77,11 +79,36 @@ function question() {
   inp.setAttribute('list', 'pe-l'); // les noms de vos Personnes (fiches et pochettes)
   X.root.querySelector('#pe-l').replaceChildren(...X.names().map(v => h('option', { value: v })));
   const top = [...S.people].sort((a, b) => b.photos - a.photos).slice(0, 12);
-  right.replaceChildren(h('h2', {}, it.refused ? 'Qui est-ce alors ?' : 'Qui est-ce ?'),
+  put(h('h2', {}, it.refused ? 'Qui est-ce alors ?' : 'Qui est-ce ?'),
     n > 1 ? h('p', { class: 'muted' }, `${n} visages semblables. Écartez d'un × ceux qui ne sont pas la même personne.`) : null,
     h('form', { class: 'pe-rv-form', onsubmit: ev => { ev.preventDefault(); const v = inp.value.trim(); if (v) X.target(v).then(assign); } }, inp, h('button', {}, `Ranger ${who}`)),
     top.length ? [h('p', { class: 'muted' }, 'Ou dans une pochette existante :'), h('div', { class: 'pe-rv-chips' }, top.map(p => h('button', { type: 'button', class: 'ghost', onclick: () => assign({ name: p.name, ...(p.contact && { contact: p.contact }), ...(p.pubkey && { pubkey: p.pubkey }) }) }, p.name)))] : null, minor);
   setTimeout(() => inp.focus(), 30);
+}
+
+// Au pouce (« ressemblances » seulement) : glisser la photo vers la droite = oui, vers la gauche = non. Le geste vertical reste
+// au défilement (touch-action: pan-y) ; la souris garde les boutons et le clavier.
+function swipe(stage) {
+  let p = null;
+  const reset = () => { if (p) { p.el.style.transform = ''; delete p.el.dataset.sw; } p = null; };
+  stage.addEventListener('pointerdown', e => {
+    const zone = e.target.closest('.pe-rv-left');
+    if (e.pointerType !== 'mouse' && zone && S.rv?.mode === 'ask') p = { el: zone, x: e.clientX, y: e.clientY, id: e.pointerId };
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!p || e.pointerId !== p.id) return;
+    const dx = e.clientX - p.x;
+    if (Math.abs(dx) < Math.abs(e.clientY - p.y)) return;
+    p.el.style.transform = `translateX(${dx}px) rotate(${dx / 40}deg)`;
+    p.el.dataset.sw = dx > 80 ? 'yes' : dx < -80 ? 'no' : '';
+  });
+  stage.addEventListener('pointerup', e => {
+    if (!p || e.pointerId !== p.id) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    reset();
+    if (Math.abs(dx) > 80 && Math.abs(dx) > 2 * Math.abs(dy)) (dx > 0 ? yes : no)();
+  });
+  stage.addEventListener('pointercancel', reset);
 }
 
 export default function review(ctx) {
@@ -90,7 +117,8 @@ export default function review(ctx) {
   const h = K.h;
   el = h('section', { class: 'pe-rv', 'aria-label': 'Trier en grand' },
     h('header', { class: 'pe-rv-top' }, h('button', { class: 'ghost', onclick: close }, '✕ Quitter'), h('span', { class: 'pe-rv-n' }), h('progress', { max: 1, value: 0 }),
-      h('span', { class: 'pe-rv-keys muted' }, h('kbd', {}, 'O'), ' oui ', h('kbd', {}, 'N'), ' non ', h('kbd', {}, 'Espace'), ' passer ', h('kbd', {}, 'Échap'), ' quitter')),
+      h('span', { class: 'pe-rv-keys muted' }, h('kbd', {}, 'O'), ' oui ', h('kbd', {}, 'N'), ' non ', h('kbd', {}, 'Espace'), ' passer ', h('kbd', {}, 'Échap'), ' quitter'),
+      h('span', { class: 'pe-rv-touch muted' }, 'Glissez la photo : → oui, ← non')),
     h('div', { class: 'pe-rv-stage' }));
   const keys = e => {
     if (!S.rv || document.querySelector('dialog[open]')) return; // la photo ouverte par-dessus garde ses touches
@@ -103,6 +131,7 @@ export default function review(ctx) {
   };
   S.rv = { q: ctx.queue(), i: 0, out: new Set(), done: 0, mode: 'ask', changed: false,
     off: () => { document.removeEventListener('keydown', keys); el.remove(); document.body.classList.remove('pe-reviewing'); } };
+  swipe(el.querySelector('.pe-rv-stage'));
   X.root.append(el); document.body.classList.add('pe-reviewing');
   document.addEventListener('keydown', keys);
   draw();

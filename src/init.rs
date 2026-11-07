@@ -71,6 +71,13 @@ pub struct InitArgs {
     /// Fils de calcul des embeddings locaux de BRO (bge-m3), inscrits dans la commande de démarrage (0 = au choix d'ONNX Runtime).
     #[arg(long, default_value_t = 0)]
     embed_threads: usize,
+    /// Visio entre membres : `relais` (STUN + relais d'appel TURN, recommandé), `stun` (STUN seul) ou `aucune`.
+    /// Demandé si absent (terminal) ; défaut : relais.
+    #[arg(long, value_parser = ["relais", "stun", "aucune"])]
+    visio: Option<String>,
+    /// Visio : serveur STUN ou TURN supplémentaire donné aux navigateurs (`stun:hôte:port`, `turn:hôte:port`), répétable.
+    #[arg(long = "ice-server")]
+    ice_servers: Vec<String>,
     /// Écrit l'unité systemd utilisateur `~/.config/systemd/user/astroportd.service`.
     #[arg(long)]
     systemd: bool,
@@ -345,17 +352,44 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
         domain
     };
 
+    // Visio : la station sert elle-même STUN (et un relais d'appel TURN) sur le port UDP de l'interface ; il faut l'ouvrir
+    // sur la box pour que deux membres derrière leurs box s'appellent en direct.
+    let ui_port = if behind_proxy { BEHIND_PROXY_LISTEN.rsplit(':').next().unwrap_or("8090").to_owned() } else if domain.is_empty() { "18080".to_owned() } else { "443".to_owned() };
+    let visio = match a.visio.clone().or_else(|| Some(prev("visio")).filter(|v| !v.is_empty())) {
+        Some(v) => v,
+        None if a.yes => "relais".to_owned(),
+        None => {
+            println!("\n③ Visio entre membres (appels vidéo directs, sans service tiers)");
+            println!("  1) STUN + relais d'appel (recommandé) : marche même entre deux réseaux très fermés ; ouvrez le port {ui_port} en UDP sur la box");
+            println!("  2) STUN seul : plus léger ; un appel entre deux réseaux très fermés peut échouer ; même port UDP {ui_port}");
+            println!("  3) aucune : pas de visio directe servie par cette station");
+            match ask.ask("Votre choix (1, 2 ou 3)", "1").as_str() { "2" => "stun", "3" => "aucune", _ => "relais" }.to_owned()
+        }
+    };
+    let ice: Vec<String> = if !a.ice_servers.is_empty() {
+        a.ice_servers.clone()
+    } else if a.yes || visio == "aucune" {
+        prev("ice_servers").split_whitespace().map(str::to_owned).collect()
+    } else {
+        let given = ask.ask("Serveur STUN/TURN supplémentaire (ex. stun:stun.exemple.org:3478, vide = aucun)", &prev("ice_servers"));
+        given.split_whitespace().map(str::to_owned).collect()
+    };
+    if let Some(bad) = ice.iter().find(|u| !(u.starts_with("stun:") || u.starts_with("turn:") || u.starts_with("turns:"))) {
+        return Err(format!("serveur de visio invalide : {bad} (attendu stun:hôte:port ou turn:hôte:port)").into());
+    }
+
     // 4. Dossiers + station.conf.
     // `nostr/` : un dossier par MULTIPASS hébergé (vide au départ ; `serve` l'exige).
     for dir in [home.clone(), home.join("blobs"), home.join("snapshots"), game.join("nostr")] {
         std::fs::create_dir_all(&dir)?;
     }
     let conf = format!(
-        "# astroportd — station.conf (écrit par `astroportd init`, relisible et modifiable)\nmode = {}\nuplanetname = {uplanetname}\nipfsnodeid = {}\ncaptain_email = {email}\ndomain = {domain}\nlat = {}\nlon = {}\nface_threads = {face_threads}\nembed_threads = {embed_threads}\n",
+        "# astroportd — station.conf (écrit par `astroportd init`, relisible et modifiable)\nmode = {}\nuplanetname = {uplanetname}\nipfsnodeid = {}\ncaptain_email = {email}\ndomain = {domain}\nlat = {}\nlon = {}\nface_threads = {face_threads}\nembed_threads = {embed_threads}\nvisio = {visio}\nice_servers = {}\n",
         if mode == Mode::Zen { "zen" } else { "origin" },
         report.peer_id,
         coords.map_or(String::new(), |c| c.0.to_string()),
         coords.map_or(String::new(), |c| c.1.to_string()),
+        ice.join(" "),
     );
     let conf = match &a.joined {
         Some(j) => format!("{conf}sponsor = {}\n", j.from),
@@ -395,6 +429,14 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
     if let Some((la, lo)) = coords {
         serve.push(format!("--lat {la} --lon {lo}"));
     }
+    match visio.as_str() {
+        "aucune" => serve.push("--no-stun".into()),
+        "stun" => serve.push("--no-turn".into()),
+        _ => {}
+    }
+    for u in &ice {
+        serve.push(format!("--ice-server {u}"));
+    }
     if face_threads > 0 {
         serve.push(format!("--face-threads {face_threads}"));
     }
@@ -411,7 +453,7 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
         let unit = format!("[Unit]\nDescription=astroportd ({})\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nExecStart={serve}\nRestart=on-failure\nRestartSec=5\nUMask=0077\n\n[Install]\nWantedBy=default.target\n", if mode == Mode::Zen { "constellation ẐEN" } else { "constellation ORIGIN" });
         let path = home_dir()?.join(".config/systemd/user/astroportd.service");
         write_private(&path, &unit)?;
-        println!("\n③ Unité systemd écrite : {}\n   systemctl --user daemon-reload && systemctl --user enable --now astroportd\n   (loginctl enable-linger $USER pour qu'elle démarre sans session ouverte)", path.display());
+        println!("\n④ Unité systemd écrite : {}\n   systemctl --user daemon-reload && systemctl --user enable --now astroportd\n   (loginctl enable-linger $USER pour qu'elle démarre sans session ouverte)", path.display());
     }
 
     println!("\n── Station prête ({}) ──", if mode == Mode::Zen { "constellation ẐEN" } else { "constellation ORIGIN" });

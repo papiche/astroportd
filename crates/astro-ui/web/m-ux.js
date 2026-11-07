@@ -57,7 +57,37 @@ function selection() {
   });
 }
 
+// Préchargement : survoler ou toucher un onglet télécharge déjà son écran (modulepreload) ; K.mod le trouvera en cache.
+function prefetch() {
+  const done = new Set(), alias = { station: 'cockpit', people: 'contacts', cloud: '' };
+  document.querySelector('nav').addEventListener('pointerover', ev => {
+    const r = ev.target.dataset?.r, n = alias[r] ?? r;
+    if (!n || done.has(n)) return;
+    done.add(n);
+    const l = document.createElement('link');
+    l.rel = 'modulepreload'; l.href = `/ui/m-${n}.js`;
+    document.head.append(l);
+  }, { passive: true });
+}
+
+// Espace Capitaine : quatre onglets persistants au-dessus de l'écran (chaque onglet regroupe ses sous-écrans).
+const TABS = [['cockpit', '🛰️', 'Cockpit', ['cockpit', 'station']], ['mesh', '🌐', 'Essaim et pairs', ['mesh', 'planes']], ['constellation', '🪙', 'Économie', ['constellation', 'coop']], ['options', '⚙️', 'Options et tunnels', ['options']]];
+function captainTabs(t) {
+  const bar = document.createElement('nav');
+  bar.className = 'cap-nav'; bar.setAttribute('aria-label', t('Espace Capitaine'));
+  const links = TABS.map(([r, icon, label]) => { const a = document.createElement('a'); a.href = '#/' + r; a.textContent = `${icon} ${t(label)}`; bar.append(a); return a; });
+  document.getElementById('main').before(bar);
+  const sync = () => {
+    const r = location.hash.slice(2).split(/[/?]/)[0], on = TABS.findIndex(x => x[3].includes(r));
+    bar.hidden = on < 0;
+    links.forEach((a, i) => (i === on ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
+  };
+  addEventListener('hashchange', sync); sync();
+}
+
 export default function ux(me, api, t) {
+  prefetch();
+  if (me.captain) captainTabs(t);
   const cloud = document.querySelector('nav a[data-r=cloud]');
   if (cloud && !document.querySelector('nav a[data-r=library]')) {
     const a = document.createElement('a');

@@ -93,5 +93,13 @@ export default {
 "Relancer": "Retry",
 "Aucune tâche pour le moment.": "No task yet.",
 "Dernières abandonnées": "Latest given up",
-"Dépôts demandés à BRO": "Uploads requested from BRO"
+"Dépôts demandés à BRO": "Uploads requested from BRO",
+"Partage retiré": "Sharing removed",
+"Retirer le partage": "Stop sharing",
+"Nom du service": "Service name",
+"Adresse et port": "Address and port",
+"Partager un service de cette machine": "Share a service from this machine",
+"Détectés :": "Detected:",
+"{0} partagé": "{0} shared",
+"Cette machine ou le réseau local seulement. Bureau à distance : serveur VNC (wayvnc, x11vnc) ou RDP, puis un ami nommé, pour une durée limitée.": "This machine or the local network only. Remote desktop: VNC (wayvnc, x11vnc) or RDP server, then a named friend, for a limited time."
 };

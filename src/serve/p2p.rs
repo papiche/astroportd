@@ -7,15 +7,32 @@ use super::*;
 pub(super) type Guards = Vec<Box<dyn std::any::Any + Send>>;
 
 /// Démarre le maillage si une option le demande ; rend ses gardiens et sa poignée. `exposed_names` reçoit les services offerts.
+/// Le maillage est actif par défaut (`--no-p2p` le coupe) : sans `--p2p-listen`, écoute sur 4101 ou le premier port libre
+/// après — chaque plan d'un `astroportd planes` reçoit le sien. Sans graine (NODE absent), le défaut s'efface avec un message ;
+/// une option P2P explicite, elle, reste une erreur.
 pub(super) async fn start(a: &ServeArgs, p2p_seed: Option<[u8; 32]>, local: &Arc<AutoBlobStore>, tunnel_policy: &Arc<TunnelPolicy>, exposed_names: &mut Vec<String>) -> Result<(Guards, Option<astro_p2p::P2pHandle>), Failure> {
     let mut p2p_guards: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
     let mut p2p_handle = None;
-    if !a.p2p_listen.is_empty() || !a.p2p_bootstrap.is_empty() || a.p2p_relay_server || !a.p2p_use_relay.is_empty() {
+    let explicit = !a.p2p_listen.is_empty() || !a.p2p_bootstrap.is_empty() || a.p2p_relay_server || !a.p2p_use_relay.is_empty();
+    if a.no_p2p {
+        if explicit {
+            return Err("--no-p2p coupe le maillage : retirez les options --p2p-listen/--p2p-bootstrap/--p2p-relay-server/--p2p-use-relay".into());
+        }
+        println!("P2P : maillage coupé (--no-p2p)");
+    } else if !explicit && p2p_seed.is_none() {
+        println!("P2P : maillage non démarré (NODE absent de --game-dir : pas de graine) ; lancez `astroportd init` pour l'activer");
+    } else {
         let seed = p2p_seed.ok_or("graine P2P introuvable : NODE absent de --game-dir (secret.NODE.dunikey) et ASTRO_P2P_SEED non défini")?;
         let mut cfg = P2pConfig::local(seed);
-        if !a.p2p_listen.is_empty() {
+        if a.p2p_listen.is_empty() {
+            let port = astroportd::mesh_admin::free_port().ok_or("aucun port libp2p libre entre 4101 et 4200 : précisez --p2p-listen ou --no-p2p")?;
+            cfg.listen = vec![format!("/ip4/0.0.0.0/tcp/{port}").parse()?];
+            println!("P2P : écoute par défaut sur le port {port} (--p2p-listen pour un autre, --no-p2p pour couper)");
+        } else {
             cfg.listen = a.p2p_listen.clone();
         }
+        // Les stations gardées depuis l'écran du Capitaine sont jointes en tâche de fond (`mesh_admin::Mesh::keep_alive`) :
+        // une station éteinte ne retarde jamais le démarrage.
         cfg.bootstrap = a.p2p_bootstrap.clone();
         cfg.external = a.p2p_external.clone();
         cfg.relay_server = a.p2p_relay_server;
@@ -48,6 +65,9 @@ pub(super) async fn start(a: &ServeArgs, p2p_seed: Option<[u8; 32]>, local: &Arc
             println!("P2P : {name} exposé, accès « {mode:?} » (réglable dans l'interface du Capitaine)");
             p2p_guards.push(Box::new(expose(&handle, name, target.to_owned(), opts)?));
         }
+        // Les services que le Capitaine partage à chaud depuis l'écran Options (gardés en base) rejoignent le maillage.
+        let fixed: Vec<String> = specs.iter().filter_map(|s| s.split_once('=').map(|(n, _)| n.to_owned())).collect();
+        tunnel_policy.attach(&handle, &fixed);
         for spec in &a.p2p_forward {
             let (bind, rest) = spec.split_once('=').ok_or("--p2p-forward attend bind=PeerID/nom")?;
             let (peer, name) = rest.split_once('/').ok_or("--p2p-forward attend bind=PeerID/nom")?;

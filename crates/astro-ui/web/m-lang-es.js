@@ -1,6 +1,6 @@
 'use strict';
 // Dictionnaire es, phrases communes. Les écrans de `parts` ont aussi m-lang-es-<écran>.js, chargé avec eux (K.mod).
-export const parts = 'account billets call contacts options sync';
+export const parts = 'account billets call contacts mesh options sync';
 export default {
 "Aller au contenu": "Ir al contenido",
 "Tableau de bord": "Panel",
@@ -315,5 +315,27 @@ export default {
 "Quelle « {0} » ?": "¿Qué «{0}»?",
 "{0} fiches portent ce nom. Choisissez la bonne personne : ses visages la rejoindront, pas les autres.": "{0} fichas llevan este nombre. Elija a la persona correcta: las caras irán a ella, no a las demás.",
 "aucun visage encore": "ninguna cara aún",
-"Une nouvelle personne": "Una persona nueva"
+"Une nouvelle personne": "Una persona nueva",
+"Capitaines amis": "Capitanes amigos",
+"Espace Capitaine": "Espacio del Capitán",
+"Cockpit": "Cabina",
+"Essaim et pairs": "Enjambre y pares",
+"Économie": "Economía",
+"Options et tunnels": "Opciones y túneles",
+"Pour vous": "Para usted",
+"{0} photo(s) de {1} attendent votre accord pour lui être envoyées": "{0} foto(s) de {1} esperan su permiso para enviárselas",
+"{0} visage(s) à confirmer": "{0} rostro(s) por confirmar",
+"{0} visage(s) à nommer": "{0} rostro(s) por nombrar",
+"Trier en 1 clic": "Ordenar en 1 toque",
+"Décider": "Decidir",
+"Le PASS de {0} est verrouillé": "El PASS de {0} está bloqueado",
+"Trop de PASS faux : le membre l'a peut-être oublié, ou quelqu'un essaie. Débloquez si c'est bien lui qui vous le demande.": "Demasiados PASS erróneos: el miembro quizá lo olvidó, o alguien lo intenta. Desbloquee si es él quien se lo pide.",
+"Débloquer": "Desbloquear",
+"{0} autre(s) compte(s) verrouillé(s)": "{0} cuenta(s) bloqueada(s) más",
+"Réserve de démarrage": "Reserva de arranque",
+"{0} Ğ1 sur {1}": "{0} Ğ1 de {1}",
+"Alimenter depuis Cesium ou Ğecko": "Recargar desde Cesium o Ğecko",
+"Glissez la photo : → oui, ← non": "Deslice la foto: → sí, ← no",
+"{0} a perdu sa station et vous demande de l'aide": "{0} perdió su estación y le pide ayuda",
+"Répondre": "Responder"
 };

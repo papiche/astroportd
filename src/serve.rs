@@ -127,9 +127,13 @@ pub struct ServeArgs {
     /// Fichier `swarm.key` du réseau privé P2P.
     #[arg(long)]
     swarm_key: Option<PathBuf>,
-    /// Écoute P2P (`/ip4/0.0.0.0/tcp/4101`). Active le maillage ; la graine vient du NODE (`secret.NODE.dunikey`).
+    /// Écoute P2P. Par défaut le maillage est **actif** sur `/ip4/0.0.0.0/tcp/4101` (ou le premier port libre après) ; la
+    /// graine vient du NODE (`secret.NODE.dunikey`). Répétable.
     #[arg(long = "p2p-listen")]
     p2p_listen: Vec<Multiaddr>,
+    /// Couper le maillage P2P (ni tunnels, ni partage entre stations, ni services des Capitaines amis).
+    #[arg(long)]
+    no_p2p: bool,
     /// Pairs à joindre au démarrage (`…/p2p/<PeerID>`).
     #[arg(long = "p2p-bootstrap")]
     p2p_bootstrap: Vec<Multiaddr>,
@@ -240,10 +244,11 @@ pub struct ServeArgs {
     /// Charges hebdomadaires de la station (PAF), en centimes de Ẑen, déduites des recettes à la clôture de semaine.
     #[arg(long, default_value_t = 0)]
     weekly_costs: u64,
-    /// Marque par transaction primale (1 Ğ1 du portefeuille maître `UPLANETNAME_G1`) les portefeuilles coopératifs vides, le compte
-    /// technique d'hébergement et le NODE : équivalent de `UPLANET.init.sh`. Désactivé par défaut : cela dépense de vrais Ğ1.
+    /// Coupe les transactions primales (1 Ğ1 du portefeuille maître `UPLANETNAME_G1`). Par défaut, la station les envoie : aux
+    /// portefeuilles coopératifs vides, au compte technique d'hébergement et au NODE (équivalent de `UPLANET.init.sh` — c'est ce
+    /// qui rend une UPlanet **officielle**), puis à chaque nouveau MULTIPASS après sa première connexion.
     #[arg(long)]
-    primal_init: bool,
+    no_primal_init: bool,
     /// Période de lecture des messages privés adressés à la station (bus de commandes de BRO), en secondes.
     #[arg(long, default_value_t = 5)]
     bus_poll_secs: u64,
@@ -501,6 +506,15 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
         p2p::offer_relay(&a, handle, &relay, &mut p2p_guards).await?;
     }
     let mut dav_config = DavConfig::new(station_secret);
+    // Un fichier qui ne se déchiffre plus pendant son envoi (blob altéré ou illisible) est dit au Capitaine, jamais tu.
+    let read_bus = activity.clone();
+    dav_config.on_read_failure = Some(Arc::new(move |f: &astro_dav::ReadFailure| {
+        let what = if f.integrity { "fichier altéré (ne se déchiffre plus)" } else { "fichier illisible sur le disque" };
+        read_bus.publish_to(astro_core::Audience::Captain, "alert", "ucloud", format!("{what} : {} ({}) — {}", f.path, f.cid.chars().take(16).collect::<String>(), f.reason), None);
+    }));
+    // Première connexion authentifiée d'un MULTIPASS créé ici = preuve qu'il a reçu ses clés (crate::member_primo).
+    let proofs = astroportd::member_primo::Proofs::new(db.clone());
+    dav_config.on_login = Some(Arc::new(move |hex: &str| proofs.note(hex)));
     if let Some(domain) = a.domains.first() {
         dav_config.public_base_url = Some(format!("https://{domain}")); // liaison NIP-98 derrière notre propre TLS
     }
@@ -533,6 +547,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     let inbox_keys = keys.clone();
     let backup_keys = keys.clone();
     let assist_keys = keys.clone();
+    let captains_keys = keys.clone();
     // Sans option : si les deux modèles sont aux emplacements habituels (et le binaire compilé avec `onnx`), l'inférence locale
     // s'active toute seule ; `astroportd face-check` dit ce qui manque.
     // Moteur FaceID : une option de ligne de commande l'impose (réglage figé dans l'interface) ; sinon le choix du Capitaine
@@ -683,6 +698,8 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
         background.push(tokio::spawn(Arc::new(inbox).run(Duration::from_secs(20), stop_watch.clone())));
         println!("partage : fichiers des proches reçus par le maillage (un passage toutes les 20 s)");
     }
+    // Réveil du crawl : un module qui demande une clé (secours d'un compte) n'attend pas le passage suivant.
+    let crawl_nudge = Arc::new(tokio::sync::Notify::new());
     // Sauvegarde privée chez un ami : le proche doit accepter ; le blob part chiffré, sans sa clé.
     let backup = {
         // Station d'accueil annoncée dans le DID d'un compte rétabli ici : `<PeerID>:<NODE_HEX>` (rien si l'un des deux manque).
@@ -691,7 +708,9 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
             .with_station(Some(publisher.clone()), services_peer.clone())
             .with_home(home, Some(publish_fn(&event_publisher)))
             .with_accounts_dir(station.nostr_dir.clone())
-            .with_notify(notify.clone());
+            .with_notify(notify.clone())
+            // Secours par les gardiens : la clé NODE demande et reçoit ; le gardien voit le domaine (sinon le nom de machine).
+            .with_rescue(station.node_secret.as_ref().map(|s| **s), Some(a.domains.first().cloned().unwrap_or_else(astroportd::init::hostname)), Some(crawl_nudge.clone()));
         if let Some(handle) = &p2p_handle {
             b = b.with_prefetch(blob_prefetch(handle, &local));
         }
@@ -717,6 +736,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
         node_hex: node_hex.clone(),
         node_secret: station.node_secret.as_ref().map(|s| **s),
         node_publisher: node_publisher.clone(),
+        crawl_nudge: crawl_nudge.clone(),
     };
     tasks::ssh_sync(&parts, &tunnel_policy, &mut background);
     // Adresses de la coopérative : la station et chaque MULTIPASS hébergé pointent vers leur espace IPNS (DNSLink OVH).
@@ -813,6 +833,18 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     let consoles = Arc::new(astroportd::console::Consoles::new(identity, known_hosts, Some(activity.clone())));
     let consoles_ui = consoles.clone();
     let assist_admin = admin::assist_admin(&assist, &forwards, &consoles);
+    // Maillage (stations, bootstrap gardé) et Capitaines (suivre, services des amis, accès à chaud) pour l'écran du Capitaine.
+    let mut mesh = astroportd::mesh_admin::Mesh::new(db.clone(), p2p_handle.clone(), a.p2p_bootstrap.clone(), station_planes(&a.db).0, activity.clone());
+    // Bail géographique : une seule station de l'UPlanet tient chaque quartier (UMAP, SECTOR, REGION), la plus proche.
+    if let Some(handle) = &p2p_handle {
+        let geo = astroportd::geo_lease::GeoLease::new(db.clone(), handle.peer_id().to_string(), a.lat.zip(a.lon), activity.clone());
+        tokio::spawn(geo.clone().run(handle.clone(), stop_watch.clone()));
+        mesh = mesh.with_geo(geo);
+    }
+    let mesh = Arc::new(mesh);
+    background.push(tokio::spawn(mesh.clone().keep_alive(Duration::from_secs(300), stop_watch.clone())));
+    let captains = Arc::new(astroportd::captains::Captains::new(db.clone(), captains_keys, Some(publish_fn(&event_publisher)), p2p_handle.clone(), forwards.clone(), Some(consoles.clone()), activity.clone()));
+    let (mesh_admin, captains_admin) = admin::mesh_admins(&mesh, &captains);
     let account_origin = a.domains.first().map(|d| format!("https://{d}"));
     let account_svc = Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone()));
     let address_book = Arc::new(astroportd::address_book::AddressBook::new(db.clone(), dav.clone(), links.clone(), Some(account_svc.clone())));
@@ -890,7 +922,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
         return Err(format!("--ice-server « {bad} » : stun:hôte:port ou turn:hôte:port attendu").into());
     }
     let mut ui = StationUi::new(services.clone(), dav.clone(), memory, ollama, true).with_setup(setup_code).with_conf_path(conf_path.clone()).with_ice(stun_port, turn.map(|t| t.0), a.ice_servers.clone()).with_presence(presence).with_chat(chat).with_people(people.clone()).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_invites(invites).with_welcome(welcome).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
-        .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), targets: service_targets(&a), dnslink: Some(dnslink.clone()), assist: Some(assist_admin), tasks: Some(db.clone()) }).handler());
+        .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), targets: service_targets(&a), dnslink: Some(dnslink.clone()), assist: Some(assist_admin), tasks: Some(db.clone()), mesh: Some(mesh_admin), captains: Some(captains_admin) }).handler());
     if let Some(f) = thumbs_fn {
         ui = ui.with_face_thumbs(f);
     }
