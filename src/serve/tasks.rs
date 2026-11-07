@@ -23,6 +23,8 @@ pub(super) struct Parts<'a> {
     pub node_publisher: Option<Arc<EventPublisher>>,
     /// Réveil du crawl (clés demandées par un autre module).
     pub crawl_nudge: Arc<tokio::sync::Notify>,
+    /// Réveil de la balise de station (30850) ; la nuit la réveille après la clôture hebdomadaire.
+    pub beacon_nudge: Arc<tokio::sync::Notify>,
 }
 
 type Background = Vec<tokio::task::JoinHandle<()>>;
@@ -352,7 +354,7 @@ pub(super) async fn nightly(p: &Parts<'_>, memory: &Option<Arc<Memory>>, backup:
                     node_hex: node_hex.clone(),
                     node_secret: *node_secret,
                     peer_id: services_peer.clone(),
-                    public_url: a.domains.first().map(|d| format!("https://{d}")),
+                    public_url: super::public_domain(a).map(|d| format!("https://{d}")),
                     weekly_costs: astro_core::Amount(a.weekly_costs),
                     split: astro_economy::split::SplitConfig::default(),
                     purge_shares: Some(purge_shares),
@@ -361,6 +363,8 @@ pub(super) async fn nightly(p: &Parts<'_>, memory: &Option<Arc<Memory>>, backup:
                     integrity: Some(integrity_night),
                     billets: billets_night,
                     publisher: node_publisher.clone(),
+                    // La balise n'existe qu'avec la clé du NODE (voir `serve`) ; sinon la nuit dit pourquoi elle saute.
+                    beacon: node_secret.is_some().then(|| p.beacon_nudge.clone()),
                     activity: Some(activity.clone()),
                     pause: Duration::from_secs(1),
                 });

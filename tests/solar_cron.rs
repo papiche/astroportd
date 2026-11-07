@@ -54,6 +54,7 @@ async fn nightly(dir: &std::path::Path, db: Arc<Db>, sink: Arc<Sink>, dream: Hoo
         integrity: None,
         billets: None,
         publisher: Some(sink),
+        beacon: None,
         activity: None,
         pause: std::time::Duration::ZERO,
     }

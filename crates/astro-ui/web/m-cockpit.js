@@ -6,7 +6,7 @@ const RANK = { down: 0, degraded: 1, info: 2, ok: 3 };
 const FLOORS = [['machine', '🖥️', 'Machine', '#/station'], ['station', '📡', 'Station', '#/station'], ['mesh', '🌐', 'Constellation', '#/planes'], ['services', '🔌', 'Services et accès', '#/options'], ['members', '👥', 'Membres', '#/station'], ['economy', '🪙', 'Économie', '#/coop']];
 const worst = (a, b) => (RANK[a] <= RANK[b] ? a : b);
 
-export function analyze({ health, cs, ec, ac, tun, tk, dash, dns }) {
+export function analyze({ health, cs, ec, ac, tun, tk, dash, dns, en }) {
   const todos = [], add = (level, floor, title, why, label, href, post) => todos.push({ level, floor, title, why, label, href, post });
   const nodes = cs?.nodes || [], me = nodes.find(n => n.self), others = nodes.filter(n => !n.self);
   // Station
@@ -38,6 +38,9 @@ export function analyze({ health, cs, ec, ac, tun, tk, dash, dns }) {
   // Économie
   if (ec?.kind === 'drawdown') add('degraded', 'economy', `Semaine ${ec.week} : trésorerie entamée`, 'Les dépenses ont dépassé les recettes de la semaine.', 'Voir la régie', '#/coop');
   else if (ec?.kind === 'volunteer') add('info', 'economy', `Semaine ${ec.week} : bénévolat actif`, 'Votre apport a couvert l\'écart de la semaine.', 'Voir la régie', '#/coop');
+  // Énergie (plugin système energy) : absent = rien à dire ; arrêté ou hors contrat = à regarder.
+  if (en?.state === 'stale') add('degraded', 'machine', 'Les mesures d\'énergie sont arrêtées', 'Le collecteur du plugin energy n\'écrit plus depuis plus d\'une heure : systemctl --user status energy-collect.timer', 'Voir la machine', '#/cockpit');
+  else if (en?.state === 'invalid') add('degraded', 'machine', 'Mesures d\'énergie illisibles', en.error || '', 'Voir la machine', '#/cockpit');
   todos.sort((a, b) => RANK[a.level] - RANK[b.level]);
   const level = todos.some(x => x.level === 'down') ? 'down' : todos.some(x => x.level === 'degraded') ? 'degraded' : 'ok';
   const floors = Object.fromEntries(FLOORS.map(([k]) => [k, todos.filter(x => x.floor === k).reduce((l, x) => worst(l, x.level), 'ok')]));
@@ -88,6 +91,8 @@ function welcomeDialog(K) {
 }
 
 const TIER = { Light: '🌿', Standard: '⚡', Brain: '🔥' };
+// Nombre à la française (virgule décimale), `d` décimales.
+const fmt = (v, d) => Number(v ?? 0).toLocaleString('fr-FR', { minimumFractionDigits: d, maximumFractionDigits: d });
 // Montant en Ğ1 depuis des centimes, sans flottant.
 export const g1 = c => `${Math.floor(c / 100)},${String(c % 100).padStart(2, '0')}`;
 const svgOf = s => { const d = s && new DOMParser().parseFromString(s, 'image/svg+xml').documentElement; return d?.nodeName === 'svg' ? document.importNode(d, true) : null; };
@@ -96,6 +101,15 @@ export default async function cockpit(root, K) {
   const link = h('link', { rel: 'stylesheet', href: '/ui/m-cockpit.css' }); document.head.append(link);
   // Carburant : le portefeuille maître à créditer pour ouvrir les portefeuilles coopératifs (transaction primale).
   // Une jauge d'abord (réserve / besoin, en centimes entiers) ; l'adresse et son QR, repliés, ne servent qu'au moment du virement.
+  // Énergie de la station (plugin système energy) : consommation, production solaire ; rien tant que le plugin manque.
+  const energyCard = e => {
+    if (!e || e.state === 'absent' || e.state === 'invalid') return null;
+    const c = e.consumption, p = e.production;
+    return h('section', { class: 'card' }, h('h2', {}, '⚡ ', t('Énergie de la station'), e.state === 'stale' ? h('small', { class: 'muted' }, ' · ' + t('mesures arrêtées depuis {0}', K.span(e.age_secs))) : null),
+      c ? h('p', {}, '🔌 ', h('strong', {}, `${fmt(c.power_w ?? c.avg_w_recent, 1)} W`), ' · ', t('{0} kWh aujourd\'hui · {1} kWh ce mois-ci · moyenne {2} W sur 30 jours', fmt(c.today_kwh, 2), fmt(c.month_kwh, 1), fmt(c.avg_w_recent, 1))) : null,
+      p ? h('p', {}, '☀️ ', h('strong', {}, `${fmt(p.power_w ?? 0, 0)} W`), ' · ', t('{0} Wh aujourd\'hui · {1} kWh ce mois-ci', fmt(p.today_wh, 0), fmt(p.month_wh / 1000, 1)), p.battery_v ? ` · 🔋 ${fmt(p.battery_v, 1)} V` : '') : null,
+      c ? h('p', { class: 'muted' }, t('Mesuré depuis le {0} ({1} jours) : la balise publique de la station porte ces chiffres, pour que la PAF reste juste.', c.since, c.days_recorded)) : null);
+  };
   const fuelCard = f => (f?.needed_g1_cents > 0 ? h('section', { class: 'card ck-fuel' }, h('h2', {}, '⛽ ', t('Réserve de démarrage')),
     h('p', {}, h('strong', {}, t('{0} Ğ1 sur {1}', g1(f.spendable_g1_cents), g1(f.spendable_g1_cents + f.needed_g1_cents)))),
     h('progress', { max: f.spendable_g1_cents + f.needed_g1_cents, value: f.spendable_g1_cents, 'aria-label': t('Réserve de démarrage') }),
@@ -138,8 +152,8 @@ export default async function cockpit(root, K) {
   };
   const welcome = () => { const d = welcomeDialog(K); K.cleanup(() => d.remove()); };
   const draw = async () => {
-    const [dash, health, cs, ec, ac, tun, tk, dns, fuel] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()).catch(() => null), soft('/api/v1/station/constellation'), soft('/api/v1/station/economy'), soft('/api/v1/station/accounts'), soft('/api/v1/station/admin/tunnels'), soft('/api/v1/station/admin/tasks'), soft('/api/v1/station/admin/dnslink'), soft('/api/v1/station/fuel')]);
-    const a = analyze({ health, cs, ec, ac, tun, tk, dash, dns }), st = dash.station, su = setup({ dash, cs, ac, dns });
+    const [dash, health, cs, ec, ac, tun, tk, dns, fuel, en] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()).catch(() => null), soft('/api/v1/station/constellation'), soft('/api/v1/station/economy'), soft('/api/v1/station/accounts'), soft('/api/v1/station/admin/tunnels'), soft('/api/v1/station/admin/tasks'), soft('/api/v1/station/admin/dnslink'), soft('/api/v1/station/fuel'), soft('/api/v1/station/energy')]);
+    const a = analyze({ health, cs, ec, ac, tun, tk, dash, dns, en }), st = dash.station, su = setup({ dash, cs, ac, dns });
     // Tant que la mise en service n'est pas finie, ses étapes disent déjà les informations (station seule, adresses) : pas de doublon.
     const todos = su.left ? a.todos.filter(x => x.level !== 'info') : a.todos;
     const todo = x => h('li', { class: 'ck-todo ' + x.level }, h('div', {}, h('strong', {}, t(...[x.title].flat())), h('p', { class: 'muted' }, t(x.why))), x.post
@@ -147,7 +161,7 @@ export default async function cockpit(root, K) {
       : h('a', { class: 'ck-btn', href: x.href }, t(x.label)));
     const floors = FLOORS.map(([k, icon, name, href]) => {
       const lv = a.floors[k], line = {
-        machine: a.me ? `${TIER[a.me.tier] || ''} ${a.me.tier} · Power-Score ${a.me.power_score}` : '—',
+        machine: (a.me ? `${TIER[a.me.tier] || ''} ${a.me.tier} · Power-Score ${a.me.power_score}` : '—') + (en?.state === 'fresh' && en.consumption?.power_w != null ? ` · ⚡ ${fmt(en.consumption.power_w, 1)} W` : ''),
         station: `${st.version} · ${t('en marche depuis')} ${K.span(st.uptime_secs)}`,
         mesh: `${a.nodes.length} ${t('station(s)')} · ${a.others.filter(n => n.status === 'connected').length} ${t('connectée(s)')}`,
         services: tun ? tun.services.map(s => `${s.name} ${s.up === false ? '○' : '●'}`).join(' · ') : '—',
@@ -160,6 +174,7 @@ export default async function cockpit(root, K) {
     root.replaceChildren(...[
       h('section', { class: 'card ck-hero ' + a.level, 'aria-live': 'polite' }, h('span', { class: 'ck-big', 'aria-hidden': 'true' }, { ok: '✅', degraded: '🟠', down: '🔴' }[a.level]), h('div', {}, h('h2', {}, t(a.verdict)), h('p', { class: 'muted' }, todos.length ? t('Voici par quoi commencer :') : t('Rien ne demande votre attention. La page se met à jour toute seule.')))),
       fuelCard(fuel),
+      energyCard(en),
       todos.length ? h('section', { class: 'card' }, h('h2', {}, t('À faire')), h('ul', { class: 'ck-list' }, todos.slice(0, 3).map(todo)), todos.length > 3 ? h('details', {}, h('summary', {}, t('Voir les {0} autres', todos.length - 3)), h('ul', { class: 'ck-list' }, todos.slice(3).map(todo))) : null) : null,
       su.left ? h('section', { class: 'card' }, h('h2', {}, t('Mettre la station en service'), h('small', { class: 'muted' }, ` · ${su.list.length - su.left}/${su.list.length}`)),
         h('progress', { max: su.list.length, value: su.list.length - su.left, 'aria-label': t('Étapes terminées') }),

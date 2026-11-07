@@ -50,7 +50,7 @@ pub fn embedded_bytes() -> usize {
 /// Fichiers chargés à la demande : la page d'inscription (`register.*`, pour les seuls nouveaux venus) et les écrans
 /// lourds (`m-*.js` / `m-*.css`, tri des visages, réplication) n'entrent pas dans le budget de la coque ; ils ont le leur.
 fn is_lazy(path: &str) -> bool {
-    path.starts_with("look.") || path.starts_with("register.") || path.starts_with("restore.") || path.starts_with("invite.") || path.starts_with("claim.") || path.starts_with("scan") || path.starts_with("jsqr.") || path.starts_with("m-") || path.starts_with("console.") || path.starts_with("xterm")
+    path.starts_with("look.") || path.starts_with("register.") || path.starts_with("restore.") || path.starts_with("stations.") || path.starts_with("invite.") || path.starts_with("claim.") || path.starts_with("scan") || path.starts_with("jsqr.") || path.starts_with("m-") || path.starts_with("console.") || path.starts_with("xterm")
 }
 
 /// Fichiers de la coque de l'application (tout sauf les fichiers chargés à la demande).
@@ -269,6 +269,11 @@ async fn restore_page(headers: HeaderMap) -> Response {
     r
 }
 
+/// Annuaire public des stations de l'UPlanet (`/stations`) : trouver la plus proche qui a encore de la place.
+async fn stations_page(headers: HeaderMap) -> Response {
+    asset("stations.html", &headers)
+}
+
 /// Page d'un lien d'invitation (`/i/<jeton>`) : la même pour tous les jetons, qui se lit dans l'adresse. Jamais indexée.
 async fn invite_page(headers: HeaderMap) -> Response {
     let mut r = asset("invite.html", &headers);
@@ -290,9 +295,9 @@ async fn scan_page(headers: HeaderMap) -> Response {
     r
 }
 
-/// Routes `/ui/{fichier}`, `/register` (inscription d'un MULTIPASS), `/restore` (rétablir son compte) et `/i/{jeton}` (invitation à recevoir des photos).
+/// Routes `/ui/{fichier}`, `/register` (inscription d'un MULTIPASS), `/restore` (rétablir son compte), `/stations` (annuaire) et `/i/{jeton}` (invitation à recevoir des photos).
 pub fn static_router() -> Router {
-    Router::new().route("/ui/{*path}", get(static_file)).route("/register", get(register_page)).route("/welcome", get(register_page)).route("/w/{token}", get(register_page)).route("/restore", get(restore_page)).route("/i/{token}", get(invite_page)).route("/claim", get(claim_page)).route("/scan", get(scan_page))
+    Router::new().route("/ui/{*path}", get(static_file)).route("/register", get(register_page)).route("/welcome", get(register_page)).route("/w/{token}", get(register_page)).route("/restore", get(restore_page)).route("/stations", get(stations_page)).route("/i/{token}", get(invite_page)).route("/claim", get(claim_page)).route("/scan", get(scan_page))
 }
 
 #[cfg(test)]

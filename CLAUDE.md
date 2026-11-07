@@ -15,7 +15,7 @@ cargo test --workspace --locked
 bash -n install.sh build-all.sh && shellcheck install.sh build-all.sh
 ```
 
-**Guide publié** (GitHub Pages sert `docs/`) : `docs/index.html` est **généré** depuis `docs/GUIDE.md` — ne jamais l'éditer à la main. Après toute modification de GUIDE.md : `python3 docs/build_guide.py` (la CI vérifie avec `--check` ; dépendance : `pip install markdown-it-py`). Les règles de l'interface (cockpit, accueil) se testent avec `node crates/astro-ui/tests/*.mjs`.
+**Guide publié** (GitHub Pages sert `docs/`) : `docs/guide.html` (guide du Capitaine) et les annexes `docs/*.html` sont **générés** depuis leurs `.md` — ne jamais les éditer à la main (seul l'en-tête de `guide.html`, avant `<nav class="toc"`, se modifie à la main). `docs/index.html` est la page d'accueil, écrite à la main (grand public et futurs Capitaines). Après toute modification de GUIDE.md : `python3 docs/build_guide.py` (la CI vérifie avec `--check` ; dépendance : `pip install markdown-it-py`). Les règles de l'interface (cockpit, accueil) se testent avec `node crates/astro-ui/tests/*.mjs`.
 
 ```bash
 cargo test -p astro-dav                       # un crate

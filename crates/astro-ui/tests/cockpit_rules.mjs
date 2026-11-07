@@ -68,4 +68,11 @@ assert.equal(s.left, 0);
 assert.equal(setup({}).left, 5);
 // Carburant : montants en Ğ1 depuis des centimes, sans flottant.
 assert.equal(g1(300), '3,00'); assert.equal(g1(5), '0,05'); assert.equal(g1(123457), '1234,57');
+// Énergie (plugin système energy) : absent ou à jour = rien à faire ; arrêté ou hors contrat = étage Machine à regarder.
+const ok = { cs: { nodes: [{ self: true, tier: 'Light', power_score: 4 }, { status: 'connected' }] }, dash: { p2p: { enabled: true } }, dns: { configured: true } };
+assert.equal(analyze({ ...ok, en: { state: 'absent' } }).floors.machine, 'ok', 'pas de plugin : rien à dire');
+assert.equal(analyze({ ...ok, en: { state: 'fresh', consumption: { power_w: 8 } } }).floors.machine, 'ok');
+const stale = analyze({ ...ok, en: { state: 'stale', age_secs: 7200 } });
+assert.equal(stale.floors.machine, 'degraded'); assert.match(stale.todos[0].why, /energy-collect\.timer/);
+assert.equal(analyze({ ...ok, en: { state: 'invalid', error: 'format energy/v2' } }).todos[0].why, 'format energy/v2');
 console.log('cockpit : règles OK');

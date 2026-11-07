@@ -54,12 +54,24 @@ footer{padding:28px 16px 48px;color:var(--mut);border-top:1px solid var(--line);
 a{overflow-wrap:anywhere}
 @media (min-width:56rem){.cols.one{grid-template-columns:1fr}}
 figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:10px}
+.crumbs{margin:0 0 10px;font-size:.95rem}
+.lead2{color:var(--mut);max-width:46rem;margin-top:0}
+nav.toc h3{font-size:1rem;margin:12px 0 4px}nav.toc h3 a{color:var(--ink);text-decoration:none}nav.toc h3 a:hover{text-decoration:underline}
+nav.toc ol{list-style:none;padding-left:0;margin:0 0 4px}
+section.part{border-top:3px solid var(--acc);margin-top:64px;padding-top:18px}
+section.part h2{font-size:clamp(1.6rem,4.4vw,2.2rem);margin-bottom:.2em}
+section.part .pn{display:block;font-size:1rem;font-weight:700;color:var(--acc);letter-spacing:0}
+section.part p{color:var(--mut);font-size:1.1rem;max-width:46rem}
+details.tech{border:1px dashed var(--line);border-radius:10px;padding:2px 14px;margin:12px 0;background:transparent}
+details.tech summary{cursor:pointer;padding:8px 0;font-weight:600;color:var(--mut);min-height:44px;display:flex;align-items:center}
+details.tech[open]{padding-bottom:10px}
+details.tech[open] summary{color:var(--acc)}
 </style>
 <style>.pg{max-width:60rem;margin:0 auto;padding:1rem 16px 3rem}</style>
 </head>
 <body>
 <main class="pg">
-<p><a href="index.html">← Retour au guide</a></p>
+<p class="back"><a href="index.html">Accueil</a> · <a href="guide.html">Guide du Capitaine</a></p>
 <h1>UPLANET</h1>
 <h2>Manuel des membres et des contributeurs</h2>
 <h3>Construire un Internet souverain sans attendre qu'on nous dise quoi faire</h3>
@@ -393,7 +405,7 @@ figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line)
 <p>Les communs nous appartiennent collectivement, dans le respect des droits et des responsabilités de chacun.</p>
 <p>À nous de les faire grandir.</p>
 
-<p><a href="index.html">← Retour au guide</a></p>
+<p class="back"><a href="index.html">Accueil</a> · <a href="guide.html">Guide du Capitaine</a></p>
 </main>
 </body>
 </html>

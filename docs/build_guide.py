@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Reconstruit le guide illustré `docs/index.html` (publié sur GitHub Pages) depuis `docs/GUIDE.md`, et remet à jour le
-sommaire de `GUIDE.md`. La source de vérité est GUIDE.md : on ne modifie pas index.html à la main.
+"""Reconstruit le guide du Capitaine `docs/guide.html` (publié sur GitHub Pages) depuis `docs/GUIDE.md`, les documents
+annexes (`PAGES`) et le sommaire de `GUIDE.md`. La source de vérité est GUIDE.md : on ne modifie pas guide.html à la main
+(sauf son en-tête, avant `<nav class="toc"`, que le générateur conserve). `docs/index.html` est la page d'accueil, écrite
+à la main : le générateur n'y touche pas.
 
-    python3 docs/build_guide.py            # écrit docs/index.html et le sommaire de GUIDE.md
+    python3 docs/build_guide.py            # écrit docs/guide.html, les annexes et le sommaire de GUIDE.md
     python3 docs/build_guide.py --check    # échoue (code 1) si l'un des deux est périmé (CI)
 
 Conventions de GUIDE.md :
 - une section = une ancre `<a id="etape-N"></a>` puis un titre `## Étape N — titre` (ou `## titre`) ;
 - `### 🖥️ Terminal (CLI)` et `### 🌐 Navigateur (Web)` forment les deux colonnes d'une étape ;
 - `![légende](img/x.svg)` devient une figure avec le SVG en ligne ;
-- un bloc `> ⚠️ **Attention.**` ou `> **À savoir.**` devient une boîte d'avertissement ou de note.
+- un bloc `> ⚠️ **Attention.**` ou `> **À savoir.**` devient une boîte d'avertissement ou de note ;
+- un bloc `> **Détails techniques.**` devient un repli fermé (`<details>`) : le lecteur pressé passe, le curieux déplie ;
+- `## Partie N — titre` ouvre une partie : un séparateur dans la page, un groupe dans le sommaire ;
+- `## Étape N — titre` est numéroté (une suite à faire dans l'ordre) ; un autre titre ne l'est pas.
 
 Dépendance : `markdown-it-py` (pip install markdown-it-py).
 """
@@ -22,7 +27,8 @@ from markdown_it import MarkdownIt
 
 DOCS = Path(__file__).resolve().parent
 GUIDE = DOCS / "GUIDE.md"
-INDEX = DOCS / "index.html"
+GUIDE_HTML = DOCS / "guide.html"
+HOME = DOCS / "index.html"  # accueil écrit à la main : le générateur n'y met à jour que le numéro de version
 CARGO = DOCS.parent / "Cargo.toml"
 
 CLI_H = "### 🖥️ Terminal (CLI)"
@@ -34,6 +40,9 @@ md = MarkdownIt("commonmark", {"html": False, "linkify": False}).enable("table")
 def version() -> str:
     m = re.search(r'^version = "([^"]+)"', CARGO.read_text(encoding="utf-8"), re.M)
     return m.group(1) if m else "?"
+
+
+PART_RE = re.compile(r"Partie ([0-9]+) — (.*)$")
 
 
 def strip_tags(s: str) -> str:
@@ -98,6 +107,11 @@ def render(chunk: str) -> str:
     # Citations → boîtes.
     def box(m):
         inner = m.group(1).strip()
+        tech = re.match(r"<p><strong>Détails techniques\.?</strong>\s*", inner)
+        if tech:
+            inner = "<p>" + inner[tech.end():]
+            return f'<details class="tech"><summary>Détails techniques</summary>{inner}</details>'
+
         warn = inner.startswith("<p>⚠️")
         inner = inner.replace("<p>⚠️ ", "<p>", 1)
         lbl = re.match(r"<p><strong>([^<]*?)\.?</strong>\s*", inner)
@@ -143,6 +157,10 @@ def split_columns(body: str):
 
 
 def render_section(sid: str, title: str, num: str, body: str, idx: int) -> str:
+    part = PART_RE.match(title)
+    if part:
+        return (f'<section id="{sid}" class="part" aria-labelledby="h-{idx}"><h2 id="h-{idx}"><span class="pn">Partie {part.group(1)}</span> '
+                f"{md.renderInline(part.group(2))}</h2>\n{render(body)}</section>")
     h = f'<h2 id="h-{idx}">' + (f'<span class="num" aria-hidden="true">{html.escape(num)}</span> ' if num else "") + f"{md.renderInline(title)}</h2>"
     parts = [f'<section id="{sid}" aria-labelledby="h-{idx}">', h]
     for block in split_columns(body):
@@ -161,20 +179,49 @@ def render_section(sid: str, title: str, num: str, body: str, idx: int) -> str:
 
 
 def sommaire(sections) -> str:
-    items = []
+    """Une ligne par partie : « - **Partie N — titre** : [1. …](#…) · … »."""
+    lines, items, head = [], [], None
+    def flush():
+        if head or items:
+            lines.append(f"- {head + ' : ' if head else ''}" + " · ".join(items))
     for sid, title, num, _ in sections:
+        part = PART_RE.match(title)
+        if part:
+            flush()
+            head, items = f"[**Partie {part.group(1)} — {part.group(2)}**](#{sid})", []
+            continue
         label = f"{num}. {title}" if num else title
         items.append(f"[{label.split(' : ')[0].split(' — ')[0]}](#{sid})")
-    return "**Sommaire** : " + " · ".join(items)
+    flush()
+    return "**Sommaire** :\n\n" + "\n".join(lines)
+
+
+def toc(sections) -> str:
+    """Sommaire de la page : une liste par partie."""
+    out, open_ = ['<nav class="toc" aria-labelledby="toc-t"><h2 id="toc-t">Sommaire</h2>'], False
+    for sid, title, num, _ in sections:
+        part = PART_RE.match(title)
+        if part:
+            if open_:
+                out.append("</ol>")
+            out.append(f'<h3><a href="#{sid}">Partie {part.group(1)} — {strip_tags(md.renderInline(part.group(2)))}</a></h3><ol>')
+            open_ = True
+            continue
+        if not open_:
+            out.append("<ol>")
+            open_ = True
+        out.append(f'<li><a href="#{sid}">{(html.escape(num) + ". ") if num else ""}{strip_tags(md.renderInline(title))}</a></li>')
+    out.append("</ol></nav>" if open_ else "</nav>")
+    return "".join(out)
 
 
 def build():
     guide = GUIDE.read_text(encoding="utf-8")
     sections = parse_sections(guide)
-    new_guide = re.sub(r"^\*\*Sommaire\*\* : .*$", lambda _: sommaire(sections), guide, count=1, flags=re.M)
+    new_guide = re.sub(r"^\*\*Sommaire\*\* :.*?(?=\n\n<a id=)", lambda _: sommaire(sections), guide, count=1, flags=re.M | re.S)
     new_guide = re.sub(r"Préversion \*\*[^*]+\*\*", f"Préversion **{version()}**", new_guide, count=1)
 
-    old = INDEX.read_text(encoding="utf-8")
+    old = GUIDE_HTML.read_text(encoding="utf-8")
     head = old[: old.index('<nav class="toc"')]
     head = re.sub(r'<span class="badge">Préversion [^<]*</span>', f'<span class="badge">Préversion {version()}</span>', head)
     tail = old[old.index("</main>"):]
@@ -187,17 +234,15 @@ def build():
         head = head.replace("</style>", "a{overflow-wrap:anywhere}\n</style>", 1)
     if ".tw{" not in head:
         head = head.replace("</style>", ".tw{overflow-x:auto}table{border-collapse:collapse;margin:.8em 0;font-size:.95rem}th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}th{background:var(--pan)}\n</style>", 1)
-    toc = '<nav class="toc" aria-labelledby="toc-t"><h2 id="toc-t">Les étapes</h2><ol style="list-style:none;padding-left:0">' + "".join(
-        f'<li><a href="#{sid}">{(html.escape(num) + ". ") if num else ""}{strip_tags(md.renderInline(title))}</a></li>' for sid, title, num, _ in sections
-    ) + "</ol></nav>\n</header>\n<main id=\"contenu\" tabindex=\"-1\">\n"
+    nav = toc(sections) + "\n</header>\n<main id=\"contenu\" tabindex=\"-1\">\n"
     body = "\n".join(render_section(sid, title, num, b, i) for i, (sid, title, num, b) in enumerate(sections))
-    index = head + toc + body + "\n" + tail
-    return new_guide, index
+    page = head + nav + body + "\n" + tail
+    return new_guide, page
 
 
 # Documents annexes publiés en HTML (GitHub Pages sert les .md bruts) : même feuille de style que le guide.
 PAGES = ["CONSTELLATIONS", "MACOS", "CHARTE_UPLANET", "UPLANET_ManuelDesMembresEtDesContributeurs"]
-LINKED = {**{f"{n}.md": f"{n}.html" for n in PAGES}, "GUIDE.md": "index.html"}
+LINKED = {**{f"{n}.md": f"{n}.html" for n in PAGES}, "GUIDE.md": "guide.html"}
 
 
 def link_md(out: str) -> str:
@@ -205,24 +250,36 @@ def link_md(out: str) -> str:
     return re.sub(r'href="([A-Za-z_]+\.md)(#[^"]*)?"', lambda m: f'href="{LINKED.get(m.group(1), m.group(1))}{m.group(2) or ""}"', out)
 
 
+# Texte placé avant le document, dans sa page HTML seulement : le .md reste intact. La charte est embarquée telle quelle
+# dans le binaire (`coop_config::DEFAULT_CHARTER`) et les Capitaines en signent l'empreinte : on n'y ajoute rien.
+INTRO = {
+    "CHARTE_UPLANET": "> **À savoir.** Ce texte est la charte que chaque station propose par défaut, mot pour mot. "
+    "Chaque Capitaine la lit dans l'écran *Ma UPlanet* et la signe d'un bouton : sa signature porte l'empreinte exacte du texte. "
+    "Une coopérative peut publier sa propre version ; elle demande alors une nouvelle signature. "
+    "Pour le détail des rôles et des règles : le [Manuel des membres et des contributeurs](UPLANET_ManuelDesMembresEtDesContributeurs.md).",
+}
+
+
 def build_page(name: str) -> str:
     text = (DOCS / f"{name}.md").read_text(encoding="utf-8")
-    old = INDEX.read_text(encoding="utf-8")
+    old = GUIDE_HTML.read_text(encoding="utf-8")
     style = old[old.index("<style>"): old.index("</style>") + len("</style>")]
     style += "\n<style>.pg{max-width:60rem;margin:0 auto;padding:1rem 16px 3rem}</style>"
     m = re.match(r"#\s+(.*)", text)
     title = m.group(1).strip() if m else name
-    body = render(re.sub(r"^#\s+.*\n", "", text, count=1))
-    back = '<p><a href="index.html">← Retour au guide</a></p>'
+    body = render(INTRO.get(name, "") + "\n\n" + re.sub(r"^#\s+.*\n", "", text, count=1))
+    back = '<p class="back"><a href="index.html">Accueil</a> · <a href="guide.html">Guide du Capitaine</a></p>'
     return link_md(f'<!doctype html>\n<html lang="fr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>{html.escape(strip_tags(title))} — astroportd</title>\n{style}\n</head>\n<body>\n<main class="pg">\n{back}\n<h1>{md.renderInline(title)}</h1>\n{body}\n{back}\n</main>\n</body>\n</html>\n')
 
 
 def main():
-    new_guide, index = build()
-    index = link_md(index)
+    new_guide, guide = build()
+    guide = link_md(guide)
     pages = {n: build_page(n) for n in PAGES}
+    home_old = HOME.read_text(encoding="utf-8")
+    home = re.sub(r"Préversion [0-9]+\.[0-9]+\.[0-9]+(?:-[a-z0-9]+)?", f"Préversion {version()}", home_old)
     if "--check" in sys.argv:
-        targets = [("GUIDE.md", GUIDE, new_guide), ("index.html", INDEX, index)] + [(f"{n}.html", DOCS / f"{n}.html", v) for n, v in pages.items()]
+        targets = [("GUIDE.md", GUIDE, new_guide), ("guide.html", GUIDE_HTML, guide), ("index.html", HOME, home)] + [(f"{n}.html", DOCS / f"{n}.html", v) for n, v in pages.items()]
         stale = [n for n, p, v in targets if not p.exists() or p.read_text(encoding="utf-8") != v]
         if stale:
             print("périmé : " + ", ".join(stale) + " — relancez python3 docs/build_guide.py", file=sys.stderr)
@@ -230,10 +287,11 @@ def main():
         print("guide à jour")
         return
     GUIDE.write_text(new_guide, encoding="utf-8")
-    INDEX.write_text(index, encoding="utf-8")
+    GUIDE_HTML.write_text(guide, encoding="utf-8")
+    HOME.write_text(home, encoding="utf-8")
     for n, v in pages.items():
         (DOCS / f"{n}.html").write_text(v, encoding="utf-8")
-    print(f"docs/index.html et le sommaire de GUIDE.md reconstruits ({len(parse_sections(new_guide))} sections, version {version()})")
+    print(f"docs/guide.html, les annexes et le sommaire de GUIDE.md reconstruits ({len(parse_sections(new_guide))} sections, version {version()})")
 
 
 if __name__ == "__main__":

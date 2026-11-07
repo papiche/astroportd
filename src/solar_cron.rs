@@ -85,6 +85,78 @@ impl NightReport {
     }
 }
 
+/// Tags économiques du 30850 pour la dernière semaine terminée avant `now` : `(semaine, état, tags)`. Montants en Ẑ
+/// (deux décimales). `health:bilan` = recettes − charges de la semaine (tag lu par les tableaux de bord du legacy).
+pub async fn health_tags(db: &Db, now: u64, weekly_costs: Amount) -> Result<(String, &'static str, Vec<Vec<String>>), String> {
+    let start = week_start(now).saturating_sub(7 * DAY);
+    let week = iso_week(start);
+    let key = economy_store::week_key(&week);
+    let status: Option<String> = db.readers().read(move |c| Ok(c.query_row("SELECT value FROM done WHERE key = ?1", [key], |r| r.get(0)).ok())).await.map_err(|e| e.to_string())?;
+    let health = match status.as_deref() {
+        Some("split") => "healthy",
+        Some("drawdown") => "drawdown",
+        Some("volunteer") => "volunteer",
+        _ => "unknown",
+    };
+    let revenue = revenue(db, start, start + 7 * DAY).await?;
+    let (cash, _) = books(db, &week).await?;
+    let bilan = if revenue.0 >= weekly_costs.0 { Amount(revenue.0 - weekly_costs.0).to_string() } else { format!("-{}", Amount(weekly_costs.0 - revenue.0)) };
+    let tags = vec![
+        vec!["d".to_owned(), "economic-health".to_owned()],
+        vec!["week".to_owned(), week.clone()],
+        vec!["health:status".to_owned(), health.to_owned()],
+        vec!["health:revenue".to_owned(), revenue.to_string()],
+        vec!["health:costs".to_owned(), weekly_costs.to_string()],
+        vec!["health:cash".to_owned(), cash.to_string()],
+        vec!["health:bilan".to_owned(), bilan],
+        vec!["balance:cash".to_owned(), cash.to_string()],
+    ];
+    Ok((week, health, tags))
+}
+
+/// Recettes d'une semaine `[start, end[` : loyers constatés.
+async fn revenue(db: &Db, start: u64, end: u64) -> Result<Amount, String> {
+    let cents: i64 = db
+        .readers()
+        .read(move |c| {
+            Ok(c.query_row(
+                "SELECT COALESCE(SUM(amount_cents), 0) FROM rents WHERE at >= ?1 AND at < ?2",
+                rusqlite::params![i64::try_from(start).unwrap_or(0), i64::try_from(end).unwrap_or(i64::MAX)],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(Amount(u64::try_from(cents).unwrap_or(0)))
+}
+
+/// Trésorerie (`CASH` des ventilations moins les prélèvements) et résultat de l'exercice avant `week`.
+async fn books(db: &Db, week: &str) -> Result<(Amount, Amount), String> {
+    let year = week.split('-').next().unwrap_or_default().to_owned();
+    let rows: Vec<(String, String)> = db
+        .readers()
+        .read(|c| {
+            let mut s = c.prepare("SELECT stream, data FROM journal WHERE stream IN ('economy.3x13', 'economy.drawdown') ORDER BY id")?;
+            Ok(s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    let (mut cash, mut taken, mut ytd) = (0u64, 0u64, 0u64);
+    let dec = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).and_then(|x| x.parse::<Amount>().ok()).map_or(0, |a| a.0);
+    for (stream, data) in rows {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) else { continue };
+        if stream == "economy.3x13" {
+            cash = cash.saturating_add(dec(&v, "cash"));
+            if v.get("week").and_then(|w| w.as_str()).is_some_and(|w| w.starts_with(&year)) {
+                ytd = ytd.saturating_add(dec(&v, "surplus"));
+            }
+        } else {
+            taken = taken.saturating_add(dec(&v, "gap"));
+        }
+    }
+    Ok((Amount(cash.saturating_sub(taken)), Amount(ytd)))
+}
+
 /// Les moyens de la nuit.
 pub struct Nightly<P: Publisher> {
     /// Base `uplanet.db`.
@@ -115,6 +187,8 @@ pub struct Nightly<P: Publisher> {
     pub billets: Option<Hook>,
     /// Publication de l'événement de santé (relai local + relais).
     pub publisher: Option<Arc<P>>,
+    /// Balise de station : si présente, l'étape « santé » la réveille au lieu de publier un 30850 réduit.
+    pub beacon: Option<Arc<tokio::sync::Notify>>,
     /// Journal d'activité.
     pub activity: Option<ActivityBus>,
     /// Respiration entre deux étapes lourdes : laisse passer le trafic HTTP/WebDAV sur un petit CPU (zéro en test).
@@ -260,51 +334,6 @@ impl<P: Publisher> Nightly<P> {
         Ok(format!("{claimed} réclamation(s) purgée(s) ; {expired} événement(s) expiré(s) ; journal CardDAV purgé ; {shares}"))
     }
 
-    /// Recettes d'une semaine `[start, end[` : loyers constatés.
-    async fn revenue(&self, start: u64, end: u64) -> Result<Amount, String> {
-        let cents: i64 = self
-            .db
-            .readers()
-            .read(move |c| {
-                Ok(c.query_row(
-                    "SELECT COALESCE(SUM(amount_cents), 0) FROM rents WHERE at >= ?1 AND at < ?2",
-                    rusqlite::params![i64::try_from(start).unwrap_or(0), i64::try_from(end).unwrap_or(i64::MAX)],
-                    |r| r.get(0),
-                )?)
-            })
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(Amount(u64::try_from(cents).unwrap_or(0)))
-    }
-
-    /// Trésorerie (`CASH` des ventilations moins les prélèvements) et résultat de l'exercice avant `week`.
-    async fn books(&self, week: &str) -> Result<(Amount, Amount), String> {
-        let year = week.split('-').next().unwrap_or_default().to_owned();
-        let rows: Vec<(String, String)> = self
-            .db
-            .readers()
-            .read(|c| {
-                let mut s = c.prepare("SELECT stream, data FROM journal WHERE stream IN ('economy.3x13', 'economy.drawdown') ORDER BY id")?;
-                Ok(s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?)
-            })
-            .await
-            .map_err(|e| e.to_string())?;
-        let (mut cash, mut taken, mut ytd) = (0u64, 0u64, 0u64);
-        let dec = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).and_then(|x| x.parse::<Amount>().ok()).map_or(0, |a| a.0);
-        for (stream, data) in rows {
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) else { continue };
-            if stream == "economy.3x13" {
-                cash = cash.saturating_add(dec(&v, "cash"));
-                if v.get("week").and_then(|w| w.as_str()).is_some_and(|w| w.starts_with(&year)) {
-                    ytd = ytd.saturating_add(dec(&v, "surplus"));
-                }
-            } else {
-                taken = taken.saturating_add(dec(&v, "gap"));
-            }
-        }
-        Ok((Amount(cash.saturating_sub(taken)), Amount(ytd)))
-    }
-
     /// Clôture les semaines ISO terminées et pas encore closes (rattrapage borné, jamais avant la première nuit).
     async fn close_weeks(&self, now: u64) -> Result<String, String> {
         let w = self.db.writer();
@@ -324,8 +353,8 @@ impl<P: Publisher> Nightly<P> {
             if closed {
                 continue;
             }
-            let revenue = self.revenue(start, start + 7 * DAY).await?;
-            let (cash_balance, ytd_profit) = self.books(&week).await?;
+            let revenue = revenue(&self.db, start, start + 7 * DAY).await?;
+            let (cash_balance, ytd_profit) = books(&self.db, &week).await?;
             let input = WeekInput { week: week.clone(), revenue, costs: self.weekly_costs, cash_balance, ytd_profit };
             let outcome = close_week(&self.split, &input).map_err(|e| format!("{week} : {e}"))?;
             let label = match &outcome {
@@ -339,30 +368,16 @@ impl<P: Publisher> Nightly<P> {
         Ok(if done.is_empty() { "aucune semaine à clôturer".into() } else { done.join(" ; ") })
     }
 
-    /// Événement 30850 `economic-health` de la dernière semaine terminée, signé par le NODE.
+    /// Événement 30850 `economic-health` de la dernière semaine terminée, signé par le NODE. Avec la balise de station
+    /// ([`crate::beacon`]), c'est elle qui le publie, complet (places libres, position, matériel) : la nuit la réveille.
     async fn health(&self, now: u64) -> Result<String, String> {
+        if let Some(beacon) = &self.beacon {
+            beacon.notify_one();
+            return Ok("confiée à la balise de station (publication complète)".into());
+        }
         let Some(secret) = self.node_secret else { return Ok("sautée : clé du NODE absente".into()) };
         let Some(publisher) = &self.publisher else { return Ok("sautée : aucun relai pour publier".into()) };
-        let start = week_start(now).saturating_sub(7 * DAY);
-        let week = iso_week(start);
-        let key = economy_store::week_key(&week);
-        let status: Option<String> = self.db.readers().read(move |c| Ok(c.query_row("SELECT value FROM done WHERE key = ?1", [key], |r| r.get(0)).ok())).await.map_err(|e| e.to_string())?;
-        let health = match status.as_deref() {
-            Some("split") => "healthy",
-            Some("drawdown") => "drawdown",
-            Some("volunteer") => "volunteer",
-            _ => "unknown",
-        };
-        let revenue = self.revenue(start, start + 7 * DAY).await?;
-        let (cash, _) = self.books(&week).await?;
-        let mut tags = vec![
-            vec!["d".to_owned(), "economic-health".to_owned()],
-            vec!["week".to_owned(), week.clone()],
-            vec!["health:status".to_owned(), health.to_owned()],
-            vec!["health:revenue".to_owned(), revenue.to_string()],
-            vec!["health:costs".to_owned(), self.weekly_costs.to_string()],
-            vec!["health:cash".to_owned(), cash.to_string()],
-        ];
+        let (week, health, mut tags) = health_tags(&self.db, now, self.weekly_costs).await?;
         if let Some(p) = &self.peer_id {
             tags.push(vec!["station".to_owned(), p.clone()]);
         }

@@ -17,6 +17,7 @@ export default {
 "Jeton": "Token",
 "Pas de compte ?": "¿Sin cuenta?",
 "Créer mon MULTIPASS": "Crear mi MULTIPASS",
+"Stations proches": "Estaciones cercanas",
 "Se connecter": "Entrar",
 "Fermer": "Cerrar",
 "Copier": "Copiar",

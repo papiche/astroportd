@@ -1,3 +1,38 @@
+## astroportd 0.5.7-beta
+
+Cette version aide les futurs membres à **trouver une station** : chaque station publie une balise, et un annuaire les envoie vers la plus proche qui a encore de la place. La station fonctionne aussi **derrière un reverse proxy** et affiche son **énergie**. La **documentation publique** est refondue : une page d'accueil pour le grand public et les futurs Capitaines, et un guide du Capitaine en quatre parties.
+
+### Trouver une station proche
+- **Balise complète** (kind 30850, `d = economic-health`, signée par le NODE) : places libres, ouverture des inscriptions, position arrondie à la maille UMAP (≈ 1 km, seulement si `--lat`/`--lon` sont réglés), matériel, prix du MULTIPASS et adresse publique. Les noms de tags restent ceux d'`ECONOMY.broadcast.sh`.
+- **Quand elle est publiée** : au démarrage, à chaque changement du nombre de places (au plus toutes les 2 minutes), toutes les 6 heures et après la nuit de 20h12.
+- **Où elle est publiée** : sur le relai de la station, sur les relais `--relay` et sur le relai commun de la coopérative `wss://relay.<OVH_ZONE>`.
+- **Annuaire** : la page `/stations` et `GET /api/v1/stations` (lisible depuis toute origine) listent les stations de la même UPlanet vues depuis moins de 8 jours. Avec « Me localiser », la position du visiteur reste dans son navigateur ; la station conseillée est revérifiée en direct.
+- **Inscriptions** : une station complète ou fermée renvoie vers l'annuaire depuis `/register`.
+- **Relai commun** : le relai accepte la balise d'une station inconnue seulement si elle porte le `swarm_id` de son UPlanet et un PeerID, avec un débit limité. Le reste du relai reste fermé.
+
+### Derrière un reverse proxy
+- **Détection par `astroportd init`** : quand les ports 80/443 sont déjà pris, la station écoute sur `127.0.0.1:8090` et demande le domaine que sert le proxy (`--public-domain`). La balise, les liens envoyés aux membres, NIP-98 et le relai annoncé utilisent ce domaine.
+- **Adresse des visiteurs** : quand la connexion vient du proxy (boucle locale ou réseau privé), la station la lit dans `X-Forwarded-For`, dont seule la dernière adresse est crue. Les limites par adresse visent ainsi les visiteurs, pas le proxy.
+
+### Énergie de la station
+- **Lecture du plugin `energy`** (dépôt `astroportd-plugins` : consommation avec PowerJoular, production solaire avec les régulateurs Victron) : la station lit le fichier `energy/v1` qu'il dépose et n'exécute jamais son code.
+- **Affichage et diffusion** : carte « Énergie de la station » dans le cockpit, `GET /api/v1/station/energy`, et tags `hw:energy_*` / `hw:solar_*` dans la balise.
+- **Fichier périmé ou invalide** : un fichier de plus d'une heure ou hors contrat est ignoré, et le cockpit le signale.
+
+### Documentation
+- **Nouvelle page d'accueil** (`docs/index.html`) pour le grand public et les futurs Capitaines :
+  - une promesse et un schéma de la constellation ;
+  - un comparatif avec Google Photos et iCloud ;
+  - deux parcours : rejoindre une station, ouvrir la sienne ;
+  - la clé de secours en trois morceaux ;
+  - « Où va l'argent » : 1×PAF à l'Armateur, 2×PAF au Capitaine, puis le surplus en 3×1/3.
+- **Guide du Capitaine** (`docs/guide.html`) :
+  - quatre parties : mettre en service en 9 étapes, ce que la station offre aux membres, l'argent, relier et administrer ;
+  - les détails techniques sont repliés ;
+  - les anciennes adresses `…/#etape-N` mènent toujours à la bonne section.
+- **Constellations et Mac réécrits.** Corrections : le SSH est fermé par défaut en ẐEN et ouvert aux Capitaines amis en ORIGIN, et astroportd tient lui-même son bloc dans `authorized_keys`.
+- **Charte** : le texte, signé par les Capitaines, est inchangé ; sa page web explique désormais ce qu'il est.
+
 ## astroportd 0.5.6-beta
 
 Cette version rend l'interface **plus simple à prendre en main**, pour le membre comme pour le Capitaine, et transforme **« J'appelle un ami »** : le membre qui a perdu sa station prévient ses gardiens, l'ami confirme d'un geste après l'avoir appelé, et le compte renaît tout seul, sans QR à lire au téléphone. Elle ouvre aussi le **maillage entre Capitaines amis** (stations ajoutées à chaud, services partagés à la demande) et rend l'économie plus sûre (primale vérifiée par deux indexeurs, intrusions corrigées).

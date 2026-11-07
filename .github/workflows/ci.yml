@@ -32,7 +32,7 @@ jobs:
         run: cargo test --workspace --locked
       - name: "Règles de l'interface (JavaScript pur, sans navigateur) : cockpit, accueil, traductions, replaceChildren…"
         run: for t in crates/astro-ui/tests/*.mjs; do echo "▶ $t"; node "$t"; done
-      - name: Guide illustré à jour (docs/index.html se reconstruit depuis docs/GUIDE.md)
+      - name: Guide illustré à jour (docs/guide.html se reconstruit depuis docs/GUIDE.md)
         run: |
           pip install markdown-it-py
           python3 docs/build_guide.py --check

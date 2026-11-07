@@ -302,10 +302,13 @@ impl Policy {
             return WriteDecision::AcceptLimited;
         }
         if circle.in_circle(&e.pubkey) {
-            WriteDecision::Accept
-        } else {
-            WriteDecision::Reject("restricted: author is outside the social circle")
+            return WriteDecision::Accept;
         }
+        // Balise d'une autre station de la même UPlanet : le relai commun de la coopérative en fait l'annuaire.
+        if e.kind == kind::ECONOMIC_HEALTH && circle.accepts_beacon(e) {
+            return WriteDecision::AcceptLimited;
+        }
+        WriteDecision::Reject("restricted: author is outside the social circle")
     }
 }
 
@@ -340,6 +343,35 @@ mod tests {
 
     fn filter(kinds: Option<Vec<u32>>) -> Filter {
         Filter { kinds, ..Filter::default() }
+    }
+
+    /// Cercle qui connaît l'UPlanet `g1X` : balises de station acceptées d'un inconnu.
+    struct BeaconCircle(StaticCircle);
+    impl CircleProvider for BeaconCircle {
+        fn is_hosted(&self, k: &str) -> bool {
+            self.0.is_hosted(k)
+        }
+        fn in_circle(&self, k: &str) -> bool {
+            self.0.in_circle(k)
+        }
+        fn accepts_beacon(&self, e: &Event) -> bool {
+            crate::circle::is_beacon_of(e, Some("g1X"))
+        }
+    }
+
+    #[test]
+    fn a_station_of_the_same_uplanet_may_post_its_beacon_but_nothing_else() {
+        let c = BeaconCircle(circle());
+        let p = Policy::default();
+        let t = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| vec![(*k).to_owned(), (*v).to_owned()]).collect::<Vec<_>>();
+        let beacon = ev(9, kind::ECONOMIC_HEALTH, t(&[("d", "economic-health"), ("swarm_id", "g1X"), ("station", "12D3KooWabc")]));
+        assert_eq!(p.write_decision(&beacon, &c), WriteDecision::AcceptLimited, "balise d'une station sœur (débit limité)");
+        let other = ev(9, kind::ECONOMIC_HEALTH, t(&[("d", "economic-health"), ("swarm_id", "g1Y"), ("station", "12D3KooWabc")]));
+        assert!(matches!(p.write_decision(&other, &c), WriteDecision::Reject(_)), "autre UPlanet refusée");
+        let no_peer = ev(9, kind::ECONOMIC_HEALTH, t(&[("d", "economic-health"), ("swarm_id", "g1X")]));
+        assert!(matches!(p.write_decision(&no_peer, &c), WriteDecision::Reject(_)), "sans PeerID refusée");
+        assert!(matches!(p.write_decision(&ev(9, kind::TEXT_NOTE, t(&[("swarm_id", "g1X")])), &c), WriteDecision::Reject(_)), "le reste du relai ne s'ouvre pas");
+        assert!(matches!(p.write_decision(&beacon, &circle()), WriteDecision::Reject(_)), "un relai qui ne connaît pas son UPlanet n'accepte rien");
     }
 
     #[test]

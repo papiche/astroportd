@@ -18,6 +18,11 @@ pub trait CircleProvider: Send + Sync {
     fn is_friend_of(&self, _author: &str, _reader: &str) -> bool {
         false
     }
+    /// Balise de station (kind 30850, `d = economic-health`) d'une station de **la même UPlanet** : acceptée d'un
+    /// inconnu, pour que le relai commun de la coopérative serve d'annuaire. Faux par défaut.
+    fn accepts_beacon(&self, _e: &astro_nostr_proto::Event) -> bool {
+        false
+    }
 }
 
 /// Cercle fixe (tests, intégration).
@@ -84,12 +89,19 @@ fn followed_keys(tags_json: &str) -> impl Iterator<Item = String> {
 #[derive(Default)]
 pub struct DbCircle {
     inner: RwLock<Snapshot>,
+    /// `swarm_id` de l'UPlanet de la station (voir [`CircleProvider::accepts_beacon`]) ; aucune balise acceptée sans lui.
+    swarm: std::sync::OnceLock<String>,
 }
 
 impl DbCircle {
     /// Cercle vide : appeler [`DbCircle::refresh`] avant usage.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Fixe l'UPlanet dont les balises de station sont acceptées (une seule fois).
+    pub fn set_swarm_id(&self, swarm_id: String) {
+        let _ = self.swarm.set(swarm_id);
     }
 
     /// Recharge le cercle depuis la base.
@@ -159,4 +171,17 @@ impl CircleProvider for DbCircle {
     fn is_friend_of(&self, author: &str, reader: &str) -> bool {
         self.inner.read().unwrap_or_else(|e| e.into_inner()).n1.get(author).is_some_and(|f| f.contains(reader))
     }
+
+    fn accepts_beacon(&self, e: &astro_nostr_proto::Event) -> bool {
+        is_beacon_of(e, self.swarm.get().map(String::as_str))
+    }
+}
+
+/// Le 30850 `e` est-il la balise d'une station de l'UPlanet `swarm` (même `swarm_id`, un PeerID libp2p) ?
+pub fn is_beacon_of(e: &astro_nostr_proto::Event, swarm: Option<&str>) -> bool {
+    let Some(swarm) = swarm.filter(|s| !s.is_empty()) else { return false };
+    e.kind == astro_nostr_proto::kind::ECONOMIC_HEALTH
+        && e.tag_value("d") == Some("economic-health")
+        && e.tag_value("swarm_id") == Some(swarm)
+        && e.tag_value("station").is_some_and(|p| p.starts_with("12D3KooW") && p.len() <= 64 && p.bytes().all(|b| b.is_ascii_alphanumeric()))
 }

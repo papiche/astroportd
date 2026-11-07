@@ -6,7 +6,7 @@
 > ci-dessous répondent.
 
 Liens utilisés : dépôt https://github.com/papiche/astroportd · releases https://github.com/papiche/astroportd/releases ·
-guide `docs/index.html` (à remplacer par l'adresse publique du guide, une fois publiée).
+guide `docs/guide.html` (à remplacer par l'adresse publique du guide, une fois publiée).
 
 ---
 

@@ -2,7 +2,8 @@
 //!
 //! Le Capitaine n'a plus à relancer `astroportd init --domain` dans un terminal : le cockpit vérifie le nom (forme, DNS,
 //! ports 80/443 de cette machine), l'écrit dans `station.conf`, puis propose de **redémarrer** la station. Au démarrage,
-//! `serve` sans `--domain` reprend le domaine de `station.conf` ([`domain_from_conf`]) et obtient seul son certificat.
+//! `serve` sans `--domain` reprend le domaine de `station.conf` ([`domain_from_conf`]) et obtient seul son certificat ;
+//! derrière un reverse proxy (`--http-listen` imposé par `init`), ce domaine devient son domaine public (`--public-domain`).
 //!
 //! Redémarrer = s'arrêter proprement avec un code d'échec : l'unité systemd écrite par `init` (`Restart=on-failure`)
 //! relance alors la station. Hors systemd, rien ne la relancerait : le cockpit donne la commande au lieu du bouton.
@@ -95,15 +96,39 @@ pub fn set_conf_value(path: &Path, key: &str, value: &str) -> std::io::Result<()
 }
 
 /// Domaine et email de contact ACME repris de `station.conf` (`domain`, `captain_email`) pour un `serve` lancé sans
-/// `--domain`. Rien si une écoute HTTP est imposée (`--http-listen` : derrière un proxy, c'est lui qui tient le TLS).
-pub fn domain_from_conf(conf: &Path, http_listen_given: bool) -> Option<(String, Option<String>)> {
-    if http_listen_given {
-        return None;
-    }
+/// `--domain`. L'appelant décide : HTTPS de la station, ou domaine servi par un reverse proxy (`--http-listen` imposé).
+pub fn domain_from_conf(conf: &Path) -> Option<(String, Option<String>)> {
     let conf = crate::init::read_conf(conf);
     let get = |k: &str| conf.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone()).filter(|v| !v.is_empty());
     let domain = normalize_domain(&get("domain")?).ok()?;
     Some((domain, get("captain_email")))
+}
+
+/// Adresse du visiteur derrière un reverse proxy : quand la connexion vient du proxy (boucle locale ou réseau privé),
+/// l'IP retenue est la **dernière** de `X-Forwarded-For`, celle que le proxy a lui-même ajoutée (les précédentes, posées
+/// par le client, ne sont pas crues). Une connexion directe d'Internet garde son adresse : l'en-tête ne s'usurpe pas.
+pub fn forwarded_client(peer: std::net::IpAddr, xff: Option<&str>) -> std::net::IpAddr {
+    let from_proxy = match peer {
+        std::net::IpAddr::V4(v) => v.is_loopback() || v.is_private() || v.is_link_local(),
+        std::net::IpAddr::V6(v) => v.is_loopback() || v.to_ipv4_mapped().is_some_and(|m| m.is_loopback() || m.is_private()) || (v.segments()[0] & 0xfe00) == 0xfc00,
+    };
+    if !from_proxy {
+        return peer;
+    }
+    xff.and_then(|h| h.rsplit(',').next()).and_then(|ip| ip.trim().parse().ok()).unwrap_or(peer)
+}
+
+/// Couche axum (mode `--public-domain`) : remplace l'adresse de connexion par celle du visiteur ([`forwarded_client`]),
+/// pour que les limites par IP (inscription, relai…) visent les visiteurs et non le proxy.
+pub async fn client_ip_from_proxy(mut req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    if let Some(info) = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().copied() {
+        let xff = req.headers().get("x-forwarded-for").and_then(|v| v.to_str().ok());
+        let ip = forwarded_client(info.0.ip(), xff);
+        if ip != info.0.ip() {
+            req.extensions_mut().insert(axum::extract::ConnectInfo(std::net::SocketAddr::new(ip, info.0.port())));
+        }
+    }
+    next.run(req).await
 }
 
 /// État d'un port de cette machine.
@@ -118,6 +143,16 @@ pub fn port_state(port: u16) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn behind_a_proxy_the_visitor_address_is_the_one_the_proxy_saw() {
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+        assert_eq!(forwarded_client(ip("127.0.0.1"), Some("203.0.113.9")), ip("203.0.113.9"), "proxy local");
+        assert_eq!(forwarded_client(ip("192.168.1.2"), Some("6.6.6.6, 198.51.100.4")), ip("198.51.100.4"), "seule la dernière adresse, ajoutée par le proxy, compte");
+        assert_eq!(forwarded_client(ip("198.51.100.7"), Some("10.0.0.1")), ip("198.51.100.7"), "connexion directe d'Internet : l'en-tête n'est pas cru");
+        assert_eq!(forwarded_client(ip("127.0.0.1"), Some("pas-une-ip")), ip("127.0.0.1"));
+        assert_eq!(forwarded_client(ip("::1"), None), ip("::1"));
+    }
 
     #[test]
     fn a_domain_is_cleaned_and_checked() {
@@ -135,12 +170,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let conf = dir.join("station.conf");
         std::fs::write(&conf, "# commentaire\nmode = origin\ndomain =\ncaptain_email = cap@exemple.org\nkind.7 = read=all\n").unwrap();
-        assert_eq!(domain_from_conf(&conf, false), None, "domaine vide : HTTP local");
+        assert_eq!(domain_from_conf(&conf), None, "domaine vide : HTTP local");
         set_conf_value(&conf, "domain", "station.exemple.org").unwrap();
         let text = std::fs::read_to_string(&conf).unwrap();
         assert!(text.starts_with("# commentaire\nmode = origin\ndomain = station.exemple.org\n") && text.contains("kind.7 = read=all"), "{text}");
-        assert_eq!(domain_from_conf(&conf, false), Some(("station.exemple.org".into(), Some("cap@exemple.org".into()))));
-        assert_eq!(domain_from_conf(&conf, true), None, "derrière un proxy (--http-listen), le TLS reste au proxy");
+        assert_eq!(domain_from_conf(&conf), Some(("station.exemple.org".into(), Some("cap@exemple.org".into()))));
         set_conf_value(&conf, "lat", "43.6").unwrap();
         assert!(std::fs::read_to_string(&conf).unwrap().ends_with("lat = 43.6\n"), "clé absente : ajoutée");
         #[cfg(unix)]

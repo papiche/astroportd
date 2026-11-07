@@ -346,10 +346,12 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
     let (p80, p443) = (probe_port(80), probe_port(443));
     let behind_proxy = p80 == Port::Busy || p443 == Port::Busy;
     let domain = a.domain.clone().unwrap_or_else(|| prev("domain"));
-    let domain = if domain.is_empty() && !behind_proxy {
-        ask.ask("Nom de domaine public pour HTTPS automatique (vide = HTTP local seulement)", "")
-    } else {
-        domain
+    let domain = match (domain.is_empty(), behind_proxy) {
+        (true, false) => ask.ask("Nom de domaine public pour HTTPS automatique (vide = HTTP local seulement)", ""),
+        // Derrière un proxy, la station doit quand même connaître son adresse publique : balise 30850 (bouton « Rejoindre »),
+        // liens envoyés aux membres, NIP-98, relai annoncé.
+        (true, true) => ask.ask("Ports 80/443 pris (reverse proxy ?) : nom de domaine public que ce proxy renvoie vers la station (vide = aucun)", ""),
+        _ => domain,
     };
 
     // Visio : la station sert elle-même STUN (et un relais d'appel TURN) sur le port UDP de l'interface ; il faut l'ouvrir
@@ -420,6 +422,9 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
     }
     if behind_proxy {
         serve.push(format!("--http-listen {BEHIND_PROXY_LISTEN}"));
+        if !domain.is_empty() {
+            serve.push(format!("--public-domain {domain}"));
+        }
     } else if !domain.is_empty() {
         serve.push(format!("--domain {domain}"));
         if !email.is_empty() {
@@ -470,6 +475,7 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
     if behind_proxy {
         println!("Web :             les ports 80/443 sont pris (Nginx Proxy Manager ?) : astroportd écoute sur http://{BEHIND_PROXY_LISTEN}/");
         println!("                  dans NPM : Proxy Host {} → http://{BEHIND_PROXY_LISTEN} (WebSockets activés), certificat SSL Let's Encrypt géré par NPM", if domain.is_empty() { "<votre domaine>" } else { &domain });
+        println!("                  proxy sur une autre machine : remplacez --http-listen {BEHIND_PROXY_LISTEN} par 0.0.0.0:8090 ; visio : ouvrez le port UDP 8090 sur la box");
     } else if !domain.is_empty() {
         println!("Interface web :   https://{domain}/   (certificat Let's Encrypt obtenu et renouvelé par astroportd ; jeton : astroportd token <email>)");
         println!("                  avant le démarrage : le DNS de {domain} doit pointer sur cette machine, et les ports 80 et 443 être ouverts (box/pare-feu)");

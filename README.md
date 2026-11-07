@@ -11,7 +11,7 @@ vos amis, vous fait **sauvegarder par vos proches** (et retrouver votre compte s
 une **comptabilité coopérative en Ẑen** (monnaie libre Ğ1) — sans plateforme, sans abonnement, sans serveur central.
 C'est le cœur souverain d'[Astroport.ONE](https://github.com/papiche/Astroport.ONE) et d'UPlanet, réécrit en Rust.
 
-> **Préversion 0.5.6-beta.** Le code est testé de bout en bout (≈ 840 tests, `clippy` sans avertissement) mais jeune :
+> **Préversion 0.5.7-beta.** Le code est testé de bout en bout (≈ 840 tests, `clippy` sans avertissement) mais jeune :
 > lisez [les limites connues](#8-état-du-projet-et-limites-connues). Licence **AGPL-3.0** · Auteur : Fred
 > (support@qo-op.com) · Rust 2024 (≥ 1.85).
 
@@ -81,7 +81,7 @@ avec ses [limites connues](#8-état-du-projet-et-limites-connues).
 > ArcFace par ONNX Runtime, modèles à fournir). Sans l'un ni l'autre, uCloud fonctionne mais sans visages. Pas de partage
 > « automatique » vers un ami qui ne vous suit pas en retour : c'est le lien secret qui sert alors.
 
-Pas à pas : [étape 8 du guide](docs/GUIDE.md#etape-8).
+Pas à pas : [FaceCloud dans le guide](docs/GUIDE.md#etape-8).
 
 ---
 
@@ -108,7 +108,7 @@ astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blo
 `astroportd init --mode origin` ou `--mode zen --swarm-key ./swarm.key` s'utilisent aussi sans questions (`--yes`).
 `astroportd init --systemd` écrit un service utilisateur ; `astroportd doctor` vérifie le tout.
 
-**Guide pas à pas illustré** (terminal *et* navigateur, accessible à tous) : [docs/index.html](docs/index.html)
+**Page d'accueil** (grand public et futurs Capitaines) : [docs/index.html](docs/index.html) · **Guide du Capitaine illustré** (terminal *et* navigateur) : [docs/guide.html](docs/guide.html)
 · version texte : [docs/GUIDE.md](docs/GUIDE.md) · en profondeur : [docs/CONSTELLATIONS.md](docs/CONSTELLATIONS.md).
 
 ## Créer son MULTIPASS, directement sur sa station
@@ -168,7 +168,7 @@ complète (`astro-secret:v1|…`) reste acceptée. Le SALT et le PEPPER ne sont 
   n'est publié tant que la restauration dure.
 - **Réafficher une part** : `astroportd multipass card <email> [--part 1|2|3] [--svg]`.
 
-Pas à pas : [guide, étape 5](docs/GUIDE.md#etape-5).
+Pas à pas : [guide, étape 6](docs/GUIDE.md#etape-5).
 
 ---
 

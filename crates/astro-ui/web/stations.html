@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0b5fff">
+<title>Stations proches</title>
+<link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+<script src="/ui/look.js"></script>
+<link rel="stylesheet" href="/ui/app.css">
+<link rel="stylesheet" href="/ui/register.css">
+<link rel="stylesheet" href="/ui/stations.css">
+</head>
+<body>
+<a class="skip" href="#main" data-t="skip">Aller au contenu</a>
+<main id="main">
+  <h1 data-t="title">Trouver ma station</h1>
+  <p class="lead" data-t="lead">Votre MULTIPASS vit sur une station de la coopérative. Choisissez la plus proche de chez vous qui a encore de la place : c’est aussi elle qui tient les nouvelles de votre quartier.</p>
+  <p class="row"><button id="geo" type="button" data-t="geo">📍 Me localiser</button> <span id="geo-st" class="muted" role="status"></span></p>
+  <p class="muted small0" data-t="privacy">Votre position reste dans ce navigateur : elle sert seulement à trier les stations, elle n’est envoyée à personne.</p>
+
+  <section id="best" class="best" hidden aria-live="polite">
+    <p class="muted" data-t="advice">Station conseillée</p>
+    <h2 id="best-name"></h2>
+    <p id="best-why"></p>
+    <p class="row"><a id="best-go" class="btn primary" href="/register" data-t="join">Créer mon MULTIPASS ici</a></p>
+  </section>
+
+  <p id="info" class="muted" role="status" data-t="loading">Lecture de l’annuaire…</p>
+  <ul id="list" class="st-list"></ul>
+  <p class="muted small" data-t="note">Chaque station publie toutes les quelques heures ses places libres et sa position approchée (à environ 1 km). Une station muette depuis plus de 8 jours n’apparaît plus.</p>
+  <p class="muted small"><a href="/register" data-t="here">Créer mon MULTIPASS sur cette station</a> · <a href="/" data-t="back">Retour à la connexion</a></p>
+</main>
+<script type="module" src="/ui/stations.js"></script>
+</body>
+</html>

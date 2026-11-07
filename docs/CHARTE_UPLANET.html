@@ -54,13 +54,26 @@ footer{padding:28px 16px 48px;color:var(--mut);border-top:1px solid var(--line);
 a{overflow-wrap:anywhere}
 @media (min-width:56rem){.cols.one{grid-template-columns:1fr}}
 figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:10px}
+.crumbs{margin:0 0 10px;font-size:.95rem}
+.lead2{color:var(--mut);max-width:46rem;margin-top:0}
+nav.toc h3{font-size:1rem;margin:12px 0 4px}nav.toc h3 a{color:var(--ink);text-decoration:none}nav.toc h3 a:hover{text-decoration:underline}
+nav.toc ol{list-style:none;padding-left:0;margin:0 0 4px}
+section.part{border-top:3px solid var(--acc);margin-top:64px;padding-top:18px}
+section.part h2{font-size:clamp(1.6rem,4.4vw,2.2rem);margin-bottom:.2em}
+section.part .pn{display:block;font-size:1rem;font-weight:700;color:var(--acc);letter-spacing:0}
+section.part p{color:var(--mut);font-size:1.1rem;max-width:46rem}
+details.tech{border:1px dashed var(--line);border-radius:10px;padding:2px 14px;margin:12px 0;background:transparent}
+details.tech summary{cursor:pointer;padding:8px 0;font-weight:600;color:var(--mut);min-height:44px;display:flex;align-items:center}
+details.tech[open]{padding-bottom:10px}
+details.tech[open] summary{color:var(--acc)}
 </style>
 <style>.pg{max-width:60rem;margin:0 auto;padding:1rem 16px 3rem}</style>
 </head>
 <body>
 <main class="pg">
-<p><a href="index.html">← Retour au guide</a></p>
+<p class="back"><a href="index.html">Accueil</a> · <a href="guide.html">Guide du Capitaine</a></p>
 <h1>Charte de la constellation</h1>
+<div class="box note"><p><span class="lbl">À savoir</span> Ce texte est la charte que chaque station propose par défaut, mot pour mot. Chaque Capitaine la lit dans l'écran <em>Ma UPlanet</em> et la signe d'un bouton : sa signature porte l'empreinte exacte du texte. Une coopérative peut publier sa propre version ; elle demande alors une nouvelle signature. Pour le détail des rôles et des règles : le <a href="UPLANET_ManuelDesMembresEtDesContributeurs.html">Manuel des membres et des contributeurs</a>.</p></div>
 <p>Cette charte résume, en une page, ce que chaque membre accepte en rejoignant cette UPlanet. Elle prolonge le <a href="UPLANET_ManuelDesMembresEtDesContributeurs.html">Manuel des membres et des contributeurs</a> ; elle n'est ni un contrat de travail ni un règlement juridique.</p>
 <p><strong>1. Des personnes avant les machines.</strong> Chacun peut proposer, construire et aider sans attendre d'ordre. Personne n'engage les autres, ni leurs données, ni leurs ressources, ni leur argent, sans leur accord.</p>
 <p><strong>2. Mes données m'appartiennent.</strong> Mes clés restent les miennes. Ni la station, ni le Capitaine, ni mes amis ne peuvent lire mes fichiers privés. Je peux partir quand je veux, avec ma clé de secours.</p>
@@ -70,7 +83,7 @@ figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line)
 <p><strong>6. Des responsabilités explicites.</strong> Le Capitaine tient la station et rend des comptes aux membres ; sa responsabilité est révisable et n'est pas un titre de propriété.</p>
 <p><strong>7. Évolution.</strong> Cette charte est versionnée. Une nouvelle version est publiée, signée par la coopérative, et chaque membre l'accepte à nouveau.</p>
 
-<p><a href="index.html">← Retour au guide</a></p>
+<p class="back"><a href="index.html">Accueil</a> · <a href="guide.html">Guide du Capitaine</a></p>
 </main>
 </body>
 </html>

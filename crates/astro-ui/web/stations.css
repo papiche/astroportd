@@ -1,0 +1,20 @@
+/* Annuaire des stations (/stations) : complète register.css. */
+main{max-width:40rem}
+.small0{font-size:.9rem;margin-top:.2rem}
+.best{background:color-mix(in srgb,var(--accent) 10%,var(--panel));border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:var(--rc);padding:.9rem 1.1rem;margin:1.2rem 0}
+.best h2{margin:.1rem 0 .3rem;font-size:1.35rem}
+.best p{margin:.3rem 0}
+.best .btn{padding:.6rem 1.2rem;font-weight:600;margin-top:.4rem}
+.st .btn{font-weight:600}
+.st-list{list-style:none;padding:0;margin:1rem 0;display:grid;gap:.6rem}
+.st{border:1px solid var(--line);border-radius:.6rem;padding:.7rem .9rem;background:var(--panel2);display:grid;grid-template-columns:1fr auto;gap:.2rem .8rem;align-items:center}
+.st h3{margin:0;font-size:1.05rem;overflow-wrap:anywhere}
+.st .meta{grid-column:1;color:var(--muted);font-size:.9rem;display:flex;flex-wrap:wrap;gap:.2rem .8rem}
+.st .act{grid-column:2;grid-row:1/span 2}
+.st .act a{white-space:nowrap}
+.st.full{opacity:.65}
+.tag{font-size:.75rem;border:1px solid var(--line);border-radius:1rem;padding:0 .45rem;margin-left:.35rem;vertical-align:middle;font-weight:400;color:var(--muted)}
+.tag.me{border-color:var(--accent);color:var(--accent)}
+.seats{font-weight:600;color:var(--ok,var(--ink))}
+.full .seats{color:var(--bad)}
+@media (max-width:30rem){.st{grid-template-columns:1fr}.st .meta{grid-row:2}.st .act{grid-column:1;grid-row:3;margin-top:.3rem}}

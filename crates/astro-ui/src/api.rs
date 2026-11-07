@@ -22,6 +22,8 @@
 //! | `GET /api/v1/friends` · `POST /api/v1/ucloud/send` | proches réciproques ; envoi de fichiers à des proches |
 //! | `GET`/`POST /api/v1/backup` · `POST /api/v1/backup/respond` | sauvegarde privée chez un ami : réglage, demandes reçues, réponse de l'hébergeur |
 //! | `POST /api/v1/backup/rescue` · `POST /api/v1/restore/ask` | secours par les gardiens : réponse du gardien ; demande depuis la carte imprimée (public) |
+//! | `GET /api/v1/station/energy` | énergie de la station préparée par le plugin système `energy` (consommation, production solaire), Capitaine |
+//! | `GET /api/v1/stations` | annuaire public des stations de la même UPlanet (balises 30850 : places, position UMAP, matériel), lisible depuis toute origine |
 //! | `POST /api/v1/ucloud/have` | parmi des SHA-256, ceux que le compte possède déjà (envoi sans doublon) |
 //! | `GET /api/v1/ucloud/memories` · `…/timeline[?ym=]` · `…/search` · `…/duplicates` | « ce jour-là », chronologie par mois, recherche à filtres, doublons exacts et visuels |
 //! | `GET /api/v1/replication` | où et par qui les données du compte sont répliquées (stations, amis, fichiers) |
@@ -341,6 +343,10 @@ pub trait Backend: Send + Sync + 'static {
     /// `{ enabled: false }` sans transaction primale ; sinon `{ master, needed_g1_cents, spendable_g1_cents, waiting, ready, total, at }`.
     fn fuel(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Ok(json!({ "enabled": false })) }
+    }
+    /// Énergie de la station préparée par le plugin `energy` (Capitaine) : `{ state: absent|invalid|stale|fresh, … }`.
+    fn energy(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Ok(json!({ "state": "absent" })) }
     }
     /// Nom de domaine de la station : actuel, enregistré, ports, redémarrage possible (Capitaine).
     fn domain_info(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
@@ -738,6 +744,10 @@ pub trait Backend: Send + Sync + 'static {
     fn register_info(&self) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("inscription non disponible sur cette station")) }
     }
+    /// Annuaire public des stations de la même UPlanet (balises 30850 récentes) : places, position arrondie, matériel.
+    fn stations(&self) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("annuaire des stations non disponible")) }
+    }
     /// Crée un MULTIPASS (public). `ip` : adresse du client, pour la limite de débit.
     fn register(&self, _ip: Option<std::net::IpAddr>, _email: String, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("inscription non disponible sur cette station")) }
@@ -889,6 +899,7 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/mcp", post(mcp::<B>))
         .route("/api/v1/me/footprint", get(footprint::<B>))
         .route("/api/v1/register", get(register_info::<B>).post(register::<B>))
+        .route("/api/v1/stations", get(stations::<B>))
         .route("/api/v1/restore", post(restore::<B>))
         .route("/api/v1/restore/ask", post(restore_ask::<B>))
         .route("/api/v1/replication", get(replication::<B>))
@@ -940,6 +951,7 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/station/constellation", get(constellation::<B>))
         .route("/api/v1/station/economy", get(economy::<B>))
         .route("/api/v1/station/fuel", get(fuel::<B>))
+        .route("/api/v1/station/energy", get(energy::<B>))
         .route("/api/v1/station/domain", get(domain_info::<B>).post(domain_set::<B>))
         .route("/api/v1/station/restart", post(restart::<B>))
         .route("/api/v1/station/welcome", get(welcome_list::<B>).post(welcome_create::<B>))
@@ -1502,6 +1514,11 @@ async fn constellation<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p)
 
 async fn economy<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
     reply(st.backend.economy(&p).await)
+}
+
+/// Énergie de la station (plugin `energy`).
+async fn energy<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
+    reply(st.backend.energy(&p).await)
 }
 
 /// Carburant de la station, avec le QR de l'adresse à créditer (lu par Cesium, Ğecko…).
@@ -2245,7 +2262,19 @@ async fn replication<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): A
 
 /// Inscription ouverte ? (aucun compte requis : c'est la porte d'entrée.)
 async fn register_info<B: Backend>(State(st): State<Arc<UiState<B>>>) -> Response {
-    reply(st.backend.register_info().await)
+    any_origin(reply(st.backend.register_info().await))
+}
+
+/// Annuaire des stations de l'UPlanet (public).
+async fn stations<B: Backend>(State(st): State<Arc<UiState<B>>>) -> Response {
+    any_origin(reply(st.backend.stations().await))
+}
+
+/// Données publiques lisibles depuis une autre origine (vue LIVE d'astroport.one, autre station) : places libres et
+/// annuaire. Lecture seule, sans cookie ni secret : `Access-Control-Allow-Origin: *` ne donne accès à rien de privé.
+fn any_origin(mut r: Response) -> Response {
+    r.headers_mut().insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    r
 }
 
 /// Crée un MULTIPASS. Les secrets de la réponse ne sont jamais remis une seconde fois : `no-store`.

@@ -70,6 +70,12 @@ fn derive(uplanet_name: &str, suffix: &str) -> Result<(Ed25519Signer, Account), 
     Ok((signer, account))
 }
 
+/// Adresse ss58 du portefeuille `<UPLANETNAME>` (le `UPLANETG1PUB` du legacy) : elle identifie l'UPlanet dans les
+/// événements publics (tag `swarm_id` du kind 30850). Dérivation lente : à appeler depuis `spawn_blocking`.
+pub fn uplanet_g1pub(uplanet_name: &str) -> Result<String, String> {
+    derive_bare(uplanet_name, None).map(|a| a.ss58())
+}
+
 /// Adresse du portefeuille `<UPLANETNAME>[.<suffixe>]`.
 fn derive_bare(uplanet_name: &str, suffix: Option<&str>) -> Result<Account, String> {
     let input = FormulaInput { salt: "", pepper: "", uplanet_name, coop_suffix: suffix };

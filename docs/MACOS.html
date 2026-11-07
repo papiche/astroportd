@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>astroportd sur macOS — astroportd</title>
+<title>Une station sur Mac (Apple Silicon) — astroportd</title>
 <style>
 :root{--bg:#ffffff;--ink:#1b1f2a;--mut:#454c61;--pan:#f1f4fb;--line:#c3c9dc;--acc:#2a46c8;--accink:#ffffff;--code:#10131c;--codeink:#e8ebf4;--note:#e7efff;--warn:#fff0e0;--warnb:#8f3b06;--ok:#14663a}
 @media (prefers-color-scheme:dark){:root{--bg:#12151f;--ink:#eef0f8;--mut:#bcc3da;--pan:#1b2030;--line:#3a4260;--acc:#9bb0ff;--accink:#10131c;--code:#0a0c13;--codeink:#e8ebf4;--note:#1d2744;--warn:#3a2414;--warnb:#ffb98a;--ok:#7fdca6}}
@@ -54,50 +54,104 @@ footer{padding:28px 16px 48px;color:var(--mut);border-top:1px solid var(--line);
 a{overflow-wrap:anywhere}
 @media (min-width:56rem){.cols.one{grid-template-columns:1fr}}
 figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:10px}
+.crumbs{margin:0 0 10px;font-size:.95rem}
+.lead2{color:var(--mut);max-width:46rem;margin-top:0}
+nav.toc h3{font-size:1rem;margin:12px 0 4px}nav.toc h3 a{color:var(--ink);text-decoration:none}nav.toc h3 a:hover{text-decoration:underline}
+nav.toc ol{list-style:none;padding-left:0;margin:0 0 4px}
+section.part{border-top:3px solid var(--acc);margin-top:64px;padding-top:18px}
+section.part h2{font-size:clamp(1.6rem,4.4vw,2.2rem);margin-bottom:.2em}
+section.part .pn{display:block;font-size:1rem;font-weight:700;color:var(--acc);letter-spacing:0}
+section.part p{color:var(--mut);font-size:1.1rem;max-width:46rem}
+details.tech{border:1px dashed var(--line);border-radius:10px;padding:2px 14px;margin:12px 0;background:transparent}
+details.tech summary{cursor:pointer;padding:8px 0;font-weight:600;color:var(--mut);min-height:44px;display:flex;align-items:center}
+details.tech[open]{padding-bottom:10px}
+details.tech[open] summary{color:var(--acc)}
 </style>
 <style>.pg{max-width:60rem;margin:0 auto;padding:1rem 16px 3rem}</style>
 </head>
 <body>
 <main class="pg">
-<p><a href="index.html">← Retour au guide</a></p>
-<h1>astroportd sur macOS</h1>
-<div class="box note"><p><span class="lbl">Statut : bêta</span> Le code est portable (POSIX, <code>rustix</code>, aucun <code>/proc</code> obligatoire) et la détection du matériel
-connaît macOS, mais <strong>aucune compilation sur un Mac n'avait été éprouvée</strong> quand ce document a été écrit. La CI macOS
-(<code>.github/workflows/ci.yml</code>, tâche <code>macos</code>) et les archives <code>*-apple-darwin</code> sont « au mieux » : si elles échouent,
-ouvrez un ticket avec la sortie de <code>cargo build</code>.</p></div>
-<h2>Pourquoi un Mac</h2>
-<p>Un Mac Apple Silicon (M1 à M4) partage sa <strong>mémoire unifiée</strong> entre le processeur et le GPU (Metal) : 16 à 32 Go y
-servent de VRAM à Ollama et à ComfyUI. C'est un bon <strong>Brain GPU</strong> pour une constellation.</p>
-<h2>Ce que fait la station</h2>
-<ul>
-<li><strong>Power-Score</strong> : la RAM vient de <code>sysctl -n hw.memsize</code> (pas de <code>/proc/meminfo</code>). Sur Apple Silicon sans carte NVIDIA,
-la VRAM est comptée comme <strong>66 % de la mémoire unifiée</strong> (le système garde le reste) ; un Mac de 16 Go vaut donc
-10 Go de VRAM, soit un Power-Score de <code>10×4 + cœurs×2 + 16×0,5</code>. <code>ASTRO_VRAM_GB=&lt;Go&gt;</code> remplace cette estimation.
-Ce 66 % est un choix prudent, <strong>non mesuré</strong> : réglez <code>ASTRO_VRAM_GB</code> d'après ce que vos modèles occupent vraiment.</li>
-<li><strong>Mac Intel</strong> : pas de mémoire unifiée, VRAM à 0 sauf <code>ASTRO_VRAM_GB</code>.</li>
-<li><strong>Reconnaissance des visages locale</strong> : <code>libonnxruntime.dylib</code> est cherchée dans <code>ORT_DYLIB_PATH</code>, puis
-<code>~/.zen/astroportd/lib</code>, <code>/opt/homebrew/lib</code>, <code>/usr/local/lib</code>.</li>
-</ul>
-<h2>Installer</h2>
-<div class="code"><pre><code>xcode-select --install                    # compilateur C (SQLite, libwebp sont compilés depuis leurs sources)
-brew install rustup ffmpeg pkg-config     # ffmpeg : pipeline média ; puis `rustup default stable`
-cargo build --release --features onnx     # ou sans --features onnx : Brain HTTP seulement
-./target/release/astroportd init          # rituel Y-Level, choix ORIGIN / ẐEN
+<p class="back"><a href="index.html">Accueil</a> · <a href="guide.html">Guide du Capitaine</a></p>
+<h1>Une station sur Mac (Apple Silicon)</h1>
+<div class="box warn"><p><span class="lbl">Attention</span> La version Mac est en <strong>bêta</strong>. Le programme a été écrit pour fonctionner sur macOS, mais <strong>aucune compilation sur un Mac n'avait été éprouvée</strong> quand cette page a été écrite. La vérification automatique sur Mac et les archives Mac toutes prêtes sont « au mieux » : si quelque chose échoue, ouvrez un ticket en joignant la sortie de <code>cargo build</code>.</p></div>
+<h2>Pour qui c'est</h2>
+<p>Cette page s'adresse à un futur Capitaine qui veut faire tourner sa station sur un <strong>Mac à puce Apple</strong> (M1 à M4) et qui est à l'aise avec le Terminal. Sur Mac, il n'y a pas encore d'installeur : vous <strong>compilez</strong> le programme vous-même (vous le fabriquez à partir de son code source), en quelques commandes.</p>
+<p>Si vous cherchez la voie la plus simple, une machine Linux (Raspberry Pi, mini-PC, vieux PC) reste la voie principale : suivez le <a href="guide.html">guide du Capitaine</a> depuis l'<a href="guide.html#etape-0">étape 1</a>.</p>
+<p>Pourquoi un Mac quand même ? Sur un Mac Apple Silicon, la <strong>mémoire unifiée</strong> (la même mémoire sert au processeur et à la puce graphique) peut servir aux outils d'IA comme Ollama (un moteur d'IA) et ComfyUI (un générateur d'images). Un Mac peut ainsi devenir un « Brain GPU » de votre constellation : la machine à qui les autres stations confient les calculs lourds.</p>
+<h2>Ce qui marche, ce qui ne marche pas encore</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th></th>
+<th>État sur Mac</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compiler et lancer la station</td>
+<td>prévu, <strong>pas encore éprouvé</strong></td>
+</tr>
+<tr>
+<td>Mesure de la machine (Power-Score)</td>
+<td>lit la mémoire du Mac ; compte une part de la mémoire unifiée comme mémoire graphique (estimation, voir plus bas)</td>
+</tr>
+<tr>
+<td>Reconnaissance des visages sur la station</td>
+<td>possible avec ONNX Runtime installé par Homebrew</td>
+</tr>
+<tr>
+<td>Partager Ollama, ComfyUI et SSH avec les autres Capitaines</td>
+<td>oui, par le maillage P2P, selon vos réglages</td>
+</tr>
+<tr>
+<td>Installeur <code>install.sh</code></td>
+<td><strong>non</strong> : il ne fonctionne que sous Linux</td>
+</tr>
+<tr>
+<td>Démarrage automatique</td>
+<td><strong>à faire à la main</strong> (launchd) : <code>astroportd init --systemd</code> n'écrit que l'unité Linux, aucune unité launchd n'est générée</td>
+</tr>
+<tr>
+<td>Mac Intel</td>
+<td>pas de mémoire unifiée : aucune mémoire graphique n'est comptée, sauf si vous la déclarez</td>
+</tr>
+</tbody>
+</table></div>
+<div class="box note"><p><span class="lbl">À savoir</span> Le Power-Score est une <strong>estimation</strong>, pas une mesure de ce que la puce graphique sait faire. Il sert à la constellation pour choisir à quelle station confier un calcul.</p></div>
+<h2>Pas à pas</h2>
+<h3>1. Installer les outils</h3>
+<div class="code"><pre><code>xcode-select --install                    # compilateur C (SQLite et libwebp sont compilés depuis leurs sources)
+brew install rustup ffmpeg pkg-config     # ffmpeg sert au traitement des photos et vidéos
+rustup default stable                     # installe le compilateur Rust
 </code></pre></div>
-<p><code>./build-all.sh --targets aarch64-apple-darwin</code> produit l'archive <code>dist/astroportd-&lt;version&gt;-aarch64-apple-darwin.tar.gz</code>.</p>
-<p>Pour l'inférence faciale locale : <code>brew install onnxruntime</code> puis, si besoin,
-<code>export ORT_DYLIB_PATH=/opt/homebrew/lib/libonnxruntime.dylib</code>, et <code>astroportd face-check</code>.</p>
-<h2>Partager Ollama et ComfyUI</h2>
-<div class="code"><pre><code>brew install ollama &amp;&amp; ollama serve &amp;          # Ollama sur Metal, port 11434
+<p>Ces commandes demandent <a href="https://brew.sh">Homebrew</a>, le gestionnaire de logiciels le plus courant sur Mac.</p>
+<h3>2. Compiler la station</h3>
+<p>Depuis le dossier du code source d'astroportd :</p>
+<div class="code"><pre><code>cargo build --release --features onnx     # avec la reconnaissance des visages sur la station
+# ou : cargo build --release              # sans : les visages sont confiés à un service externe (Brain HTTP)
+</code></pre></div>
+<p>Le programme se trouve ensuite dans <code>./target/release/astroportd</code>.</p>
+<div class="box note"><p><span class="lbl">À savoir</span> <code>./build-all.sh --targets aarch64-apple-darwin</code> produit une archive prête à distribuer : <code>dist/astroportd-&lt;version&gt;-aarch64-apple-darwin.tar.gz</code>. Une archive Mac ne se construit que <strong>sur</strong> un Mac.</p></div>
+<h3>3. Préparer la station</h3>
+<div class="code"><pre><code>./target/release/astroportd init          # Y-Level, puis choix ORIGIN ou ẐEN
+</code></pre></div>
+<p><code>init</code> lie la clé de votre Mac à l'identité de la station (Y-Level, voir l'<a href="guide.html#etape-2">étape 3 du guide</a>) et vous fait choisir votre constellation (voir <a href="CONSTELLATIONS.html">Constellations</a>).</p>
+<h3>4. (Facultatif) Reconnaissance des visages sur la station</h3>
+<div class="code"><pre><code>brew install onnxruntime
+export ORT_DYLIB_PATH=/opt/homebrew/lib/libonnxruntime.dylib   # seulement si la station ne la trouve pas
+astroportd face-check                                          # dit ce qui manque, et comment l'obtenir
+</code></pre></div>
+<p>La station cherche la bibliothèque <code>libonnxruntime.dylib</code> dans cet ordre : <code>ORT_DYLIB_PATH</code>, puis <code>~/.zen/astroportd/lib</code>, <code>/opt/homebrew/lib</code>, <code>/usr/local/lib</code>.</p>
+<h3>5. Partager Ollama et ComfyUI</h3>
+<div class="code"><pre><code>brew install ollama &amp;&amp; ollama serve &amp;          # Ollama, port 11434
 # ComfyUI : installation PyTorch/MPS, port 8188
 ./target/release/astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs \
     --p2p-listen /ip4/0.0.0.0/tcp/4101
 </code></pre></div>
-<p>Ollama (<code>127.0.0.1:11434</code>), ComfyUI (<code>127.0.0.1:8188</code>) et SSH (<code>127.0.0.1:22</code>) sont offerts au maillage <strong>par défaut</strong>
-mais <strong>fermés</strong> : le Capitaine choisit qui les ouvre dans <em>Options › Tunnels</em> (voir le GUIDE, étape tunnels). Sur macOS,
-activez <em>Réglages Système › Partage › Session à distance</em> pour que le SSH existe.</p>
-<h2>Démarrer au login (launchd)</h2>
-<p><code>~/Library/LaunchAgents/org.uplanet.astroportd.plist</code> (remplacez <code>VOTRE_USER</code>) :</p>
+<p>La station offre au maillage Ollama (<code>127.0.0.1:11434</code>), ComfyUI (<code>127.0.0.1:8188</code>) et SSH (<code>127.0.0.1:22</code>). <strong>C'est vous qui décidez qui peut les ouvrir</strong>, dans <em>Options › Tunnels</em>. Au départ, Ollama et ComfyUI sont ouverts à vos Capitaines amis ; le SSH est fermé en ẐEN et ouvert à vos Capitaines amis en ORIGIN. Détails dans <a href="CONSTELLATIONS.html">Constellations</a> et, dans le guide, à <a href="guide.html#etape-9">Relier sa station aux autres Capitaines</a>.</p>
+<p>Pour que le SSH existe sur le Mac, activez <em>Réglages Système › Partage › Session à distance</em>.</p>
+<h3>6. Démarrer la station à l'ouverture de session (launchd)</h3>
+<p>launchd est le service de macOS qui lance des programmes au démarrage. Créez le fichier <code>~/Library/LaunchAgents/org.uplanet.astroportd.plist</code> (remplacez <code>VOTRE_USER</code> par votre nom d'utilisateur) :</p>
 <div class="code"><pre><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
 &lt;!DOCTYPE plist PUBLIC &quot;-//Apple//DTD PLIST 1.0//EN&quot; &quot;http://www.apple.com/DTDs/PropertyList-1.0.dtd&quot;&gt;
 &lt;plist version=&quot;1.0&quot;&gt;&lt;dict&gt;
@@ -113,17 +167,33 @@ activez <em>Réglages Système › Partage › Session à distance</em> pour que
   &lt;key&gt;StandardErrorPath&lt;/key&gt;&lt;string&gt;/Users/VOTRE_USER/.zen/astroportd/astroportd.log&lt;/string&gt;
 &lt;/dict&gt;&lt;/plist&gt;
 </code></pre></div>
-<p><code>launchctl load ~/Library/LaunchAgents/org.uplanet.astroportd.plist</code>. Pour que le Mac ne s'endorme pas :
-<code>sudo pmset -a sleep 0</code> (ou <em>Réglages Système › Batterie / Économie d'énergie</em>). <code>astroportd init --systemd</code> n'écrit
-que l'unité Linux.</p>
+<p>Puis chargez-le :</p>
+<div class="code"><pre><code>launchctl load ~/Library/LaunchAgents/org.uplanet.astroportd.plist
+</code></pre></div>
+<h3>7. Empêcher le Mac de s'endormir</h3>
+<p>Une station endormie ne rend plus service à ses membres.</p>
+<div class="code"><pre><code>sudo pmset -a sleep 0
+</code></pre></div>
+<p>Ou bien <em>Réglages Système › Batterie / Économie d'énergie</em>.</p>
 <h2>Limites connues</h2>
 <ul>
-<li>Aucune compilation macOS éprouvée à ce jour (voir l'état de la CI).</li>
-<li><code>init --systemd</code> ne s'applique pas ; pas d'unité <code>launchd</code> générée.</li>
-<li>Pas de Brain GPU « automatique » : le Power-Score est une estimation, pas une mesure de Metal.</li>
+<li>Aucune compilation macOS éprouvée à ce jour (voir l'état de la vérification automatique).</li>
+<li><code>init --systemd</code> ne s'applique pas ; pas d'unité <code>launchd</code> générée : il faut écrire le fichier ci-dessus.</li>
+<li>Le Power-Score est une estimation, pas une mesure de la puce graphique.</li>
 </ul>
+<h2>Pour aller plus loin (technique)</h2>
+<h3>Comment la station mesure un Mac</h3>
+<ul>
+<li><strong>Mémoire</strong> : lue avec <code>sysctl -n hw.memsize</code> (macOS n'a pas de <code>/proc/meminfo</code>) ; voir <code>crates/astro-p2p/src/routing.rs</code>.</li>
+<li><strong>Mémoire graphique (VRAM)</strong> : sur Apple Silicon sans carte NVIDIA, la station compte <strong>66 % de la mémoire unifiée</strong> (arrondi à l'entier inférieur), le système gardant le reste. Ce 66 % est un choix prudent, <strong>non mesuré</strong>.</li>
+<li><strong>Formule</strong> : Power-Score = <code>VRAM×4 + cœurs×2 + RAM×0,5</code>. Un Mac de 16 Go compte donc 10 Go de VRAM, soit <code>10×4 + cœurs×2 + 16×0,5</code>.</li>
+<li><strong>Réglage manuel</strong> : <code>ASTRO_VRAM_GB=&lt;Go&gt;</code> remplace l'estimation. Réglez-le d'après ce que vos modèles occupent vraiment.</li>
+<li><strong>Mac Intel</strong> : VRAM à 0, sauf <code>ASTRO_VRAM_GB</code>.</li>
+</ul>
+<h3>Portabilité et vérification automatique</h3>
+<p>Le code est portable (POSIX, <code>rustix</code>, aucun <code>/proc</code> obligatoire). La vérification automatique Mac est la tâche <code>macos</code> de <code>.github/workflows/ci.yml</code> ; elle est non bloquante tant qu'elle n'a pas réussi une première fois. Les archives <code>*-apple-darwin</code> (<code>aarch64-apple-darwin</code> pour Apple Silicon, <code>x86_64-apple-darwin</code> pour Mac Intel) sont « au mieux » ; elles sont construites avec l'inférence locale (<code>--features onnx</code>), la bibliothèque <code>libonnxruntime.dylib</code> étant chargée à l'exécution.</p>
 
-<p><a href="index.html">← Retour au guide</a></p>
+<p class="back"><a href="index.html">Accueil</a> · <a href="guide.html">Guide du Capitaine</a></p>
 </main>
 </body>
 </html>

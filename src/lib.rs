@@ -3,6 +3,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+pub mod beacon;
 pub mod captains;
 pub mod account;
 pub mod address_book;
@@ -13,6 +14,7 @@ pub mod coop_config;
 pub mod console;
 pub mod doctor;
 pub mod dnslink;
+pub mod energy;
 pub mod duniter_nodes;
 pub mod fetch;
 pub mod forwards;

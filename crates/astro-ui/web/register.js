@@ -36,7 +36,10 @@ async function init() {
       $('#guest').parentElement.hidden = true; $('#code-box').hidden = false; $('#code').required = true;
       $('#info').textContent = 'Constellation ' + j.constellation + ' · première installation.'; $('#f').hidden = false; $('#code').focus();
     } else if (r.ok && j.open) { $('#info').textContent = 'Constellation ' + j.constellation + ' · inscription ouverte.'; $('#f').hidden = false; $('#email').focus(); }
-    else $('#info').textContent = j.error || 'Inscription fermée sur cette station.';
+    else { // complète ou fermée : renvoi vers l'annuaire des stations de l'UPlanet
+      $('#info').textContent = (j.error || 'Inscription fermée sur cette station.') + ' ';
+      const a = document.createElement('a'); a.href = '/stations'; a.textContent = 'Trouver une station proche qui accueille encore →'; $('#info').append(a);
+    }
   } catch { $('#info').textContent = 'Station injoignable.'; }
 }
 $('#f').onsubmit = async ev => {

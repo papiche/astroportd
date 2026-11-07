@@ -59,6 +59,7 @@ pub struct StationUi<B: BlobStore> {
     send_fn: Option<SendFn>,
     board: astro_facecloud::board::BoardCache,
     registrar: Option<Arc<crate::register::Registrar>>,
+    stations: Option<Arc<crate::beacon::Stations>>,
     /// Code d'installation d'une station sans Capitaine (page `/welcome`).
     setup: Option<Arc<crate::first_run::SetupCode>>,
     /// `station.conf` (domaine réglé depuis le cockpit).
@@ -139,7 +140,7 @@ pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Fu
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, site: None, admin: None, console: None, account: None, contacts: None, invites: None, welcome: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, setup: None, conf_path: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None, chat: None, people: None, ice: (None, None, Vec::new()), presence: None }
+        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, site: None, admin: None, console: None, account: None, contacts: None, invites: None, welcome: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, stations: None, setup: None, conf_path: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None, chat: None, people: None, ice: (None, None, Vec::new()), presence: None }
     }
 
     /// Annuaire des clés d'une même personne dans plusieurs UPlanet.
@@ -332,6 +333,12 @@ impl<B: BlobStore> StationUi<B> {
         self
     }
 
+    /// Active l'annuaire public des stations de l'UPlanet (`GET /api/v1/stations`).
+    pub fn with_stations(mut self, s: Arc<crate::beacon::Stations>) -> Self {
+        self.stations = Some(s);
+        self
+    }
+
     /// `station.conf` de la station : le cockpit y enregistre le nom de domaine.
     pub fn with_conf_path(mut self, path: std::path::PathBuf) -> Self {
         self.conf_path = Some(path);
@@ -459,6 +466,11 @@ impl<B: BlobStore> Backend for StationUi<B> {
             out["captain_setup"] = json!(self.setup.is_some());
         }
         Ok(out)
+    }
+
+    async fn stations(&self) -> Result<Value, ApiError> {
+        let s = self.stations.as_ref().ok_or_else(|| ApiError::unavailable("annuaire des stations non disponible"))?;
+        s.list(u64::try_from(crate::private_backup::now()).unwrap_or(0)).await.map_err(ApiError::internal)
     }
 
     async fn register_captain(&self, ip: Option<std::net::IpAddr>, code: String, email: String, lang: String) -> Result<Value, ApiError> {
@@ -1685,6 +1697,11 @@ impl<B: BlobStore> Backend for StationUi<B> {
             out["warnings"] = json!(a.warnings);
         }
         Ok(out)
+    }
+
+    async fn energy(&self, _who: &Principal) -> Result<Value, ApiError> {
+        let home = self.conf_path.as_deref().and_then(std::path::Path::parent).ok_or_else(|| ApiError::unavailable("dossier de la station inconnu"))?;
+        Ok(crate::energy::view(&crate::energy::read(home, u64::try_from(crate::private_backup::now()).unwrap_or(0))))
     }
 
     async fn fuel(&self, _who: &Principal) -> Result<Value, ApiError> {

@@ -1,12 +1,23 @@
-# Guide pas à pas : démarrer sa station astroportd
+# Guide du Capitaine : ouvrir et tenir sa station
 
-> Version texte du [guide illustré](index.html). Préversion **0.5.6-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
+> Version texte du [guide illustré](guide.html). Pour découvrir Astroport sans rien installer : [la page d'accueil](index.html). Préversion **0.5.7-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
 
-**Sommaire** : [0. Avant de commencer](#etape-0) · [1. Installer astroportd](#etape-1) · [2. Activer Y-Level](#etape-2) · [3. Choisir sa constellation](#etape-3) · [4. Démarrer la station](#etape-4) · [5. Créer mon MULTIPASS](#etape-5) · [6. Vérifier que tout va bien](#etape-6) · [7. Entrer dans l'interface web](#etape-7) · [7 bis. Le cockpit du Capitaine](#etape-7b) · [8. FaceCloud](#etape-8) · [8 bis. Contacts, agenda (CardDAV, CalDAV) et Mon compte](#etape-8b) · [8 bis-b. Mon coffre de mots de passe (KeePass)](#etape-8bis-b) · [8 bis-c. Reprendre son uCloud d'Astroport.ONE](#etape-8bis-c) · [8 bis-d. Remplir son uCloud depuis un autre serveur (Nextcloud, ownCloud…)](#etape-8bis-d) · [8 bis-e. Ranger son uCloud par type](#etape-8bis-e) · [8 bis-f. Un jeton par appareil (téléphones, tablettes, ordinateurs)](#etape-8bis-f) · [8 bis-g. Hébergement facturé, compte technique et règlement hebdomadaire](#etape-8bis-g) · [8 bis-h. Plusieurs astroportd sur une machine (ORIGIN + ZEN*)](#etape-8bis-h) · [8 bis-i. Plusieurs UPlanet dans un seul processus](#etape-8bis-i) · [8 bis-j. Messages privés et une personne dans plusieurs UPlanet](#etape-8bis-j) · [8 bis-k. Ma UPlanet](#etape-8c) · [8 bis-l. Ğ1Billet](#etape-8bis-l) · [8 bis-m. Mon site public](#etape-8bis-m) · [8 ter. Options du Capitaine](#etape-8ter) · [8 quater. Inviter quelqu'un à recevoir des photos](#etape-8quater) · [8 quinquies. Sans email, connexion par PASS, signature déléguée](#etape-8quinquies) · [9. Relier sa station aux autres Capitaines](#etape-9) · [9 bis. Une adresse pour chaque station et chaque MULTIPASS (DNSLink)](#etape-9b) · [10. En cas de problème](#etape-10) · [Sur un smartphone](#sur-un-smartphone)
+**Sommaire** :
+
+- [**Partie 1 — Mettre la station en service**](#partie-1) : [1. Avant de commencer](#etape-0) · [2. Installer astroportd](#etape-1) · [3. Donner une identité à la station (Y-Level)](#etape-2) · [4. Choisir sa constellation](#etape-3) · [5. Démarrer la station](#etape-4) · [6. Créer votre compte de Capitaine, puis ceux des membres](#etape-5) · [7. Vérifier que tout va bien](#etape-6) · [8. Entrer dans l'interface web](#etape-7) · [9. Le cockpit du Capitaine](#etape-7b)
+- [**Partie 2 — Ce que la station offre à vos membres**](#partie-2) : [FaceCloud](#etape-8) · [Inviter quelqu'un à recevoir des photos](#etape-8quater) · [La clé de secours](#secours) · [Contacts, agenda et Mon compte](#etape-8b) · [Messages privés, et une personne dans plusieurs UPlanet](#etape-8bis-j) · [Appeler en visio](#visio) · [Le coffre de mots de passe (KeePass)](#etape-8bis-b) · [Le site public](#etape-8bis-m) · [Un jeton par appareil (téléphones, tablettes, ordinateurs)](#etape-8bis-f) · [Reprendre ses fichiers d'un autre serveur (Nextcloud, ownCloud…)](#etape-8bis-d) · [Ranger son uCloud par type](#etape-8bis-e) · [Connexion par PASS, compte sans email, signature déléguée](#etape-8quinquies) · [Sur un smartphone](#sur-un-smartphone)
+- [**Partie 3 — L'argent de la station**](#partie-3) : [Hébergement facturé et partage de la semaine](#etape-8bis-g) · [Ma UPlanet](#etape-8c) · [Ğ1Billet](#etape-8bis-l)
+- [**Partie 4 — Relier, ouvrir, administrer**](#partie-4) : [Être trouvé](#annuaire) · [Relier sa station aux autres Capitaines](#etape-9) · [Options du Capitaine](#etape-8ter) · [Une adresse pour chaque station et chaque MULTIPASS (DNSLink)](#etape-9b) · [Reprendre un uCloud d'Astroport.ONE](#etape-8bis-c) · [Plusieurs astroportd sur une machine](#etape-8bis-h) · [Plusieurs UPlanet dans un seul processus](#etape-8bis-i) · [En cas de problème](#etape-10)
+
+<a id="partie-1"></a>
+
+## Partie 1 — Mettre la station en service
+
+Neuf étapes, à suivre dans l'ordre. À la fin, votre station tourne, vous avez votre compte de Capitaine, et le cockpit vous dit d'un regard ce qui demande votre attention.
 
 <a id="etape-0"></a>
 
-## Étape 0 — Avant de commencer
+## Étape 1 — Avant de commencer
 
 **astroportd** est un programme unique qui fait tourner votre « Astroport » : un cloud personnel chiffré, vos photos avec reconnaissance des visages, le partage entre amis et un relais Nostr. Ce guide vous mène de zéro à une station qui fonctionne.
 
@@ -33,13 +44,13 @@ date       # l'année doit être 2026 ou plus
 
 Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.
 
-> **À savoir.** astroportd est en **préversion 0.5.6-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
+> **À savoir.** astroportd est en **préversion 0.5.7-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
 
-Vous aurez aussi besoin d'un compte **MULTIPASS** (votre identité Nostr) : astroportd le crée pour vous à l'étape 5.
+Vous aurez aussi besoin d'un compte **MULTIPASS** (votre identité Nostr) : astroportd le crée pour vous à l'[étape 6](#etape-5).
 
 <a id="etape-1"></a>
 
-## Étape 1 — Installer astroportd
+## Étape 2 — Installer astroportd
 
 Le plus simple : l'installeur. Il choisit le bon fichier pour votre machine et **vérifie son empreinte SHA-256** avant de l'installer. S'il y a le moindre doute, il s'arrête.
 
@@ -49,7 +60,7 @@ Le plus simple : l'installeur. Il choisit le bon fichier pour votre machine et *
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 ```
 
-Options utiles : `--version v0.5.6-beta`, `--static` (binaire statique, x86_64 et aarch64), `--prefix DIR`, `--no-init`, `--yes`.
+Options utiles : `--version v0.5.7-beta`, `--static` (binaire statique, x86_64 et aarch64), `--prefix DIR`, `--no-init`, `--yes`.
 
 **Mettre à jour** : relancez simplement le même `install.sh`. Il montre l'installation en place (version, constellation, domaine, Capitaine, service), installe la nouvelle version, garde vos modèles et votre station, puis redémarre le service. Il ne relance jamais `init`, qui changerait l'identité de la station. `--force` réinstalle la même version.
 
@@ -79,7 +90,7 @@ curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh 
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash -s -- --no-embed           # pas d'embeddings locaux (ni leur téléchargement de 560 Mo)
 ```
 
-Chaque modèle est vérifié par SHA-256 avant d'être gardé ; un fichier incorrect est refusé. Les fils de calcul retenus sont inscrits dans `station.conf` et dans la commande de démarrage (`--face-threads`, `--embed-threads`) : un second `astroportd init` les conserve.
+> **Détails techniques.** Chaque modèle est vérifié par SHA-256 avant d'être gardé ; un fichier incorrect est refusé. Les fils de calcul retenus sont inscrits dans `station.conf` et dans la commande de démarrage (`--face-threads`, `--embed-threads`) : un second `astroportd init` les conserve.
 
 ### 🌐 Navigateur (Web)
 
@@ -96,11 +107,11 @@ Téléchargez aussi `SHA256SUMS`. Décompressez l'archive avec votre gestionnair
 
 <a id="etape-2"></a>
 
-## Étape 2 — Activer Y-Level : une clé, quatre identités
+## Étape 3 — Donner une identité à la station (Y-Level)
 
 Y-Level est le rituel qui relie **vous**, votre **machine** et le **réseau**. À partir de votre clé SSH, astroportd fabrique une graine unique. De cette graine viennent quatre identités qui partagent la même clé publique : une clé SSH « jumelle », l'identité **IPFS** de la station (`12D3Koo…`, appelée IPFSNODEID), votre portefeuille **Ğ1** et votre identité **Nostr**.
 
-Résultat : on peut vérifier, de n'importe où, que l'accès SSH à une machine et son identité sur le réseau sont **la même clé**.
+En clair : la clé qui vous ouvre la machine est aussi sa carte d'identité sur le réseau. Personne ne peut se faire passer pour votre station sans cette clé, et l'on peut vérifier, de n'importe où, que l'accès SSH à une machine et son identité sur le réseau sont **la même clé**.
 
 ![Schéma Y-Level : de la clé SSH à quatre identités (SSH jumelle, PeerID IPFS, Ğ1, Nostr).](img/y-level.svg)
 
@@ -127,11 +138,11 @@ astroportd ylevel --verify   # code de sortie 1 si ça ne correspond pas
 
 Il n'y a **volontairement pas d'écran web** pour cette étape : une clé privée ne doit jamais passer par un navigateur.
 
-Une fois la station démarrée (étape 4), l'écran *Station* de l'interface web montre l'identité IPFS de votre station.
+Une fois la station démarrée ([étape 5](#etape-4)), l'écran *Station* de l'interface web montre l'identité IPFS de votre station.
 
 <a id="etape-3"></a>
 
-## Étape 3 — Choisir sa constellation : ORIGIN ou ẐEN
+## Étape 4 — Choisir sa constellation : ORIGIN ou ẐEN
 
 Une **constellation** est un groupe de stations qui se parlent. Il y en a deux sortes.
 
@@ -183,17 +194,17 @@ astroportd init --mode zen --swarm-key ./swarm.key
 
 ### 🌐 Navigateur (Web)
 
-**ORIGIN** — [qo-op.com](https://qo-op.com) reste une **option** : c'est une station ORIGIN publique où l'on peut s'inscrire. Ce n'est pas une obligation : sur votre propre station, vous créez vos MULTIPASS vous-même (étape 5).
+**ORIGIN** — [qo-op.com](https://qo-op.com) reste une **option** : c'est une station ORIGIN publique où l'on peut s'inscrire. Ce n'est pas une obligation : sur votre propre station, vous créez vos MULTIPASS vous-même ([étape 6](#etape-5)).
 
 **ẐEN** — pour passer d'ORIGIN à ẐEN, la voie habituelle est la certification DRAGON, puis la réception de la `swarm.key`. Informations : le dépôt [Astroport.ONE](https://github.com/papiche/Astroport.ONE) et support@qo-op.com.
 
-> **À savoir.** Une commande `astroportd serve` sert **une** constellation (une `swarm.key`, ou aucune). Pour raccorder **la même station** à ORIGIN **et** à une ou plusieurs UPlanet ẐEN, on utilise `astroportd planes` (étape 8 bis-i) : un seul processus, la **même identité Y-Level** (même `IPFSNODEID`), et pour chaque *plan* sa base, son dossier de comptes, son **réseau P2P privé** (sa `swarm.key`) et son port. Chaque MULTIPASS est rattaché à un plan et rien ne passe d'un plan à l'autre sans votre accord.
+> **À savoir.** Une commande `astroportd serve` sert **une** constellation (une `swarm.key`, ou aucune). Pour raccorder **la même station** à ORIGIN **et** à une ou plusieurs UPlanet ẐEN, on utilise `astroportd planes` (voir [Plusieurs UPlanet dans un seul processus](#etape-8bis-i)) : un seul processus, la **même identité Y-Level** (même `IPFSNODEID`), et pour chaque *plan* sa base, son dossier de comptes, son **réseau P2P privé** (sa `swarm.key`) et son port. Chaque MULTIPASS est rattaché à un plan et rien ne passe d'un plan à l'autre sans votre accord.
 
-Le **premier** choix (ORIGIN ou ẐEN) se fait au terminal avec `astroportd init` : il engage une clé secrète. Ensuite, **ajouter** une UPlanet à une station existante (la fonder, ou la rejoindre avec une `swarm.key` reçue) se fait aussi dans l'interface web, écran *Station › Plans (UPlanet)* (étape 8 bis-i).
+Le **premier** choix (ORIGIN ou ẐEN) se fait au terminal avec `astroportd init` : il engage une clé secrète. Ensuite, **ajouter** une UPlanet à une station existante (la fonder, ou la rejoindre avec une `swarm.key` reçue) se fait aussi dans l'interface web, écran *Station › Plans (UPlanet)* (voir [Plusieurs UPlanet dans un seul processus](#etape-8bis-i)).
 
 <a id="etape-4"></a>
 
-## Étape 4 — Démarrer la station
+## Étape 5 — Démarrer la station
 
 `init` a préparé le dossier de la station (`~/.zen/astroportd` : la base `uplanet.db`, les fichiers chiffrés `blobs`, les sauvegardes `snapshots`) et vous a affiché la commande suivante. Voici les deux façons de démarrer.
 
@@ -216,6 +227,8 @@ astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blo
 # en ẐEN, ajoutez : --swarm-key ./swarm.key
 ```
 
+**Derrière un reverse proxy** (Nginx Proxy Manager… tient déjà 80/443) : `init` le détecte, fait écouter la station sur `127.0.0.1:8090` et demande le domaine que sert le proxy, écrit en `--public-domain`. La station ne demande alors pas de certificat mais se présente sous `https://<domaine>` (balise 30850 et bouton « Rejoindre », liens, NIP-98, relai annoncé), lit l'adresse des visiteurs dans `X-Forwarded-For` quand la connexion vient du proxy (boucle locale ou réseau privé ; seule la dernière adresse, posée par le proxy, est crue) et sert la visio sur le port UDP 8090 de toutes les interfaces. Dans le proxy : un seul hôte vers `http://127.0.0.1:8090`, WebSockets activés. Proxy sur une autre machine : `--http-listen 0.0.0.0:8090`.
+
 **Qu'elle démarre toute seule** (systemd, sans droits administrateur) :
 
 ```bash
@@ -234,7 +247,7 @@ Sur une **même adresse**, un navigateur reçoit l'application, et un client Nos
 
 <a id="etape-5"></a>
 
-## Étape 5 — Créer mon MULTIPASS
+## Étape 6 — Créer votre compte de Capitaine, puis ceux des membres
 
 Votre **MULTIPASS** est votre identité sur la station : une clé Nostr, un portefeuille Ğ1 et une identité IPNS. astroportd le crée **directement sur votre station**, il n'y a pas besoin d'aller ailleurs.
 
@@ -266,13 +279,13 @@ astroportd multipass list
 
 Options : `--lang fr|en|es`, `--relay ws://…` (publier les événements de naissance sur un relai), `--home DIR`, `--game-dir DIR`, `--db FICHIER`.
 
-Ce que la création écrit : un dossier `~/.zen/game/nostr/<email>/` (`.secret.nostr`, `.secret.dunikey`, `.keyformula`, `.pass`, `.multipass.json` en `0600`, plus `HEX`, `NPUB`, `G1PUBNOSTR`, `LANG`, `NOSTRNS`) et trois événements signés par le compte : son **profil** (kind 0), le **suivi du Capitaine** (kind 3) et son **DID** (kind 30800).
+> **Détails techniques.** Ce que la création écrit : un dossier `~/.zen/game/nostr/<email>/` (`.secret.nostr`, `.secret.dunikey`, `.keyformula`, `.pass`, `.multipass.json` en `0600`, plus `HEX`, `NPUB`, `G1PUBNOSTR`, `LANG`, `NOSTRNS`) et trois événements signés par le compte : son **profil** (kind 0), le **suivi du Capitaine** (kind 3) et son **DID** (kind 30800).
 
-> **À savoir.** **Limites.** La création reprend l'essentiel de `make_NOSTRCARD.sh` d'Astroport.ONE, mais pas : l'import de la clé IPNS dans Kubo, l'envoi du zine par email ni la ZenCard. La **primo-transaction** (1 Ğ1 du portefeuille maître) n'est plus envoyée à la création : elle part à la **première connexion** du membre (navigateur, WebDAV ou NIP-98), preuve qu'il a bien reçu ses clés — au plus 20 par jour (`--no-primal-init` coupe toutes les transactions primales). Un MULTIPASS créé ici qui ne s'est jamais connecté en 24 h peut être **éjecté** depuis l'écran Station (bouton « Éjecter ») : si quelqu'un lui a tout de même envoyé des Ğ1, elles sont d'abord reversées au portefeuille primal `UPLANETNAME_G1` (mémo `MULTIPASS:<nom>:PRIMAL:CASH-BACK`, comme `nostr_DESTROY_TW.sh`) ; ses clés vont dans la **corbeille** de la station (`~/.zen/game/trash/ejected/`, vidée à 20h12 après 30 jours, comme `trash/moved/` pour les comptes partis vers une autre station) et l'adresse peut se réinscrire. À l'inscription, le membre peut aussi **indiquer son quartier** : la station n'en garde que la maille UMAP (0,01°, ≈ 1 km), écrite aussi dans les fichiers `GPS` et `ZUMAP` du compte comme le faisait Astroport.ONE. Le découpage SSSS du DISCO envoyé chiffré au Capitaine n'est pas repris tel quel : il est remplacé par la **clé de secours en trois parts** (voir plus bas), avec son QR (`astroportd multipass card <email> --svg`). Retrouver un compte repose donc sur cette clé de secours ; le SALT/PEPPER et le `nsec` ne sont affichés qu'une fois à la création (ils restent dans le dossier du compte et dans `--json`).
+> **Détails techniques.** **Limites.** La création reprend l'essentiel de `make_NOSTRCARD.sh` d'Astroport.ONE, mais pas : l'import de la clé IPNS dans Kubo, l'envoi du zine par email ni la ZenCard. La **primo-transaction** (1 Ğ1 du portefeuille maître) n'est plus envoyée à la création : elle part à la **première connexion** du membre (navigateur, WebDAV ou NIP-98), preuve qu'il a bien reçu ses clés — au plus 20 par jour (`--no-primal-init` coupe toutes les transactions primales). Un MULTIPASS créé ici qui ne s'est jamais connecté en 24 h peut être **éjecté** depuis l'écran Station (bouton « Éjecter ») : si quelqu'un lui a tout de même envoyé des Ğ1, elles sont d'abord reversées au portefeuille primal `UPLANETNAME_G1` (mémo `MULTIPASS:<nom>:PRIMAL:CASH-BACK`, comme `nostr_DESTROY_TW.sh`) ; ses clés vont dans la **corbeille** de la station (`~/.zen/game/trash/ejected/`, vidée à 20h12 après 30 jours, comme `trash/moved/` pour les comptes partis vers une autre station) et l'adresse peut se réinscrire. À l'inscription, le membre peut aussi **indiquer son quartier** : la station n'en garde que la maille UMAP (0,01°, ≈ 1 km), écrite aussi dans les fichiers `GPS` et `ZUMAP` du compte comme le faisait Astroport.ONE. Le découpage SSSS du DISCO envoyé chiffré au Capitaine n'est pas repris tel quel : il est remplacé par la **clé de secours en trois parts** (voir plus bas), avec son QR (`astroportd multipass card <email> --svg`). Retrouver un compte repose donc sur cette clé de secours ; le SALT/PEPPER et le `nsec` ne sont affichés qu'une fois à la création (ils restent dans le dossier du compte et dans `--json`).
 
 ### 🌐 Navigateur (Web)
 
-Les **membres** s'inscrivent depuis le navigateur (le Capitaine se crée au terminal, ci-contre). La station doit tourner (étape 4).
+Les **membres** s'inscrivent depuis le navigateur (le Capitaine se crée au terminal, ci-contre). La station doit tourner ([étape 5](#etape-4)).
 
 1. Ouvrez `https://votre-domaine/register` (ou, dans la fenêtre **Connexion**, le lien **« Pas de compte ? Créer mon MULTIPASS »**).
 2. Saisissez votre **email** et choisissez la **langue**.
@@ -284,7 +297,200 @@ L'inscription web est **ouverte par défaut**, avec des garde-fous réglables au
 
 > **À savoir.** Sur une station publique, pensez à fermer l'inscription (`--no-register`) quand vos membres sont inscrits.
 
-### 🔑 La clé de secours : retrouver son compte si la station tombe en panne
+<a id="etape-6"></a>
+
+## Étape 7 — Vérifier que tout va bien
+
+Trois vérifications, de la plus complète à la plus rapide. Aucune ne modifie rien.
+
+### 🖥️ Terminal (CLI)
+
+```bash
+astroportd doctor --db ~/.zen/astroportd/uplanet.db --game-dir ~/.zen/game
+astroportd ylevel --verify
+curl http://127.0.0.1:18080/health
+```
+
+`doctor` contrôle l'identité, les permissions `0600` des secrets, la base, les certificats HTTPS et l'horloge (il affiche le prochain 20h12 solaire). Code de sortie `1` si une vérification échoue.
+
+Pour voir le relai Nostr de la station :
+
+```bash
+curl -H 'Accept: application/nostr+json' http://127.0.0.1:18080/
+```
+
+### 🌐 Navigateur (Web)
+
+Ouvrez `http://127.0.0.1:18080/health` : une page courte indique l'état de chaque partie de la station (OK ou en panne).
+
+Si l'application se charge sur `http://127.0.0.1:18080/`, c'est que le serveur web fonctionne.
+
+<a id="etape-7"></a>
+
+## Étape 8 — Entrer dans l'interface web
+
+L'application web s'ouvre sur l'**Accueil** : trois gestes (**Mes photos**, **Mes proches**, **Mon assistant** — ou **Mon smartphone** quand il n'y a pas d'assistant) et une liste **Bien démarrer**. Les autres écrans : **Station** (réservé au Capitaine, voir l'[étape 9](#etape-7b)), **uCloud**, **Personnes** (le carnet d'adresses et les visages réunis), **Messages**, **Réplication** et **Mon compte**.
+
+Pour s'y connecter, il faut un compte hébergé par la station ([étape 6](#etape-5)) et son **jeton**.
+
+![Schéma de l'écran MULTIPASS : cartes Solde, Autonomie, Empreinte, Souveraineté, Ẑen Opex et Ẑen Capex.](img/multipass-ecran.svg)
+
+### 🖥️ Terminal (CLI)
+
+Le jeton est affiché à la création du compte. Pour le retrouver (son email) :
+
+```bash
+astroportd token vous@exemple.org --game-dir ~/.zen/game
+```
+
+Le même jeton sert de mot de passe pour monter votre cloud en WebDAV (Finder, Explorateur Windows, application mobile) : adresse `https://votre-domaine/dav`, identifiant = votre email.
+
+### 🌐 Navigateur (Web)
+
+1. Ouvrez la station dans votre navigateur.
+2. Une fenêtre **Connexion** s'affiche : saisissez votre email (ou votre clé) et le jeton.
+3. L'**Accueil** vous propose d'envoyer vos premières photos, de **synchroniser votre smartphone** (photos, contacts, agenda : on quitte Google et Apple), de reconnaître un visage, de retrouver un proche, de mettre vos fichiers à l'abri chez un ami. Les étapes se cochent toutes seules ; la liste disparaît quand tout est fait. Une alerte n'apparaît que si votre espace dépasse 90 %.
+4. En bas de l'accueil, **Mes chiffres** montre votre solde en Ẑen, votre autonomie, votre empreinte sur les communs, vos fichiers chiffrés, et deux cartes distinctes : **Ẑen Opex** (ce que vous dépensez : loyer) et **Ẑen Capex** (ce que vous possédez : parts de matériel, avec leur amortissement).
+5. La carte **Copie privée** vous demande d'attester, une fois, que vos films et séries sont des copies pour votre usage privé.
+
+![L'Accueil d'un membre : trois gestes (photos, proches, assistant ou smartphone) et la liste « Bien démarrer ».](img/ui-accueil.png)
+
+Sur un téléphone, installez la page comme application (menu du navigateur : *Ajouter à l'écran d'accueil*).
+
+**Style de l'interface.** Dans l'en-tête, le sélecteur propose trois styles : **Aurore** (par défaut : dégradés, icônes, liseré coloré sur les cartes), **Sobre** (sans décor) et **Kraft** (papier chaud, inspiré des pochettes de FaceCloud). Le bouton voisin (◐ ☀ ☾) choisit le mode : automatique (celui de l'appareil), clair ou sombre. Ces choix restent sur l'appareil et ne sont envoyés nulle part.
+
+<a id="etape-7b"></a>
+
+## Étape 9 — Le cockpit du Capitaine
+
+Dans l'application web, l'écran **Station** est le **cockpit** : tout ce qu'un Capitaine doit voir, d'un seul regard.
+
+### 🌐 Navigateur (Web)
+
+1. En haut, **un verdict** : ✅ *Tout va bien*, 🟠 *N points à regarder* ou 🔴 *Intervention nécessaire*.
+2. **À faire** : les trois actions les plus urgentes, chacune avec sa raison en clair et un bouton qui mène à l'écran qui la règle (sous-système en panne, P2P arrêté, SSH ouvert à tout le réseau, service réglé qui ne répond plus, tâches abandonnées, MULTIPASS presque pleins, comptes verrouillés ou en période de grâce, trésorerie entamée).
+3. Sur une station neuve, **Mettre la station en service** : nom de domaine, maillage P2P, autres stations vues, adresses de la coopérative, premier membre invité. Les étapes se cochent d'après l'état réel.
+4. **Les étages de la station**, chacun avec son voyant : Machine, Station, Constellation, Services et accès, Membres, Économie.
+5. **L'essaim** : une carte par station (Power-Score, distance, en ligne ou vue, services partagés) et le nombre de *Brains* qui offrent Ollama.
+6. La page se met à jour toute seule toutes les 30 secondes. Les écrans détaillés restent à un clic (*Détails techniques*).
+
+![Le cockpit d'une station neuve : verdict, À faire, mise en service, étages et essaim.](img/ui-cockpit.png)
+
+<a id="partie-2"></a>
+
+## Partie 2 — Ce que la station offre à vos membres
+
+Ces fonctions ne se suivent pas : lisez celles dont vos membres ont besoin. Les photos et l'invitation viennent d'abord, parce que c'est par elles que la plupart des gens arrivent : un proche leur envoie des photos, ils créent leur compte pour les recevoir.
+
+<a id="etape-8"></a>
+
+## FaceCloud : retrouver et partager les photos entre amis
+
+C'est ce que vos membres utiliseront le plus. Vous déposez vos photos dans votre **uCloud** (chiffré avant de quitter votre appareil). La station y repère les **visages**, les compare, et vous aide à les nommer. Les photos où figure un ami peuvent alors lui être **partagées automatiquement**.
+
+Deux cercles : vos **amis N¹** (ceux que vous suivez *et* qui vous suivent) reçoivent le partage automatique ; pour tous les autres, vous créez un **lien secret**.
+
+![Parcours FaceCloud : photos, visages, album, amis N¹, lien secret.](img/facecloud-partage.svg)
+
+### 🖥️ Terminal (CLI)
+
+FaceCloud s'active quand la station sait où faire l'inférence faciale : un service HTTP de reconnaissance (modèle InsightFace) :
+
+```bash
+astroportd serve ... --face-engine http://127.0.0.1:8000 --relay ws://127.0.0.1:7777
+```
+
+`--relay` indique où publier les partages vers les amis qui sont sur **une autre station** (message chiffré, enveloppé NIP-59). Sans `--face-engine` ni `--face-models`, uCloud fonctionne mais sans reconnaissance.
+
+**Sans service HTTP : l'inférence locale (facultatif).** Une station autonome peut exécuter SCRFD (détection) et ArcFace (empreinte 512D) dans le binaire, par ONNX Runtime :
+
+```bash
+cargo build --release --features onnx                      # ou la version publiée compilée avec cette fonction
+export ORT_DYLIB_PATH=/chemin/vers/libonnxruntime.so       # chargée à l'exécution : rien n'est téléchargé à la compilation
+astroportd serve ... --face-models ~/modeles/buffalo_l     # contient det_10g.onnx et w600k_r50.onnx
+```
+
+Pour savoir ce qui manque, lancez `astroportd face-check` : il vérifie la fonction compilée, les modèles, la bibliothèque et le chargement. Si les deux modèles sont dans `~/.zen/astroportd/models` (ou `~/.insightface/models/buffalo_l`) et la bibliothèque aux emplacements habituels (dont le `onnxruntime` d'un venv pip), `serve` active l'inférence locale **tout seul**, sans option.
+
+Les deux modèles ne sont **pas** fournis avec astroportd : ce sont ceux du paquet InsightFace `buffalo_l`. Leurs poids sont publiés pour la **recherche non commerciale** : vérifiez la licence avant tout usage commercial, ou utilisez des modèles compatibles dont la licence vous convient (mêmes noms de fichiers, mêmes entrées et sorties). Mesure sur un PC de bureau (build de développement, 2 fils) : environ 0,5 s par photo ; le binaire optimisé est nettement plus rapide.
+
+> **Détails techniques.** **Mémoire et recherche : des embeddings calculés dans la station (facultatif).** La mémoire de BRO et la recherche par le sens transforment chaque texte en un vecteur de 1024 nombres (modèle `bge-m3`). Par défaut, c'est Ollama qui les calcule (`--ollama http://…`). Une station peut aussi les calculer **elle-même**, sans Ollama, avec la version quantifiée en entiers 8 bits (int8) de `bge-m3`, par le même ONNX Runtime que les visages :
+>
+> ```bash
+> astroportd embed-check                                     # fonction compilée, fichiers, bibliothèque, chargement, essai
+> astroportd serve ... --ollama http://127.0.0.1:11434       # les vecteurs sont calculés en local si les fichiers sont là
+> astroportd serve ... --embed-models ~/modeles/bge-m3       # ou impose le dossier (erreur claire s'il est incomplet)
+> astroportd serve ... --embed-threads 2                     # limite les fils de calcul (0 = tous les cœurs)
+> ```
+>
+> Les deux fichiers sont `bge-m3-int8.onnx` (≈ 540 Mo) et `bge-m3-tokenizer.json` (≈ 16 Mo), dans `~/.zen/astroportd/models` : l'installeur les met en place (profils *standard* et *confort*), vérifiés par SHA-256. Ils viennent de `Xenova/bge-m3` (licence MIT). Sans option, `serve` les utilise **tout seul** quand ils sont présents (et que `libonnxruntime` est trouvée) ; sinon Ollama reste le moteur, et si les fichiers sont là mais inutilisables, la station le dit à l'écran avant de se rabattre sur Ollama. Ce sont les mêmes 1024 dimensions que celles d'Ollama, et le calcul reproduit exactement celui d'`onnxruntime` sur ce même fichier (cosinus 1,000). **Attention** : le fichier est *quantifié* (int8) alors qu'Ollama sert une autre version du modèle ; leurs vecteurs sont très proches mais **non identiques**, et cet écart n'a pas été mesuré. Sur une mémoire déjà indexée par Ollama, gardez le même moteur ou ré-indexez avant de changer.
+>
+> Ordres de grandeur sur un PC de bureau à 12 cœurs : chargement ≈ 2 s au démarrage, environ 20 ms pour une phrase courte et 170 ms pour 200 jetons (≈ 150 mots), **≈ 1,3 Go de mémoire au pic**. Ollama reste nécessaire pour les **résumés** du cycle RÊVE ; seuls les vecteurs sont calculés en local. Le binaire statique (musl) n'a pas cette fonction.
+
+L'écran **Personnes** réunit le carnet d'adresses et les visages : **une personne est une fiche de contact**. En tête, le sas **« N visages à ranger »** propose **Trier en grand** (plein écran, une question à la fois : « Ces 3 visages sont-ils Léa ? » Oui / Non, puis « Qui est-ce ? » ; la photo entière s'affiche, le visage entouré ; raccourcis O, N, Espace, Échap) et la **table de tri** pour les gestes en masse. Chaque fiche montre ses visages ; un clic ouvre la photo d'origine, le visage entouré. Si plusieurs fiches portent le nom tapé, l'interface demande laquelle (ou « une nouvelle personne ») : elle ne devine jamais.
+
+La **table de tri** (`#/people/tri`) montre les visages sur une table lumineuse : chaque pastille est un visage, les visages inconnus qui se ressemblent sont regroupés en grappes, et on les **glisse** sur la pochette d'une personne (ou au lasso, ou avec la barre d'actions au clavier). Les vignettes sont recadrées par la station ; les empreintes ne quittent jamais la station.
+
+Déposez vos photos par WebDAV, par exemple avec `curl` :
+
+```bash
+curl -u vous@exemple.org:JETON -T photo.jpg https://votre-domaine/dav/Photos/photo.jpg
+```
+
+### 🌐 Navigateur (Web)
+
+1. Écran **uCloud** → bouton **Album** : vos photos, de la plus récente à la plus ancienne.
+2. Écran **Visages & BRO** : les visages détectés. Un visage reconnu à plus de 82 % porte son nom ; entre 55 % et 82 %, la station demande « est-ce X ? » : vous acceptez ou vous nommez vous-même.
+3. Entre amis N¹ réciproques, les photos sont copiées dans `/Partages/De_<nom>/` chez l'ami (même station), ou lui sont envoyées chiffrées (autre station).
+4. Pour partager avec quelqu'un d'autre (cercle N², invités) : ouvrez une photo, bouton **Partager** → **Lien magique**. Durée de 1 heure à 30 jours (72 h par défaut). Envoyez le lien tel quel : la clé de déchiffrement est après le `#` et ne quitte **jamais** votre navigateur ni celui de l'invité.
+5. Les liens expirés sont supprimés chaque nuit, avec leurs copies chiffrées.
+
+> **À savoir.** Les films et séries déposés (copie privée) ne sont publiés que pour votre cercle N¹, jamais pour tout le cercle N².
+
+<a id="etape-8quater"></a>
+
+## Inviter quelqu'un à recevoir des photos
+
+C'est la meilleure façon de faire entrer quelqu'un : vous lui envoyez les photos où il apparaît, il crée son compte pour les recevoir, et vous voilà amis sur la station. Aucune adresse email à demander, aucun formulaire à remplir pour vous.
+
+Pour envoyer des photos à une personne qui n'a pas encore de MULTIPASS : écran **Personnes → Synchroniser et inviter → Inviter** (sur une fiche, ou sur une personne reconnue sans fiche : la fiche est alors créée d'abord). La station retient la liste des photos où cette personne apparaît (200 au plus) et rend un **lien** `https://<station>/i/<jeton>` avec son **QR code**, à envoyer par le moyen de votre choix (le bouton *Partager* ouvre le menu de partage du téléphone).
+
+Ce que voit la personne, sans compte : qui l'invite, combien de fichiers, de petites vignettes **floutées** (16 pixels de côté : on reconnaît une scène, pas un visage). Elle saisit **son** adresse email ; la station crée alors son MULTIPASS, lui remet ses identifiants une seule fois, la rend **Proche réciproque** de l'expéditeur (chacun suit l'autre, listes de contacts signées par chacune des deux clés et publiées), range les photos dans `/Partages/De_<expéditeur>/` (même blob chiffré, même clé : aucune copie) et **relie la fiche de contact** à son nouveau MULTIPASS. Les autres photos où elle apparaît lui sont partagées aussitôt, comme pour tout Proche relié.
+
+Garde-fous :
+
+- **Usage unique.** La réclamation est prise de façon atomique avant toute création ; si la création échoue (adresse invalide, déjà inscrite), le lien reste valable.
+- **Une adresse qui a déjà un MULTIPASS ici est refusée** : lier deux comptes sur la seule foi d'une adresse saisie permettrait de s'imposer comme proche de n'importe qui. La personne se connecte, puis demande à être ajoutée comme proche.
+- Le lien expire (14 jours par défaut, 90 au plus), se retire d'un clic (*Retirer*), et chaque compte garde au plus 50 invitations en attente. La page est servie avec `X-Robots-Tag: noindex` et sans en-tête `Referer`.
+- Le débit d'inscription par adresse IP s'applique aussi aux réclamations (`--register-per-hour`) ; `--no-register` ferme les invitations avec l'inscription.
+- Les clés des fichiers ne quittent pas la station avant la réclamation. Quand le lien est créé pour **une personne** (« toutes les photos de Léa »), la liste est **recalculée au moment où le lien est ouvert et accepté** : les photos traitées entre-temps sont incluses, celles supprimées depuis ne le sont plus. Un lien créé pour des chemins précis garde ces chemins.
+
+**Accepter avec son compte (même station).** Si le visiteur est déjà connecté à la station, la page propose d'abord « Bonjour Léa, ajouter ces N fichiers à votre compte ? » : un clic (`POST /api/v1/invite/<jeton>/accept`) accepte, **sans formulaire et sans nouveau compte**. L'identité est prouvée par la **session**, jamais par une adresse saisie. Le double suivi, le rangement des photos, la liaison de la fiche et la prévenance de l'expéditeur sont les mêmes qu'à la création d'un compte ; l'expéditeur ne peut pas accepter son propre lien. « Utiliser un autre compte » rouvre le formulaire d'inscription. La session de l'application est conservée dans le `localStorage` du navigateur (elle survit à la fermeture de la PWA ; *Déconnexion* l'efface) : c'est ce qui permet à la page d'invitation, ouverte dans un autre onglet, de la reconnaître.
+
+**Envoi du lien.** La station n'envoie **jamais** de courrier : le lien se transmet par la messagerie de l'expéditeur. Après *Inviter*, les boutons **Email** (`mailto:` prérempli avec l'adresse de la fiche), **SMS**, **WhatsApp** et **Partager** (menu du téléphone) ouvrent son application avec le message prêt.
+
+> **Détails techniques.** **Erreurs à code stable.** Toute erreur d'invitation porte `{ "error": "…", "code": "invite_used" | "invite_expired" | "invite_revoked" | "email_taken" | "rate_limited" | "registration_closed" | … }` ; la page traduit d'après le code (français, anglais, espagnol), jamais d'après le texte.
+
+**Limites actuelles.** « Accepter avec mon compte » ne fonctionne que pour un compte hébergé sur **cette** station : une personne inscrite sur une autre station n'est pas encore redirigée vers la sienne (acceptation entre stations à faire). Une session ouverte par une extension Nostr (NIP-07) n'est pas reconnue par la page : seule la session par identifiant et jeton ou PASS l'est. Les codes d'erreur ne couvrent pas encore tous les écrans de l'application, seulement les invitations et le PASS. Ce parcours n'a pas été essayé sur un vrai téléphone.
+
+### Compte sur une autre station
+
+Sur la page du lien, **« Mon compte est sur une autre station »** : la personne saisit l'adresse de sa station et y est envoyée (`/claim`). Le jeton voyage dans le **fragment** de l'adresse (`#origin=…&token=…`), que le navigateur n'envoie à aucun serveur ; la page le retire de l'adresse dès qu'elle l'a lu. Elle demande le PASS s'il n'y a pas de session dans ce navigateur (la session obtenue reste en mémoire), puis nomme la station d'origine et le compte qui recevra, et attend un clic.
+
+> **Détails techniques.** Ensuite c'est **la station du destinataire** qui travaille, sans que le navigateur parle à l'autre station (pas de CORS) :
+>
+> 1. `GET /api/v1/invite/<jeton>` signé NIP-98 : l'aperçu public ne contient jamais la clé de l'expéditeur, la réponse signée la donne.
+> 2. Le destinataire suit l'expéditeur (liste de contacts signée avec sa clé, qui ne quitte pas sa station).
+> 3. `POST /api/v1/invite/<jeton>/accept` signé NIP-98 (le corps est lié à la signature) : la station d'origine vérifie, marque le lien utilisé par cette clé, suit le destinataire, relie la fiche de contact et rend la liste de contacts de l'expéditeur, que la station du destinataire range **avant** toute photo (un fichier n'est accepté que d'un proche réciproque ; une enveloppe arrivée trop tôt est écartée).
+> 4. `POST /api/v1/invite/<jeton>/deliver` : les photos partent par le maillage (NIP-17 emballé en NIP-59, puis rapatriement du blob chiffré par `/astro/blob/1.0.0`) vers `/Partages/De_<expéditeur>/`.
+>
+> Limites : le lien reste à usage unique (`invite_gone` si la station d'origine répond 404/410) ; l'envoi est réservé à celui qui a accepté, pendant une heure et 3 fois au plus ; l'adresse saisie doit être celle que la station d'origine annonce publiquement (la signature est liée à l'URL). Sans station d'accueil connue pour le destinataire, c'est son `home_station` (envoyé dans le corps signé) qui sert de route.
+
+<a id="secours"></a>
+
+## La clé de secours : tout retrouver après une panne
+
+Une station peut tomber en panne, brûler, ou être quittée pour une autre. Le compte d'un membre n'en dépend pas : il le retrouve ailleurs, avec ses amis, ses contacts et ses fichiers.
 
 À la création, la carte d'identité contient une **clé de secours** : le secret de votre compte est découpé en **trois parts, dont deux suffisent**. Vous recevez la **part 1** (une ligne `astro-share:v1|…` et son **QR**). **Seule, elle ne révèle rien** : une photo ou une carte volée ne donne pas accès à votre compte. Imprimez-la et gardez-la hors ligne.
 
@@ -335,153 +541,11 @@ Ouvrez `https://votre-nouvelle-station/restore`, **scannez le QR** (si votre nav
 >
 > **Limites actuelles.** (1) Un fichier qu'un ami vous avait envoyé revient seulement si cet ami est joignable. (2) Seuls les amis réciproques participent. (3) L'ancienne station doit être à jour pour comprendre `moved` ; sinon arrêtez-la.
 
-<a id="etape-6"></a>
-
-## Étape 6 — Vérifier que tout va bien
-
-Trois vérifications, de la plus complète à la plus rapide. Aucune ne modifie rien.
-
-### 🖥️ Terminal (CLI)
-
-```bash
-astroportd doctor --db ~/.zen/astroportd/uplanet.db --game-dir ~/.zen/game
-astroportd ylevel --verify
-curl http://127.0.0.1:18080/health
-```
-
-`doctor` contrôle l'identité, les permissions `0600` des secrets, la base, les certificats HTTPS et l'horloge (il affiche le prochain 20h12 solaire). Code de sortie `1` si une vérification échoue.
-
-Pour voir le relai Nostr de la station :
-
-```bash
-curl -H 'Accept: application/nostr+json' http://127.0.0.1:18080/
-```
-
-### 🌐 Navigateur (Web)
-
-Ouvrez `http://127.0.0.1:18080/health` : une page courte indique l'état de chaque partie de la station (OK ou en panne).
-
-Si l'application se charge sur `http://127.0.0.1:18080/`, c'est que le serveur web fonctionne.
-
-<a id="etape-7"></a>
-
-## Étape 7 — Entrer dans l'interface web
-
-L'application web s'ouvre sur l'**Accueil** : trois gestes (**Mes photos**, **Mes proches**, **Mon assistant** — ou **Mon smartphone** quand il n'y a pas d'assistant) et une liste **Bien démarrer**. Les autres écrans : **Station** (réservé au Capitaine, voir l'étape 7 bis), **uCloud**, **Personnes** (le carnet d'adresses et les visages réunis), **Messages**, **Réplication** et **Mon compte**.
-
-Pour s'y connecter, il faut un compte hébergé par la station (étape 5) et son **jeton**.
-
-![Schéma de l'écran MULTIPASS : cartes Solde, Autonomie, Empreinte, Souveraineté, Ẑen Opex et Ẑen Capex.](img/multipass-ecran.svg)
-
-### 🖥️ Terminal (CLI)
-
-Le jeton est affiché à la création du compte. Pour le retrouver (son email) :
-
-```bash
-astroportd token vous@exemple.org --game-dir ~/.zen/game
-```
-
-Le même jeton sert de mot de passe pour monter votre cloud en WebDAV (Finder, Explorateur Windows, application mobile) : adresse `https://votre-domaine/dav`, identifiant = votre email.
-
-### 🌐 Navigateur (Web)
-
-1. Ouvrez la station dans votre navigateur.
-2. Une fenêtre **Connexion** s'affiche : saisissez votre email (ou votre clé) et le jeton.
-3. L'**Accueil** vous propose d'envoyer vos premières photos, de **synchroniser votre smartphone** (photos, contacts, agenda : on quitte Google et Apple), de reconnaître un visage, de retrouver un proche, de mettre vos fichiers à l'abri chez un ami. Les étapes se cochent toutes seules ; la liste disparaît quand tout est fait. Une alerte n'apparaît que si votre espace dépasse 90 %.
-4. En bas de l'accueil, **Mes chiffres** montre votre solde en Ẑen, votre autonomie, votre empreinte sur les communs, vos fichiers chiffrés, et deux cartes distinctes : **Ẑen Opex** (ce que vous dépensez : loyer) et **Ẑen Capex** (ce que vous possédez : parts de matériel, avec leur amortissement).
-5. La carte **Copie privée** vous demande d'attester, une fois, que vos films et séries sont des copies pour votre usage privé.
-
-![L'Accueil d'un membre : trois gestes (photos, proches, assistant ou smartphone) et la liste « Bien démarrer ».](img/ui-accueil.png)
-
-Sur un téléphone, installez la page comme application (menu du navigateur : *Ajouter à l'écran d'accueil*).
-
-**Style de l'interface.** Dans l'en-tête, le sélecteur propose trois styles : **Aurore** (par défaut : dégradés, icônes, liseré coloré sur les cartes), **Sobre** (sans décor) et **Kraft** (papier chaud, inspiré des pochettes de FaceCloud). Le bouton voisin (◐ ☀ ☾) choisit le mode : automatique (celui de l'appareil), clair ou sombre. Ces choix restent sur l'appareil et ne sont envoyés nulle part.
-
-<a id="etape-7b"></a>
-
-## Étape 7 bis — Le cockpit du Capitaine
-
-Dans l'application web, l'écran **Station** est le **cockpit** : tout ce qu'un Capitaine doit voir, d'un seul regard.
-
-### 🌐 Navigateur (Web)
-
-1. En haut, **un verdict** : ✅ *Tout va bien*, 🟠 *N points à regarder* ou 🔴 *Intervention nécessaire*.
-2. **À faire** : les trois actions les plus urgentes, chacune avec sa raison en clair et un bouton qui mène à l'écran qui la règle (sous-système en panne, P2P arrêté, SSH ouvert à tout le réseau, service réglé qui ne répond plus, tâches abandonnées, MULTIPASS presque pleins, comptes verrouillés ou en période de grâce, trésorerie entamée).
-3. Sur une station neuve, **Mettre la station en service** : nom de domaine, maillage P2P, autres stations vues, adresses de la coopérative, premier membre invité. Les étapes se cochent d'après l'état réel.
-4. **Les étages de la station**, chacun avec son voyant : Machine, Station, Constellation, Services et accès, Membres, Économie.
-5. **L'essaim** : une carte par station (Power-Score, distance, en ligne ou vue, services partagés) et le nombre de *Brains* qui offrent Ollama.
-6. La page se met à jour toute seule toutes les 30 secondes. Les écrans détaillés restent à un clic (*Détails techniques*).
-
-![Le cockpit d'une station neuve : verdict, À faire, mise en service, étages et essaim.](img/ui-cockpit.png)
-
-<a id="etape-8"></a>
-
-## Étape 8 — FaceCloud : retrouver et partager vos photos entre amis
-
-C'est l'application phare. Vous déposez vos photos dans votre **uCloud** (chiffré avant de quitter votre appareil). La station y repère les **visages**, les compare, et vous aide à les nommer. Les photos où figure un ami peuvent alors lui être **partagées automatiquement**.
-
-Deux cercles : vos **amis N¹** (ceux que vous suivez *et* qui vous suivent) reçoivent le partage automatique ; pour tous les autres, vous créez un **lien secret**.
-
-![Parcours FaceCloud : photos, visages, album, amis N¹, lien secret.](img/facecloud-partage.svg)
-
-### 🖥️ Terminal (CLI)
-
-FaceCloud s'active quand la station sait où faire l'inférence faciale : un service HTTP de reconnaissance (modèle InsightFace) :
-
-```bash
-astroportd serve ... --face-engine http://127.0.0.1:8000 --relay ws://127.0.0.1:7777
-```
-
-`--relay` indique où publier les partages vers les amis qui sont sur **une autre station** (message chiffré, enveloppé NIP-59). Sans `--face-engine` ni `--face-models`, uCloud fonctionne mais sans reconnaissance.
-
-**Sans service HTTP : l'inférence locale (facultatif).** Une station autonome peut exécuter SCRFD (détection) et ArcFace (empreinte 512D) dans le binaire, par ONNX Runtime :
-
-```bash
-cargo build --release --features onnx                      # ou la version publiée compilée avec cette fonction
-export ORT_DYLIB_PATH=/chemin/vers/libonnxruntime.so       # chargée à l'exécution : rien n'est téléchargé à la compilation
-astroportd serve ... --face-models ~/modeles/buffalo_l     # contient det_10g.onnx et w600k_r50.onnx
-```
-
-Pour savoir ce qui manque, lancez `astroportd face-check` : il vérifie la fonction compilée, les modèles, la bibliothèque et le chargement. Si les deux modèles sont dans `~/.zen/astroportd/models` (ou `~/.insightface/models/buffalo_l`) et la bibliothèque aux emplacements habituels (dont le `onnxruntime` d'un venv pip), `serve` active l'inférence locale **tout seul**, sans option.
-
-Les deux modèles ne sont **pas** fournis avec astroportd : ce sont ceux du paquet InsightFace `buffalo_l`. Leurs poids sont publiés pour la **recherche non commerciale** : vérifiez la licence avant tout usage commercial, ou utilisez des modèles compatibles dont la licence vous convient (mêmes noms de fichiers, mêmes entrées et sorties). Mesure sur un PC de bureau (build de développement, 2 fils) : environ 0,5 s par photo ; le binaire optimisé est nettement plus rapide.
-
-**Mémoire et recherche : des embeddings calculés dans la station (facultatif).** La mémoire de BRO et la recherche par le sens transforment chaque texte en un vecteur de 1024 nombres (modèle `bge-m3`). Par défaut, c'est Ollama qui les calcule (`--ollama http://…`). Une station peut aussi les calculer **elle-même**, sans Ollama, avec la version quantifiée en entiers 8 bits (int8) de `bge-m3`, par le même ONNX Runtime que les visages :
-
-```bash
-astroportd embed-check                                     # fonction compilée, fichiers, bibliothèque, chargement, essai
-astroportd serve ... --ollama http://127.0.0.1:11434       # les vecteurs sont calculés en local si les fichiers sont là
-astroportd serve ... --embed-models ~/modeles/bge-m3       # ou impose le dossier (erreur claire s'il est incomplet)
-astroportd serve ... --embed-threads 2                     # limite les fils de calcul (0 = tous les cœurs)
-```
-
-Les deux fichiers sont `bge-m3-int8.onnx` (≈ 540 Mo) et `bge-m3-tokenizer.json` (≈ 16 Mo), dans `~/.zen/astroportd/models` : l'installeur les met en place (profils *standard* et *confort*), vérifiés par SHA-256. Ils viennent de `Xenova/bge-m3` (licence MIT). Sans option, `serve` les utilise **tout seul** quand ils sont présents (et que `libonnxruntime` est trouvée) ; sinon Ollama reste le moteur, et si les fichiers sont là mais inutilisables, la station le dit à l'écran avant de se rabattre sur Ollama. Ce sont les mêmes 1024 dimensions que celles d'Ollama, et le calcul reproduit exactement celui d'`onnxruntime` sur ce même fichier (cosinus 1,000). **Attention** : le fichier est *quantifié* (int8) alors qu'Ollama sert une autre version du modèle ; leurs vecteurs sont très proches mais **non identiques**, et cet écart n'a pas été mesuré. Sur une mémoire déjà indexée par Ollama, gardez le même moteur ou ré-indexez avant de changer.
-
-Ordres de grandeur sur un PC de bureau à 12 cœurs : chargement ≈ 2 s au démarrage, environ 20 ms pour une phrase courte et 170 ms pour 200 jetons (≈ 150 mots), **≈ 1,3 Go de mémoire au pic**. Ollama reste nécessaire pour les **résumés** du cycle RÊVE ; seuls les vecteurs sont calculés en local. Le binaire statique (musl) n'a pas cette fonction.
-
-L'écran **Personnes** réunit le carnet d'adresses et les visages : **une personne est une fiche de contact**. En tête, le sas **« N visages à ranger »** propose **Trier en grand** (plein écran, une question à la fois : « Ces 3 visages sont-ils Léa ? » Oui / Non, puis « Qui est-ce ? » ; la photo entière s'affiche, le visage entouré ; raccourcis O, N, Espace, Échap) et la **table de tri** pour les gestes en masse. Chaque fiche montre ses visages ; un clic ouvre la photo d'origine, le visage entouré. Si plusieurs fiches portent le nom tapé, l'interface demande laquelle (ou « une nouvelle personne ») : elle ne devine jamais.
-
-La **table de tri** (`#/people/tri`) montre les visages sur une table lumineuse : chaque pastille est un visage, les visages inconnus qui se ressemblent sont regroupés en grappes, et on les **glisse** sur la pochette d'une personne (ou au lasso, ou avec la barre d'actions au clavier). Les vignettes sont recadrées par la station ; les empreintes ne quittent jamais la station.
-
-Déposez vos photos par WebDAV, par exemple avec `curl` :
-
-```bash
-curl -u vous@exemple.org:JETON -T photo.jpg https://votre-domaine/dav/Photos/photo.jpg
-```
-
-### 🌐 Navigateur (Web)
-
-1. Écran **uCloud** → bouton **Album** : vos photos, de la plus récente à la plus ancienne.
-2. Écran **Visages & BRO** : les visages détectés. Un visage reconnu à plus de 82 % porte son nom ; entre 55 % et 82 %, la station demande « est-ce X ? » : vous acceptez ou vous nommez vous-même.
-3. Entre amis N¹ réciproques, les photos sont copiées dans `/Partages/De_<nom>/` chez l'ami (même station), ou lui sont envoyées chiffrées (autre station).
-4. Pour partager avec quelqu'un d'autre (cercle N², invités) : ouvrez une photo, bouton **Partager** → **Lien magique**. Durée de 1 heure à 30 jours (72 h par défaut). Envoyez le lien tel quel : la clé de déchiffrement est après le `#` et ne quitte **jamais** votre navigateur ni celui de l'invité.
-5. Les liens expirés sont supprimés chaque nuit, avec leurs copies chiffrées.
-
-> **À savoir.** Les films et séries déposés (copie privée) ne sont publiés que pour votre cercle N¹, jamais pour tout le cercle N².
-
 <a id="etape-8b"></a>
 
-## Étape 8 bis — Contacts, agenda (CardDAV, CalDAV) et Mon compte
+## Contacts, agenda et Mon compte
+
+Le carnet d'adresses et l'agenda du téléphone quittent Google et Apple pour la station, où ils sont chiffrés et sauvegardés chez vos amis comme le reste de vos fichiers.
 
 **Carnet d'adresses (CardDAV).** Chaque compte a un carnet synchronisable avec « Contacts » d'Android (DAVx⁵) et d'iPhone. Les fiches sont des fichiers `.vcf` chiffrés du dossier `/Contacts` de votre uCloud (donc répliqués, sauvegardés et comptés dans votre quota), servis en CardDAV (RFC 6352) :
 
@@ -493,11 +557,44 @@ curl -u vous@exemple.org:JETON -T photo.jpg https://votre-domaine/dav/Photos/pho
 - **Serveur** : le même `https://<station>/dav/` (découverte `/.well-known/caldav` et `calendar-home-set` du principal) ; mêmes identifiants. Un seul agenda par compte, nommé « Agenda ».
 - Limites connues : `calendar-query` renvoie tout l'agenda sans appliquer le filtre de dates ni développer les récurrences (le client le fait) ; pas d'invitations entre participants ; pas de création d'agendas supplémentaires. `sync-collection` est pris en charge, avec le même journal que le carnet.
 
-**Rapprochement photo ↔ fiche ↔ MULTIPASS.** Une fiche relie un visage à un MULTIPASS de deux façons : la fiche porte une clé Nostr (`X-NOSTR-PUBKEY` ou `X-NOSTR-NPUB`, en hexadécimal ou `npub1…`), ou son email est celui d'un compte **hébergé par cette station** (un email déclaré dans un DID distant n'est jamais une preuve). Un visage est relié à **sa fiche par l'UID vCard** de celle-ci, jamais par le nom : deux homonymes restent deux personnes, renommer la fiche (sur le téléphone ou dans Personnes) renomme ses visages, et supprimer la fiche les délie (ils gardent leur nom). Une fiche sans UID en reçoit un à l'indexation ; le téléphone le récupère à sa synchronisation suivante. La clé Nostr de la fiche passe à ses visages. Les visages nommés avant ce lien sont rattachés une seule fois, par leur clé ou par un nom qu'une seule fiche porte. Si vous êtes Proches réciproques, les photos déjà analysées de cette personne lui sont partagées aussitôt. L'écran **Personnes** (onglet *Synchroniser et inviter*) montre les fiches, leur lien, les personnes reconnues sans fiche (*Créer la fiche*) et permet de relier à la main (email d'un MULTIPASS de la station, ou `npub`) ; une clé ajoutée à la main est écrite dans la fiche, donc elle suit le carnet sur votre téléphone.
+> **Détails techniques.** **Rapprochement photo ↔ fiche ↔ MULTIPASS.** Une fiche relie un visage à un MULTIPASS de deux façons : la fiche porte une clé Nostr (`X-NOSTR-PUBKEY` ou `X-NOSTR-NPUB`, en hexadécimal ou `npub1…`), ou son email est celui d'un compte **hébergé par cette station** (un email déclaré dans un DID distant n'est jamais une preuve). Un visage est relié à **sa fiche par l'UID vCard** de celle-ci, jamais par le nom : deux homonymes restent deux personnes, renommer la fiche (sur le téléphone ou dans Personnes) renomme ses visages, et supprimer la fiche les délie (ils gardent leur nom). Une fiche sans UID en reçoit un à l'indexation ; le téléphone le récupère à sa synchronisation suivante. La clé Nostr de la fiche passe à ses visages. Les visages nommés avant ce lien sont rattachés une seule fois, par leur clé ou par un nom qu'une seule fiche porte. Si vous êtes Proches réciproques, les photos déjà analysées de cette personne lui sont partagées aussitôt. L'écran **Personnes** (onglet *Synchroniser et inviter*) montre les fiches, leur lien, les personnes reconnues sans fiche (*Créer la fiche*) et permet de relier à la main (email d'un MULTIPASS de la station, ou `npub`) ; une clé ajoutée à la main est écrite dans la fiche, donc elle suit le carnet sur votre téléphone.
 
 **Mon compte.** Identité et clés publiques, profil Nostr (nom, présentation, image : un nouveau kind 0 signé par la station pour votre compte), langue de l'interface (français, English, Español), relais annoncés (NIP-65), **changement du jeton** (l'ancien cesse de fonctionner immédiatement ; la génération est conservée dans la base) et **export de vos clés** (case à cocher de confirmation, 3 exports par heure, chaque export est tracé et vous est signalé).
 
-## Étape 8 bis-b — Mon coffre de mots de passe (KeePass)
+<a id="etape-8bis-j"></a>
+
+## Messages privés, et une personne dans plusieurs UPlanet
+
+**Messages** : des conversations privées, de personne à personne, que seuls les deux interlocuteurs peuvent lire.
+
+> **Détails techniques.** **Comment ça marche** (`#/chat`) : conversations 1 à 1 chiffrées (NIP-17 : message kind 14, scellé kind 13, enveloppe kind 1059). La station ouvre toutes les 3 s les enveloppes nouvelles de chaque MULTIPASS hébergé (repère `seq` dans `kv`, car NIP-59 brouille les dates) et range les messages déchiffrés dans `chat_messages` (état local). API : `GET /api/v1/chat`, `GET /api/v1/chat/messages?peer=`, `POST /api/v1/chat/send`, `POST /api/v1/chat/read`.
+
+> **Détails techniques.** **Une personne, plusieurs UPlanet.** Le MULTIPASS d'une personne a une clé différente dans chaque UPlanet : on ne peut pas la déduire de son email. La station la retrouve de deux façons :
+> 1. **Annuaire de la station** : les plans voisins (`planes.json`) sont lus en lecture seule ; l'email d'un MULTIPASS hébergé donne sa clé dans chaque plan.
+> 2. **Lien prouvé** : kind 31903 `d = plane-link`, signé par la clé A, tag `p` = clé B, contenu = événement `d = plane-link-proof` signé par B qui nomme A. Un lien sans les deux signatures est ignoré.
+>
+> `GET /api/v1/me/links` liste vos clés ; `POST /api/v1/me/links` annonce vos comptes des autres plans (public, sur demande, à faire dans chaque UPlanet). La fiche d'un contact (`GET /api/v1/book/card`) rend `keys` ; le chat regroupe les clés liées en une conversation et écrit dans l'UPlanet commune.
+
+<a id="visio"></a>
+
+## Appeler en visio
+
+Dans **Messages**, le bouton 📹 en haut d'une conversation appelle votre proche en visio ; la fiche d'une personne reliée à un MULTIPASS (écran **Personnes**) a aussi son bouton *Appeler en visio*. Chez votre proche, une carte **« Léa vous appelle »** apparaît sur n'importe quel écran, avec une sonnerie et une vibration : *Décrocher* ou *Refuser*. Pendant l'appel : *Micro*, *Caméra*, *Raccrocher*. Un appel sans réponse laisse **« 📹 Appel manqué »** dans la conversation, avec un bouton *Rappeler*.
+
+- **Qui est là** : dans **Mon compte → Visio**, cochez *Être joignable en visio*. Vos amis réciproques voient alors une pastille sur votre avatar dans Messages (« en ligne », ou « en appel » en rouge), tant qu'une page Astroport est ouverte chez vous. Personne d'autre ne la voit, et rien n'est gardé.
+- **Plusieurs écrans** : si la station est ouverte sur votre téléphone et votre ordinateur, tous sonnent ; décrochez sur l'un, les autres s'arrêtent (« Appel pris sur un autre écran »).
+- **Onglet en arrière-plan** : le titre de l'onglet clignote et, si vous l'avez accepté (*Être prévenu des appels sur cet appareil*, ou au premier appel que vous passez), une notification du système vous prévient.
+
+- **Sans tiers** : le son et l'image vont directement d'un navigateur à l'autre. La station ne transporte que la sonnerie et la mise en relation, chiffrées comme un message privé, dans une enveloppe que les relais oublient au bout de dix minutes. Seul un proche qui vous suit peut vous faire sonner.
+- **Adresse sécurisée obligatoire** : un navigateur n'ouvre la caméra et le micro que sur une adresse `https` (ou `localhost`). Une station sans nom de domaine ne permet donc la visio que depuis la machine elle-même : `astroportd init --domain votre.domaine`.
+- **Relais d'appel** : quand deux navigateurs ne peuvent pas se joindre en direct (réseaux mobiles, réseaux d'entreprise), le son et l'image passent par la station de l'appelant. Ce relais est **réservé aux membres de la station et à leurs amis N¹** (amis réciproques) : un membre reçoit ses accès de sa station, un ami ne les reçoit que dans l'appel chiffré qui lui est destiné, pour lui seul. Le relais ne fait passer le trafic qu'entre deux appels de la station : il ne peut servir à joindre ni Internet ni le réseau de la station.
+- **Pour le Capitaine** : STUN et relais écoutent en **UDP sur le même port** que l'interface (443 avec un domaine) : ouvrez ce port **en UDP** sur la box, en plus du TCP. Sur une machine à plusieurs adresses (box, VPN, conteneurs), la station ouvre une prise par adresse, pour répondre depuis l'adresse que le navigateur a jointe. `--stun-listen ip:port` change ce port, `--no-turn` garde STUN sans relais, `--no-stun` coupe les deux, `--ice-server stun:…|turn:…` (répétable) ajoute des serveurs. Derrière un reverse proxy qui ne transmet pas l'UDP, donnez un `--stun-listen` joignable directement.
+- **Appel de groupe** (4 personnes au plus) : pendant un appel que vous avez lancé, *＋ Ajouter* invite un autre proche. Chacun voit les autres en tuiles ; qui raccroche quitte l'appel, les autres continuent. Les invités n'ont pas besoin d'être amis entre eux : la station de chacun n'admet les autres participants que dans la salle ouverte par un ami, et tout le monde peut passer par le relais de la station de l'hôte.
+- **Limites** : 4 personnes au plus (chaque navigateur envoie son image à tous les autres) ; si les réseaux bloquent aussi l'UDP vers la station, l'appel échoue et l'écran le dit.
+
+<a id="etape-8bis-b"></a>
+
+## Le coffre de mots de passe (KeePass)
 
 Votre uCloud accueille un **coffre KeePass** (`.kdbx`) dans le dossier `/Coffre`. Le fichier est chiffré par **votre** mot de passe maître, que la station ne connaît pas : l'hébergeur, le Capitaine et les amis qui gardent votre sauvegarde n'en voient qu'un fichier opaque. Il est répliqué avec vos sauvegardes et comptabilisé dans votre quota. **Il n'est jamais partageable** : ni lien d'invité, ni envoi à un ami, même en désignant le dossier racine.
 
@@ -518,14 +615,14 @@ Votre uCloud accueille un **coffre KeePass** (`.kdbx`) dans le dossier `/Coffre`
 
 À chaque enregistrement, l'application écrase le fichier (la station renvoie `204`) et relit la dernière version à l'ouverture. Si deux appareils modifient en même temps, KeePass propose de fusionner : acceptez.
 
-**Agents et serveur MCP (demande d'accord).** La station parle MCP (JSON-RPC 2.0, `POST https://<station>/mcp`). Un agent s'y présente avec **son propre jeton**, jamais avec votre compte :
-
-1. Vous déclarez l'agent (`POST /api/v1/agents` avec `{ "name": "BRO", "group": "Agents", "max_secs": 600 }`, authentifié comme pour le reste de l'API). La réponse contient son **jeton `ag1_…`, montré une seule fois** : la station n'en garde que l'empreinte SHA-256. Huit agents au plus par compte ; pour en retirer un : `POST /api/v1/agents/revoke`.
-2. Le registre est un événement Nostr **kind 31903, `d = agents`**, signé de votre clé et **chiffré pour vous seul** (NIP-44) ; il suit vos sauvegardes et se reconstruit au `replay`.
-3. L'agent appelle l'outil `demander_acces` (`site` = nom d'hôte seul, par exemple `impots.gouv.fr`, et une `raison` de 200 caractères) puis interroge `statut_acces`. Vous recevez la demande dans le flux d'activité et la tranchez par `POST /api/v1/agents/decide` (`{ "id", "approve", "secs" }`). Une demande non traitée expire au bout de 5 minutes ; la durée d'un accord est plafonnée par l'agent et par une heure.
-4. Chaque demande, accord, refus et retrait est écrit dans le journal d'audit (`audit.agent`).
-
-**Ce que cette étape ne fait pas :** un agent ne reçoit jamais de mot de passe (il reçoit « en attente », « accordé », « refusé » ou « expiré »), et pour l'instant l'accord n'ouvre pas non plus `agents.kdbx` : il est seulement enregistré et tracé. La remise d'un identifiant à un navigateur reste à construire. Pas d'écran dédié non plus : l'API et le flux d'activité suffisent aux premiers essais. Limites : 5 demandes en attente et 20 par heure et par agent.
+> **Détails techniques.** **Agents et serveur MCP (demande d'accord).** La station parle MCP (JSON-RPC 2.0, `POST https://<station>/mcp`). Un agent s'y présente avec **son propre jeton**, jamais avec votre compte :
+>
+> 1. Vous déclarez l'agent (`POST /api/v1/agents` avec `{ "name": "BRO", "group": "Agents", "max_secs": 600 }`, authentifié comme pour le reste de l'API). La réponse contient son **jeton `ag1_…`, montré une seule fois** : la station n'en garde que l'empreinte SHA-256. Huit agents au plus par compte ; pour en retirer un : `POST /api/v1/agents/revoke`.
+> 2. Le registre est un événement Nostr **kind 31903, `d = agents`**, signé de votre clé et **chiffré pour vous seul** (NIP-44) ; il suit vos sauvegardes et se reconstruit au `replay`.
+> 3. L'agent appelle l'outil `demander_acces` (`site` = nom d'hôte seul, par exemple `impots.gouv.fr`, et une `raison` de 200 caractères) puis interroge `statut_acces`. Vous recevez la demande dans le flux d'activité et la tranchez par `POST /api/v1/agents/decide` (`{ "id", "approve", "secs" }`). Une demande non traitée expire au bout de 5 minutes ; la durée d'un accord est plafonnée par l'agent et par une heure.
+> 4. Chaque demande, accord, refus et retrait est écrit dans le journal d'audit (`audit.agent`).
+>
+> **Ce que cette étape ne fait pas :** un agent ne reçoit jamais de mot de passe (il reçoit « en attente », « accordé », « refusé » ou « expiré »), et pour l'instant l'accord n'ouvre pas non plus `agents.kdbx` : il est seulement enregistré et tracé. La remise d'un identifiant à un navigateur reste à construire. Pas d'écran dédié non plus : l'API et le flux d'activité suffisent aux premiers essais. Limites : 5 demandes en attente et 20 par heure et par agent.
 
 **Quitter le coffre de Firefox.**
 
@@ -538,192 +635,9 @@ Les codes à usage unique (TOTP) ne migrent pas : Firefox n'en stocke pas ; KeeP
 
 **Si vous oubliez le mot de passe maître**, personne ne peut le retrouver, ni vous aider : ni la station, ni le Capitaine, ni vos amis (la clé de secours rétablit votre compte, pas ce mot de passe). Notez-le sur papier, ou ajoutez un fichier clé à votre coffre.
 
-## Étape 8 bis-c — Reprendre son uCloud d'Astroport.ONE
+<a id="etape-8bis-m"></a>
 
-`astroportd import-ucloud <email>` reprend le uCloud d'un compte (`~/.zen/game/nostr/<email>/.ucloud`) **sans rien recopier ni ré-encoder** : le nouveau VFS référence les **mêmes blobs chiffrés** (UENC v1, déjà dans IPFS) avec **les mêmes clés**. L'ancienne base n'est ouverte qu'en lecture seule et n'est jamais modifiée.
-
-1. **À blanc d'abord** : `astroportd import-ucloud fred@example.org --dry-run`. Il lit l'ancien uCloud, dit ce qu'il reprendrait (fichiers, taille, dossiers, clés) et ce qu'il **écarterait avec la raison** (liste complète dans `import-ucloud-ecartes.tsv`), puis **relit, déchiffre et compare** un échantillon de fichiers (`--verify`, 60 par défaut) : taille et SHA-256 du clair doivent être ceux annoncés par l'ancienne base. Au moindre échec, rien n'est écrit.
-2. **Pour de bon** : même commande sans `--dry-run`. Le compte ne doit pas déjà avoir de fichiers dans astroportd (sinon `--replace`). Le manifeste Nostr est publié à la fin (`--no-publish` pour s'en abstenir).
-3. **`astroportd serve` doit tourner avec `--kubo http://127.0.0.1:5001`** : les anciens blobs n'existent que dans IPFS (CID v0 `Qm…`). Sans cela, les entrées s'affichent mais leur contenu est illisible.
-
-Ce qui change pour ces fichiers : ils se lisent et se téléchargent comme les autres (`Range` compris) ; **les supprimer retire l'entrée sans jamais désépingler le blob** (l'ancienne station le référence encore) ; ils **ne sont pas** sauvegardés chez les amis ni répliqués par P2P tant qu'ils n'ont pas été ré-enregistrés au format natif, et le contrôle d'intégrité de nuit les laisse de côté. Non repris : empreintes de visages (Qdrant) et vignettes, qui se recalculent ; les index vectoriels de descriptions.
-
-**Avant un import réel, mettez le démon à jour** : cette version migre le schéma de `uplanet.db` à l'ouverture, un démon d'une version antérieure qui tourne encore ne s'y retrouverait pas. Arrêtez-le, sauvegardez la base, lancez l'import, redémarrez.
-
-## Étape 8 bis-d — Remplir son uCloud depuis un autre serveur (Nextcloud, ownCloud…)
-
-Le uCloud peut se remplir en **tirant** (mode « pull ») un dossier d'un autre serveur WebDAV : un Nextcloud, un ownCloud, ou une autre station astroportd. À lancer depuis l'interface : **uCloud › Sources**.
-
-1. **Ajouter une source** : adresse WebDAV du serveur (par exemple `https://nextcloud.example/remote.php/dav/files/votre-identifiant`), identifiant et **mot de passe d'application** (à créer côté serveur : vous pouvez le révoquer à tout moment). Dossier distant, libellé et dossier de dépôt sont facultatifs. L'adresse et les identifiants sont vérifiés avant l'enregistrement, et le mot de passe est rangé **chiffré pour vous seul**.
-2. **Aperçu** : compte ce qui serait repris, sans rien écrire. **Reprendre** : lance le passage en arrière-plan, avec une barre de progression ; **Arrêter** l'interrompt (le fichier en cours s'achève). Un seul passage à la fois par compte.
-3. **Les fichiers arrivent tels quels** sous le dossier de dépôt (`/Imports/<libellé>` par défaut), avec l'arborescence du serveur : **aucun tri par dates**. Les ranger comme un seul disque, alimenté par plusieurs sources, est le rôle d'une fonction de rangement à part.
-4. **Rejouable** : un fichier déjà repris n'est ni repris ni écrasé, même si vous l'avez déplacé ailleurs dans le uCloud depuis (la station retient ce qui vient de quelle source). Un fichier modifié depuis sur le serveur est signalé, jamais dupliqué.
-
-Garde-fous : seules les adresses **publiques** sont jointes depuis l'interface (un serveur sur votre réseau local se branche par la ligne de commande de l'opérateur, `--allow-private`) ; les identifiants ne suivent **jamais** une redirection vers un autre serveur ; un serveur qui désignerait des chemins hors du dossier demandé ne peut rien écrire ailleurs ; fichiers de 200 Mo au plus, 50 000 fichiers au plus par passage.
-
-En ligne de commande : `astroportd pull-webdav <compte> add --url … --user … --password-stdin --remote-path Photos [--dest /Imports/X] [--allow-private]`, puis `list`, `run [id] [--dry-run] [--limit N]` et `remove <id>`. Le mot de passe se lit sur l'entrée standard, jamais en argument.
-
-## Étape 8 bis-e — Ranger son uCloud par type
-
-Le uCloud est alimenté par de nombreuses sources (dépôts, reprises WebDAV, téléphones). **uCloud › Ranger** le réorganise **comme un ordinateur de bureau** : Documents, Images, Musique, Vidéos, Archives.
-
-1. **Voir ce qui serait rangé** : un aperçu par type (nombre de fichiers, taille, exemples de destination), et ce qui reste en place. Rien n'est écrit.
-2. **Réglages** : le dossier à ranger (`/` pour tout le uCloud, ou par exemple `/Imports`), des sous-dossiers par date (aucun, par année, par année et mois : la date de prise de vue, sinon de modification) et les types à ranger.
-3. **Ranger maintenant** : le rangement tourne en arrière-plan, avec une barre de progression et un bouton **Arrêter**. Les dossiers laissés vides disparaissent.
-4. **Annuler ce rangement** : chaque passage est journalisé, et un bouton remet chaque fichier à sa place d'avant (les dossiers sont recréés ; si une place a été reprise entre-temps, le fichier revient sous un numéro).
-
-Seuls les **chemins** changent : aucun fichier n'est recopié ni re-chiffré (le rangement de 30 000 photos est donc quasi instantané), vos **visages** et vos **partages** suivent leur photo. Jamais touchés : le coffre, les contacts, l'agenda, les partages reçus, les sauvegardes et tous les dossiers cachés. Un fichier de type inconnu reste où il est, un fichier déjà dans un dossier de type aussi, et un nom déjà pris reçoit un numéro (jamais d'écrasement).
-
-## Étape 8 bis-f — Un jeton par appareil (téléphones, tablettes, ordinateurs)
-
-**Mon compte › Appareils** donne à chaque appareil **son propre jeton WebDAV**, **confiné à un dossier** de votre uCloud : son envoi arrive dans le répertoire que vous choisissez (par exemple `/Photos/Téléphone de Léa`), et il ne voit ni ne touche rien d'autre.
-
-1. **Ajouter un appareil** : un nom, un dossier (créé s'il manque ; par défaut `/Photos/<nom>`) et des droits : **envoi seul** (déposer, créer des dossiers, déplacer ; ni lire, ni supprimer : le bon choix pour une appli de sauvegarde de photos), **lecture et écriture**, ou **lecture seule** (un écran qui montre un album).
-2. Le **jeton** (`dv_…`) est montré **une seule fois**, avec l'adresse du serveur et votre identifiant : à saisir dans l'application de l'appareil (adresse WebDAV, identifiant = votre email, mot de passe = ce jeton). La station n'en garde que l'empreinte.
-3. L'appareil voit son dossier comme la **racine** du WebDAV : les liens renvoyés n'indiquent jamais le chemin au-dessus. Aucun `..` ne l'en fait sortir. Contacts et agenda lui sont fermés (utilisez le jeton principal pour synchroniser le carnet d'adresses et l'agenda).
-4. **Révoquer** coupe le jeton tout de suite ; ce que l'appareil a déjà déposé reste dans votre uCloud. Le **dernier envoi** de chaque appareil est affiché. 16 appareils au plus. Un jeton d'appareil n'ouvre jamais l'interface : seulement ce dossier, en WebDAV.
-
-Le jeton principal du compte (et NIP-98) fonctionne comme avant, sans confinement.
-
-## Étape 8 bis-g — Hébergement facturé, compte technique et règlement hebdomadaire
-
-Le Capitaine fixe, par MULTIPASS hébergé, un **quota** et un **prix hebdomadaire en ẑ** (Station › Comptes hébergés › *Hébergement*), et un **palier par défaut** pour les autres. Sans réglage, tout est gratuit.
-
-1. **Prélèvement** : la machine d'états du cycle de vie décide ; tous les 7 jours depuis le dernier prélèvement réussi, le prix part du MULTIPASS sur la Ğ1 vers le **compte technique d'hébergement** (`<UPLANETNAME>.HOSTING.<PeerID du NODE>` : indépendant de l'email du Capitaine). Un prix tout juste fixé ne débite que dans une semaine. Solde insuffisant : *période de grâce* de 7 jours puis *suspension* — un **statut et un message**, jamais une coupure du service, jamais une suppression.
-2. **Règlement hebdomadaire** (avec `--weekly-costs` = 3×PAF, en centimes de ẑ ; `0` désactive) : une fois la semaine clôturée à 20h12, si le montant reçu le permet, le compte technique vire 1×PAF au NODE, 2×PAF au MULTIPASS du Capitaine, puis le surplus ventilé par la clôture (`IMPOT`, prime de 1 %, `TREASURY`, `RND`, `ASSETS`).
-3. **Transaction primale** : le portefeuille maître `UPLANETNAME_G1` envoie **1 Ğ1** à chaque portefeuille coopératif vide (`UPLANETNAME`, `SOCIETY`, `TREASURY`, `RND`, `ASSETS`, `IMPOT`, `INTRUSION`, `CAPITAL`, `AMORTISSEMENT`), au compte technique et au NODE : c'est leur *primal*, qui les marque comme appartenant à cette UPlanet (équivalent de `UPLANET.init.sh`). **Actif par défaut : c'est ce qui rend une UPlanet officielle** (`--no-primal-init` pour le couper ; cela dépense de vrais Ğ1). Le maître doit détenir au moins 1 Ğ1 par portefeuille en plus de son propre dépôt ; sinon la station le dit une fois par jour et reprend seule.
-
-> **À savoir.** **Correction des intrusions.** Un virement reçu par un compte de la station (MULTIPASS, Capitaine) ou par un portefeuille coopératif (sauf `INTRUSION`, le maître et le NODE), dont l'émetteur a une primale **prouvée** étrangère (deux indexeurs d'accord), n'est pas compté en Ẑen et il est **renvoyé vers `INTRUSION`** dès le bloc, avec le mémo de `primal_wallet_control.sh` (`…:INTRUSION:<émetteur>:ID:<bloc>_<émetteur>`). Jamais sur une primale inconnue ou non vérifiée, jamais la réserve de 1 Ğ1 (ce qui a déjà été dépensé est signalé au Capitaine), une seule fois par virement. Les virements reçus pendant un arrêt de la station ne sont pas rattrapés : l'écran Économie (vigilance) les montre.
-
-Chaque virement est noté **avant** d'être signé ; une issue inconnue n'est jamais rejouée (alerte au Capitaine : vérifier le solde du compte concerné).
-
-<a id="etape-8bis-h"></a>
-
-## Étape 8 bis-h — Plusieurs astroportd sur une machine (ORIGIN + ZEN*) : un seul bassin de blobs
-
-Chaque plan est un `astroportd serve` à lui (ses `--db`, `--game-dir`, ports, `--swarm-key`). Pour **ne pas payer deux fois le disque**, tous pointent leur `--blobs` vers **le même dossier**, et chacun déclare les bases des autres avec `--pool-peer` :
-
-```bash
-astroportd serve --db ~/.zen/origin/uplanet.db --blobs ~/.zen/pool --pool-peer ~/.zen/zen1/uplanet.db --kubo http://127.0.0.1:5001 …
-astroportd serve --db ~/.zen/zen1/uplanet.db   --blobs ~/.zen/pool --pool-peer ~/.zen/origin/uplanet.db …   # sans --kubo : Kubo n'appartient qu'à ORIGIN
-```
-
-- **Un blob n'est supprimé que si plus aucun plan ne le référence** : avant de supprimer, la station interroge la base de chaque pair en lecture seule (entrées, clés, miniatures, manifestes). Un pair illisible fait **garder** le blob (une place perdue vaut mieux qu'un fichier perdu).
-- **Adopter sans copier** : `astroportd bridge-copy --from-db … --from alice@… --to-db … --to alice@… --blobs ~/.zen/pool --path /Photos --dest /Imports/ORIGIN --same-person` fait apparaître les fichiers du premier plan dans le second, **même blob, même clé, zéro octet de plus**. `--same-person` atteste l'accord explicite (les deux comptes partagent la clé de fichier). Rejouable, jamais d'écrasement, quota du compte de destination appliqué, `--dry-run` pour compter. Les fichiers de l'ancien format (CID `Qm…`, vivants dans Kubo) et ceux absents du bassin sont **signalés, jamais copiés en silence** : leur transfert demande un ré-chiffrement (non fait).
-- **Contrôler le bassin** : `astroportd pool-status --blobs ~/.zen/pool --db …/origin/uplanet.db --db …/zen1/uplanet.db` affiche le poids, la part de chaque plan, la **place économisée par le partage** et les orphelins (`--sweep` supprime ceux de plus de 24 h).
-
-<a id="etape-8bis-i"></a>
-
-## Étape 8 bis-i — Plusieurs UPlanet dans un seul processus : assistant et `astroportd planes`
-
-Un **plan** est une UPlanet vue de cette machine : ORIGIN (sans `swarm.key`) ou une UPlanet privée (ZEN1, ZEN2…, avec sa `swarm.key`). Une seule commande les sert tous : même NODE (même `IPFSNODEID`), même bassin de blobs, **une base, un dossier de comptes et un port par plan** ; l'étanchéité est structurelle.
-
-**Configurer, au choix :**
-- **En ligne de commande** : `astroportd plane-setup list` · `plane-setup add` (pose les questions : fonder une UPlanet neuve — la station crée sa `swarm.key` et vous la montre pour la donner aux autres stations — ou rejoindre avec la clé reçue) · `plane-setup add --name zen1 --found` · `plane-setup add --name zen2 --swarm-key reçue.key` · `plane-setup remove zen2`.
-- **Sur le web** : Station › *Plans (UPlanet)* › *Gérer les plans* (Capitaine) : liste, état (servi / au prochain démarrage), ajout (fonder ou coller la `swarm.key` reçue) et retrait.
-
-![Station › Plans : une station qui sert ORIGIN et une UPlanet privée (zen1) dans un seul processus, et le formulaire pour en ajouter une.](img/ui-plans.png)
-
-Dans les deux cas : ports choisis libres, clé écrite en `0600` sous `~/.zen/game/<plan>/swarm.key` sans jamais écraser une clé existante, **ORIGIN reste dans sa base et son dossier actuels (rien n'est déplacé)**, et **retirer un plan ne supprime aucune donnée**. Les règles du démarrage sont vérifiées dès l'ajout : Kubo n'appartient qu'à ORIGIN, pas deux plans avec la même clé, la même base ou le même port.
-
-**Servir** : `astroportd planes --check` valide `~/.zen/astroportd/planes.json` et prépare les dossiers (liens vers les fichiers du NODE) sans rien lancer ; `astroportd planes` démarre tous les plans, à la place de `serve` : chaque plan a son propre `serve` (donc son propre nœud P2P, avec sa `swarm.key`) dans le même processus. Ajouter un plan demande de relancer cette commande.
-
-- **Un seul nom, plusieurs plans** : `astroportd planes --front 127.0.0.1:18000` écoute sur un port commun et route **par nom d'hôte** : `zen1.votre-domaine` ouvre le plan `zen1`, le nom nu ouvre ORIGIN (en local : `zen1.localhost`). HTTP en clair : à placer derrière le terminateur TLS (Nginx Proxy Manager).
-- **Choisir le plan d'une commande** : `--plane zen1` (par exemple `astroportd --plane zen1 multipass create alice@exemple.org`, `token`, `doctor`, `pool-status`) remplit la base, les blobs, le dossier de comptes et la clé du plan choisi, sans remplacer ce que vous donnez vous-même. Un plan inconnu est refusé.
-- **Dans l'interface** : quand la station route par nom d'hôte, le Capitaine a un **sélecteur de plan** dans l'en-tête ; l'écran *Station › Plans* dit si la station sert plusieurs plans dans un seul processus.
-
-<a id="etape-8bis-j"></a>
-
-## Étape 8 bis-j — Messages privés et une personne dans plusieurs UPlanet
-
-**Messages** (`#/chat`) : conversations 1 à 1 chiffrées (NIP-17 : message kind 14, scellé kind 13, enveloppe kind 1059). La station ouvre toutes les 3 s les enveloppes nouvelles de chaque MULTIPASS hébergé (repère `seq` dans `kv`, car NIP-59 brouille les dates) et range les messages déchiffrés dans `chat_messages` (état local). API : `GET /api/v1/chat`, `GET /api/v1/chat/messages?peer=`, `POST /api/v1/chat/send`, `POST /api/v1/chat/read`.
-
-**Une personne, plusieurs UPlanet.** Le MULTIPASS d'une personne a une clé différente dans chaque UPlanet : on ne peut pas la déduire de son email. La station la retrouve de deux façons :
-1. **Annuaire de la station** : les plans voisins (`planes.json`) sont lus en lecture seule ; l'email d'un MULTIPASS hébergé donne sa clé dans chaque plan.
-2. **Lien prouvé** : kind 31903 `d = plane-link`, signé par la clé A, tag `p` = clé B, contenu = événement `d = plane-link-proof` signé par B qui nomme A. Un lien sans les deux signatures est ignoré.
-
-`GET /api/v1/me/links` liste vos clés ; `POST /api/v1/me/links` annonce vos comptes des autres plans (public, sur demande, à faire dans chaque UPlanet). La fiche d'un contact (`GET /api/v1/book/card`) rend `keys` ; le chat regroupe les clés liées en une conversation et écrit dans l'UPlanet commune.
-
-<a id="etape-8c"></a>
-
-### Appeler en visio
-
-Dans **Messages**, le bouton 📹 en haut d'une conversation appelle votre proche en visio ; la fiche d'une personne reliée à un MULTIPASS (écran **Personnes**) a aussi son bouton *Appeler en visio*. Chez votre proche, une carte **« Léa vous appelle »** apparaît sur n'importe quel écran, avec une sonnerie et une vibration : *Décrocher* ou *Refuser*. Pendant l'appel : *Micro*, *Caméra*, *Raccrocher*. Un appel sans réponse laisse **« 📹 Appel manqué »** dans la conversation, avec un bouton *Rappeler*.
-
-- **Qui est là** : dans **Mon compte → Visio**, cochez *Être joignable en visio*. Vos amis réciproques voient alors une pastille sur votre avatar dans Messages (« en ligne », ou « en appel » en rouge), tant qu'une page Astroport est ouverte chez vous. Personne d'autre ne la voit, et rien n'est gardé.
-- **Plusieurs écrans** : si la station est ouverte sur votre téléphone et votre ordinateur, tous sonnent ; décrochez sur l'un, les autres s'arrêtent (« Appel pris sur un autre écran »).
-- **Onglet en arrière-plan** : le titre de l'onglet clignote et, si vous l'avez accepté (*Être prévenu des appels sur cet appareil*, ou au premier appel que vous passez), une notification du système vous prévient.
-
-- **Sans tiers** : le son et l'image vont directement d'un navigateur à l'autre. La station ne transporte que la sonnerie et la mise en relation, chiffrées comme un message privé, dans une enveloppe que les relais oublient au bout de dix minutes. Seul un proche qui vous suit peut vous faire sonner.
-- **Adresse sécurisée obligatoire** : un navigateur n'ouvre la caméra et le micro que sur une adresse `https` (ou `localhost`). Une station sans nom de domaine ne permet donc la visio que depuis la machine elle-même : `astroportd init --domain votre.domaine`.
-- **Relais d'appel** : quand deux navigateurs ne peuvent pas se joindre en direct (réseaux mobiles, réseaux d'entreprise), le son et l'image passent par la station de l'appelant. Ce relais est **réservé aux membres de la station et à leurs amis N¹** (amis réciproques) : un membre reçoit ses accès de sa station, un ami ne les reçoit que dans l'appel chiffré qui lui est destiné, pour lui seul. Le relais ne fait passer le trafic qu'entre deux appels de la station : il ne peut servir à joindre ni Internet ni le réseau de la station.
-- **Pour le Capitaine** : STUN et relais écoutent en **UDP sur le même port** que l'interface (443 avec un domaine) : ouvrez ce port **en UDP** sur la box, en plus du TCP. Sur une machine à plusieurs adresses (box, VPN, conteneurs), la station ouvre une prise par adresse, pour répondre depuis l'adresse que le navigateur a jointe. `--stun-listen ip:port` change ce port, `--no-turn` garde STUN sans relais, `--no-stun` coupe les deux, `--ice-server stun:…|turn:…` (répétable) ajoute des serveurs. Derrière un reverse proxy qui ne transmet pas l'UDP, donnez un `--stun-listen` joignable directement.
-- **Appel de groupe** (4 personnes au plus) : pendant un appel que vous avez lancé, *＋ Ajouter* invite un autre proche. Chacun voit les autres en tuiles ; qui raccroche quitte l'appel, les autres continuent. Les invités n'ont pas besoin d'être amis entre eux : la station de chacun n'admet les autres participants que dans la salle ouverte par un ami, et tout le monde peut passer par le relais de la station de l'hôte.
-- **Limites** : 4 personnes au plus (chaque navigateur envoie son image à tous les autres) ; si les réseaux bloquent aussi l'UDP vers la station, l'appel échoue et l'écran le dit.
-
-## Étape 8 bis-k — Ma UPlanet : nom, charte, portefeuilles et économie en mouvement
-
-Chaque UPlanet a un **nom**, une **charte** et un **argent commun visible de tous ses membres**. L'écran **Ma UPlanet** (`#/constellation`, lien en bas de l'Accueil) réunit trois choses.
-
-- **Les portefeuilles de la coopérative** : `UPLANETNAME_G1` (le portefeuille maître) et ceux que la transaction primale marque (`UPLANETNAME`, `SOCIETY`, `TREASURY`, `RND`, `ASSETS`, `IMPOT`, `INTRUSION`, `CAPITAL`, `AMORTISSEMENT`, l'hébergement et le NODE). Pour chacun : l'adresse Ğ1, le solde en Ğ1 et en Ẑen, et l'état de sa transaction primale. **Tous les membres** les voient. Les soldes sont lus sur la chaîne Ğ1 : sans nœud Duniter, l'écran le dit.
-- **L'économie en mouvement** : une carte animée en SVG, sans bibliothèque. Chaque virement est une **impulsion** qui court dans un **tuyau** entre deux portefeuilles ; la taille d'un portefeuille suit son solde. Le bouton **Rejouer** déroule toute l'histoire en trente secondes (vitesses ×1, ×4, ×16), le curseur permet de se placer à une date. Les comptes des membres sont regroupés en un seul point « membres », tout autre compte en « extérieur » : aucune adresse personnelle n'apparaît.
-- **Les Ğ1Billets en circulation** : créés, en circulation (et leur valeur en Ẑen), encaissés, renvoyés à l'émetteur, expirés non renvoyés. Les billets forment le point « billets » de la carte animée (cadre en haut à gauche) : leur création, leur encaissement et leur retour y apparaissent comme des impulsions entre `UPLANETNAME_G1`, « billets » et « membres ».
-- **La charte** : un texte court, versionné, publié dans la configuration coopérative et donc **signé par la clé de la coopérative**. Tant que le Capitaine n'en a pas publié une, la charte type ([CHARTE_UPLANET.md](CHARTE_UPLANET.md), tirée du [Manuel des membres](UPLANET_ManuelDesMembresEtDesContributeurs.md)) est proposée. **Chaque Capitaine signe** la version courante : un bouton « Je signe cette charte » publie un événement Nostr public (kind 31903, `d = charter-accept`) portant l'empreinte SHA-256 du texte, signé de sa clé. L'écran liste les Capitaines que la station connaît et dit qui a signé la version courante ; une nouvelle version de la charte a une autre empreinte et demande une nouvelle signature (on ne peut signer qu'une version que l'on a sous les yeux).
-
-**L'historique vient de l'indexeur.** Le nœud Duniter ne garde pas l'historique d'un portefeuille : la station le copie depuis un indexeur squid (`--squid-url`, ou découverte automatique), toutes les 15 minutes, dans la table `coop_ledger`. Sans indexeur, ou tant qu'il n'a pas répondu, la carte affiche **« historique partiel »** et seuls les soldes d'aujourd'hui sont connus.
-
-**Le Capitaine** nomme l'UPlanet et publie la charte dans **Configuration coopérative** (section « Nom et charte de l'UPlanet » : `UPLANET_NAME`, `CHARTER_VERSION`, `CHARTER_TEXT`, 6000 caractères au plus).
-
-```bash
-curl -s -H "Authorization: Basic …" https://ma-station/api/v1/constellation          # portefeuilles, charte, état de l'historique
-curl -s -H "Authorization: Basic …" "https://ma-station/api/v1/constellation/ledger?since=1700000000&limit=5000"
-curl -s -X POST -H "Authorization: Basic …" -d '{"sha256":"<empreinte de la charte>"}' https://ma-station/api/v1/constellation/charter/accept   # Capitaine
-```
-
-> **À savoir.** Seuls les **Capitaines** signent la charte ; l'acceptation par chaque membre à l'inscription n'est pas faite. La liste ne montre que les Capitaines que votre station connaît : les signatures d'une autre station n'arrivent que si leurs événements sont répliqués jusqu'à vous (maillage N¹/N²). Le rendu animé est vérifié par un test de la disposition et des soldes rejoués, pas encore sur un grand nombre de virements réels.
-
-## Étape 8 bis-l — Ğ1Billet : vérifier la valeur d'un billet papier et l'encaisser
-
-Un **Ğ1Billet** est un billet papier dont la valeur est portée par une clé Ğ1 jetable. Son secret est découpé en trois parts dont deux suffisent : un **QR en clair**, un **QR sous le pli**, et une troisième part qui n'est pas imprimée. Les billets déjà imprimés par UPassport restent valables : le découpage est le même.
-
-**Pour le porteur**, la page publique **`/scan`** (aucun compte à créer) tient en trois étapes :
-
-1. **Scanner** : la caméra s'ouvre toute seule ; on lit le QR en clair puis le QR sous le pli, **dans n'importe quel ordre**. La station retrouve laquelle est laquelle. Un lien `/scan?g1pub=…` (le QR « vérifier » du billet) affiche déjà la valeur, l'authenticité et la date de fin. Sans caméra : « Choisir une photo » du QR, ou saisie du texte.
-2. **Destination** : l'adresse `g1…` d'un compte de l'UPlanet, à coller ou à scanner. Si ce navigateur a une session ouverte sur la station, un bouton **« Mon compte (email) »** remplit l'adresse du portefeuille Ğ1 de votre MULTIPASS d'un geste (sans session, on colle ou on scanne l'adresse). La station vérifie tout de suite que ce portefeuille est reconnu par l'UPlanet.
-3. **Encaisser** : un récapitulatif, puis un bouton. La valeur est visible en Ẑen et en Ğ1.
-
-La lecture utilise `BarcodeDetector` quand le navigateur l'a (Chrome, Android) ; sinon un décodeur (jsQR, Apache-2.0, environ 46 Ko compressés) n'est chargé qu'à ce moment-là. Il est hors du budget de l'application : seule la page `/scan` y touche.
-
-**Ce que fait la station** (inchangé par rapport à UPassport) : le billet est **vidé vers `UPLANETNAME_G1`**, qui **renvoie `solde − 1 Ğ1`** au destinataire (ce 1 Ğ1 est le dépôt d'activation que `UPLANETNAME_G1` avait avancé : le porteur reçoit exactement la valeur du billet). Avant tout virement, deux contrôles : le billet est bien **de cette UPlanet** (son premier virement reçu vient de `UPLANETNAME_G1`) et le destinataire l'est aussi. Sans indexeur Ğ1 (`--squid-url`) l'origine ne peut pas être lue : l'encaissement est refusé, par prudence.
-
-- **Reprise.** L'état du billet est écrit **avant** chaque virement. Si le transfert final échoue après le vidage, les fonds restent sur `UPLANETNAME_G1`, le porteur est prévenu (« en cours »), le Capitaine reçoit une alerte et la station **réessaie toutes les 5 minutes**. Un vidage dont l'issue est inconnue n'est jamais rejoué.
-- **Validité.** Un billet peut porter une date de fin, écrite dans un événement signé par la clé de la coopérative (kind 31903, `d = billet:<adresse>`, tag `u` en secondes Unix). Passée cette date, le porteur ne l'encaisse plus. Seule la clé de la coopérative fait foi.
-- **Limites de débit** : 40 lectures par minute et 6 encaissements par 10 minutes et par adresse.
-
-```bash
-curl -s "https://ma-station/api/v1/billet/check?g1pub=g1…"                    # valeur, origine, validité
-curl -s "https://ma-station/api/v1/billet/destination?g1pub=g1…"             # destinataire reconnu ?
-curl -s -d '{"parts":["<64 hex>","<64 hex>"]}' https://ma-station/api/v1/billet/identify
-```
-
-### Créer des billets (Capitaine et MULTIPASS autorisés)
-
-Le **Capitaine** choisit les MULTIPASS qui peuvent créer des Ğ1Billets **dans la même action que le quota et le prix en ẑ par semaine** : le bouton « Hébergement » d'un compte (écran Station) ouvre un **panneau dans la page** (pas de fenêtre de saisie) avec le quota, le prix et la case « Peut créer des Ğ1Billets ». Un 🎫 le rappelle dans la liste. L'option **« Mes Ğ1Billets »** apparaît alors dans l'interface de ce MULTIPASS (lien en bas de l'Accueil) ; le Capitaine y a toujours accès.
-
-L'écran propose : le **nombre de billets** (1 à 6 par planche), la **valeur de chacun en ẑ**, une **durée de validité** (sans limite, 7 jours, 3 mois, 1 an) et l'option **« retour automatique »**. Puis, en deux temps :
-
-1. **Créer la planche** : la station tire une clé jetable par billet et affiche une **planche A4 paysage de 6 billets** (2 × 3) : le QR **sous le pli** (bande de gauche), le QR **en clair**, le QR **« vérifier »** (lien `/scan?g1pub=…`), la valeur, l'adresse et la date de fin. Les parts ne s'affichent **qu'une seule fois** : on imprime tout de suite (`Imprimer la planche`).
-2. **Financer** chaque billet (ou « Tout financer ») : 1 Ğ1 d'activation avancé par `UPLANETNAME_G1`, puis la valeur, du **portefeuille de l'émetteur**. Chaque billet a son propre appel : un échec n'en touche pas un autre, et on peut rappeler sans rien payer deux fois. Seul l'émetteur d'un billet peut le financer (sinon n'importe qui ferait avancer des Ğ1 gratuits par la coopérative). Un virement refusé pour cause de nonce (« Invalid Transaction (1010) ») est réessayé.
-
-**Retour automatique.** Si l'option est choisie, la station garde **P2 et P3, chiffrées pour son NODE seul** (dans le témoin, événement kind 31903 `d = billet:<adresse>` signé par la coopérative, tags `p` émetteur, `a` valeur, `u` date de fin, `r` retour). À la date de fin, si le billet n'a pas été encaissé, le porteur est refusé et la station renvoie la valeur au portefeuille de l'émetteur (par le même circuit), **une fois par jour, à 20h12 solaire** (étape « billets » de la nuit ; sans l'orchestrateur de nuit, rien n'est renvoyé). Sans l'option, la station ne garde **aucune part** : elle ne peut pas toucher au billet. Avec elle, la station garde le billet **en dépôt** jusqu'à l'échéance ; sur ORIGIN (clés publiques) ce dépôt n'est protégé que par la clé du NODE.
-
-Ces billets servent aussi à **remplir le compte d'un MULTIPASS** : le porteur donne son adresse `g1…` comme destination.
-
-**Fond et icône.** Chaque billet prend pour **fond le bandeau (`banner`)** et pour **icône l'image (`picture`)** du profil Nostr (kind 0) de l'émetteur, voilés pour garder les QR lisibles. Dans **Mon compte › Profil**, on envoie une image depuis l'appareil (réduite dans le navigateur puis réencodée par la station, qui la sert publiquement à `/api/v1/profile/<clé>/<picture|banner>.jpg` et republie le profil) ou on colle une adresse `https://`. Une image d'un site tiers est lue par la station (taille limitée, adresses privées refusées) et intégrée au billet ; si elle est illisible, le billet est créé sans fond.
-
-> **À savoir.** Pas de verso personnalisé comme dans UPassport. La mise en page a été vérifiée en code et sur la vraie chaîne Ğ1 (création, financement, retour automatique), pas sur du papier imprimé. Le retour automatique se fait à 20h12 : un billet expiré à 9 h revient le soir même.
-
-## Étape 8 bis-m — Mon site public : le dossier /Public de l'uCloud
+## Le site public : le dossier /Public
 
 Chaque membre a un **site web** : tout ce qui se trouve dans le dossier **`/Public`** de son uCloud est servi **en clair, sans mot de passe**. C'est le geste de publication, et il est simple : **déplacer un fichier dans `/Public` le publie, l'en sortir le retire**. On peut aussi y construire un vrai site (pages HTML, CSS, images, sous-dossiers) depuis n'importe quel client WebDAV (celui de la section « Mon compte », avec le même identifiant).
 
@@ -743,74 +657,59 @@ Chaque membre a un **site web** : tout ce qui se trouve dans le dossier **`/Publ
 ```
 
 - **Chiffrement.** Les fichiers restent chiffrés au repos comme tout l'uCloud ; la station ne les déchiffre qu'à la demande, et seulement pour ce dossier. Un fichier hors de `/Public` n'est jamais lisible par cette adresse, quel que soit le chemin demandé (`..`, fichiers cachés `.nom` refusés).
-- **Isolation.** Le code d'une page (scripts compris) est celui de son auteur : chaque réponse porte une politique `sandbox` (origine opaque, sans `allow-same-origin`), `nosniff` et `no-referrer`. Une page publique n'atteint ni la session ni l'API de la station.
+> **Détails techniques.** - **Isolation.** Le code d'une page (scripts compris) est celui de son auteur : chaque réponse porte une politique `sandbox` (origine opaque, sans `allow-same-origin`), `nosniff` et `no-referrer`. Une page publique n'atteint ni la session ni l'API de la station.
 
 - **Publier depuis l'explorateur.** Dans **uCloud › Dossiers**, cochez des fichiers ou dossiers puis **« Publier »** : un panneau (dans la page) dit ce qui va devenir public et demande confirmation, puis la station les **déplace** dans `/Public` (rien n'est copié ; un nom déjà pris n'est jamais écrasé). Dans `/Public`, le même bouton devient **« Retirer de Public »** : les éléments vont dans `/Retirés de Public`, visibles de vous seul. Le coffre n'est jamais publié.
 - **Image de profil depuis /Public.** Dans **Mon compte › Profil**, « Choisir dans mes fichiers publics » affiche les images de `/Public` ; un clic en fait l'image ou le bandeau du profil (la station la relit elle-même, aucun autre dossier n'est accepté). Le bandeau sert aussi de fond aux Ğ1Billets.
 - **Visites.** La carte « Mon site public » compte les pages vues (aujourd'hui, 7 et 90 jours, pages les plus vues). Seule une **page** (HTML ou liste de dossier) compte, pas une image ni une feuille de style. Le compteur ne garde **aucune adresse IP ni identifiant de visiteur** : un compte, un jour, une page, un nombre ; 90 jours de mémoire, 200 pages distinctes par jour au plus.
-- **Plusieurs stations derrière le même DNS.** Un enregistrement DNS en tourniquet (`*.<zone>` vers plusieurs stations) fonctionne : une station qui reçoit `https://<nom>.<zone>/` (ou `/site/<nom>/`) pour un membre qu'elle n'héberge pas le **redirige** (307) vers la station qui l'héberge, à l'adresse `…/site/<nom>/…`. Elle la trouve par la station d'accueil du DID du membre (`home_station`) et l'adresse publique que chaque station annonce dans son résumé de santé nocturne (tag `url` du kind 30850, répliqué par la constellation). Une station neuve est donc connue au plus tard le lendemain de sa première nuit ; sans adresse connue, la page répond 404 plutôt que de deviner.
+> **Détails techniques.** - **Plusieurs stations derrière le même DNS.** Un enregistrement DNS en tourniquet (`*.<zone>` vers plusieurs stations) fonctionne : une station qui reçoit `https://<nom>.<zone>/` (ou `/site/<nom>/`) pour un membre qu'elle n'héberge pas le **redirige** (307) vers la station qui l'héberge, à l'adresse `…/site/<nom>/…`. Elle la trouve par la station d'accueil du DID du membre (`home_station`) et l'adresse publique que chaque station annonce dans son résumé de santé nocturne (tag `url` du kind 30850, répliqué par la constellation). Une station neuve est donc connue au plus tard le lendemain de sa première nuit ; sans adresse connue, la page répond 404 plutôt que de deviner.
 
 > **À savoir.** C'est la version HTTP. La publication sur IPFS et l'IPNS du MULTIPASS n'est **pas** prévue : l'adresse DNSLink n'affiche pas ce site, c'est l'adresse `<nom>.<zone>` (ou `/site/<nom>/`) qui le sert.
 
-## Étape 8 ter — Options du Capitaine : moteur FaceID et règles du relai
+<a id="etape-8bis-f"></a>
 
-L'écran **Station → Options de la station** change sans redémarrer :
+## Un jeton par appareil (téléphones, tablettes, ordinateurs)
 
-- **Tunnels et accès des autres Capitaines** : pour chaque service offert (SSH, ComfyUI, Ollama, plus ceux de `--p2p-expose`), *qui peut l'ouvrir* — fermé, la liste seulement, les Capitaines amis, ou tout le réseau — et la liste nominative avec une durée (« laisser un ami m'aider »). Un service qui ne répond pas sur la machine n'a pas de carte : une ligne *Non détectés* le nomme, jusqu'à ce qu'il démarre. Un réglage s'applique tout de suite, sessions ouvertes comprises.
-- **Partager un service de cette machine** : le Capitaine ajoute à chaud un autre port (nom + `IP:port`), sans redémarrer — par exemple un bureau à distance (serveur VNC `wayvnc`/`x11vnc` ou RDP), Jellyfin, Home Assistant ; les services courants qui répondent sont proposés (*Détectés*). La cible est cette machine ou le réseau local privé, jamais une adresse publique. Un service ajouté est fermé à tous tant que le Capitaine ne nomme personne (« Seulement la liste ») ; *Retirer le partage* coupe aussi les sessions ouvertes. Le partage passe par le maillage P2P (`--p2p-listen`) ; l'ami s'y connecte depuis l'assistance (« Se connecter ») ou avec `--p2p-forward`.
-- **Assistance entre Capitaines amis** : demander de l'aide pour un service, pour une durée ; rien ne s'ouvre avant qu'un ami accepte.
-- **File de traitement** : les tâches en attente, en cours ou abandonnées, avec relance.
+**Mon compte › Appareils** donne à chaque appareil **son propre jeton WebDAV**, **confiné à un dossier** de votre uCloud : son envoi arrive dans le répertoire que vous choisissez (par exemple `/Photos/Téléphone de Léa`), et il ne voit ni ne touche rien d'autre.
 
-- **Reconnaissance des visages** : *ONNX local* (modèles `det_10g.onnx` + `w600k_r50.onnx`), *Brain GPU distant* (adresse `http://hôte:port/chemin`, testée avant d'être appliquée) ou *Arrêté* (les photos attendent, aucune tentative n'est consommée). L'écran montre ce qui manque (fonction `onnx` compilée, modèles, `libonnxruntime`). Le choix est conservé ; une option `--face-engine` / `--face-models` sur la ligne de commande l'impose et fige le réglage.
-![Options de la station : assistance entre Capitaines, tunnels et accès (ComfyUI non détecté, SSH réglé sur « Capitaines amis + liste »).](img/ui-options.png)
+1. **Ajouter un appareil** : un nom, un dossier (créé s'il manque ; par défaut `/Photos/<nom>`) et des droits : **envoi seul** (déposer, créer des dossiers, déplacer ; ni lire, ni supprimer : le bon choix pour une appli de sauvegarde de photos), **lecture et écriture**, ou **lecture seule** (un écran qui montre un album).
+2. Le **jeton** (`dv_…`) est montré **une seule fois**, avec l'adresse du serveur et votre identifiant : à saisir dans l'application de l'appareil (adresse WebDAV, identifiant = votre email, mot de passe = ce jeton). La station n'en garde que l'empreinte.
+3. L'appareil voit son dossier comme la **racine** du WebDAV : les liens renvoyés n'indiquent jamais le chemin au-dessus. Aucun `..` ne l'en fait sortir. Contacts et agenda lui sont fermés (utilisez le jeton principal pour synchroniser le carnet d'adresses et l'agenda).
+4. **Révoquer** coupe le jeton tout de suite ; ce que l'appareil a déjà déposé reste dans votre uCloud. Le **dernier envoi** de chaque appareil est affiché. 16 appareils au plus. Un jeton d'appareil n'ouvre jamais l'interface : seulement ce dossier, en WebDAV.
 
-- **Relai : lecture, écriture, projection par kind.** Lecture : *Tous*, *Auteur et destinataires*, *Auteur et ses Proches*, *Cercle social*, *Personne*. Écriture : *Cercle social*, *Tous (débit limité)*, *Personne*. Projection : l'événement alimente-t-il les tables dérivées (comptes, ledger…) ; il reste stocké et servi. Couches, de la plus faible à la plus forte : défauts du relai, `station.conf`, réglages du Capitaine. Dans `station.conf` :
+Le jeton principal du compte (et NIP-98) fonctionne comme avant, sans confinement.
 
-```ini
-kind.30078 = write=open project=off
-kind.7     = read=circle write=circle project=on
-```
+<a id="etape-8bis-d"></a>
 
-Une règle invalide est refusée avant d'être enregistrée (ou signalée au démarrage, la politique par défaut s'applique). Le kind 22242 (authentification) n'a pas de règle ; le kind 1059 garde sa règle d'amorçage.
+## Reprendre ses fichiers d'un autre serveur (Nextcloud, ownCloud…)
 
-**NIP-65.** À sa création, un MULTIPASS publie sa liste de relais (kind 10002) avec le relai de la station (`--domain`). Pour écrire à un ami dont la station est inconnue, la station essaie ses relais de **lecture** annoncés avant les `--relay` fixes.
+Le uCloud peut se remplir en **tirant** (mode « pull ») un dossier d'un autre serveur WebDAV : un Nextcloud, un ownCloud, ou une autre station astroportd. À lancer depuis l'interface : **uCloud › Sources**.
 
-## Étape 8 quater — Inviter quelqu'un à recevoir des photos
+1. **Ajouter une source** : adresse WebDAV du serveur (par exemple `https://nextcloud.example/remote.php/dav/files/votre-identifiant`), identifiant et **mot de passe d'application** (à créer côté serveur : vous pouvez le révoquer à tout moment). Dossier distant, libellé et dossier de dépôt sont facultatifs. L'adresse et les identifiants sont vérifiés avant l'enregistrement, et le mot de passe est rangé **chiffré pour vous seul**.
+2. **Aperçu** : compte ce qui serait repris, sans rien écrire. **Reprendre** : lance le passage en arrière-plan, avec une barre de progression ; **Arrêter** l'interrompt (le fichier en cours s'achève). Un seul passage à la fois par compte.
+3. **Les fichiers arrivent tels quels** sous le dossier de dépôt (`/Imports/<libellé>` par défaut), avec l'arborescence du serveur : **aucun tri par dates**. Les ranger comme un seul disque, alimenté par plusieurs sources, est le rôle d'une fonction de rangement à part.
+4. **Rejouable** : un fichier déjà repris n'est ni repris ni écrasé, même si vous l'avez déplacé ailleurs dans le uCloud depuis (la station retient ce qui vient de quelle source). Un fichier modifié depuis sur le serveur est signalé, jamais dupliqué.
 
-Pour envoyer des photos à une personne qui n'a pas encore de MULTIPASS : écran **Personnes → Synchroniser et inviter → Inviter** (sur une fiche, ou sur une personne reconnue sans fiche : la fiche est alors créée d'abord). La station retient la liste des photos où cette personne apparaît (200 au plus) et rend un **lien** `https://<station>/i/<jeton>` avec son **QR code**, à envoyer par le moyen de votre choix (le bouton *Partager* ouvre le menu de partage du téléphone).
+Garde-fous : seules les adresses **publiques** sont jointes depuis l'interface (un serveur sur votre réseau local se branche par la ligne de commande de l'opérateur, `--allow-private`) ; les identifiants ne suivent **jamais** une redirection vers un autre serveur ; un serveur qui désignerait des chemins hors du dossier demandé ne peut rien écrire ailleurs ; fichiers de 200 Mo au plus, 50 000 fichiers au plus par passage.
 
-Ce que voit la personne, sans compte : qui l'invite, combien de fichiers, de petites vignettes **floutées** (16 pixels de côté : on reconnaît une scène, pas un visage). Elle saisit **son** adresse email ; la station crée alors son MULTIPASS, lui remet ses identifiants une seule fois, la rend **Proche réciproque** de l'expéditeur (chacun suit l'autre, listes de contacts signées par chacune des deux clés et publiées), range les photos dans `/Partages/De_<expéditeur>/` (même blob chiffré, même clé : aucune copie) et **relie la fiche de contact** à son nouveau MULTIPASS. Les autres photos où elle apparaît lui sont partagées aussitôt, comme pour tout Proche relié.
+En ligne de commande : `astroportd pull-webdav <compte> add --url … --user … --password-stdin --remote-path Photos [--dest /Imports/X] [--allow-private]`, puis `list`, `run [id] [--dry-run] [--limit N]` et `remove <id>`. Le mot de passe se lit sur l'entrée standard, jamais en argument.
 
-Garde-fous :
+<a id="etape-8bis-e"></a>
 
-- **Usage unique.** La réclamation est prise de façon atomique avant toute création ; si la création échoue (adresse invalide, déjà inscrite), le lien reste valable.
-- **Une adresse qui a déjà un MULTIPASS ici est refusée** : lier deux comptes sur la seule foi d'une adresse saisie permettrait de s'imposer comme proche de n'importe qui. La personne se connecte, puis demande à être ajoutée comme proche.
-- Le lien expire (14 jours par défaut, 90 au plus), se retire d'un clic (*Retirer*), et chaque compte garde au plus 50 invitations en attente. La page est servie avec `X-Robots-Tag: noindex` et sans en-tête `Referer`.
-- Le débit d'inscription par adresse IP s'applique aussi aux réclamations (`--register-per-hour`) ; `--no-register` ferme les invitations avec l'inscription.
-- Les clés des fichiers ne quittent pas la station avant la réclamation. Quand le lien est créé pour **une personne** (« toutes les photos de Léa »), la liste est **recalculée au moment où le lien est ouvert et accepté** : les photos traitées entre-temps sont incluses, celles supprimées depuis ne le sont plus. Un lien créé pour des chemins précis garde ces chemins.
+## Ranger son uCloud par type
 
-**Accepter avec son compte (même station).** Si le visiteur est déjà connecté à la station, la page propose d'abord « Bonjour Léa, ajouter ces N fichiers à votre compte ? » : un clic (`POST /api/v1/invite/<jeton>/accept`) accepte, **sans formulaire et sans nouveau compte**. L'identité est prouvée par la **session**, jamais par une adresse saisie. Le double suivi, le rangement des photos, la liaison de la fiche et la prévenance de l'expéditeur sont les mêmes qu'à la création d'un compte ; l'expéditeur ne peut pas accepter son propre lien. « Utiliser un autre compte » rouvre le formulaire d'inscription. La session de l'application est conservée dans le `localStorage` du navigateur (elle survit à la fermeture de la PWA ; *Déconnexion* l'efface) : c'est ce qui permet à la page d'invitation, ouverte dans un autre onglet, de la reconnaître.
+Le uCloud est alimenté par de nombreuses sources (dépôts, reprises WebDAV, téléphones). **uCloud › Ranger** le réorganise **comme un ordinateur de bureau** : Documents, Images, Musique, Vidéos, Archives.
 
-**Envoi du lien.** La station n'envoie **jamais** de courrier : le lien se transmet par la messagerie de l'expéditeur. Après *Inviter*, les boutons **Email** (`mailto:` prérempli avec l'adresse de la fiche), **SMS**, **WhatsApp** et **Partager** (menu du téléphone) ouvrent son application avec le message prêt.
+1. **Voir ce qui serait rangé** : un aperçu par type (nombre de fichiers, taille, exemples de destination), et ce qui reste en place. Rien n'est écrit.
+2. **Réglages** : le dossier à ranger (`/` pour tout le uCloud, ou par exemple `/Imports`), des sous-dossiers par date (aucun, par année, par année et mois : la date de prise de vue, sinon de modification) et les types à ranger.
+3. **Ranger maintenant** : le rangement tourne en arrière-plan, avec une barre de progression et un bouton **Arrêter**. Les dossiers laissés vides disparaissent.
+4. **Annuler ce rangement** : chaque passage est journalisé, et un bouton remet chaque fichier à sa place d'avant (les dossiers sont recréés ; si une place a été reprise entre-temps, le fichier revient sous un numéro).
 
-**Erreurs à code stable.** Toute erreur d'invitation porte `{ "error": "…", "code": "invite_used" | "invite_expired" | "invite_revoked" | "email_taken" | "rate_limited" | "registration_closed" | … }` ; la page traduit d'après le code (français, anglais, espagnol), jamais d'après le texte.
+Seuls les **chemins** changent : aucun fichier n'est recopié ni re-chiffré (le rangement de 30 000 photos est donc quasi instantané), vos **visages** et vos **partages** suivent leur photo. Jamais touchés : le coffre, les contacts, l'agenda, les partages reçus, les sauvegardes et tous les dossiers cachés. Un fichier de type inconnu reste où il est, un fichier déjà dans un dossier de type aussi, et un nom déjà pris reçoit un numéro (jamais d'écrasement).
 
-**Limites actuelles.** « Accepter avec mon compte » ne fonctionne que pour un compte hébergé sur **cette** station : une personne inscrite sur une autre station n'est pas encore redirigée vers la sienne (acceptation entre stations à faire). Une session ouverte par une extension Nostr (NIP-07) n'est pas reconnue par la page : seule la session par identifiant et jeton ou PASS l'est. Les codes d'erreur ne couvrent pas encore tous les écrans de l'application, seulement les invitations et le PASS. Ce parcours n'a pas été essayé sur un vrai téléphone.
+<a id="etape-8quinquies"></a>
 
-### Compte sur une autre station
-
-Sur la page du lien, **« Mon compte est sur une autre station »** : la personne saisit l'adresse de sa station et y est envoyée (`/claim`). Le jeton voyage dans le **fragment** de l'adresse (`#origin=…&token=…`), que le navigateur n'envoie à aucun serveur ; la page le retire de l'adresse dès qu'elle l'a lu. Elle demande le PASS s'il n'y a pas de session dans ce navigateur (la session obtenue reste en mémoire), puis nomme la station d'origine et le compte qui recevra, et attend un clic.
-
-Ensuite c'est **la station du destinataire** qui travaille, sans que le navigateur parle à l'autre station (pas de CORS) :
-
-1. `GET /api/v1/invite/<jeton>` signé NIP-98 : l'aperçu public ne contient jamais la clé de l'expéditeur, la réponse signée la donne.
-2. Le destinataire suit l'expéditeur (liste de contacts signée avec sa clé, qui ne quitte pas sa station).
-3. `POST /api/v1/invite/<jeton>/accept` signé NIP-98 (le corps est lié à la signature) : la station d'origine vérifie, marque le lien utilisé par cette clé, suit le destinataire, relie la fiche de contact et rend la liste de contacts de l'expéditeur, que la station du destinataire range **avant** toute photo (un fichier n'est accepté que d'un proche réciproque ; une enveloppe arrivée trop tôt est écartée).
-4. `POST /api/v1/invite/<jeton>/deliver` : les photos partent par le maillage (NIP-17 emballé en NIP-59, puis rapatriement du blob chiffré par `/astro/blob/1.0.0`) vers `/Partages/De_<expéditeur>/`.
-
-Limites : le lien reste à usage unique (`invite_gone` si la station d'origine répond 404/410) ; l'envoi est réservé à celui qui a accepté, pendant une heure et 3 fois au plus ; l'adresse saisie doit être celle que la station d'origine annonce publiquement (la signature est liée à l'URL). Sans station d'accueil connue pour le destinataire, c'est son `home_station` (envoyé dans le corps signé) qui sert de route.
-
-## Étape 8 quinquies — Sans email, connexion par PASS, signature déléguée
+## Connexion par PASS, compte sans email, signature déléguée
 
 **L'email tient lieu de `npub`.** Chaque MULTIPASS en a un, unique : un index de la base refuse deux MULTIPASS hébergés de même adresse (casse comprise) ; la ZenCard et le Capitaine d'un même membre, eux, peuvent porter la même adresse que son MULTIPASS. L'unicité sur **toute** la constellation ne peut pas être garantie par une base centrale : c'est la station qui crée le compte qui la contrôle.
 
@@ -826,112 +725,9 @@ Limites : le lien reste à usage unique (`invite_gone` si la station d'origine r
 
 Un succès remet tout à zéro, et une erreur isolée s'oublie après 24 h. Le PASS n'est **jamais détruit** par des échecs : n'importe qui connaissant une adresse pourrait sinon l'invalider à distance. Le Capitaine lève un verrou dans **Station → Comptes → Déverrouiller le PASS**. Une même adresse IP est en outre limitée à 30 tentatives par quart d'heure.
 
-**`window.nostr` sans extension.** Après la connexion, l'application fournit `window.nostr` (NIP-07) aux scripts de **sa propre origine** : `getPublicKey()` rend la clé du compte, `signEvent()` envoie l'événement non signé à `POST /api/v1/account/sign` et reçoit l'événement signé. **La clé secrète ne quitte jamais la station** : un téléphone volé se révoque en changeant le jeton (Mon compte), alors qu'une clé Nostr ne se change pas. La station refuse de signer les kinds 30800 (configuration coopérative) et 30852 (grand livre), les enveloppes NIP-59 et les réactions `+N` (elles déclenchent un paiement) ; la signature est limitée à 120 par minute et par compte, et tracée dans le journal d'audit (kind seulement). Une extension de navigateur déjà installée n'est jamais remplacée. Les clients d'une **autre** origine (Coracle…) ne voient pas ce `window.nostr` : un signataire distant NIP-46 le permettra, il n'est pas encore fait.
+> **Détails techniques.** **`window.nostr` sans extension.** Après la connexion, l'application fournit `window.nostr` (NIP-07) aux scripts de **sa propre origine** : `getPublicKey()` rend la clé du compte, `signEvent()` envoie l'événement non signé à `POST /api/v1/account/sign` et reçoit l'événement signé. **La clé secrète ne quitte jamais la station** : un téléphone volé se révoque en changeant le jeton (Mon compte), alors qu'une clé Nostr ne se change pas. La station refuse de signer les kinds 30800 (configuration coopérative) et 30852 (grand livre), les enveloppes NIP-59 et les réactions `+N` (elles déclenchent un paiement) ; la signature est limitée à 120 par minute et par compte, et tracée dans le journal d'audit (kind seulement). Une extension de navigateur déjà installée n'est jamais remplacée. Les clients d'une **autre** origine (Coracle…) ne voient pas ce `window.nostr` : un signataire distant NIP-46 le permettra, il n'est pas encore fait.
 
-<a id="etape-9"></a>
-
-## Étape 9 — Relier sa station aux autres Capitaines
-
-Grâce à Y-Level, la clé publique SSH d'une station **se déduit de son identité IPFS** (`12D3Koo…`) : c'est la même clé. Quand deux Capitaines se suivent sur Nostr, ils peuvent donc s'ouvrir un accès SSH entre machines de confiance : de l'**individu**, à l'**Astroport**, au **territoire**.
-
-Qui fait quoi ? Le **suivi automatique** entre Capitaines (lecture des rapports économiques kind 30850, suivi mutuel) est fait par **Astroport.ONE** (`DRAGON_p2p_ssh.sh`). **astroportd**, lui, fournit le **tunnel** P2P entre les stations, sans ouvrir de port sur la box ; et il fait suivre le Capitaine par chaque MULTIPASS qu'il crée.
-
-![Individus, Astroports et territoire ; les Capitaines qui se suivent.](img/individu-astroport-territoire.svg)
-
-### 🖥️ Terminal (CLI)
-
-**Le maillage est actif par défaut** : sans `--p2p-listen`, la station écoute sur `/ip4/0.0.0.0/tcp/4101` (ou le premier port libre après) ; `--no-p2p` le coupe. Avec `astroportd planes`, chaque UPlanet reçoit son propre port (4101, 4102…) et son propre réseau privé : une station d'une autre UPlanet ne peut pas être jointe.
-
-L'écran du Capitaine **Maillage et Capitaines amis** (`#/mesh`, lien « Capitaines amis » du cockpit) réunit :
-- *Ma station* : l'UPlanet servie, le nombre de stations connectées et l'adresse à donner aux autres Capitaines ;
-- *Stations* : joindre une station à chaud par son adresse (`/ip4/…/tcp/4101/p2p/12D3Koo…`), et la **garder comme bootstrap** (rejointe à chaque démarrage et rappelée toutes les 5 minutes si la liaison tombe) ;
-- *Capitaines* : les Capitaines connus, qui suit qui, **Suivre / Ne plus suivre** (liste de contacts du Capitaine, signée par la station et publiée). Pour un ami réciproque, l'écran demande à **sa** station les services qu'elle nous ouvre ; elle ne répond qu'avec ceux que sa politique de tunnels nous permet, rien n'est publié. *Se connecter* ouvre un accès local à chaud (`127.0.0.1:<port>`, 8 heures) : commande `ssh` toute prête, client de bureau à distance, ou adresse web.
-
-**Bail géographique.** Par le maillage, chaque station dit aux autres stations de son UPlanet sa position (`--lat`/`--lon`) et ses cases de quartier : UMAP (0,01°), SECTOR (0,1°) et REGION (1°), les siennes et celles de ses membres qui ont indiqué leur quartier. Toutes calculent le même propriétaire de chaque case : **la station la plus proche de son centre**, le PeerID départageant deux distances égales. Seule celle-là publiera avec les clés du quartier, si bien que deux stations voisines n'écrivent jamais deux versions concurrentes. Une station muette depuis 36 h sort du calcul et la suivante reprend. L'API `mesh` du Capitaine en donne l'état (champ `geo` : cases tenues, cases cédées et à qui). Les noms de cases sont ceux d'Astroport.ONE (`_43.61_1.44`, `_43.6_1.4`, `_43_1`).
-
-Quand le maillage P2P est actif, la station **offre aussi son relai Nostr** aux autres stations (service `strfry`, tunnel `/x/strfry-<PeerID>`) : c'est par là que la synchronisation N¹/N² et l'écran « Réplication » joignent les relais des autres stations, sans port public.
-
-Sur la station qui **offre** son accès SSH :
-
-```bash
-astroportd serve ... [--swarm-key ./swarm.key]   # maillage actif sur 4101 par défaut ; le SSH est offert par défaut, mais fermé : le Capitaine l'ouvre dans Options › Tunnels
-```
-
-Sur la station qui **rejoint** (le PeerID est celui de l'hôte, visible avec `astroportd ylevel`) :
-
-```bash
-astroportd serve ... --p2p-forward 127.0.0.1:2222=12D3Koo…/ssh
-ssh -p 2222 utilisateur@127.0.0.1
-```
-
-> ⚠️ **Attention.** Le tunnel transporte les octets : c'est toujours `sshd` qui décide. Ajoutez volontairement la clé publique de l'autre Capitaine dans `~/.ssh/authorized_keys`, et en réseau **ORIGIN (ouvert)** n'exposez SSH que si `PasswordAuthentication no`.
-
-Pour choisir le meilleur nœud du réseau pour un service (GPU, Ollama…) :
-
-```bash
-astroportd route ollama --mode closest --lat 45.7 --lon 4.8
-```
-
-### 🌐 Navigateur (Web)
-
-Le Capitaine voit dans l'écran **Station** (le cockpit, étape 7 bis) l'état de la constellation, l'économie de la station et les comptes hébergés ; les cartes **Ollama** et **ComfyUI** de *Options › Tunnels* n'apparaissent que si le service répond sur la machine.
-
-Le territoire se lit sur la carte UPlanet : chaque dalle de 0,01° (environ 1 km²) a sa propre identité, et les stations voisines forment le territoire.
-
-<a id="etape-9b"></a>
-
-## Étape 9 bis — Une adresse pour chaque station et chaque MULTIPASS (DNSLink)
-
-La coopérative peut donner à **chaque station** et à **chaque MULTIPASS** une adresse lisible dans sa zone DNS : `_dnslink.<nom>.<zone>` pointe vers l'espace IPNS (`/ipns/k51…`), et n'importe quelle passerelle IPFS résout alors `<nom>.<zone>`.
-
-### 🖥️ Terminal (CLI)
-
-La station s'en charge seule dès que le Capitaine a renseigné les clés OVH de la coopérative (`OVH_APP_KEY`, `OVH_APP_SECRET`, `OVH_CONSUMER_KEY`, `OVH_ZONE`, `astroport.one` par défaut). Elle écrit les **mêmes** enregistrements que l'outil `Astroport.ONE/admin/system/ovh.me.sh`, que l'on peut garder pour inspecter la zone :
-
-```bash
-~/.zen/Astroport.ONE/admin/system/ovh.me.sh list
-```
-
-### 🌐 Navigateur (Web)
-
-1. Dans *Station › Configuration coopérative*, renseignez les clés OVH (elles sont chiffrées, jamais ré-affichées).
-2. Dans le cockpit, la carte **Adresses de la coopérative** montre l'adresse de la station, combien d'adresses sont à jour, en attente ou en échec ; **Enregistrer maintenant** lance un passage tout de suite.
-3. Un MULTIPASS s'appelle `<partie locale à l'envers>.<domaine>` (`geg-la@exemple.org` devient `la.geg.exemple.org`) ; une station `<nom de machine>-<6 derniers caractères du PeerID>`.
-
-> **À savoir.** Un passage a lieu 90 secondes après le démarrage puis toutes les 15 minutes, et n'appelle OVH que pour ce qui a changé. La station ne supprime jamais un enregistrement. Un échec est affiché et le Capitaine en est averti une fois.
-
-<a id="etape-10"></a>
-
-## Étape 10 — En cas de problème
-
-Les réponses aux questions les plus fréquentes. Dans tous les cas, `astroportd doctor` est le premier réflexe.
-
-### 🖥️ Terminal (CLI)
-
-- **« L'horloge est antérieure à 2026 »** : réglez l'heure (`sudo timedatectl set-ntp true`). Sur Raspberry Pi sans pile, c'est normal au premier démarrage.
-- **Le port 80 ou 443 est refusé** : un utilisateur ordinaire ne peut pas ouvrir les ports sous 1024. Autorisez-le : `sudo setcap 'cap_net_bind_service=+ep' ~/.local/bin/astroportd`.
-- **`doctor` signale un secret lisible par d'autres** : `chmod 600 ~/.zen/game/secret.*` (et `chmod 600` sur la base).
-- **`ylevel --verify` échoue** : la clé SSH a été remplacée après Y-Level (ou une autre machine l'a écrasée). Relancez `astroportd init`, ou restaurez `~/.ssh/id_ed25519` depuis vos sauvegardes.
-- **La reconnaissance de visages ne démarre pas** : vérifiez `--face-engine` ou `--face-models` (voir étape 8). Avec `--face-models`, le binaire doit avoir été compilé avec `--features onnx`, `ORT_DYLIB_PATH` doit désigner `libonnxruntime.so` et le dossier doit contenir `det_10g.onnx` et `w600k_r50.onnx`.
-- **Les embeddings locaux ne démarrent pas** : lancez `astroportd embed-check`, il dit ce qui manque (fonction `onnx` compilée, `bge-m3-int8.onnx` et `bge-m3-tokenizer.json` dans `~/.zen/astroportd/models`, `libonnxruntime`). Sans option, des fichiers inutilisables font dire pourquoi à la station, qui se rabat alors sur Ollama ; avec `--embed-models`, un dossier incomplet ou une bibliothèque introuvable est une **erreur** et la station ne démarre pas. Sur une petite machine, le démarrage charge ≈ 560 Mo de modèle : si la mémoire manque, relancez l'installeur avec `--check-hardware` et choisissez le profil *léger* ou `--no-embed`.
-- **L'installeur recommande « léger » alors que je veux tout en local** : il a vu un manque de mémoire, de place ou un disque très lent (chaque raison est affichée). Forcez avec `--profile standard` ou `--profile confort` si vous assumez la lenteur, ou changez de disque (un SSD USB ou NVMe vaut mieux qu'une carte SD).
-- **Un virement Ğ1 n'apparaît pas en Ẑen** : l'écoute des virements compte un virement comme Ẑen seulement s'il vient de cette UPlanet (contrôle « primal »). Les nœuds Duniter et les indexeurs squid sont **découverts automatiquement** au démarrage (amorces, pairs, fichier réseau officiel, annonces on-chain ; sondés puis triés par latence ; cache d'une heure) : `--duniter-rpc` et `--squid-url` ne servent qu'à les imposer, `--no-duniter` à ne pas joindre la Ğ1. Si aucun indexeur ne répond, l'origine reste « non vérifiée » et le titulaire est prévenu sans que le montant soit compté.
-- **Photos : GPS et date de prise de vue.** À la réception d'une photo, la station lit son EXIF (position GPS, date de prise de vue) avant que la miniature n'en efface les métadonnées, et les note dans l'uCloud (jamais d'écrasement d'une valeur déjà saisie ; une position « 0, 0 » ou hors du globe est ignorée). L'**orientation** EXIF est appliquée partout : la détection des visages, leurs vignettes et la visionneuse partagent le même repère. Les photos reçues **avant** cette version ne sont pas rattrapées.
-- **La station ne voit pas les autres** : en ẐEN, toutes les stations doivent avoir **exactement la même** `swarm.key`.
-- **Passer d'ORIGIN à ẐEN** : ajoutez `--swarm-key ./swarm.key` au démarrage et redémarrez ; la station ne verra plus que les stations de la même clé.
-
-Une question, un bug ? Ouvrez un ticket : [https://github.com/papiche/astroportd/issues](https://github.com/papiche/astroportd/issues). Pour la coopérative : support@qo-op.com.
-
-### 🌐 Navigateur (Web)
-
-- **Impossible de se connecter** : le compte doit être hébergé par la station (dossier `~/.zen/game/nostr/<email>/`) ; le jeton s'obtient avec `astroportd token`. Pas de compte ? `astroportd multipass create <email>` ou la page `/register`.
-- **La page ne se charge pas** : essayez `/health` ; si elle répond, videz le cache du navigateur.
-- **Le lien magique ne s'ouvre pas** : l'adresse doit être copiée en entier, avec le `#` et ce qui le suit.
-- **Le guide en ligne** : [Astroport.ONE](https://github.com/papiche/Astroport.ONE) pour le suivi automatique des Capitaines, la ZenCard et les QR codes.
-
----
-
-Pour comprendre en profondeur ORIGIN, ẐEN et Y-Level : [CONSTELLATIONS.md](CONSTELLATIONS.md). Licence AGPL-3.0.
+<a id="sur-un-smartphone"></a>
 
 ## Sur un smartphone
 
@@ -957,3 +753,298 @@ Limites à connaître (non vérifiées sur un appareil réel) :
 - **Veille** : Android coupe les applications en arrière-plan. Lancez `termux-wake-lock` et retirez Termux de l'optimisation de batterie, sans quoi la station s'endort.
 - **Reconnaissance de visages et embeddings locaux** : ils demandent `libonnxruntime` (glibc), indisponible pour un binaire statique. Pointez `--face-engine` vers le service d'une autre station, et `--ollama` vers une machine qui héberge Ollama pour les vecteurs de la mémoire.
 - **Réseau** : un téléphone est derrière un NAT d'opérateur ; pour être joignable par ses pairs, utilisez `--p2p-use-relay` avec une station qui sert de relais. iOS n'est pas supporté.
+
+<a id="partie-3"></a>
+
+## Partie 3 — L'argent de la station
+
+Votre station peut être gratuite, ou demander à chaque membre un prix à la semaine : c'est vous qui décidez. Ce qui est encaissé se partage chaque semaine, dans cet ordre, et seulement si le montant le permet :
+
+1. **une part, la PAF (participation aux frais), pour l'Armateur** : celui qui fournit la machine et paie l'électricité ;
+2. **deux parts pour le Capitaine**, pour le temps passé à tenir la station et à aider les membres ;
+3. **le surplus**, s'il y en a : une provision pour l'impôt, 1 % de prime de gestion au Capitaine, puis trois tiers égaux pour la trésorerie, la recherche et développement, et le matériel durable (la règle des 3×1/3).
+
+Un membre qui ne paie pas n'est jamais coupé : son compte passe en période de grâce, puis en attente, sans perdre ni son accès ni ses fichiers. Tous les portefeuilles de la coopérative sont visibles de tous les membres.
+
+<a id="etape-8bis-g"></a>
+
+## Hébergement facturé et partage de la semaine
+
+Ce que vous demandez à vos membres, et comment la station le répartit chaque semaine, sans que vous ayez rien à faire à la main.
+
+Le Capitaine fixe, par MULTIPASS hébergé, un **quota** et un **prix hebdomadaire en ẑ** (Station › Comptes hébergés › *Hébergement*), et un **palier par défaut** pour les autres. Sans réglage, tout est gratuit.
+
+1. **Prélèvement** : la machine d'états du cycle de vie décide ; tous les 7 jours depuis le dernier prélèvement réussi, le prix part du MULTIPASS sur la Ğ1 vers le **compte technique d'hébergement** (`<UPLANETNAME>.HOSTING.<PeerID du NODE>` : indépendant de l'email du Capitaine). Un prix tout juste fixé ne débite que dans une semaine. Solde insuffisant : *période de grâce* de 7 jours puis *suspension* — un **statut et un message**, jamais une coupure du service, jamais une suppression.
+2. **Règlement hebdomadaire** (avec `--weekly-costs` = 3×PAF, en centimes de ẑ ; `0` désactive) : une fois la semaine clôturée à 20h12, si le montant reçu le permet, le compte technique vire 1×PAF au NODE, 2×PAF au MULTIPASS du Capitaine, puis le surplus ventilé par la clôture (`IMPOT`, prime de 1 %, `TREASURY`, `RND`, `ASSETS`).
+> **Détails techniques.** 3. **Transaction primale** : le portefeuille maître `UPLANETNAME_G1` envoie **1 Ğ1** à chaque portefeuille coopératif vide (`UPLANETNAME`, `SOCIETY`, `TREASURY`, `RND`, `ASSETS`, `IMPOT`, `INTRUSION`, `CAPITAL`, `AMORTISSEMENT`), au compte technique et au NODE : c'est leur *primal*, qui les marque comme appartenant à cette UPlanet (équivalent de `UPLANET.init.sh`). **Actif par défaut : c'est ce qui rend une UPlanet officielle** (`--no-primal-init` pour le couper ; cela dépense de vrais Ğ1). Le maître doit détenir au moins 1 Ğ1 par portefeuille en plus de son propre dépôt ; sinon la station le dit une fois par jour et reprend seule.
+
+> **Détails techniques.** **Correction des intrusions.** Un virement reçu par un compte de la station (MULTIPASS, Capitaine) ou par un portefeuille coopératif (sauf `INTRUSION`, le maître et le NODE), dont l'émetteur a une primale **prouvée** étrangère (deux indexeurs d'accord), n'est pas compté en Ẑen et il est **renvoyé vers `INTRUSION`** dès le bloc, avec le mémo de `primal_wallet_control.sh` (`…:INTRUSION:<émetteur>:ID:<bloc>_<émetteur>`). Jamais sur une primale inconnue ou non vérifiée, jamais la réserve de 1 Ğ1 (ce qui a déjà été dépensé est signalé au Capitaine), une seule fois par virement. Les virements reçus pendant un arrêt de la station ne sont pas rattrapés : l'écran Économie (vigilance) les montre.
+
+Chaque virement est noté **avant** d'être signé ; une issue inconnue n'est jamais rejouée (alerte au Capitaine : vérifier le solde du compte concerné).
+
+<a id="etape-8c"></a>
+
+## Ma UPlanet : nom, charte et comptes visibles de tous
+
+Chaque UPlanet a un **nom**, une **charte** et un **argent commun visible de tous ses membres**. L'écran **Ma UPlanet** (`#/constellation`, lien en bas de l'Accueil) réunit trois choses.
+
+- **Les portefeuilles de la coopérative** : `UPLANETNAME_G1` (le portefeuille maître) et ceux que la transaction primale marque (`UPLANETNAME`, `SOCIETY`, `TREASURY`, `RND`, `ASSETS`, `IMPOT`, `INTRUSION`, `CAPITAL`, `AMORTISSEMENT`, l'hébergement et le NODE). Pour chacun : l'adresse Ğ1, le solde en Ğ1 et en Ẑen, et l'état de sa transaction primale. **Tous les membres** les voient. Les soldes sont lus sur la chaîne Ğ1 : sans nœud Duniter, l'écran le dit.
+- **L'économie en mouvement** : une carte animée en SVG, sans bibliothèque. Chaque virement est une **impulsion** qui court dans un **tuyau** entre deux portefeuilles ; la taille d'un portefeuille suit son solde. Le bouton **Rejouer** déroule toute l'histoire en trente secondes (vitesses ×1, ×4, ×16), le curseur permet de se placer à une date. Les comptes des membres sont regroupés en un seul point « membres », tout autre compte en « extérieur » : aucune adresse personnelle n'apparaît.
+- **Les Ğ1Billets en circulation** : créés, en circulation (et leur valeur en Ẑen), encaissés, renvoyés à l'émetteur, expirés non renvoyés. Les billets forment le point « billets » de la carte animée (cadre en haut à gauche) : leur création, leur encaissement et leur retour y apparaissent comme des impulsions entre `UPLANETNAME_G1`, « billets » et « membres ».
+- **La charte** : un texte court, versionné, publié dans la configuration coopérative et donc **signé par la clé de la coopérative**. Tant que le Capitaine n'en a pas publié une, la charte type ([CHARTE_UPLANET.md](CHARTE_UPLANET.md), tirée du [Manuel des membres](UPLANET_ManuelDesMembresEtDesContributeurs.md)) est proposée. **Chaque Capitaine signe** la version courante : un bouton « Je signe cette charte » publie un événement Nostr public (kind 31903, `d = charter-accept`) portant l'empreinte SHA-256 du texte, signé de sa clé. L'écran liste les Capitaines que la station connaît et dit qui a signé la version courante ; une nouvelle version de la charte a une autre empreinte et demande une nouvelle signature (on ne peut signer qu'une version que l'on a sous les yeux).
+
+> **Détails techniques.** **L'historique vient de l'indexeur.** Le nœud Duniter ne garde pas l'historique d'un portefeuille : la station le copie depuis un indexeur squid (`--squid-url`, ou découverte automatique), toutes les 15 minutes, dans la table `coop_ledger`. Sans indexeur, ou tant qu'il n'a pas répondu, la carte affiche **« historique partiel »** et seuls les soldes d'aujourd'hui sont connus.
+
+**Le Capitaine** nomme l'UPlanet et publie la charte dans **Configuration coopérative** (section « Nom et charte de l'UPlanet » : `UPLANET_NAME`, `CHARTER_VERSION`, `CHARTER_TEXT`, 6000 caractères au plus).
+
+> **Détails techniques.** ```bash
+> curl -s -H "Authorization: Basic …" https://ma-station/api/v1/constellation          # portefeuilles, charte, état de l'historique
+> curl -s -H "Authorization: Basic …" "https://ma-station/api/v1/constellation/ledger?since=1700000000&limit=5000"
+> curl -s -X POST -H "Authorization: Basic …" -d '{"sha256":"<empreinte de la charte>"}' https://ma-station/api/v1/constellation/charter/accept   # Capitaine
+> ```
+
+> **À savoir.** Seuls les **Capitaines** signent la charte ; l'acceptation par chaque membre à l'inscription n'est pas faite. La liste ne montre que les Capitaines que votre station connaît : les signatures d'une autre station n'arrivent que si leurs événements sont répliqués jusqu'à vous (maillage N¹/N²). Le rendu animé est vérifié par un test de la disposition et des soldes rejoués, pas encore sur un grand nombre de virements réels.
+
+<a id="etape-8bis-l"></a>
+
+## Ğ1Billet : des billets papier en Ẑen
+
+Des billets papier en Ẑen, que vos membres impriment, donnent de la main à la main, et que n'importe qui encaisse en scannant deux QR codes.
+
+Un **Ğ1Billet** est un billet papier dont la valeur est portée par une clé Ğ1 jetable. Son secret est découpé en trois parts dont deux suffisent : un **QR en clair**, un **QR sous le pli**, et une troisième part qui n'est pas imprimée. Les billets déjà imprimés par UPassport restent valables : le découpage est le même.
+
+**Pour le porteur**, la page publique **`/scan`** (aucun compte à créer) tient en trois étapes :
+
+1. **Scanner** : la caméra s'ouvre toute seule ; on lit le QR en clair puis le QR sous le pli, **dans n'importe quel ordre**. La station retrouve laquelle est laquelle. Un lien `/scan?g1pub=…` (le QR « vérifier » du billet) affiche déjà la valeur, l'authenticité et la date de fin. Sans caméra : « Choisir une photo » du QR, ou saisie du texte.
+2. **Destination** : l'adresse `g1…` d'un compte de l'UPlanet, à coller ou à scanner. Si ce navigateur a une session ouverte sur la station, un bouton **« Mon compte (email) »** remplit l'adresse du portefeuille Ğ1 de votre MULTIPASS d'un geste (sans session, on colle ou on scanne l'adresse). La station vérifie tout de suite que ce portefeuille est reconnu par l'UPlanet.
+3. **Encaisser** : un récapitulatif, puis un bouton. La valeur est visible en Ẑen et en Ğ1.
+
+> **Détails techniques.** La lecture utilise `BarcodeDetector` quand le navigateur l'a (Chrome, Android) ; sinon un décodeur (jsQR, Apache-2.0, environ 46 Ko compressés) n'est chargé qu'à ce moment-là. Il est hors du budget de l'application : seule la page `/scan` y touche.
+
+**Ce que fait la station** (inchangé par rapport à UPassport) : le billet est **vidé vers `UPLANETNAME_G1`**, qui **renvoie `solde − 1 Ğ1`** au destinataire (ce 1 Ğ1 est le dépôt d'activation que `UPLANETNAME_G1` avait avancé : le porteur reçoit exactement la valeur du billet). Avant tout virement, deux contrôles : le billet est bien **de cette UPlanet** (son premier virement reçu vient de `UPLANETNAME_G1`) et le destinataire l'est aussi. Sans indexeur Ğ1 (`--squid-url`) l'origine ne peut pas être lue : l'encaissement est refusé, par prudence.
+
+> **Détails techniques.** - **Reprise.** L'état du billet est écrit **avant** chaque virement. Si le transfert final échoue après le vidage, les fonds restent sur `UPLANETNAME_G1`, le porteur est prévenu (« en cours »), le Capitaine reçoit une alerte et la station **réessaie toutes les 5 minutes**. Un vidage dont l'issue est inconnue n'est jamais rejoué.
+> - **Validité.** Un billet peut porter une date de fin, écrite dans un événement signé par la clé de la coopérative (kind 31903, `d = billet:<adresse>`, tag `u` en secondes Unix). Passée cette date, le porteur ne l'encaisse plus. Seule la clé de la coopérative fait foi.
+> - **Limites de débit** : 40 lectures par minute et 6 encaissements par 10 minutes et par adresse.
+>
+> ```bash
+> curl -s "https://ma-station/api/v1/billet/check?g1pub=g1…"                    # valeur, origine, validité
+> curl -s "https://ma-station/api/v1/billet/destination?g1pub=g1…"             # destinataire reconnu ?
+> curl -s -d '{"parts":["<64 hex>","<64 hex>"]}' https://ma-station/api/v1/billet/identify
+> ```
+
+### Créer des billets (Capitaine et MULTIPASS autorisés)
+
+Le **Capitaine** choisit les MULTIPASS qui peuvent créer des Ğ1Billets **dans la même action que le quota et le prix en ẑ par semaine** : le bouton « Hébergement » d'un compte (écran Station) ouvre un **panneau dans la page** (pas de fenêtre de saisie) avec le quota, le prix et la case « Peut créer des Ğ1Billets ». Un 🎫 le rappelle dans la liste. L'option **« Mes Ğ1Billets »** apparaît alors dans l'interface de ce MULTIPASS (lien en bas de l'Accueil) ; le Capitaine y a toujours accès.
+
+L'écran propose : le **nombre de billets** (1 à 6 par planche), la **valeur de chacun en ẑ**, une **durée de validité** (sans limite, 7 jours, 3 mois, 1 an) et l'option **« retour automatique »**. Puis, en deux temps :
+
+1. **Créer la planche** : la station tire une clé jetable par billet et affiche une **planche A4 paysage de 6 billets** (2 × 3) : le QR **sous le pli** (bande de gauche), le QR **en clair**, le QR **« vérifier »** (lien `/scan?g1pub=…`), la valeur, l'adresse et la date de fin. Les parts ne s'affichent **qu'une seule fois** : on imprime tout de suite (`Imprimer la planche`).
+2. **Financer** chaque billet (ou « Tout financer ») : 1 Ğ1 d'activation avancé par `UPLANETNAME_G1`, puis la valeur, du **portefeuille de l'émetteur**. Chaque billet a son propre appel : un échec n'en touche pas un autre, et on peut rappeler sans rien payer deux fois. Seul l'émetteur d'un billet peut le financer (sinon n'importe qui ferait avancer des Ğ1 gratuits par la coopérative). Un virement refusé pour cause de nonce (« Invalid Transaction (1010) ») est réessayé.
+
+**Retour automatique.** Si l'option est choisie, la station garde **P2 et P3, chiffrées pour son NODE seul** (dans le témoin, événement kind 31903 `d = billet:<adresse>` signé par la coopérative, tags `p` émetteur, `a` valeur, `u` date de fin, `r` retour). À la date de fin, si le billet n'a pas été encaissé, le porteur est refusé et la station renvoie la valeur au portefeuille de l'émetteur (par le même circuit), **une fois par jour, à 20h12 solaire** (étape « billets » de la nuit ; sans l'orchestrateur de nuit, rien n'est renvoyé). Sans l'option, la station ne garde **aucune part** : elle ne peut pas toucher au billet. Avec elle, la station garde le billet **en dépôt** jusqu'à l'échéance ; sur ORIGIN (clés publiques) ce dépôt n'est protégé que par la clé du NODE.
+
+Ces billets servent aussi à **remplir le compte d'un MULTIPASS** : le porteur donne son adresse `g1…` comme destination.
+
+**Fond et icône.** Chaque billet prend pour **fond le bandeau (`banner`)** et pour **icône l'image (`picture`)** du profil Nostr (kind 0) de l'émetteur, voilés pour garder les QR lisibles. Dans **Mon compte › Profil**, on envoie une image depuis l'appareil (réduite dans le navigateur puis réencodée par la station, qui la sert publiquement à `/api/v1/profile/<clé>/<picture|banner>.jpg` et republie le profil) ou on colle une adresse `https://`. Une image d'un site tiers est lue par la station (taille limitée, adresses privées refusées) et intégrée au billet ; si elle est illisible, le billet est créé sans fond.
+
+> **À savoir.** Pas de verso personnalisé comme dans UPassport. La mise en page a été vérifiée en code et sur la vraie chaîne Ğ1 (création, financement, retour automatique), pas sur du papier imprimé. Le retour automatique se fait à 20h12 : un billet expiré à 9 h revient le soir même.
+
+<a id="partie-4"></a>
+
+## Partie 4 — Relier, ouvrir, administrer
+
+Rien de cette partie n'est nécessaire pour démarrer. Vous y viendrez pour être trouvé par les futurs membres, vous entraider entre Capitaines, donner des adresses lisibles, ou servir plusieurs UPlanet depuis une même machine.
+
+<a id="annuaire"></a>
+
+## Être trouvé : balise et annuaire des stations
+
+Un futur membre clique « Rejoindre » sur astroport.one : il est envoyé vers la station la plus proche qui a encore de la place. Pour que ce soit la vôtre, il suffit d'avoir donné la position de la station à `astroportd init` ; le reste se fait seul.
+
+Chaque station publie sa **balise** (événement NOSTR kind 30850, `d = economic-health`, signé par le NODE) : santé économique de la dernière semaine close, **places libres** (`capacity:multipass_used` / `capacity:multipass_total`, `register:open`), **position arrondie à la case UMAP** (0,01°, ≈ 1 km ; seulement si `--lat` / `--lon` sont réglés, ce que demande `astroportd init`), matériel, prix du MULTIPASS et adresse publique. Les noms de tags sont ceux d'`ECONOMY.broadcast.sh` : la vue **LIVE** d'astroport.one et `heartbox.js` la lisent sans changement.
+
+> **Détails techniques.** - **Quand** : au démarrage, dès que le nombre de comptes ou l'ouverture des inscriptions change (au plus toutes les 2 minutes), toutes les 6 heures et après la clôture de 20h12.
+> - **Où** : relai local, relais `--relay`, et le **relai commun de la coopérative** `wss://relay.<zone>`, où `<zone>` est le domaine `OVH_ZONE` de la configuration coopérative (configuration coopérative, section « DNSLink OVH »).
+> - **Annuaire** : la station relit ces relais tous les quarts d'heure et sert les stations de **la même UPlanet** (même `swarm_id`, l'adresse du portefeuille `<UPLANETNAME>`, comme le legacy) vues depuis moins de 8 jours : `GET /api/v1/stations` (public, lisible depuis toute origine) et la page **`/stations`**. Le futur membre clique « Me localiser » : sa position **reste dans son navigateur** et sert seulement au tri ; la station conseillée est revérifiée en direct (`GET <url>/api/v1/register`). Une station complète renvoie vers `/stations` depuis `/register`.
+> - **Relai commun** : un relai astroportd accepte la balise d'une station **inconnue** seulement si elle porte le `swarm_id` de son UPlanet et un PeerID (débit limité par adresse) ; le reste du relai ne s'ouvre pas.
+> - **Énergie** : avec le plugin système [`energy`](https://github.com/papiche/astroportd-plugins/tree/main/energy) (dépôt `astroportd-plugins` : PowerJoular pour la consommation, régulateurs Victron en Bluetooth pour la production solaire), la balise porte aussi `hw:energy_today_kwh`, `hw:energy_month_kwh`, `hw:energy_total_kwh`, `hw:avg_w_recent` et les `hw:solar_*`, plus le contenu `hardware.energy` / `hardware.solar`, comme le rapport d'Astroport.ONE ; le cockpit affiche la carte « Énergie de la station ». Le plugin dépose `~/.zen/astroportd/plugins/energy/energy.json` (contrat `energy/v1`, schéma JSON et OpenAPI dans le dépôt des plugins) ; la station le lit et ne l'exécute jamais. Un fichier de plus d'une heure (collecteur arrêté) ou hors contrat est ignoré, et le cockpit le signale à l'étage Machine.
+
+<a id="etape-9"></a>
+
+## Relier sa station aux autres Capitaines
+
+Grâce à Y-Level, la clé publique SSH d'une station **se déduit de son identité IPFS** (`12D3Koo…`) : c'est la même clé. Quand deux Capitaines se suivent sur Nostr, ils peuvent donc s'ouvrir un accès SSH entre machines de confiance : de l'**individu**, à l'**Astroport**, au **territoire**.
+
+Qui fait quoi ? Le **suivi automatique** entre Capitaines (lecture des rapports économiques kind 30850, suivi mutuel) est fait par **Astroport.ONE** (`DRAGON_p2p_ssh.sh`). **astroportd**, lui, fournit le **tunnel** P2P entre les stations, sans ouvrir de port sur la box ; et il fait suivre le Capitaine par chaque MULTIPASS qu'il crée.
+
+![Individus, Astroports et territoire ; les Capitaines qui se suivent.](img/individu-astroport-territoire.svg)
+
+### 🖥️ Terminal (CLI)
+
+**Le maillage est actif par défaut** : sans `--p2p-listen`, la station écoute sur `/ip4/0.0.0.0/tcp/4101` (ou le premier port libre après) ; `--no-p2p` le coupe. Avec `astroportd planes`, chaque UPlanet reçoit son propre port (4101, 4102…) et son propre réseau privé : une station d'une autre UPlanet ne peut pas être jointe.
+
+L'écran du Capitaine **Maillage et Capitaines amis** (`#/mesh`, lien « Capitaines amis » du cockpit) réunit :
+- *Ma station* : l'UPlanet servie, le nombre de stations connectées et l'adresse à donner aux autres Capitaines ;
+- *Stations* : joindre une station à chaud par son adresse (`/ip4/…/tcp/4101/p2p/12D3Koo…`), et la **garder comme bootstrap** (rejointe à chaque démarrage et rappelée toutes les 5 minutes si la liaison tombe) ;
+- *Capitaines* : les Capitaines connus, qui suit qui, **Suivre / Ne plus suivre** (liste de contacts du Capitaine, signée par la station et publiée). Pour un ami réciproque, l'écran demande à **sa** station les services qu'elle nous ouvre ; elle ne répond qu'avec ceux que sa politique de tunnels nous permet, rien n'est publié. *Se connecter* ouvre un accès local à chaud (`127.0.0.1:<port>`, 8 heures) : commande `ssh` toute prête, client de bureau à distance, ou adresse web.
+
+> **Détails techniques.** **Bail géographique.** Par le maillage, chaque station dit aux autres stations de son UPlanet sa position (`--lat`/`--lon`) et ses cases de quartier : UMAP (0,01°), SECTOR (0,1°) et REGION (1°), les siennes et celles de ses membres qui ont indiqué leur quartier. Toutes calculent le même propriétaire de chaque case : **la station la plus proche de son centre**, le PeerID départageant deux distances égales. Seule celle-là publiera avec les clés du quartier, si bien que deux stations voisines n'écrivent jamais deux versions concurrentes. Une station muette depuis 36 h sort du calcul et la suivante reprend. L'API `mesh` du Capitaine en donne l'état (champ `geo` : cases tenues, cases cédées et à qui). Les noms de cases sont ceux d'Astroport.ONE (`_43.61_1.44`, `_43.6_1.4`, `_43_1`).
+
+Quand le maillage P2P est actif, la station **offre aussi son relai Nostr** aux autres stations (service `strfry`, tunnel `/x/strfry-<PeerID>`) : c'est par là que la synchronisation N¹/N² et l'écran « Réplication » joignent les relais des autres stations, sans port public.
+
+Sur la station qui **offre** son accès SSH :
+
+```bash
+astroportd serve ... [--swarm-key ./swarm.key]   # maillage actif sur 4101 par défaut ; le SSH est fermé par défaut en ẐEN, ouvert aux Capitaines amis en ORIGIN : réglage dans Options › Tunnels
+```
+
+Sur la station qui **rejoint** (le PeerID est celui de l'hôte, visible avec `astroportd ylevel`) :
+
+```bash
+astroportd serve ... --p2p-forward 127.0.0.1:2222=12D3Koo…/ssh
+ssh -p 2222 utilisateur@127.0.0.1
+```
+
+> ⚠️ **Attention.** Le tunnel transporte les octets : c'est toujours `sshd` qui décide. Ajoutez volontairement la clé publique de l'autre Capitaine dans `~/.ssh/authorized_keys`, et en réseau **ORIGIN (ouvert)** n'exposez SSH que si `PasswordAuthentication no`.
+
+Pour choisir le meilleur nœud du réseau pour un service (GPU, Ollama…) :
+
+```bash
+astroportd route ollama --mode closest --lat 45.7 --lon 4.8
+```
+
+### 🌐 Navigateur (Web)
+
+Le Capitaine voit dans l'écran **Station** (le cockpit, [étape 9](#etape-7b)) l'état de la constellation, l'économie de la station et les comptes hébergés ; les cartes **Ollama** et **ComfyUI** de *Options › Tunnels* n'apparaissent que si le service répond sur la machine.
+
+Le territoire se lit sur la carte UPlanet : chaque dalle de 0,01° (environ 1 km²) a sa propre identité, et les stations voisines forment le territoire.
+
+<a id="etape-8ter"></a>
+
+## Options du Capitaine : accès, visages, règles du relai
+
+L'écran **Station → Options de la station** change sans redémarrer :
+
+- **Tunnels et accès des autres Capitaines** : pour chaque service offert (SSH, ComfyUI, Ollama, plus ceux de `--p2p-expose`), *qui peut l'ouvrir* — fermé, la liste seulement, les Capitaines amis, ou tout le réseau — et la liste nominative avec une durée (« laisser un ami m'aider »). Un service qui ne répond pas sur la machine n'a pas de carte : une ligne *Non détectés* le nomme, jusqu'à ce qu'il démarre. Un réglage s'applique tout de suite, sessions ouvertes comprises.
+- **Partager un service de cette machine** : le Capitaine ajoute à chaud un autre port (nom + `IP:port`), sans redémarrer — par exemple un bureau à distance (serveur VNC `wayvnc`/`x11vnc` ou RDP), Jellyfin, Home Assistant ; les services courants qui répondent sont proposés (*Détectés*). La cible est cette machine ou le réseau local privé, jamais une adresse publique. Un service ajouté est fermé à tous tant que le Capitaine ne nomme personne (« Seulement la liste ») ; *Retirer le partage* coupe aussi les sessions ouvertes. Le partage passe par le maillage P2P (`--p2p-listen`) ; l'ami s'y connecte depuis l'assistance (« Se connecter ») ou avec `--p2p-forward`.
+- **Assistance entre Capitaines amis** : demander de l'aide pour un service, pour une durée ; rien ne s'ouvre avant qu'un ami accepte.
+- **File de traitement** : les tâches en attente, en cours ou abandonnées, avec relance.
+
+- **Reconnaissance des visages** : *ONNX local* (modèles `det_10g.onnx` + `w600k_r50.onnx`), *Brain GPU distant* (adresse `http://hôte:port/chemin`, testée avant d'être appliquée) ou *Arrêté* (les photos attendent, aucune tentative n'est consommée). L'écran montre ce qui manque (fonction `onnx` compilée, modèles, `libonnxruntime`). Le choix est conservé ; une option `--face-engine` / `--face-models` sur la ligne de commande l'impose et fige le réglage.
+![Options de la station : assistance entre Capitaines, tunnels et accès (ComfyUI non détecté, SSH réglé sur « Capitaines amis + liste »).](img/ui-options.png)
+
+- **Relai : lecture, écriture, projection par kind.** Lecture : *Tous*, *Auteur et destinataires*, *Auteur et ses Proches*, *Cercle social*, *Personne*. Écriture : *Cercle social*, *Tous (débit limité)*, *Personne*. Projection : l'événement alimente-t-il les tables dérivées (comptes, ledger…) ; il reste stocké et servi. Couches, de la plus faible à la plus forte : défauts du relai, `station.conf`, réglages du Capitaine. Dans `station.conf` :
+
+```ini
+kind.30078 = write=open project=off
+kind.7     = read=circle write=circle project=on
+```
+
+Une règle invalide est refusée avant d'être enregistrée (ou signalée au démarrage, la politique par défaut s'applique). Le kind 22242 (authentification) n'a pas de règle ; le kind 1059 garde sa règle d'amorçage.
+
+**NIP-65.** À sa création, un MULTIPASS publie sa liste de relais (kind 10002) avec le relai de la station (`--domain`). Pour écrire à un ami dont la station est inconnue, la station essaie ses relais de **lecture** annoncés avant les `--relay` fixes.
+
+<a id="etape-9b"></a>
+
+## Une adresse pour chaque station et chaque MULTIPASS (DNSLink)
+
+La coopérative peut donner à **chaque station** et à **chaque MULTIPASS** une adresse lisible dans sa zone DNS : `_dnslink.<nom>.<zone>` pointe vers l'espace IPNS (`/ipns/k51…`), et n'importe quelle passerelle IPFS résout alors `<nom>.<zone>`.
+
+### 🖥️ Terminal (CLI)
+
+La station s'en charge seule dès que le Capitaine a renseigné les clés OVH de la coopérative (`OVH_APP_KEY`, `OVH_APP_SECRET`, `OVH_CONSUMER_KEY`, `OVH_ZONE`, `astroport.one` par défaut). Elle écrit les **mêmes** enregistrements que l'outil `Astroport.ONE/admin/system/ovh.me.sh`, que l'on peut garder pour inspecter la zone :
+
+```bash
+~/.zen/Astroport.ONE/admin/system/ovh.me.sh list
+```
+
+### 🌐 Navigateur (Web)
+
+1. Dans *Station › Configuration coopérative*, renseignez les clés OVH (elles sont chiffrées, jamais ré-affichées).
+2. Dans le cockpit, la carte **Adresses de la coopérative** montre l'adresse de la station, combien d'adresses sont à jour, en attente ou en échec ; **Enregistrer maintenant** lance un passage tout de suite.
+3. Un MULTIPASS s'appelle `<partie locale à l'envers>.<domaine>` (`geg-la@exemple.org` devient `la.geg.exemple.org`) ; une station `<nom de machine>-<6 derniers caractères du PeerID>`.
+
+> **À savoir.** Un passage a lieu 90 secondes après le démarrage puis toutes les 15 minutes, et n'appelle OVH que pour ce qui a changé. La station ne supprime jamais un enregistrement. Un échec est affiché et le Capitaine en est averti une fois.
+
+<a id="etape-8bis-c"></a>
+
+## Reprendre un uCloud d'Astroport.ONE
+
+`astroportd import-ucloud <email>` reprend le uCloud d'un compte (`~/.zen/game/nostr/<email>/.ucloud`) **sans rien recopier ni ré-encoder** : le nouveau VFS référence les **mêmes blobs chiffrés** (UENC v1, déjà dans IPFS) avec **les mêmes clés**. L'ancienne base n'est ouverte qu'en lecture seule et n'est jamais modifiée.
+
+1. **À blanc d'abord** : `astroportd import-ucloud fred@example.org --dry-run`. Il lit l'ancien uCloud, dit ce qu'il reprendrait (fichiers, taille, dossiers, clés) et ce qu'il **écarterait avec la raison** (liste complète dans `import-ucloud-ecartes.tsv`), puis **relit, déchiffre et compare** un échantillon de fichiers (`--verify`, 60 par défaut) : taille et SHA-256 du clair doivent être ceux annoncés par l'ancienne base. Au moindre échec, rien n'est écrit.
+2. **Pour de bon** : même commande sans `--dry-run`. Le compte ne doit pas déjà avoir de fichiers dans astroportd (sinon `--replace`). Le manifeste Nostr est publié à la fin (`--no-publish` pour s'en abstenir).
+3. **`astroportd serve` doit tourner avec `--kubo http://127.0.0.1:5001`** : les anciens blobs n'existent que dans IPFS (CID v0 `Qm…`). Sans cela, les entrées s'affichent mais leur contenu est illisible.
+
+Ce qui change pour ces fichiers : ils se lisent et se téléchargent comme les autres (`Range` compris) ; **les supprimer retire l'entrée sans jamais désépingler le blob** (l'ancienne station le référence encore) ; ils **ne sont pas** sauvegardés chez les amis ni répliqués par P2P tant qu'ils n'ont pas été ré-enregistrés au format natif, et le contrôle d'intégrité de nuit les laisse de côté. Non repris : empreintes de visages (Qdrant) et vignettes, qui se recalculent ; les index vectoriels de descriptions.
+
+**Avant un import réel, mettez le démon à jour** : cette version migre le schéma de `uplanet.db` à l'ouverture, un démon d'une version antérieure qui tourne encore ne s'y retrouverait pas. Arrêtez-le, sauvegardez la base, lancez l'import, redémarrez.
+
+<a id="etape-8bis-h"></a>
+
+## Plusieurs astroportd sur une machine : un seul bassin de fichiers
+
+Chaque plan est un `astroportd serve` à lui (ses `--db`, `--game-dir`, ports, `--swarm-key`). Pour **ne pas payer deux fois le disque**, tous pointent leur `--blobs` vers **le même dossier**, et chacun déclare les bases des autres avec `--pool-peer` :
+
+```bash
+astroportd serve --db ~/.zen/origin/uplanet.db --blobs ~/.zen/pool --pool-peer ~/.zen/zen1/uplanet.db --kubo http://127.0.0.1:5001 …
+astroportd serve --db ~/.zen/zen1/uplanet.db   --blobs ~/.zen/pool --pool-peer ~/.zen/origin/uplanet.db …   # sans --kubo : Kubo n'appartient qu'à ORIGIN
+```
+
+- **Un blob n'est supprimé que si plus aucun plan ne le référence** : avant de supprimer, la station interroge la base de chaque pair en lecture seule (entrées, clés, miniatures, manifestes). Un pair illisible fait **garder** le blob (une place perdue vaut mieux qu'un fichier perdu).
+- **Adopter sans copier** : `astroportd bridge-copy --from-db … --from alice@… --to-db … --to alice@… --blobs ~/.zen/pool --path /Photos --dest /Imports/ORIGIN --same-person` fait apparaître les fichiers du premier plan dans le second, **même blob, même clé, zéro octet de plus**. `--same-person` atteste l'accord explicite (les deux comptes partagent la clé de fichier). Rejouable, jamais d'écrasement, quota du compte de destination appliqué, `--dry-run` pour compter. Les fichiers de l'ancien format (CID `Qm…`, vivants dans Kubo) et ceux absents du bassin sont **signalés, jamais copiés en silence** : leur transfert demande un ré-chiffrement (non fait).
+- **Contrôler le bassin** : `astroportd pool-status --blobs ~/.zen/pool --db …/origin/uplanet.db --db …/zen1/uplanet.db` affiche le poids, la part de chaque plan, la **place économisée par le partage** et les orphelins (`--sweep` supprime ceux de plus de 24 h).
+
+<a id="etape-8bis-i"></a>
+
+## Plusieurs UPlanet dans un seul processus
+
+Un **plan** est une UPlanet vue de cette machine : ORIGIN (sans `swarm.key`) ou une UPlanet privée (ZEN1, ZEN2…, avec sa `swarm.key`). Une seule commande les sert tous : même NODE (même `IPFSNODEID`), même bassin de blobs, **une base, un dossier de comptes et un port par plan** ; l'étanchéité est structurelle.
+
+**Configurer, au choix :**
+- **En ligne de commande** : `astroportd plane-setup list` · `plane-setup add` (pose les questions : fonder une UPlanet neuve — la station crée sa `swarm.key` et vous la montre pour la donner aux autres stations — ou rejoindre avec la clé reçue) · `plane-setup add --name zen1 --found` · `plane-setup add --name zen2 --swarm-key reçue.key` · `plane-setup remove zen2`.
+- **Sur le web** : Station › *Plans (UPlanet)* › *Gérer les plans* (Capitaine) : liste, état (servi / au prochain démarrage), ajout (fonder ou coller la `swarm.key` reçue) et retrait.
+
+![Station › Plans : une station qui sert ORIGIN et une UPlanet privée (zen1) dans un seul processus, et le formulaire pour en ajouter une.](img/ui-plans.png)
+
+Dans les deux cas : ports choisis libres, clé écrite en `0600` sous `~/.zen/game/<plan>/swarm.key` sans jamais écraser une clé existante, **ORIGIN reste dans sa base et son dossier actuels (rien n'est déplacé)**, et **retirer un plan ne supprime aucune donnée**. Les règles du démarrage sont vérifiées dès l'ajout : Kubo n'appartient qu'à ORIGIN, pas deux plans avec la même clé, la même base ou le même port.
+
+**Servir** : `astroportd planes --check` valide `~/.zen/astroportd/planes.json` et prépare les dossiers (liens vers les fichiers du NODE) sans rien lancer ; `astroportd planes` démarre tous les plans, à la place de `serve` : chaque plan a son propre `serve` (donc son propre nœud P2P, avec sa `swarm.key`) dans le même processus. Ajouter un plan demande de relancer cette commande.
+
+- **Un seul nom, plusieurs plans** : `astroportd planes --front 127.0.0.1:18000` écoute sur un port commun et route **par nom d'hôte** : `zen1.votre-domaine` ouvre le plan `zen1`, le nom nu ouvre ORIGIN (en local : `zen1.localhost`). HTTP en clair : à placer derrière le terminateur TLS (Nginx Proxy Manager).
+- **Choisir le plan d'une commande** : `--plane zen1` (par exemple `astroportd --plane zen1 multipass create alice@exemple.org`, `token`, `doctor`, `pool-status`) remplit la base, les blobs, le dossier de comptes et la clé du plan choisi, sans remplacer ce que vous donnez vous-même. Un plan inconnu est refusé.
+- **Dans l'interface** : quand la station route par nom d'hôte, le Capitaine a un **sélecteur de plan** dans l'en-tête ; l'écran *Station › Plans* dit si la station sert plusieurs plans dans un seul processus.
+
+<a id="etape-10"></a>
+
+## En cas de problème
+
+Les réponses aux questions les plus fréquentes. Dans tous les cas, `astroportd doctor` est le premier réflexe.
+
+### 🖥️ Terminal (CLI)
+
+- **« L'horloge est antérieure à 2026 »** : réglez l'heure (`sudo timedatectl set-ntp true`). Sur Raspberry Pi sans pile, c'est normal au premier démarrage.
+- **Le port 80 ou 443 est refusé** : un utilisateur ordinaire ne peut pas ouvrir les ports sous 1024. Autorisez-le : `sudo setcap 'cap_net_bind_service=+ep' ~/.local/bin/astroportd`.
+- **`doctor` signale un secret lisible par d'autres** : `chmod 600 ~/.zen/game/secret.*` (et `chmod 600` sur la base).
+- **`ylevel --verify` échoue** : la clé SSH a été remplacée après Y-Level (ou une autre machine l'a écrasée). Relancez `astroportd init`, ou restaurez `~/.ssh/id_ed25519` depuis vos sauvegardes.
+- **La reconnaissance de visages ne démarre pas** : vérifiez `--face-engine` ou `--face-models` (voir [FaceCloud](#etape-8)). Avec `--face-models`, le binaire doit avoir été compilé avec `--features onnx`, `ORT_DYLIB_PATH` doit désigner `libonnxruntime.so` et le dossier doit contenir `det_10g.onnx` et `w600k_r50.onnx`.
+- **Les embeddings locaux ne démarrent pas** : lancez `astroportd embed-check`, il dit ce qui manque (fonction `onnx` compilée, `bge-m3-int8.onnx` et `bge-m3-tokenizer.json` dans `~/.zen/astroportd/models`, `libonnxruntime`). Sans option, des fichiers inutilisables font dire pourquoi à la station, qui se rabat alors sur Ollama ; avec `--embed-models`, un dossier incomplet ou une bibliothèque introuvable est une **erreur** et la station ne démarre pas. Sur une petite machine, le démarrage charge ≈ 560 Mo de modèle : si la mémoire manque, relancez l'installeur avec `--check-hardware` et choisissez le profil *léger* ou `--no-embed`.
+- **L'installeur recommande « léger » alors que je veux tout en local** : il a vu un manque de mémoire, de place ou un disque très lent (chaque raison est affichée). Forcez avec `--profile standard` ou `--profile confort` si vous assumez la lenteur, ou changez de disque (un SSD USB ou NVMe vaut mieux qu'une carte SD).
+- **Un virement Ğ1 n'apparaît pas en Ẑen** : l'écoute des virements compte un virement comme Ẑen seulement s'il vient de cette UPlanet (contrôle « primal »). Les nœuds Duniter et les indexeurs squid sont **découverts automatiquement** au démarrage (amorces, pairs, fichier réseau officiel, annonces on-chain ; sondés puis triés par latence ; cache d'une heure) : `--duniter-rpc` et `--squid-url` ne servent qu'à les imposer, `--no-duniter` à ne pas joindre la Ğ1. Si aucun indexeur ne répond, l'origine reste « non vérifiée » et le titulaire est prévenu sans que le montant soit compté.
+- **Photos : GPS et date de prise de vue.** À la réception d'une photo, la station lit son EXIF (position GPS, date de prise de vue) avant que la miniature n'en efface les métadonnées, et les note dans l'uCloud (jamais d'écrasement d'une valeur déjà saisie ; une position « 0, 0 » ou hors du globe est ignorée). L'**orientation** EXIF est appliquée partout : la détection des visages, leurs vignettes et la visionneuse partagent le même repère. Les photos reçues **avant** cette version ne sont pas rattrapées.
+- **La station ne voit pas les autres** : en ẐEN, toutes les stations doivent avoir **exactement la même** `swarm.key`.
+- **Passer d'ORIGIN à ẐEN** : ajoutez `--swarm-key ./swarm.key` au démarrage et redémarrez ; la station ne verra plus que les stations de la même clé.
+
+Une question, un bug ? Ouvrez un ticket : [https://github.com/papiche/astroportd/issues](https://github.com/papiche/astroportd/issues). Pour la coopérative : support@qo-op.com.
+
+### 🌐 Navigateur (Web)
+
+- **Impossible de se connecter** : le compte doit être hébergé par la station (dossier `~/.zen/game/nostr/<email>/`) ; le jeton s'obtient avec `astroportd token`. Pas de compte ? `astroportd multipass create <email>` ou la page `/register`.
+- **La page ne se charge pas** : essayez `/health` ; si elle répond, videz le cache du navigateur.
+- **Le lien magique ne s'ouvre pas** : l'adresse doit être copiée en entier, avec le `#` et ce qui le suit.
+- **Le guide en ligne** : [Astroport.ONE](https://github.com/papiche/Astroport.ONE) pour le suivi automatique des Capitaines, la ZenCard et les QR codes.
+
+---
+
+Pour comprendre en profondeur ORIGIN, ẐEN et Y-Level : [CONSTELLATIONS.md](CONSTELLATIONS.md). Licence AGPL-3.0.
