@@ -11,6 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use astro_lifecycle::ylevel::{self, InitOptions, Paths, Source};
 use clap::{Args, ValueEnum};
 
+use crate::{plane, systemd_unit};
+
 /// `UPLANETNAME` d'une constellation ORIGIN (pas de `swarm.key`) : 64 zéros, comme `tools/my.sh`.
 pub const ORIGIN_UPLANETNAME: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -47,6 +49,11 @@ pub struct InitArgs {
     /// Nom de domaine public : HTTPS automatique (Let's Encrypt) quand les ports 80/443 sont libres. Demandé si absent (terminal).
     #[arg(long)]
     domain: Option<String>,
+    /// Un reverse proxy (Nginx Proxy Manager…) sert déjà le domaine, sur cette machine ou une autre : la station écoute sur
+    /// `0.0.0.0:8090` et ne demande pas de certificat. Détecté seul quand le proxy est sur cette machine ou qu'il répond
+    /// au nom de domaine.
+    #[arg(long)]
+    proxy: bool,
     /// Dossier de la station (défaut : `~/.zen/astroportd`).
     #[arg(long)]
     home: Option<PathBuf>,
@@ -81,6 +88,10 @@ pub struct InitArgs {
     /// Écrit l'unité systemd utilisateur `~/.config/systemd/user/astroportd.service`.
     #[arg(long)]
     systemd: bool,
+    /// Mode lancé par l'unité systemd : `serve` (une constellation) ou `planes` (tous les plans de `planes.json`).
+    /// Défaut : `planes` si `planes.json` existe, sinon `serve`.
+    #[arg(long, value_parser = ["serve", "planes"], requires = "systemd")]
+    systemd_mode: Option<String>,
     /// Aucune question : valeurs par défaut (ORIGIN) et options données.
     #[arg(long, short = 'y')]
     yes: bool,
@@ -197,9 +208,6 @@ fn probe_port(port: u16) -> Port {
         Err(_) => Port::Privileged,
     }
 }
-
-/// Port local de repli quand 80/443 sont pris : le reverse proxy (NPM) y renvoie le domaine.
-const BEHIND_PROXY_LISTEN: &str = "127.0.0.1:8090";
 
 fn parse_coord(s: &str, name: &str, max: f64) -> Result<f64, String> {
     let v: f64 = s.trim().replace(',', ".").parse().map_err(|_| format!("{name} : « {s} » n'est pas un nombre"))?;
@@ -342,9 +350,10 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
     let (face_threads, embed_threads) = (threads(a.face_threads, "face_threads"), threads(a.embed_threads, "embed_threads"));
     let email = a.email.clone().unwrap_or_else(|| ask.ask("Email du Capitaine (son compte est créé à la fin ; vide = plus tard)", &prev("captain_email")));
 
-    // Web : domaine + certificat. Ports 80/443 libres → astroportd gère lui-même HTTPS (ACME) ; pris (NPM…) → il reste local.
+    // Web : domaine + certificat. Ports 80/443 libres → astroportd gère lui-même HTTPS (ACME) ; un reverse proxy (NPM…)
+    // sur cette machine ou une autre → la station écoute sur 0.0.0.0:8090 et le proxy tient le certificat.
     let (p80, p443) = (probe_port(80), probe_port(443));
-    let behind_proxy = p80 == Port::Busy || p443 == Port::Busy;
+    let mut behind_proxy = a.proxy || prev(crate::station_domain::WEB_KEY) == "proxy" || p80 == Port::Busy || p443 == Port::Busy;
     let domain = a.domain.clone().unwrap_or_else(|| prev("domain"));
     let domain = match (domain.is_empty(), behind_proxy) {
         (true, false) => ask.ask("Nom de domaine public pour HTTPS automatique (vide = HTTP local seulement)", ""),
@@ -353,10 +362,26 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
         (true, true) => ask.ask("Ports 80/443 pris (reverse proxy ?) : nom de domaine public que ce proxy renvoie vers la station (vide = aucun)", ""),
         _ => domain,
     };
+    // Ports libres ici, mais le domaine peut arriver sur un reverse proxy d'une autre machine : on le lui demande.
+    if !behind_proxy && !domain.is_empty() && p80 == Port::Free {
+        match crate::station_domain::who_answers(&domain) {
+            crate::station_domain::Answer::Other(server) => {
+                println!("http://{domain}/ arrive sur un autre serveur web ({server}), pas sur cette machine : un reverse proxy d'une autre machine sert ce domaine. La station se met derrière lui.");
+                behind_proxy = true;
+            }
+            crate::station_domain::Answer::Me => {}
+            crate::station_domain::Answer::Unknown if a.yes => {}
+            crate::station_domain::Answer::Unknown => {
+                let r = ask.ask(&format!("{domain} ne répond pas encore. Un reverse proxy (Nginx Proxy Manager…) sur une autre machine sert-il ce domaine ? (o/N)"), "n");
+                behind_proxy = r.to_lowercase().starts_with('o') || r.to_lowercase().starts_with('y');
+            }
+        }
+    }
+    let ui = crate::station_domain::UI_PORT;
 
     // Visio : la station sert elle-même STUN (et un relais d'appel TURN) sur le port UDP de l'interface ; il faut l'ouvrir
     // sur la box pour que deux membres derrière leurs box s'appellent en direct.
-    let ui_port = if behind_proxy { BEHIND_PROXY_LISTEN.rsplit(':').next().unwrap_or("8090").to_owned() } else if domain.is_empty() { "18080".to_owned() } else { "443".to_owned() };
+    let ui_port = if !behind_proxy && !domain.is_empty() { "443".to_owned() } else { ui.to_string() };
     let visio = match a.visio.clone().or_else(|| Some(prev("visio")).filter(|v| !v.is_empty())) {
         Some(v) => v,
         None if a.yes => "relais".to_owned(),
@@ -386,12 +411,14 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
         std::fs::create_dir_all(&dir)?;
     }
     let conf = format!(
-        "# astroportd — station.conf (écrit par `astroportd init`, relisible et modifiable)\nmode = {}\nuplanetname = {uplanetname}\nipfsnodeid = {}\ncaptain_email = {email}\ndomain = {domain}\nlat = {}\nlon = {}\nface_threads = {face_threads}\nembed_threads = {embed_threads}\nvisio = {visio}\nice_servers = {}\n",
+        "# astroportd — station.conf (écrit par `astroportd init`, relisible et modifiable)\nmode = {}\nuplanetname = {uplanetname}\nipfsnodeid = {}\ncaptain_email = {email}\ndomain = {domain}\nlat = {}\nlon = {}\nface_threads = {face_threads}\nembed_threads = {embed_threads}\nvisio = {visio}\nice_servers = {}\n{} = {}\n",
         if mode == Mode::Zen { "zen" } else { "origin" },
         report.peer_id,
         coords.map_or(String::new(), |c| c.0.to_string()),
         coords.map_or(String::new(), |c| c.1.to_string()),
         ice.join(" "),
+        crate::station_domain::WEB_KEY,
+        if behind_proxy { "proxy" } else { "" },
     );
     let conf = match &a.joined {
         Some(j) => format!("{conf}sponsor = {}\n", j.from),
@@ -421,7 +448,7 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
         serve.push(format!("--p2p-bootstrap {b}"));
     }
     if behind_proxy {
-        serve.push(format!("--http-listen {BEHIND_PROXY_LISTEN}"));
+        serve.push(format!("--http-listen {}", crate::station_domain::proxy_listen()));
         if !domain.is_empty() {
             serve.push(format!("--public-domain {domain}"));
         }
@@ -454,11 +481,38 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
         serve.push("--kubo http://127.0.0.1:5001".into());
     }
     let serve = serve.join(" ");
+    // Une station à plusieurs plans se lance par `planes` : `serve` ne servirait que ORIGIN.
+    let planes_json = home.join("planes.json");
+    let user_home = home_dir()?;
+    let want = match a.systemd_mode.as_deref() {
+        Some("planes") => systemd_unit::Mode::Planes,
+        Some(_) => systemd_unit::Mode::Serve,
+        None => systemd_unit::detect_mode(&planes_json),
+    };
+    let planes_start = || -> Result<(String, String), String> {
+        let (file, existed) = plane::load(&planes_json, &user_home).map_err(|e| e.to_string())?;
+        if !existed {
+            return Err(format!("{} introuvable : créez les plans avec `astroportd plane-setup add` avant --systemd-mode planes", planes_json.display()));
+        }
+        let planes = plane::plan(&file, &user_home).map_err(|e| format!("{} invalide : {e} (unité systemd non écrite)", planes_json.display()))?;
+        let config = (planes_json != plane::default_path(&user_home)).then_some(planes_json.as_path());
+        Ok((systemd_unit::planes_exec(&exe, config), systemd_unit::planes_description(&planes.iter().map(|p| p.name.clone()).collect::<Vec<_>>())))
+    };
+    let serve_start = (serve.clone(), format!("astroportd ({})", if mode == Mode::Zen { "constellation ẐEN" } else { "constellation ORIGIN" }));
+    let (start, unit_desc) = if want == systemd_unit::Mode::Planes {
+        match planes_start() {
+            Ok(v) => v,
+            Err(e) if a.systemd => return Err(e.into()),
+            Err(_) => serve_start, // sans --systemd, la consigne finale reste celle de `serve`
+        }
+    } else {
+        serve_start
+    };
     if a.systemd {
-        let unit = format!("[Unit]\nDescription=astroportd ({})\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nExecStart={serve}\nRestart=on-failure\nRestartSec=5\nUMask=0077\n\n[Install]\nWantedBy=default.target\n", if mode == Mode::Zen { "constellation ẐEN" } else { "constellation ORIGIN" });
-        let path = home_dir()?.join(".config/systemd/user/astroportd.service");
+        let unit = systemd_unit::render(&unit_desc, &start);
+        let path = systemd_unit::unit_path(&user_home);
         write_private(&path, &unit)?;
-        println!("\n④ Unité systemd écrite : {}\n   systemctl --user daemon-reload && systemctl --user enable --now astroportd\n   (loginctl enable-linger $USER pour qu'elle démarre sans session ouverte)", path.display());
+        println!("\n④ Unité systemd écrite : {} (mode {})\n   systemctl --user daemon-reload && systemctl --user enable --now astroportd\n   (loginctl enable-linger $USER pour qu'elle démarre sans session ouverte)", path.display(), if want == systemd_unit::Mode::Planes { "planes" } else { "serve" });
     }
 
     println!("\n── Station prête ({}) ──", if mode == Mode::Zen { "constellation ẐEN" } else { "constellation ORIGIN" });
@@ -471,29 +525,31 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
     if let Some(j) = &a.joined {
         println!("Marraine :        {} : la station s'amorce sur elle au démarrage ({} adresse(s) P2P)", j.from, j.bootstrap.len());
     }
-    println!("Démarrer :        {serve}\nVérifier :        astroportd doctor --game-dir {} && astroportd ylevel --verify", game.display());
+    println!("Démarrer :        {start}\nVérifier :        astroportd doctor --game-dir {} && astroportd ylevel --verify", game.display());
     if behind_proxy {
-        println!("Web :             les ports 80/443 sont pris (Nginx Proxy Manager ?) : astroportd écoute sur http://{BEHIND_PROXY_LISTEN}/");
-        println!("                  dans NPM : Proxy Host {} → http://{BEHIND_PROXY_LISTEN} (WebSockets activés), certificat SSL Let's Encrypt géré par NPM", if domain.is_empty() { "<votre domaine>" } else { &domain });
-        println!("                  proxy sur une autre machine : remplacez --http-listen {BEHIND_PROXY_LISTEN} par 0.0.0.0:8090 ; visio : ouvrez le port UDP 8090 sur la box");
+        println!("Web :             derrière un reverse proxy : astroportd écoute sur http://{}/ (toutes les interfaces : le proxy doit la joindre)", crate::station_domain::proxy_listen());
     } else if !domain.is_empty() {
         println!("Interface web :   https://{domain}/   (certificat Let's Encrypt obtenu et renouvelé par astroportd ; jeton : astroportd token <email>)");
-        println!("                  avant le démarrage : le DNS de {domain} doit pointer sur cette machine, et les ports 80 et 443 être ouverts (box/pare-feu)");
+        println!("                  avant le démarrage : le DNS de {domain} doit pointer sur cette machine");
         if p80 == Port::Privileged || p443 == Port::Privileged {
-            println!("                  ports < 1024 refusés à un utilisateur : sudo setcap 'cap_net_bind_service=+ep' {}   (ou lancer avec --http-listen/--https-listen sur d'autres ports)", exe.display());
+            println!("                  ports < 1024 refusés à un utilisateur : sudo setcap 'cap_net_bind_service=+ep' {}", exe.display());
         }
         println!("                  essai sans quota : ajoutez --acme-staging à la commande");
     } else {
-        println!("Interface web :   http://127.0.0.1:18080/   (jeton : astroportd token <email>)   — HTTPS : relancez `astroportd init --domain votre.domaine`");
+        println!("Interface web :   http://{}/   (jeton : astroportd token <email>)   — HTTPS : relancez `astroportd init --domain votre.domaine`", crate::station_domain::local_listen());
     }
-    let web_url = if behind_proxy && !domain.is_empty() {
-        format!("https://{domain}/")
-    } else if behind_proxy {
-        format!("http://{BEHIND_PROXY_LISTEN}/")
-    } else if !domain.is_empty() {
+    let visio_port = (visio != "aucune").then(|| ui_port.parse::<u16>().unwrap_or(ui));
+    let steps = crate::station_domain::network_steps(behind_proxy, Some(domain.as_str()).filter(|d| !d.is_empty()), Some(4101), visio_port);
+    if !steps.is_empty() {
+        println!("\nRéseau, à régler une fois :");
+        for st in steps {
+            println!("  • {st}");
+        }
+    }
+    let web_url = if !domain.is_empty() {
         format!("https://{domain}/")
     } else {
-        "http://127.0.0.1:18080/".to_owned()
+        format!("http://{}/", crate::station_domain::local_listen())
     };
     Ok(InitDone { home, game, captain_email: email, web_url })
 }

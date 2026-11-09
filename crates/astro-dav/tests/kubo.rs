@@ -82,6 +82,11 @@ async fn kubo(State(m): State<Shared>, req: Request) -> Response {
             let chunks: Vec<Result<Vec<u8>, std::io::Error>> = slice.chunks(10_000).map(|c| Ok(c.to_vec())).collect();
             Body::from_stream(futures_util::stream::iter(chunks)).into_response()
         }
+        // Comme Kubo 0.40 : 200 si épinglé, 500 `{"Message":"path '…' is not pinned"}` sinon.
+        "/api/v0/pin/ls" => {
+            let cid = query_param(&query, "arg").unwrap();
+            if m.lock().unwrap().pinned.contains(&cid) { format!("{{\"Keys\":{{\"{cid}\":{{\"Type\":\"recursive\"}}}}}}").into_response() } else { json_error(&format!("path '{cid}' is not pinned")) }
+        }
         "/api/v0/pin/rm" => {
             let cid = query_param(&query, "arg").unwrap();
             let mut g = m.lock().unwrap();
@@ -395,4 +400,23 @@ async fn webdav_serves_an_imported_legacy_v1_file_and_deleting_it_keeps_the_blob
     assert_eq!(call(&app, "DELETE", "/dav/ancienne.jpg", Some(&a), &[], Body::empty()).await.status(), 204);
     let g = mock.lock().unwrap();
     assert!(g.pinned.contains(legacy) && !g.calls.iter().any(|c| c.ends_with("pin/rm")), "l'ancien blob reste épinglé");
+}
+
+/// Garde de la passerelle `/ipfs/` pour les anciens CID : seulement ce que ce Kubo épingle (jamais récupéré sur le réseau),
+/// et seulement les CID v0 ; sans Kubo, jamais.
+#[tokio::test]
+async fn the_gateway_guard_accepts_only_legacy_blobs_pinned_in_the_local_kubo() {
+    let (pinned, loose) = ("QmNLgdgGvnDoGDLMktDDhM7Qdf2aJogNqdX3njxwqi44LL", "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG");
+    let (url, mock) = mock_kubo().await;
+    mock.lock().unwrap().pinned.insert(pinned.to_owned());
+    let dir = std::env::temp_dir().join(format!("astroportd-gw-guard-{}", std::process::id()));
+    let auto = AutoBlobStore::new(Some(KuboBlobStore::new(&url)), FsBlobStore::open(&dir).unwrap());
+    assert!(auto.pinned_legacy(pinned).await);
+    assert!(!auto.pinned_legacy(loose).await, "connu de personne ici : jamais cherché sur le réseau");
+    let native = cid_raw_sha256(&[7; 32]);
+    mock.lock().unwrap().pinned.insert(native.clone());
+    assert!(!auto.pinned_legacy(&native).await, "un CID natif suit la règle des liens, pas celle des épingles");
+    assert!(!auto.pinned_legacy("../etc/passwd").await);
+    assert!(!AutoBlobStore::new(None, FsBlobStore::open(&dir).unwrap()).pinned_legacy(pinned).await, "sans Kubo (ẐEN) : jamais");
+    let _ = std::fs::remove_dir_all(dir);
 }

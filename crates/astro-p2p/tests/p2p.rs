@@ -325,3 +325,58 @@ async fn a_station_answers_each_asker_according_to_who_asks() {
     // Protocole inconnu chez la station : erreur claire, pas de blocage.
     assert!(ask(&b.handle, a.handle.peer_id(), "/test/absent/1", t).await.is_err());
 }
+
+#[tokio::test]
+async fn a_reservation_is_visible_while_it_lasts_and_disappears_with_the_relay() {
+    let key = generate_swarm_key().unwrap();
+    let (relay, relay_addr) = node(51, Some(&key), true).await;
+    let mut public = relay_addr.clone();
+    public.pop();
+    relay.handle.add_external_address(public).await;
+    let (a, _) = node(52, Some(&key), false).await;
+    assert!(a.handle.reserved_relays().is_empty());
+    a.handle.listen_via_relay(relay_addr).await.unwrap();
+    let relay_id = relay.handle.peer_id();
+    assert_eq!(a.handle.reserved_relays(), vec![relay_id], "réservation tenue chez le relais");
+    relay.shutdown().await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while !a.handle.reserved_relays().is_empty() {
+        assert!(tokio::time::Instant::now() < deadline, "la réservation perdue doit disparaître des adresses d'écoute");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(a.handle.listen_addrs().iter().all(|x| !x.to_string().contains("p2p-circuit")));
+}
+
+#[tokio::test]
+async fn a_station_is_reachable_by_a_domain_name_address() {
+    let key = generate_swarm_key().unwrap();
+    let (a, a_addr) = node(61, Some(&key), false).await;
+    let (b, _) = node(62, Some(&key), false).await;
+    let port = a_addr.iter().find_map(|p| if let astro_p2p::multiaddr::Protocol::Tcp(p) = p { Some(p) } else { None }).unwrap();
+    let by_name: Multiaddr = format!("/dns4/localhost/tcp/{port}/p2p/{}", a.handle.peer_id()).parse().unwrap();
+    assert_eq!(b.handle.dial(by_name).await.unwrap(), a.handle.peer_id());
+}
+
+#[tokio::test]
+#[ignore = "demande le multicast du réseau local (mDNS) : cargo test -p astro-p2p --test p2p -- --ignored"]
+async fn two_stations_of_the_same_lan_find_and_join_each_other_without_any_address() {
+    let key = generate_swarm_key().unwrap();
+    let other = generate_swarm_key().unwrap();
+    let lan = |seed: u8, k: &str| {
+        let mut cfg = P2pConfig::local([seed; 32]);
+        cfg.psk = Some(parse_swarm_key(k).unwrap());
+        cfg.listen = vec!["/ip4/0.0.0.0/tcp/0".parse().unwrap()];
+        cfg.mdns = true;
+        P2pNode::spawn(cfg)
+    };
+    let a = lan(71, &key).await.unwrap();
+    let b = lan(72, &key).await.unwrap();
+    let stranger = lan(73, &other).await.unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while !a.handle.connected_peers().contains(&b.handle.peer_id()) {
+        assert!(tokio::time::Instant::now() < deadline, "les deux stations du réseau local doivent se relier seules");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(!a.handle.connected_peers().contains(&stranger.handle.peer_id()), "une autre constellation ne se relie pas");
+}

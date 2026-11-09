@@ -7,7 +7,7 @@ use astro_bro::bus;
 use astro_bro::{AnyEmbedder, MemoryStore, Meta, OllamaClient, Slot};
 use astro_core::Amount;
 use astro_dav::{BlobStore, DavState};
-use astro_p2p::routing::{Candidate, haversine_km};
+use astro_p2p::routing::haversine_km;
 use astro_ui::api::{Applicant, AssignTarget, BookOp, ChatOp};
 use astro_ui::{ApiError, Backend, Principal, Status, Subsystem};
 use axum::http::{HeaderMap, Uri};
@@ -36,11 +36,11 @@ pub struct StationUi<B: BlobStore> {
     pub ollama: Option<Arc<OllamaClient>>,
     /// FaceCloud est actif.
     pub faces_enabled: bool,
-    consent_fn: Option<ConsentFn>,
     thumbs_fn: Option<ThumbFn>,
     pending_fn: Option<PendingShareFn>,
     friends_fn: Option<FriendsFn>,
     backup: Option<BackupFns>,
+    replicate_fn: Option<ReplicateFn>,
     coop: Option<(CoopGetFn, CoopSetFn)>,
     constellation: Option<ConstellationFn>,
     charter: Option<CharterFn>,
@@ -60,6 +60,8 @@ pub struct StationUi<B: BlobStore> {
     board: astro_facecloud::board::BoardCache,
     registrar: Option<Arc<crate::register::Registrar>>,
     stations: Option<Arc<crate::beacon::Stations>>,
+    feedback: Option<Arc<crate::feedback::Feedback>>,
+    oc: Option<Arc<crate::oc_member::OcMember>>,
     /// Code d'installation d'une station sans Capitaine (page `/welcome`).
     setup: Option<Arc<crate::first_run::SetupCode>>,
     /// `station.conf` (domaine réglé depuis le cockpit).
@@ -104,6 +106,8 @@ pub type AdminFn = Arc<dyn Fn(String, Option<Value>) -> std::pin::Pin<Box<dyn st
 pub type FriendsFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
 /// Réglage de la sauvegarde privée : `(compte, actif, ami)`.
 pub type BackupSetFn = Arc<dyn Fn(String, bool, Option<String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
+/// Copie d'une pièce jointe chez les amis hébergeurs : `(propriétaire, CID, octets, échéance)`.
+pub type ReplicateFn = Arc<dyn Fn(String, String, u64, i64) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
 /// Réponse de l'hébergeur : `(hébergeur, propriétaire, accepte, volume demandé, volume maximal)`.
 pub type BackupRespondFn = Arc<dyn Fn(String, String, bool, u64, u64) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
 
@@ -134,13 +138,10 @@ pub struct BackupFns {
 /// Envoi de fichiers d'un titulaire à des proches : `(titulaire, chemins, proches)`.
 pub type SendFn = Arc<dyn Fn(String, Vec<String>, Vec<String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
 
-/// Enregistre l'attestation de copie privée d'un compte (signature, stockage, publication) : fourni par le binaire.
-pub type ConsentFn = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>> + Send + Sync>;
-
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, consent_fn: None, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, site: None, admin: None, console: None, account: None, contacts: None, invites: None, welcome: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, stations: None, setup: None, conf_path: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None, chat: None, people: None, ice: (None, None, Vec::new()), presence: None }
+        Self { services, dav, memory, ollama, faces_enabled, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, replicate_fn: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, site: None, admin: None, console: None, account: None, contacts: None, invites: None, welcome: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, stations: None, feedback: None, oc: None, setup: None, conf_path: None, probe: Mutex::new(None), planes_home: None, ai: None, book: None, chat: None, people: None, ice: (None, None, Vec::new()), presence: None }
     }
 
     /// Annuaire des clés d'une même personne dans plusieurs UPlanet.
@@ -159,6 +160,27 @@ impl<B: BlobStore> StationUi<B> {
     pub fn with_presence(mut self, presence: Arc<crate::presence::Presence>) -> Self {
         self.presence = Some(presence);
         self
+    }
+
+    /// Comment l'interface est servie maintenant : `https` (certificat de la station), `proxy` (reverse proxy) ou `local`.
+    fn web_mode(&self) -> &'static str {
+        match (self.services.tls_status().is_some(), self.services.info.domain.is_some()) {
+            (true, _) => "https",
+            (false, true) => "proxy",
+            (false, false) => "local",
+        }
+    }
+
+    /// Port TCP du maillage (le premier écouté hors circuit de relais).
+    fn p2p_port(&self) -> Option<u16> {
+        let addrs = self.services.p2p.as_ref()?.listen_addrs();
+        addrs.iter().map(ToString::to_string).filter(|a| !a.contains("/p2p-circuit")).find_map(|a| a.split("/tcp/").nth(1)?.split('/').next()?.parse().ok())
+    }
+
+    /// Port UDP de la visio dans la configuration donnée (`None` : visio coupée, ou pas de domaine).
+    fn visio_port(&self, proxy: bool, has_domain: bool) -> Option<u16> {
+        self.ice.0?;
+        has_domain.then_some(if proxy { crate::station_domain::UI_PORT } else { 443 })
     }
 
     /// Visio : port STUN servi par la station (`None` : aucun), secret du relais d'appel (`None` : pas de relais) et serveurs
@@ -188,12 +210,6 @@ impl<B: BlobStore> StationUi<B> {
 
     fn planes_home(&self) -> Result<&std::path::Path, ApiError> {
         self.planes_home.as_deref().ok_or_else(|| ApiError::unavailable("configuration des plans non disponible sur cette station"))
-    }
-
-    /// Active l'attestation de copie privée depuis l'interface.
-    pub fn with_consent(mut self, f: ConsentFn) -> Self {
-        self.consent_fn = Some(f);
-        self
     }
 
     /// Invitations par lien : photos envoyées à quelqu'un qui n'a pas encore de MULTIPASS.
@@ -309,6 +325,12 @@ impl<B: BlobStore> StationUi<B> {
         self
     }
 
+    /// Copie chaque pièce jointe de message chez les amis hébergeurs (ceux qui gardent la part P3), sans retarder la réponse.
+    pub fn with_attachment_replication(mut self, f: ReplicateFn) -> Self {
+        self.replicate_fn = Some(f);
+        self
+    }
+
     /// Active la sauvegarde privée chez un ami.
     pub fn with_backup(mut self, fns: BackupFns) -> Self {
         self.backup = Some(fns);
@@ -330,6 +352,18 @@ impl<B: BlobStore> StationUi<B> {
     /// Ouvre l'inscription d'un MULTIPASS depuis l'interface (`/register`).
     pub fn with_registrar(mut self, r: Arc<crate::register::Registrar>) -> Self {
         self.registrar = Some(r);
+        self
+    }
+
+    /// Retours des utilisateurs en issues Git (`POST /api/v1/feedback`).
+    pub fn with_feedback(mut self, f: Arc<crate::feedback::Feedback>) -> Self {
+        self.feedback = Some(f);
+        self
+    }
+
+    /// Vérification d'inscription OpenCollective du compte (`GET /api/v1/account/oc`).
+    pub fn with_oc(mut self, o: Arc<crate::oc_member::OcMember>) -> Self {
+        self.oc = Some(o);
         self
     }
 
@@ -466,6 +500,124 @@ impl<B: BlobStore> Backend for StationUi<B> {
             out["captain_setup"] = json!(self.setup.is_some());
         }
         Ok(out)
+    }
+
+    async fn check_balance(&self, g1pub: &str) -> Result<Value, ApiError> {
+        let b = self.services.balance_of_address(g1pub).await.map_err(|e| if e.starts_with("adresse") { ApiError::bad_request(e) } else if e.starts_with("trop de lectures") { ApiError::too_many(e) } else { ApiError::unavailable(e) })?;
+        let dec = |cents: u64| format!("{}.{:02}", cents / 100, cents % 100);
+        // Montants en entiers de centimes (`*_cents`) ; les chaînes décimales servent aux clients historiques, qui lisent `balance`.
+        Ok(json!({ "g1pub": g1pub, "balance": dec(b.g1_cents), "g1_cents": b.g1_cents, "zen": dec(b.zen_cents), "zen_cents": b.zen_cents }))
+    }
+
+    async fn feedback(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
+        use crate::feedback::FeedbackError as E;
+        let f = self.feedback.as_ref().ok_or_else(|| ApiError::unavailable("retours non activés sur cette station"))?;
+        f.submit(&who.hex, &body).await.map_err(|e| match e {
+            E::Invalid(m) => ApiError::bad_request(m),
+            E::Limited(m) => ApiError::too_many(m).with_code("rate_limited"),
+            E::Internal(m) => {
+                eprintln!("interface : retour : {m}");
+                ApiError::internal("retour non enregistré : voir les journaux de la station")
+            }
+        })
+    }
+
+    async fn account_oc(&self, who: &Principal) -> Result<Value, ApiError> {
+        let oc = self.oc.as_ref().ok_or_else(|| ApiError::unavailable("vérification OpenCollective non activée sur cette station"))?;
+        let email = who.email.as_deref().ok_or_else(|| ApiError::bad_request("ce compte n'a pas d'adresse e-mail"))?;
+        Ok(oc.check(email).await)
+    }
+
+    fn public_origin(&self, host: &str) -> String {
+        match &self.services.info.domain {
+            Some(d) => format!("https://{d}"),
+            None => format!("http://{host}"),
+        }
+    }
+
+    async fn upload_image(&self, who: &Principal, data: Vec<u8>, host: String) -> Result<Value, ApiError> {
+        use sha2::{Digest, Sha256};
+        // Deux images décodées à la fois au plus : le décodage est du processeur, et la station a d'autres métiers.
+        static BUSY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+        let email = who.email.clone().ok_or_else(|| ApiError::bad_request("ce compte n'a pas de dossier public : envoi impossible"))?;
+        if self.site.is_none() {
+            return Err(ApiError::unavailable("site public non activé sur cette station"));
+        }
+        let _permit = BUSY.try_acquire().map_err(|_| ApiError::too_many("des images sont en cours de traitement : réessayez dans un instant"))?;
+        let original = hex::encode(Sha256::digest(&data));
+        let prepared = tokio::task::spawn_blocking(move || crate::upload_image::normalize(&data)).await.map_err(|e| ApiError::internal(e.to_string()))?.map_err(ApiError::bad_request)?;
+        let name = format!("{}.{}", &prepared.sha256[..32], prepared.ext);
+        let size = prepared.data.len();
+        astro_dav::ingest::replace(&self.dav, &who.hex, "/Public/uploads", &name, Some(prepared.mime), std::io::Cursor::new(prepared.data)).await.map_err(|e| match e {
+            astro_dav::ingest::IngestError::TooLarge(m) => ApiError::bad_request(m),
+            other => ApiError::internal(other.to_string()),
+        })?;
+        let url = format!("{}/site/{}/uploads/{name}", self.public_origin(&host), crate::public_site::name_of(&email));
+        // Réponse NIP-96 (`nip94_event`), plus `url` à la racine : c'est ce que lisent les clients historiques.
+        Ok(json!({
+            "status": "success", "message": "Upload successful.", "url": url,
+            "nip94_event": { "tags": [["url", url], ["ox", original], ["x", prepared.sha256], ["m", prepared.mime], ["size", size.to_string()]], "content": "" },
+        }))
+    }
+
+    async fn attach(&self, who: &Principal, data: Vec<u8>, days: i64, origin: String) -> Result<Value, ApiError> {
+        use astro_dav::share::{ShareError, store_attachment};
+        if !self.dav.config.ipfs_gateway {
+            return Err(ApiError::unavailable("passerelle /ipfs non activée sur cette station (--ipfs-gateway) : pièces jointes impossibles"));
+        }
+        let a = store_attachment(&self.dav.db, self.dav.blobs.as_ref(), &who.hex, &data, days * 86_400, Self::now()).await.map_err(|e| match e {
+            ShareError::Refused(m) => ApiError::bad_request(m),
+            other => {
+                eprintln!("interface : pièce jointe impossible : {other}");
+                ApiError::internal("dépôt de la pièce jointe impossible")
+            }
+        })?;
+        if let Some(replicate) = self.replicate_fn.clone() {
+            let (owner, cid, size, expires_at) = (who.hex.clone(), a.cid.clone(), a.size, a.expires_at);
+            tokio::spawn(async move { replicate(owner, cid, size, expires_at).await });
+        }
+        // L'adresse est celle d'un contenu : n'importe quelle passerelle de la constellation qui l'a peut le servir à la même
+        // adresse ; `gateway` n'est que celle où il se trouve aujourd'hui.
+        Ok(json!({ "cid": a.cid, "size": a.size, "expires_at": a.expires_at, "gateway": origin, "url": format!("{origin}/ipfs/{}", a.cid) }))
+    }
+
+    async fn station_card(&self) -> Result<Value, ApiError> {
+        let svc = &self.services;
+        let keys = self.stations.as_ref().ok_or_else(|| ApiError::unavailable("carte de station non disponible"))?.public_keys().await.map_err(ApiError::internal)?;
+        let captain: Option<String> = svc
+            .db
+            .readers()
+            .read(|c| Ok(rusqlite::OptionalExtension::optional(c.query_row("SELECT hex FROM identities WHERE hosted = 1 AND role = 'captain' ORDER BY hex LIMIT 1", [], |r| r.get::<_, String>(0)))?))
+            .await
+            .map_err(db_err)?;
+        // Seulement ce que la station publie déjà ailleurs (balise 30850, carte de maillage) : jamais d'e-mail, de secret ni de solde.
+        let mut card = json!({
+            "_source": "astroportd", "version": env!("CARGO_PKG_VERSION"), "hostname": crate::init::hostname(),
+            "NODEHEX": svc.info.node_hex, "UPLANETG1PUB": keys.g1pub, "UPLANETNAME_G1": keys.name_g1,
+        });
+        if let Some(id) = &svc.info.peer_id {
+            card["ipfsnodeid"] = json!(id);
+        }
+        if let Some(c) = captain {
+            card["captainHEX"] = json!(c);
+        }
+        if let Some(d) = &svc.info.domain {
+            card["myRELAY"] = json!(format!("wss://{d}"));
+            card["uSPOT"] = json!(format!("https://{d}"));
+            if self.dav.config.ipfs_gateway {
+                card["myIPFS"] = json!(format!("https://{d}"));
+            }
+        }
+        if let Some((lat, lon)) = svc.origin {
+            card["STATION_LAT"] = json!(crate::beacon::umap_coord(lat));
+            card["STATION_LON"] = json!(crate::beacon::umap_coord(lon));
+        }
+        Ok(card)
+    }
+
+    async fn uplanet_hex(&self, g1: bool) -> Result<String, ApiError> {
+        let keys = self.stations.as_ref().ok_or_else(|| ApiError::unavailable("clé de l'UPlanet non disponible"))?.public_keys().await.map_err(ApiError::internal)?;
+        Ok(if g1 { keys.g1hex.clone() } else { keys.hex.clone() })
     }
 
     async fn stations(&self) -> Result<Value, ApiError> {
@@ -898,28 +1050,6 @@ impl<B: BlobStore> Backend for StationUi<B> {
 
     async fn mcp(&self, bearer: Option<String>, body: Value) -> Result<Option<Value>, ApiError> {
         self.agents_service()?.mcp(bearer.as_deref(), &body).await.map_err(agent_err)
-    }
-
-    async fn consent(&self, who: &Principal) -> Result<Value, ApiError> {
-        let owner = who.hex.clone();
-        let row: Option<(i64, i64)> = self.services.db.readers().read(move |c| Ok(c.query_row("SELECT version, accepted_at FROM private_copy_consent WHERE owner_hex = ?1", [owner], |r| Ok((r.get(0)?, r.get(1)?))).ok())).await.map_err(db_err)?;
-        let current = i64::from(astro_dav::media::CONSENT_VERSION);
-        Ok(json!({
-            "accepted": row.is_some_and(|(v, _)| v >= current), "version": row.map(|r| r.0), "accepted_at": row.map(|r| r.1),
-            "current_version": current, "article": "CPI L. 122-5", "text": astro_dav::media::CONSENT_TEXT, "available": self.consent_fn.is_some(),
-        }))
-    }
-
-    async fn consent_accept(&self, who: &Principal, version: u32) -> Result<Value, ApiError> {
-        let Some(f) = &self.consent_fn else { return Err(ApiError::unavailable("dépôt de médias non disponible sur cette station")) };
-        if version != astro_dav::media::CONSENT_VERSION {
-            return Err(ApiError::bad_request("le texte d'attestation a changé : rechargez la page avant d'attester"));
-        }
-        f(who.hex.clone()).await.map_err(|e| {
-            eprintln!("interface : attestation de copie privée : {e}");
-            ApiError::internal("attestation impossible : clé du compte absente de cette station ?")
-        })?;
-        self.consent(who).await
     }
 
     async fn footprint(&self, who: &Principal) -> Result<Value, ApiError> {
@@ -1581,12 +1711,37 @@ impl<B: BlobStore> Backend for StationUi<B> {
                 .await
                 .map_err(db_err)?,
         };
-        let dir = svc.swarm_dir.clone();
-        let peers: Vec<Candidate> = tokio::task::spawn_blocking(move || dir.map(|d| astro_p2p::routing::read_swarm_dir(&d)).unwrap_or_default())
-        .await
-        .map_err(db_err)?;
+        // Les autres stations viennent de l'annuaire des balises (comme pour `astroportd route`), plus de `12345.json`.
+        let rows: Vec<Value> = match &self.stations {
+            Some(s) => s.list(u64::try_from(crate::private_backup::now()).unwrap_or(0)).await.map_err(ApiError::internal)?["stations"].as_array().cloned().unwrap_or_default(),
+            None => Vec::new(),
+        };
         let connected: Vec<String> = svc.p2p.as_ref().map(|h| h.connected_peers().iter().map(ToString::to_string).collect()).unwrap_or_default();
         let me = svc.info.peer_id.clone().unwrap_or_default();
+        let others: Vec<&Value> = rows.iter().filter(|r| r["station"].as_str().is_some_and(|id| id != me)).collect();
+        // Ce que chaque station connectée **nous** ouvre (sa politique de tunnels répond) : jamais ce qu'elle ne nous destine pas.
+        let asked: Vec<Option<Vec<String>>> = match &svc.p2p {
+            Some(h) => {
+                // 12 stations connectées au plus (les ids sont déjà dans l'ordre de l'annuaire, la plus récente d'abord).
+                let mut budget = 12;
+                let ids: Vec<Option<String>> = others
+                    .iter()
+                    .map(|r| {
+                        let id = r["station"].as_str().filter(|id| connected.iter().any(|c| c == id) && budget > 0)?;
+                        budget -= 1;
+                        Some(id.to_owned())
+                    })
+                    .collect();
+                futures_util::future::join_all(ids.iter().map(|id| async move {
+                    match id {
+                        Some(id) => crate::tunnel_policy::ask_services(h, id).await.ok(),
+                        None => None,
+                    }
+                }))
+                .await
+            }
+            None => vec![None; others.len()],
+        };
         let describe = |node_id: &str, power: f64, pos: Option<(f64, f64)>, services: Vec<String>, is_self: bool| {
             let distance = match (origin, pos) {
                 (Some(o), Some(p)) => Some((haversine_km(o, p) * 10.0).round() / 10.0),
@@ -1600,27 +1755,35 @@ impl<B: BlobStore> Backend for StationUi<B> {
             })
         };
         let mut nodes = vec![describe(&me, svc.hardware.score(), origin, svc.exposed.clone(), true)];
-        let mut others: Vec<&Candidate> = peers.iter().filter(|p| p.node_id != me).collect();
-        others.sort_by(|a, b| b.power_score.total_cmp(&a.power_score).then_with(|| a.node_id.cmp(&b.node_id)));
-        nodes.extend(others.iter().map(|p| describe(&p.node_id, p.power_score, p.lat.zip(p.lon), p.services.clone(), false)));
-        Ok(json!({ "origin": origin.map(|o| json!({ "lat": o.0, "lon": o.1 })), "nodes": nodes, "swarm_dir_configured": svc.swarm_dir.is_some() }))
+        let mut rest: Vec<(&Value, Vec<String>)> = others.into_iter().zip(asked).map(|(r, a)| (r, a.unwrap_or_default())).collect();
+        rest.sort_by(|a, b| b.0["power"].as_f64().unwrap_or(0.0).total_cmp(&a.0["power"].as_f64().unwrap_or(0.0)).then_with(|| a.0["station"].as_str().cmp(&b.0["station"].as_str())));
+        nodes.extend(rest.iter().map(|(r, services)| describe(r["station"].as_str().unwrap_or_default(), r["power"].as_f64().unwrap_or(0.0), r["lat"].as_f64().zip(r["lon"].as_f64()), services.clone(), false)));
+        Ok(json!({ "origin": origin.map(|o| json!({ "lat": o.0, "lon": o.1 })), "nodes": nodes }))
     }
 
     async fn domain_info(&self, _who: &Principal) -> Result<Value, ApiError> {
+        use crate::station_domain as sd;
         let conf = self.conf_path.as_ref().ok_or_else(|| ApiError::unavailable("station.conf inconnu : réglage du domaine indisponible"))?;
         let saved = crate::init::read_conf(conf).into_iter().find(|(k, _)| k == "domain").map(|(_, v)| v).filter(|v| !v.is_empty());
+        let saved_proxy = sd::proxy_from_conf(conf);
         let running = self.services.info.domain.clone();
+        let mode = self.web_mode();
+        // Les gestes réseau de la configuration enregistrée (celle qui vaudra après redémarrage), sinon de l'actuelle.
+        let proxy = if saved.is_some() { saved_proxy } else { mode == "proxy" };
+        let domain = saved.clone().or_else(|| running.clone());
         Ok(json!({
-            "domain": running, "saved": saved, "pending": saved.is_some() && saved != running,
-            "restart": crate::station_domain::restart_available(), "restart_command": "systemctl --user restart astroportd",
+            "domain": running, "saved": saved, "mode": mode, "proxy": proxy,
+            "pending": saved.is_some() && (saved != running || (mode != "local" && proxy != (mode == "proxy"))),
+            "steps": sd::network_steps(proxy, domain.as_deref(), self.p2p_port(), self.visio_port(proxy, domain.is_some())),
+            "restart": sd::restart_available(), "restart_command": "systemctl --user restart astroportd",
         }))
     }
 
-    async fn domain_set(&self, _who: &Principal, domain: String) -> Result<Value, ApiError> {
+    async fn domain_set(&self, _who: &Principal, domain: String, proxy: Option<bool>) -> Result<Value, ApiError> {
         use crate::station_domain as sd;
         let conf = self.conf_path.clone().ok_or_else(|| ApiError::unavailable("station.conf inconnu : réglage du domaine indisponible"))?;
         let domain = sd::normalize_domain(&domain).map_err(ApiError::bad_request)?;
-        // Le DNS d'abord : sans lui, le certificat ne peut pas être obtenu.
+        // Le DNS d'abord : sans lui, ni la station ni un proxy n'obtiennent de certificat.
         let lookup = tokio::time::timeout(Duration::from_secs(8), tokio::net::lookup_host((domain.as_str(), 443))).await;
         let ips: Vec<String> = match lookup {
             Ok(Ok(addrs)) => {
@@ -1635,20 +1798,49 @@ impl<B: BlobStore> Backend for StationUi<B> {
             return Err(ApiError::bad_request(format!("{domain} ne pointe encore nulle part : chez votre fournisseur de domaine, créez un enregistrement A vers l'adresse publique de votre box, puis réessayez (la propagation prend parfois une heure)")));
         }
         let mut warnings = Vec::new();
-        if self.services.info.domain.is_none() {
-            // Station en HTTP local : elle prendra elle-même les ports 80 et 443 au redémarrage.
+        let mode = self.web_mode();
+        let proxy = match proxy {
+            Some(p) => p,
+            None if mode == "https" => false,
+            None if mode == "proxy" => true,
+            None => {
+                // Station en HTTP local : qui tient les ports 80/443 ici, et qui répond au nom de domaine ?
+                let (p80, p443) = (sd::port_state(80), sd::port_state(443));
+                if p80 == "busy" || p443 == "busy" {
+                    warnings.push("les ports 80/443 de cette machine sont tenus par un autre programme : un reverse proxy (Nginx Proxy Manager…), qui servira ce domaine".to_owned());
+                    true
+                } else if p80 == "free" {
+                    let d = domain.clone();
+                    match tokio::task::spawn_blocking(move || sd::who_answers(&d)).await.unwrap_or(sd::Answer::Unknown) {
+                        sd::Answer::Other(server) => {
+                            warnings.push(format!("http://{domain}/ arrive sur un autre serveur web ({server}), pas sur cette machine : un reverse proxy d'une autre machine sert ce domaine"));
+                            true
+                        }
+                        _ => sd::proxy_from_conf(&conf),
+                    }
+                } else {
+                    sd::proxy_from_conf(&conf)
+                }
+            }
+        };
+        if !proxy && mode != "https" {
+            // La station prendra elle-même les ports 80 et 443 au redémarrage.
             let (p80, p443) = (sd::port_state(80), sd::port_state(443));
             if p80 == "busy" || p443 == "busy" {
-                return Err(ApiError::conflict("les ports 80/443 de cette machine sont déjà pris (Nginx Proxy Manager ?) : c'est à ce proxy de servir le domaine, vers l'adresse locale de la station"));
+                return Err(ApiError::conflict("les ports 80/443 de cette machine sont déjà pris (Nginx Proxy Manager ?) : cochez « Un reverse proxy sert ce domaine »"));
             }
             if p80 == "privileged" || p443 == "privileged" {
                 let exe = std::env::current_exe().map(|e| e.display().to_string()).unwrap_or_else(|_| "astroportd".into());
                 warnings.push(format!("la station n'a pas le droit d'ouvrir les ports 80 et 443 : sur cette machine, lancez une fois « sudo setcap 'cap_net_bind_service=+ep' {exe} » avant de redémarrer"));
             }
         }
-        warnings.push("dans votre box, redirigez les ports 80 et 443 vers cette machine : sans cela, le certificat HTTPS ne peut pas être obtenu".to_owned());
         sd::set_conf_value(&conf, "domain", &domain).map_err(|e| ApiError::internal(format!("{} : {e}", conf.display())))?;
-        Ok(json!({ "domain": domain, "ips": ips, "warnings": warnings, "restart": sd::restart_available(), "restart_command": "systemctl --user restart astroportd", "url": format!("https://{domain}/") }))
+        sd::set_conf_value(&conf, sd::WEB_KEY, if proxy { "proxy" } else { "" }).map_err(|e| ApiError::internal(format!("{} : {e}", conf.display())))?;
+        Ok(json!({
+            "domain": domain, "ips": ips, "proxy": proxy, "warnings": warnings,
+            "steps": sd::network_steps(proxy, Some(&domain), self.p2p_port(), self.visio_port(proxy, true)),
+            "restart": sd::restart_available(), "restart_command": "systemctl --user restart astroportd", "url": format!("https://{domain}/"),
+        }))
     }
 
     async fn restart(&self, _who: &Principal) -> Result<Value, ApiError> {
@@ -2123,7 +2315,8 @@ fn account_error(e: crate::account::AccountError) -> ApiError {
     match e {
         E::Invalid(m) => ApiError::bad_request(m),
         E::NotFound => ApiError::not_found("compte non hébergé ici"),
-        E::Limited(m) => ApiError::too_many(m).with_code("pass_locked"),
+        E::Limited(m) => ApiError::too_many(m).with_code("rate_limited"),
+        E::Locked(m) => ApiError::too_many(m).with_code("pass_locked"),
         E::Denied(m) => ApiError::denied(m).with_code("pass_denied"),
         E::Internal(m) => {
             eprintln!("interface : Mon compte : {m}");

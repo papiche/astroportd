@@ -1,6 +1,6 @@
 [package]
 name = "astroportd"
-version = "0.5.7-beta"
+version = "0.5.8-beta"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -90,7 +90,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.7-beta"
+version = "0.5.8-beta"
 edition = "2024"
 rust-version = "1.85"
 license = "AGPL-3.0-only"
@@ -168,7 +168,7 @@ arc-swap = "1"
 subxt = { version = "0.44", default-features = false, features = ["native", "jsonrpsee"] }
 parity-scale-codec = "3"
 x509-parser = "0.17"
-libp2p = { version = "0.56", default-features = false, features = ["tokio", "tcp", "quic", "noise", "yamux", "pnet", "relay", "dcutr", "identify", "ping", "macros", "ed25519"] }
+libp2p = { version = "0.56", default-features = false, features = ["tokio", "tcp", "quic", "dns", "mdns", "noise", "yamux", "pnet", "relay", "dcutr", "identify", "ping", "macros", "ed25519"] }
 libp2p-stream = "0.4.0-alpha"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }

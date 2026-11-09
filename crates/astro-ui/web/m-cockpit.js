@@ -126,27 +126,34 @@ export default async function cockpit(root, K) {
       try { await K.api('/api/v1/station/restart', { method: 'POST' }); out.replaceChildren(h('p', {}, t('Redémarrage en cours. Dans une minute, ouvrez :'), ' ', h('a', { href: r.url }, r.url)), h('p', { class: 'muted' }, t('Le certificat HTTPS s\'obtient au premier démarrage ; en cas d\'échec, le cockpit en donne la cause.'))); } catch (e) { K.toast(e.message); btn.disabled = false; }
     } }, t('Redémarrer la station'))
     : h('p', {}, t('Puis redémarrez la station sur la machine :'), ' ', h('code', {}, r.restart_command)));
+  // Réglages hors de la station (box, proxy), une ligne par geste : donnés par la station selon le mode choisi.
+  const stepsBlock = steps => (steps?.length ? h('div', {}, h('h3', {}, t('Réseau, à régler une fois')), h('ul', {}, steps.map(x => h('li', {}, x)))) : null);
   const domainDialog = async () => {
     const info = await api('/api/v1/station/domain').catch(e => { K.toast(e.message); return null; });
     if (!info) return;
     const out = h('div', { role: 'status', 'aria-live': 'polite' });
     const pending = info.pending ? h('p', { class: 'muted' }, t('Enregistré : {0}, en attente de redémarrage.', info.saved), ' ', restartBlock({ ...info, url: `https://${info.saved}/` }, out)) : null;
     const inp = h('input', { id: 'ck-dom', type: 'text', inputMode: 'url', autocomplete: 'off', spellcheck: false, required: true, placeholder: 'station.mondomaine.org', value: info.saved || info.domain || '' });
+    // Non touchée, la case laisse la station détecter le proxy (ports 80/443 pris ici, ou domaine servi par une autre machine).
+    let touched = false;
+    const px = h('input', { id: 'ck-px', type: 'checkbox', checked: !!info.proxy, onchange: () => { touched = true; } });
+    const steps = h('div', {}, stepsBlock(info.steps));
     const go = h('button', { type: 'submit' }, t('Vérifier et enregistrer'));
     const form = h('form', { onsubmit: async ev => {
       ev.preventDefault(); go.disabled = true; out.replaceChildren(h('p', { class: 'muted' }, t('Vérification du DNS…')));
       try {
-        const r = await K.api('/api/v1/station/domain', { method: 'POST', body: { domain: inp.value } });
-        pending?.remove();
-        out.replaceChildren(h('p', {}, '✅ ', t('{0} pointe vers {1} : domaine enregistré.', r.domain, r.ips.join(', '))), h('ul', {}, r.warnings.map(w => h('li', {}, w))),
-          h('p', { class: 'muted' }, t('Après le redémarrage, l\'interface sera à {0}.', r.url)), restartBlock(r, out));
+        const r = await K.api('/api/v1/station/domain', { method: 'POST', body: { domain: inp.value, proxy: touched ? px.checked : null } });
+        pending?.remove(); px.checked = r.proxy; steps.replaceChildren();
+        out.replaceChildren(h('p', {}, '✅ ', t(r.proxy ? '{0} pointe vers {1} : domaine enregistré, servi par votre reverse proxy.' : '{0} pointe vers {1} : domaine enregistré.', r.domain, r.ips.join(', '))), h('ul', {}, r.warnings.map(w => h('li', {}, w))),
+          stepsBlock(r.steps), h('p', { class: 'muted' }, t('Après le redémarrage, l\'interface sera à {0}.', r.url)), restartBlock(r, out));
       } catch (e) { out.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); } finally { go.disabled = false; }
-    } }, h('label', { for: 'ck-dom' }, t('Nom de domaine')), inp, h('p', {}, go));
+    } }, h('label', { for: 'ck-dom' }, t('Nom de domaine')), inp,
+      h('p', {}, h('label', {}, px, ' ', t('Un reverse proxy (Nginx Proxy Manager…) sert ce domaine, sur cette machine ou une autre'))), h('p', {}, go));
     const dlg = h('dialog', { 'aria-labelledby': 'ck-dom-t', onclose: () => dlg.remove() },
       h('button', { type: 'button', class: 'x', 'aria-label': t('Fermer'), onclick: () => dlg.close() }, '×'),
       h('h2', { id: 'ck-dom-t' }, t('Nom de domaine de la station')),
-      h('ol', {}, h('li', {}, t('Chez votre fournisseur de domaine, faites pointer le nom (enregistrement A) vers l\'adresse publique de votre box.')), h('li', {}, t('Dans la box, redirigez les ports 80 et 443 vers cette machine.')), h('li', {}, t('Enregistrez ici, puis redémarrez : la station obtient seule son certificat HTTPS.'))),
-      pending, form, out);
+      h('ol', {}, h('li', {}, t('Chez votre fournisseur de domaine, faites pointer le nom (enregistrement A) vers l\'adresse publique de votre box.')), h('li', {}, t('Enregistrez ici : la station vérifie qui répond à ce nom et vous dit quoi régler dans la box ou le proxy.')), h('li', {}, t('Redémarrez : la station obtient seule son certificat HTTPS, ou se présente derrière votre proxy.'))),
+      pending, form, steps, out);
     document.body.append(dlg); dlg.showModal(); inp.focus();
     K.cleanup(() => dlg.remove());
   };

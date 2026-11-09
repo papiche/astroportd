@@ -192,6 +192,90 @@ fn clock_checks(conn: Option<&Connection>, lat: Option<f64>, lon: Option<f64>, o
     }
 }
 
+/// Descripteurs de fichiers : chaque tunnel, chaque pair libp2p et chaque client en consomme. Sous 8 192 la station
+/// refuse des connexions dès qu'elle partage un peu de GPU.
+pub fn nofile_level(limit: u64) -> (Level, String) {
+    if limit >= 8192 {
+        (Level::Ok, format!("{limit} descripteurs de fichiers"))
+    } else {
+        (Level::Warn, format!("{limit} descripteurs seulement : `LimitNOFILE=65536` dans [Service] de l'unité astroportd (ou `ulimit -n 65536` avant `serve`)"))
+    }
+}
+
+/// Limite souple « Max open files » lue dans le texte de `/proc/<pid>/limits`.
+pub fn parse_nofile(limits: &str) -> Option<u64> {
+    let line = limits.lines().find(|l| l.starts_with("Max open files"))?;
+    line.split_whitespace().nth(3)?.parse().ok().or(Some(u64::MAX)) // « unlimited »
+}
+
+/// `PasswordAuthentication` de `sshd_config` : la première valeur gagne et rien ne compte après un bloc `Match`.
+/// `None` : la directive est absente (le défaut d'OpenSSH est `yes`).
+pub fn sshd_password_auth(config: &str) -> Option<bool> {
+    for line in config.lines() {
+        let mut words = line.split('#').next().unwrap_or("").split_whitespace();
+        match (words.next().map(str::to_ascii_lowercase).as_deref(), words.next().map(str::to_ascii_lowercase).as_deref()) {
+            (Some("match"), _) => return None,
+            (Some("passwordauthentication"), Some(v)) => return Some(v == "yes"),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Plafond du journal systemd (`SystemMaxUse`) : sans lui, le journal peut occuper jusqu'à 10 % du disque.
+pub fn journald_cap(config: &str) -> Option<String> {
+    config.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter_map(|l| l.strip_prefix("SystemMaxUse")).filter_map(|r| r.trim_start().strip_prefix('=')).map(|v| v.trim().to_owned()).rfind(|v| !v.is_empty())
+}
+
+/// Texte de `fichier` et, avant lui, des `*.conf` de `fichier.d/` (l'ordre d'application d'OpenSSH et de systemd).
+fn with_dropins(file: &str, dropins_first: bool) -> Option<String> {
+    let main = std::fs::read_to_string(file).ok();
+    let mut dropins: Vec<_> = std::fs::read_dir(format!("{}.d", file.trim_end_matches(".conf"))).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "conf")).collect();
+    dropins.sort();
+    let extra: String = dropins.iter().filter_map(|p| std::fs::read_to_string(p).ok()).collect::<Vec<_>>().join("\n");
+    match (main, extra.is_empty()) {
+        (None, true) => None,
+        (m, _) => Some(if dropins_first { format!("{extra}\n{}", m.unwrap_or_default()) } else { format!("{}\n{extra}", m.unwrap_or_default()) }),
+    }
+}
+
+/// Réglages de la machine dont dépend la station et que le démon ne peut ni ne doit changer lui-même : lus, jamais modifiés.
+fn system_checks(out: &mut Vec<Check>) {
+    if let Some(n) = std::fs::read_to_string("/proc/self/limits").ok().as_deref().and_then(parse_nofile) {
+        let (level, detail) = nofile_level(n);
+        out.push(check("système/fichiers", level, format!("{detail} (limite de ce shell ; le service a la sienne, voir son unité)")));
+    }
+    let unit = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/systemd/user/astroportd.service"));
+    if let Some(text) = unit.as_ref().and_then(|u| std::fs::read_to_string(u).ok()) {
+        let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_default();
+        if !user.is_empty() && !Path::new(&format!("/var/lib/systemd/linger/{user}")).exists() {
+            out.push(check("système/linger", Level::Warn, "l'unité utilisateur ne démarre qu'avec une session ouverte : `loginctl enable-linger $USER` pour qu'elle démarre au boot"));
+        } else if !user.is_empty() {
+            out.push(check("système/linger", Level::Ok, "l'unité démarre au boot sans session ouverte"));
+        }
+        let limit = text.lines().find_map(|l| l.trim().strip_prefix("LimitNOFILE=")).map(str::trim);
+        match limit {
+            Some(v) => out.push(check("système/unité", Level::Ok, format!("LimitNOFILE={v}"))),
+            None => out.push(check("système/unité", Level::Warn, "pas de LimitNOFILE dans l'unité astroportd : la limite par défaut de systemd (1 024 en souple) s'applique à la station")),
+        }
+    }
+    // sshd : mot de passe interdit dès qu'une station partage SSH par ses tunnels (le jumeau SSH de l'identité suffit).
+    if let Some(cfg) = with_dropins("/etc/ssh/sshd_config", true) {
+        match sshd_password_auth(&cfg) {
+            Some(false) => out.push(check("système/sshd", Level::Ok, "PasswordAuthentication no")),
+            Some(true) => out.push(check("système/sshd", Level::Warn, "PasswordAuthentication yes : `PasswordAuthentication no` dans sshd_config (clés seules : le tunnel SSH expose ce port à des amis)")),
+            None => out.push(check("système/sshd", Level::Warn, "PasswordAuthentication non fixé (défaut d'OpenSSH : yes) : écrire `PasswordAuthentication no` dans sshd_config")),
+        }
+    }
+    if let Some(cfg) = with_dropins("/etc/systemd/journald.conf", false) {
+        match journald_cap(&cfg) {
+            Some(v) => out.push(check("système/journal", Level::Ok, format!("SystemMaxUse={v}"))),
+            None => out.push(check("système/journal", Level::Warn, "journal systemd sans plafond : `SystemMaxUse=500M` dans /etc/systemd/journald.conf.d/ (il peut sinon prendre 10 % du disque)")),
+        }
+    }
+}
+
+
 /// Exécute le diagnostic.
 pub fn run(a: DoctorArgs) -> Result<(), Box<dyn std::error::Error>> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
@@ -245,6 +329,7 @@ pub fn run(a: DoctorArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     clock_checks(conn.as_ref(), a.lat, a.lon, &mut checks);
+    system_checks(&mut checks);
 
     let fails = checks.iter().filter(|c| c.level == Level::Fail).count();
     if a.json {
@@ -331,5 +416,23 @@ mod tests {
         let mut out = Vec::new();
         clock_checks(None, None, None, &mut out);
         assert_eq!(out[0].level, Level::Warn);
+    }
+
+    #[test]
+    fn system_settings_are_read_from_their_text() {
+        assert_eq!(nofile_level(1024).0, Level::Warn);
+        assert_eq!(nofile_level(65536).0, Level::Ok);
+        let limits = "Limit                     Soft Limit           Hard Limit           Units\nMax open files            1024                 524288               files\n";
+        assert_eq!(parse_nofile(limits), Some(1024));
+        assert_eq!(parse_nofile("Max open files            unlimited            unlimited            files\n"), Some(u64::MAX));
+        assert_eq!(parse_nofile("rien"), None);
+        // sshd : la première valeur gagne ; après `Match`, on ne juge plus ; commentaires ignorés ; casse indifférente.
+        assert_eq!(sshd_password_auth("# PasswordAuthentication yes\nPasswordAuthentication no\nPasswordAuthentication yes\n"), Some(false));
+        assert_eq!(sshd_password_auth("passwordauthentication YES\n"), Some(true));
+        assert_eq!(sshd_password_auth("Port 22\nMatch User bob\n  PasswordAuthentication no\n"), None, "dans un bloc Match : ne vaut pas pour tous");
+        assert_eq!(sshd_password_auth(""), None);
+        // journald : la dernière valeur non vide gagne.
+        assert_eq!(journald_cap("[Journal]\n#SystemMaxUse=\nSystemMaxUse=200M\nSystemMaxUse=500M # plafond\n").as_deref(), Some("500M"));
+        assert_eq!(journald_cap("[Journal]\n#SystemMaxUse=\nSystemKeepFree=2G\n"), None);
     }
 }

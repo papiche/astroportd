@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
-use crate::blob::{BlobError, BlobStore, BlobWriter, is_cid};
-use crate::server::{DavState, parse_range};
+use crate::blob::{BlobError, BlobStore, BlobWriter, is_cid, is_legacy_cid};
+use crate::server::{DavState, now_secs, parse_range};
 use crate::vfs::{self, EntryKind, VfsError};
 
 const SCOPE: &str = "guest_share";
@@ -36,6 +36,9 @@ pub enum ShareError {
     /// Trop de fichiers.
     #[error("trop de fichiers (max {MAX_ITEMS})")]
     TooMany,
+    /// Pièce jointe refusée (forme, taille, quota, disque) : le message est destiné à l'utilisateur.
+    #[error("{0}")]
+    Refused(String),
     /// Base.
     #[error("base : {0}")]
     Db(#[from] DbError),
@@ -74,6 +77,16 @@ struct Record {
     manifest_cid: String,
     cids: Vec<String>,
     expires_at: i64,
+    /// `"attachment"` pour une pièce jointe de message (un seul blob, pas de manifeste) ; vide pour un lien d'invité.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    kind: String,
+    /// Octets du blob d'une pièce jointe (comptés dans le quota du propriétaire).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    size: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 #[derive(Serialize)]
@@ -162,7 +175,7 @@ pub async fn create_guest_link<B: BlobStore>(db: &Db, blobs: &B, owner: &str, pa
     getrandom::fill(&mut rnd).map_err(|e| ShareError::Other(e.to_string()))?;
     let slug = hex::encode(rnd);
     let expires_at = now + ttl_secs;
-    let record = serde_json::to_string(&Record { owner: owner.to_owned(), manifest_cid, cids, expires_at }).map_err(|e| ShareError::Other(e.to_string()))?;
+    let record = serde_json::to_string(&Record { owner: owner.to_owned(), manifest_cid, cids, expires_at, kind: String::new(), size: 0 }).map_err(|e| ShareError::Other(e.to_string()))?;
     db.writer()
         .execute(
             "INSERT INTO kv(scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?4)",
@@ -171,6 +184,119 @@ pub async fn create_guest_link<B: BlobStore>(db: &Db, blobs: &B, owner: &str, pa
         .await?;
     crate::adopt::mark_shared(db, owner, originals, "link").await;
     Ok(GuestLink { path: format!("/s/{slug}"), slug, key_hex: link_key.to_hex(), expires_at, items: items.len() })
+}
+
+/// Taille maximale d'une pièce jointe (octets chiffrés).
+pub const ATTACHMENT_MAX: usize = 20 * 1024 * 1024;
+/// Durée maximale de conservation d'une pièce jointe.
+pub const ATTACHMENT_MAX_TTL: i64 = 90 * 86_400;
+/// Pièces jointes actives par compte, et leur volume total : au-delà, le dépôt est refusé (elles expirent seules).
+const ATTACHMENTS_PER_ACCOUNT: i64 = 200;
+const ATTACHMENT_BYTES_PER_ACCOUNT: i64 = 1 << 30;
+
+/// Pièce jointe déposée.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attachment {
+    /// CID (v1, raw, sha2-256) des octets reçus : l'adresse à écrire dans le message.
+    pub cid: String,
+    /// Octets conservés.
+    pub size: u64,
+    /// Échéance, secondes UNIX.
+    pub expires_at: i64,
+}
+
+/// Dépose la pièce jointe d'un message : des octets **déjà chiffrés par l'expéditeur** (format UENC v1, AES-256-GCM), dont la
+/// station ne connaît jamais la clé (elle voyage dans le message chiffré de bout en bout). Le blob est servi par la passerelle
+/// `/ipfs/<cid>` tant que son enregistrement n'est pas échu ; l'enregistrement est celui des liens d'invité (même purge,
+/// même révocation, même porte), sans clé ni manifeste.
+///
+/// Refus : clair (en-tête UENC absent, donc la station n'héberge pas de fichiers lisibles), vide ou trop gros, quota du
+/// compte atteint, disque presque plein. Des octets déjà connus de la station (même CID) ne créent **pas** de second
+/// enregistrement : sinon l'échéance courte d'un tiers supprimerait le blob de l'expéditeur d'origine.
+pub async fn store_attachment<B: BlobStore>(db: &Db, blobs: &B, owner: &str, data: &[u8], ttl_secs: i64, now: i64) -> Result<Attachment, ShareError> {
+    const HEADER: usize = 4 + 1 + 1 + 12;
+    if data.len() > ATTACHMENT_MAX {
+        return Err(ShareError::Refused(format!("pièce jointe trop lourde ({} Mo au plus)", ATTACHMENT_MAX >> 20)));
+    }
+    // En-tête + au moins l'étiquette d'authentification GCM (16 octets).
+    if data.len() < HEADER + 16 || !is_uenc_v1(data) {
+        return Err(ShareError::Refused("pièce jointe non chiffrée : format UENC v1 (AES-256-GCM) attendu".into()));
+    }
+    if !(1..=ATTACHMENT_MAX_TTL).contains(&ttl_secs) {
+        return Err(ShareError::Refused("durée de conservation : 1 seconde à 90 jours".into()));
+    }
+    if !crate::blob::disk_has_room(blobs, data.len() as u64) {
+        return Err(ShareError::Refused("espace disque de la station presque plein : dépôt refusé".into()));
+    }
+    let o = owner.to_owned();
+    let (count, bytes): (i64, i64) = db
+        .readers()
+        .read(move |c| {
+            Ok(c.query_row(
+                "SELECT count(*), coalesce(sum(json_extract(value, '$.size')), 0) FROM kv WHERE scope = ?1 AND json_valid(value) \
+                 AND json_extract(value, '$.kind') = 'attachment' AND json_extract(value, '$.owner') = ?2 AND json_extract(value, '$.expires_at') > ?3",
+                rusqlite::params![SCOPE, o, now],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?)
+        })
+        .await?;
+    if count >= ATTACHMENTS_PER_ACCOUNT || bytes.saturating_add(data.len() as i64) > ATTACHMENT_BYTES_PER_ACCOUNT {
+        return Err(ShareError::Refused("quota de pièces jointes atteint : elles expirent d'elles-mêmes, réessayez plus tard".into()));
+    }
+
+    let mut w = blobs.begin().await?;
+    tokio::io::AsyncWriteExt::write_all(&mut w, data).await.map_err(|e| ShareError::Other(e.to_string()))?;
+    let meta = w.commit().await?;
+    let expires_at = record_attachment(db, owner, "attachment", &meta.cid, meta.size, now + ttl_secs, now).await?;
+    Ok(Attachment { cid: meta.cid, size: meta.size, expires_at })
+}
+
+/// Enregistre `cid` comme servi par la passerelle `/ipfs/` jusqu'à `expires_at` (`kind` : `attachment` pour une pièce jointe
+/// déposée ici, `replica` pour la copie d'un ami hébergeur). Des octets déjà connus de la station (même CID, enregistrement
+/// non échu) ne créent **pas** de second enregistrement : rend l'échéance de l'existant.
+pub async fn record_attachment(db: &Db, owner: &str, kind: &str, cid: &str, size: u64, expires_at: i64, now: i64) -> Result<i64, ShareError> {
+    let c = cid.to_owned();
+    let known: Option<i64> = db
+        .readers()
+        .read(move |conn| {
+            Ok(rusqlite::OptionalExtension::optional(conn.query_row(
+                "SELECT json_extract(k.value, '$.expires_at') FROM kv k WHERE k.scope = ?1 AND json_valid(k.value) AND json_extract(k.value, '$.expires_at') > ?2 \
+                 AND EXISTS (SELECT 1 FROM json_each(json_extract(k.value, '$.cids')) j WHERE j.value = ?3) ORDER BY 1 DESC LIMIT 1",
+                rusqlite::params![SCOPE, now, c],
+                |r| r.get(0),
+            ))?)
+        })
+        .await?;
+    if let Some(known) = known {
+        return Ok(known);
+    }
+    let mut rnd = [0u8; 16];
+    getrandom::fill(&mut rnd).map_err(|e| ShareError::Other(e.to_string()))?;
+    let slug = hex::encode(rnd);
+    let record = serde_json::to_string(&Record { owner: owner.to_owned(), manifest_cid: cid.to_owned(), cids: vec![cid.to_owned()], expires_at, kind: kind.to_owned(), size }).map_err(|e| ShareError::Other(e.to_string()))?;
+    db.writer().execute("INSERT INTO kv(scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?4)", vec![SCOPE.to_owned().into(), slug.into(), record.into(), now.into()]).await?;
+    Ok(expires_at)
+}
+
+/// Octets de copies (`replica`) que `owner` fait héberger ici et dont l'échéance n'est pas passée.
+pub async fn replica_bytes(db: &Db, owner: &str, now: i64) -> u64 {
+    let o = owner.to_owned();
+    db.readers()
+        .read(move |c| {
+            Ok(c.query_row(
+                "SELECT coalesce(sum(json_extract(value, '$.size')), 0) FROM kv WHERE scope = ?1 AND json_valid(value) \
+                 AND json_extract(value, '$.kind') = 'replica' AND json_extract(value, '$.owner') = ?2 AND json_extract(value, '$.expires_at') > ?3",
+                rusqlite::params![SCOPE, o, now],
+                |r| r.get::<_, i64>(0),
+            )?)
+        })
+        .await
+        .map_or(0, |n| u64::try_from(n).unwrap_or(0))
+}
+
+/// Ces octets sont-ils bien une pièce jointe chiffrée (en-tête UENC v1, AES-256-GCM) ? Un hébergeur ne range jamais de clair.
+pub fn is_uenc_v1(head: &[u8]) -> bool {
+    head.starts_with(b"UENC\x01\x01")
 }
 
 /// Révoque un lien : l'enregistrement et tous ses blobs sont supprimés.
@@ -256,6 +382,54 @@ pub async fn blob<B: BlobStore>(State(st): State<Arc<DavState<B>>>, Path((slug, 
         return StatusCode::NOT_FOUND.into_response();
     }
     serve_blob(&st, &cid, &headers).await
+}
+
+/// Passerelle de compatibilité `GET /ipfs/<cid>` : les clients historiques (zelkova, coracle) lisent `{passerelle}/ipfs/{cid}`.
+/// **Désactivée par défaut** (`--ipfs-gateway`), lecture seule, un blob à la fois (jamais de dossier ni de sous-chemin) :
+/// - un blob natif (CID v1) n'est servi que s'il appartient à un **lien de partage actif** : la révocation et l'échéance
+///   d'un lien ferment donc aussi cette porte ;
+/// - un ancien blob `Qm…` n'est servi que s'il est **épinglé** dans le Kubo local (ORIGIN) : jamais récupéré sur le réseau.
+///
+/// Ce sont des blobs chiffrés : sans leur clé (dans le lien `#clé`), la passerelle ne donne que du bruit.
+pub async fn ipfs_gateway<B: BlobStore>(State(st): State<Arc<DavState<B>>>, Path(cid): Path<String>, headers: HeaderMap) -> Response {
+    if !st.config.ipfs_gateway {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let allowed = if is_cid(&cid) {
+        shared_by_active_link(&st, &cid).await
+    } else if is_legacy_cid(&cid) {
+        st.blobs.pinned_legacy(&cid).await
+    } else {
+        false
+    };
+    if !allowed {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let mut r = serve_blob(&st, &cid, &headers).await;
+    let h = r.headers_mut();
+    // Des octets chiffrés lisibles depuis un autre site (coracle), jamais interprétés par le navigateur.
+    h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'none'; sandbox"));
+    r
+}
+
+/// `cid` figure-t-il dans un lien de partage non échu ? Décidé en SQL sur la table des liens.
+async fn shared_by_active_link<B: BlobStore>(st: &DavState<B>, cid: &str) -> bool {
+    let (cid, now) = (cid.to_owned(), now_secs());
+    st.db
+        .readers()
+        .read(move |c| {
+            Ok(c.query_row(
+                // `k.value` : dans la sous-requête, `value` seul désignerait la colonne de `json_each`.
+                "SELECT 1 FROM kv k WHERE k.scope = ?1 AND json_valid(k.value) AND json_extract(k.value, '$.expires_at') > ?2 \
+                 AND EXISTS (SELECT 1 FROM json_each(json_extract(k.value, '$.cids')) j WHERE j.value = ?3) LIMIT 1",
+                rusqlite::params![SCOPE, now, cid],
+                |_| Ok(()),
+            )
+            .is_ok())
+        })
+        .await
+        .unwrap_or(false)
 }
 
 async fn serve_blob<B: BlobStore>(st: &DavState<B>, cid: &str, headers: &HeaderMap) -> Response {

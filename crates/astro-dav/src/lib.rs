@@ -13,7 +13,6 @@ pub mod ical;
 pub mod ingest;
 pub mod kubo;
 pub mod locks;
-pub mod media;
 pub mod manifest;
 pub mod parse;
 pub mod pool;

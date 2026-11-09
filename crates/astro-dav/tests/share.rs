@@ -179,3 +179,81 @@ async fn the_browser_code_decrypts_what_the_server_wrote() {
         }
     }
 }
+
+/// CID des fichiers d'un lien et CID de son manifeste, lus dans l'enregistrement du lien.
+async fn record_cids(b: &Bench, slug: &str) -> (Vec<String>, String) {
+    let slug = slug.to_owned();
+    let raw: String = b.db.readers().read(move |c| Ok(c.query_row("SELECT value FROM kv WHERE scope = 'guest_share' AND key = ?1", [slug], |r| r.get(0))?)).await.unwrap();
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    (v["cids"].as_array().unwrap().iter().map(|c| c.as_str().unwrap().to_owned()).collect(), v["manifest_cid"].as_str().unwrap().to_owned())
+}
+
+/// Passerelle `/ipfs/<cid>` des clients historiques : coupée par défaut ; ouverte, elle ne sert que du chiffré, que des blobs
+/// d'un lien actif, jamais un blob du propriétaire, un lien échu ou révoqué, un sous-chemin ou un ancien CID sans Kubo.
+#[tokio::test]
+async fn the_ipfs_gateway_is_off_by_default_and_serves_only_blobs_of_an_active_link() {
+    let owner = hex(&ALICE);
+    let paths = ["/a.txt".to_owned()];
+
+    // Coupée par défaut : un blob de lien vivant reste introuvable par /ipfs/.
+    let off = bench("ipfs-off").await;
+    put(&off, "/dav/a.txt", b"secret".to_vec()).await;
+    let link = create_guest_link(&off.db, off.blobs.as_ref(), &owner, &paths, "t", 3600, now()).await.unwrap();
+    let cid = record_cids(&off, &link.slug).await.0.remove(0);
+    assert_eq!(anon(&off, &format!("/s/{}/b/{cid}", link.slug), &[]).await.status(), 200, "le lien lui-même marche");
+    assert_eq!(anon(&off, &format!("/ipfs/{cid}"), &[]).await.status(), 404, "passerelle coupée");
+
+    let b = bench_with("ipfs-on", |c| c.ipfs_gateway = true).await;
+    put(&b, "/dav/a.txt", b"secret".to_vec()).await;
+    let link = create_guest_link(&b.db, b.blobs.as_ref(), &owner, &paths, "t", 3600, now()).await.unwrap();
+    let (cids, manifest) = record_cids(&b, &link.slug).await;
+    let key = UencKey::from_hex(&link.key_hex).unwrap();
+    // Un blob du lien : octets chiffrés, lisibles depuis un autre site, jamais interprétés par un navigateur.
+    let r = anon(&b, &format!("/ipfs/{}", cids[0]), &[]).await;
+    for (h, v) in [("access-control-allow-origin", "*"), ("content-type", "application/octet-stream"), ("x-content-type-options", "nosniff"), ("content-security-policy", "default-src 'none'; sandbox")] {
+        assert_eq!(r.headers()[h], v, "{h}");
+    }
+    let (status, _, blob) = bytes(r).await;
+    assert_eq!(status, 200);
+    assert!(!String::from_utf8_lossy(&blob).contains("secret"), "chiffré");
+    assert_eq!(anon(&b, &format!("/ipfs/{manifest}"), &[]).await.status(), 404, "le manifeste ne passe que par /s/<lien>/m");
+    let all: Vec<Vec<u8>> = {
+        let mut v = Vec::new();
+        for c in &cids {
+            v.push(bytes(anon(&b, &format!("/ipfs/{c}"), &[]).await).await.2);
+        }
+        v
+    };
+    assert!(futures_util::future::join_all(all.iter().map(|x| uenc::decrypt_to_vec(&key, x))).await.iter().any(|r| r.as_ref().is_ok_and(|p| p == b"secret")), "la clé du lien déchiffre le fichier");
+    // Lecture partielle : un téléchargement reprenable.
+    assert_eq!(anon(&b, &format!("/ipfs/{}", cids[0]), &[("range", "bytes=0-3")]).await.status(), 206);
+
+    // Le blob du propriétaire (copie non partagée) n'est pas servi.
+    let owner_cids: Vec<String> = b.db.readers().read(|c| Ok(c.prepare("SELECT cid FROM ucloud_entries WHERE cid IS NOT NULL")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?)).await.unwrap();
+    assert!(!owner_cids.is_empty());
+    for c in &owner_cids {
+        assert_eq!(anon(&b, &format!("/ipfs/{c}"), &[]).await.status(), 404, "blob du propriétaire");
+    }
+    // Lien échu (pas encore purgé) : plus servi ; lien révoqué : plus servi.
+    let old = create_guest_link(&b.db, b.blobs.as_ref(), &owner, &paths, "t", -10, now()).await.unwrap();
+    for c in record_cids(&b, &old.slug).await.0 {
+        assert_eq!(anon(&b, &format!("/ipfs/{c}"), &[]).await.status(), 404, "lien échu");
+    }
+    assert!(revoke_guest_link(&b.db, b.blobs.as_ref(), &owner, &link.slug).await.unwrap());
+    assert_eq!(anon(&b, &format!("/ipfs/{}", cids[0]), &[]).await.status(), 404, "lien révoqué");
+
+    // Entrées hostiles : aucun accès, jamais un 200.
+    let live = create_guest_link(&b.db, b.blobs.as_ref(), &owner, &paths, "t", 3600, now()).await.unwrap();
+    let live_cid = record_cids(&b, &live.slug).await.0.remove(0);
+    for uri in [
+        format!("/ipfs/{live_cid}/sous-chemin"),
+        format!("/ipfs/{live_cid}/../x"),
+        "/ipfs/..%2f..%2fetc%2fpasswd".to_owned(),
+        "/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG".to_owned(), // ancien CID : pas de Kubo ici
+        "/ipfs/pas-un-cid".to_owned(),
+        format!("/ipfs/{}", live_cid.to_uppercase()),
+    ] {
+        assert_ne!(anon(&b, &uri, &[]).await.status(), 200, "{uri}");
+    }
+    assert_eq!(anon(&b, &format!("/ipfs/{live_cid}"), &[]).await.status(), 200, "et le bon CID marche toujours");
+}

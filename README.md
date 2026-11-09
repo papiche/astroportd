@@ -11,7 +11,7 @@ vos amis, vous fait **sauvegarder par vos proches** (et retrouver votre compte s
 une **comptabilité coopérative en Ẑen** (monnaie libre Ğ1) — sans plateforme, sans abonnement, sans serveur central.
 C'est le cœur souverain d'[Astroport.ONE](https://github.com/papiche/Astroport.ONE) et d'UPlanet, réécrit en Rust.
 
-> **Préversion 0.5.7-beta.** Le code est testé de bout en bout (≈ 840 tests, `clippy` sans avertissement) mais jeune :
+> **Préversion 0.5.8-beta.** Le code est testé de bout en bout (≈ 880 tests, `clippy` sans avertissement) mais jeune :
 > lisez [les limites connues](#8-état-du-projet-et-limites-connues). Licence **AGPL-3.0** · Auteur : Fred
 > (support@qo-op.com) · Rust 2024 (≥ 1.85).
 
@@ -44,7 +44,7 @@ choix que les services habituels ne font pas :
 | **Photos et visages** | Google Photos, Apple Photos | Immich, PhotoPrism | Photos **chiffrées**, empreintes de visages 512D **cloisonnées par propriétaire** (`sqlite-vec`), partage vers les amis reconnus par messages chiffrés **NIP-59/NIP-17**, avec validation de l'utilisateur dans la zone de doute. |
 | **Identité et réseau social** | Keybase, X, Mastodon | Urbit, Farcaster, clients Nostr | Une **identité dérivée de votre clé SSH** (Y-Level : SSH, IPFS, Ğ1 et Nostr sont la même clé) et un **pare-feu social NIP-42 à deux niveaux** : seuls les membres du cercle (hébergés, N¹, N²) publient, et tout contenu non public exige d'être authentifié dans le cercle. |
 | **Sauvegarde et reprise** | Sauvegarde cloud payante | Syncthing, Tahoe-LAFS | Des **amis réciproques hébergent votre copie chiffrée** (ils ne peuvent rien lire), et restituent **d'eux-mêmes** après une panne : ma **clé de secours** (QR) plus la part d'un ami suffisent à retrouver compte, contacts et fichiers sur une autre station. |
-| **Communication entre machines** | Tailscale, ZeroTier, ngrok | libp2p, Iroh | Tunnels **« DRAGON »** natifs `/x/<service>-<PeerID>` sur le maillage libp2p, sans ouvrir de port sur la box ; une politique réglée par le Capitaine dit qui peut ouvrir quel service. |
+| **Communication entre machines** | Tailscale, ZeroTier, ngrok | libp2p, Iroh | Tunnels **« DRAGON »** natifs `/x/<service>-<PeerID>` sur le maillage libp2p, sans ouvrir de port sur la box : découverte mDNS sur le réseau local, stations relais publiées par la configuration coopérative (`P2P_RELAYS`), adresses annoncées dans la balise et dossier de l'essaim tenu par astroportd ; une politique réglée par le Capitaine dit qui peut ouvrir quel service. |
 | **Économie et monnaie** | OpenCollective, Stripe | DAO, Lightning | Comptabilité coopérative adossée à la **monnaie libre Ğ1** (Duniter v2s) : **règle des 3×1/3**, registre Ğ1-N² signé et chaîné, **micro-dons sur réaction Nostr `+N`**. Le Ẑen est une unité comptable de la coopérative, pas une monnaie publique. |
 
 Ce qu'on ne prétend pas : astroportd n'est pas un réseau social grand public, ni un service hébergé. C'est **votre** station,
@@ -100,9 +100,9 @@ astroportd init
 
 # 4. Démarrer
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
-# → http://127.0.0.1:18080 : l'application web ; la même adresse sert le relai Nostr
+# → http://127.0.0.1:8090 : l'application web ; la même adresse sert le relai Nostr
 
-# 5. Les membres s'inscrivent sur http://127.0.0.1:18080/register (ou : astroportd multipass create <email>)
+# 5. Les membres s'inscrivent sur http://127.0.0.1:8090/register (ou : astroportd multipass create <email>)
 ```
 
 `astroportd init --mode origin` ou `--mode zen --swarm-key ./swarm.key` s'utilisent aussi sans questions (`--yes`).
@@ -239,8 +239,9 @@ de certification choisie pour vous. `astroportd` applique cette phrase à la let
 - **Vos fichiers sont chiffrés avant de quitter la machine** (UENC v2, AES-256-GCM ou ChaCha20-Poly1305, par blocs de
   64 Kio). Le clair ne touche jamais le disque : le téléversement est chiffré *en flux*. Un lien partagé porte sa clé
   dans le fragment `#…` de l'URL, qu'un navigateur n'envoie jamais au serveur.
-- **Vos certificats sont les vôtres.** HTTPS automatique (Let's Encrypt ou ZeroSSL, défi HTTP-01) sans Nginx ni
-  Certbot : le démon tient les ports 80 et 443.
+- **Vos certificats sont les vôtres.** HTTPS automatique (Let's Encrypt, défi HTTP-01) sans Nginx ni Certbot : le
+  démon tient les ports 80 et 443. Vous avez déjà un reverse proxy (Nginx Proxy Manager…) ? La station se met derrière
+  lui, sur le port 8090 ; `init` le détecte.
 - **Votre monnaie est comptable, pas spéculative.** Le **ẐEN** est l'unité de compte interne d'une coopérative, adossée
   à la Ğ1 (Duniter v2s). Tout montant est un **entier de centimes** : le flottant est banni de la monnaie.
 
@@ -365,7 +366,7 @@ solaire). Code de sortie `1` si une vérification échoue.
 ### Démarrer une station
 
 ```bash
-# Essai local, sans domaine (HTTP en clair sur 127.0.0.1:18080) :
+# Essai local, sans domaine (HTTP en clair sur 127.0.0.1:8090) :
 astroportd serve --db uplanet.db --blobs blobs
 
 # Station publique : HTTPS automatique, maillage P2P, BRO, soldes Ğ1 :
@@ -374,7 +375,12 @@ astroportd serve --db uplanet.db --blobs blobs \
     --p2p-listen /ip4/0.0.0.0/tcp/4101 --swarm-key swarm.key \
     --p2p-expose comfyui=127.0.0.1:8188 \
     --ollama http://127.0.0.1:11434 --duniter-rpc wss://g1.axiom-team.fr/ws
+
+# Derrière un reverse proxy (Nginx Proxy Manager…) : il garde le certificat, la station écoute sur 0.0.0.0:8090
+astroportd serve --db uplanet.db --blobs blobs --public-domain station.exemple.org
 ```
+
+Ports à ouvrir et réglage de Nginx Proxy Manager : [guide, étape 5](docs/GUIDE.md#etape-4) (« Réseau : ce qu'il faut ouvrir »).
 
 Ouvrez ensuite `https://station.exemple.org/` : un navigateur reçoit l'application, un client Nostr reçoit le relai
 (`Accept: application/nostr+json` ou WebSocket) — **même adresse**. Les clés de la station sont découvertes
@@ -389,10 +395,9 @@ automatiquement dans `~/.zen/game` (`--game-dir` ou `ASTRO_GAME_DIR`).
 | `astroportd multipass create <email> [--captain]` / `multipass list` | Crée (et liste) les MULTIPASS de la station ; secrets affichés une seule fois. |
 | `astroportd parrainer` / `astroportd init --join <jeton>` | Station marraine : jeton à usage unique (24 h) qui fait rejoindre sa constellation à une nouvelle station (swarm.key chiffrée, amorçage P2P). |
 | `astroportd token <email>` | Jeton de connexion d'un compte hébergé (interface web, clients WebDAV). |
-| `astroportd media --account <email> consent` | Atteste la copie privée (CPI L. 122-5), une fois. `--show` affiche le texte. |
-| `astroportd media --account <email> --db … --blobs … add --file film.mkv --series "Kaamelott" --season 2 --episode 3` | Dépose un film ou un épisode (≤ 1 024 Mo), encode en H.264/AAC (`--transcode auto\|notify`) et publie l'événement vidéo. |
 | `astroportd replay --db uplanet.db [--from ws://relai --hosted <hex>] [--blobs blobs]` | Reconstruit la base depuis les événements (et restaure uCloud depuis les manifestes). |
-| `astroportd route ollama --mode closest --lat 45.7 --lon 4.8` | Meilleur nœud du swarm pour un service. |
+| `astroportd route ollama --mode closest` | Meilleure station de la constellation qui vous ouvre un service (demande au démon qui tourne). |
+| `astroportd tunnel list \| connect <service> [--port N] \| close \| policy \| mode \| allow \| revoke \| share \| unshare` | Services des autres stations (accès local à chaud) et politique de tunnels de cette station, via `control.sock`. |
 | `astroportd swarm-key` | Génère la clé d'un réseau privé de constellation. |
 | `astroportd plane-setup list \| add \| remove` · `astroportd planes [--check]` | Plusieurs UPlanet (ORIGIN, ZEN1…) dans un seul processus : assistant, puis démarrage de tous les plans. |
 | `astroportd pool-status` · `bridge-copy` | Bassin de blobs partagé entre plans : état et orphelins ; adoption sans copie d'un plan à l'autre. |
@@ -561,22 +566,19 @@ mention de co-auteur.
 
 ## 10. Films et séries : la copie privée
 
-Héritage d'`ajouter_media.sh`, sans shell. La chaîne refuse chaque fois en le disant :
+astroportd **ne traite pas les médias** : c'est un serveur WebDAV qui partage en P2P, N¹ ou N². Le plugin système
+[`media`](https://github.com/papiche/astroportd-plugins/tree/main/media) (héritage d'`ajouter_media.sh`) sonde, réencode,
+télécharge, écrit dans l'uCloud du membre (`/Vidéos/Films`, `/Vidéos/Séries/<série>/Saison NN`, `/Vidéos/Autres`,
+`/Musique/<artiste>/<album>`) par WebDAV et **publie lui-même l'événement vidéo**, signé de la clé du membre. Ce que la station
+fait de ces événements :
 
-1. **Attestation** : le titulaire atteste une fois (écran MULTIPASS ou `astroportd media consent`) que ses dépôts sont des
-   copies pour son usage strictement privé (article L. 122-5, 2° du CPI). C'est un événement **kind 31903**
-   (`d = private_copy`) signé de sa clé, qui contient le texte exact accepté : il est projeté dans
-   `private_copy_consent` et revient au replay. Sans lui, rien n'est déposé ni publié.
-2. **Plafond frugal** : 1 024 Mo par fichier.
-3. **Sondage** (`ffprobe`) et plan : un fichier déjà MP4/H.264/AAC n'est jamais réencodé. Sinon, mode `auto` : `ffmpeg`
-   réencode en H.264/AAC, **en gardant la piste audio française** (la première si aucune n'est étiquetée, avec
-   remarque) ; mode `notify` : dépôt tel quel et encodage recommandé sur le bus d'activité. Outils lancés sous délai,
-   `kill_on_drop`, jamais par `fork` du démon.
-4. **Dépôt chiffré** (UENC v2) dans `/Vidéos/Films` ou `/Vidéos/Séries/<série>/Saison NN`.
-5. **Événement vidéo** NIP-71 : **kind 21** (> 60 s) ou **22** (≤ 60 s), `imeta` (NIP-94 : `url`, `m`, `x`, `dim`,
-   `duration`, `bitrate`), genres en étiquettes **NIP-32**, `series_name` / `season_number` / `episode_number` /
-   `episode_name`, tag NIP-70 `["-"]`. Les métadonnées viennent d'un document TMDB (`--tmdb-json`) ou des options.
-6. **Cercle N¹** : le relai ne livre un kind 21/22 qu'à son **auteur** et à ceux qu'il **suit** (N¹), jamais au reste du
+1. **Copie privée** : le plugin pose lui-même, au premier dépôt, l'attestation locale du titulaire (dépôts pour son usage
+   strictement privé, article L. 122-5, 2° du CPI). Rien n'est publié (pas d'événement 31903) et la station n'en lit rien.
+2. **Événement vidéo** NIP-71, écrit par le plugin : **kind 21** (> 60 s) ou **22** (≤ 60 s), `imeta` (NIP-94 : `url`, `m`,
+   `x`, `dim`, `duration`, `bitrate`), genres en étiquettes **NIP-32**, `series_name` / `season_number` / `episode_number` /
+   `episode_name`, tag NIP-70 `["-"]`. Le relai le traite comme n'importe quel événement (test d'interopérabilité
+   `tests/plugin_media_interop.rs`).
+3. **Cercle N¹** : le relai ne livre un kind 21/22 qu'à son **auteur** et à ceux qu'il **suit** (N¹), jamais au reste du
    cercle N². Le N¹ se lit dans le **dernier kind 3 de l'auteur** stocké sur la station, qu'il soit hébergé ici ou sur une
    station distante de la constellation ; un lecteur authentifié (NIP-42) qui y figure est servi même s'il est inconnu
    du cercle local. Le N¹ est rechargé à chaque rafraîchissement du cercle : une liste de contacts qui change prend

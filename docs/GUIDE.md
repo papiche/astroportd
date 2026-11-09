@@ -1,13 +1,13 @@
 # Guide du Capitaine : ouvrir et tenir sa station
 
-> Version texte du [guide illustré](guide.html). Pour découvrir Astroport sans rien installer : [la page d'accueil](index.html). Préversion **0.5.7-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
+> Version texte du [guide illustré](guide.html). Pour découvrir Astroport sans rien installer : [la page d'accueil](index.html). Préversion **0.5.8-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
 
 **Sommaire** :
 
 - [**Partie 1 — Mettre la station en service**](#partie-1) : [1. Avant de commencer](#etape-0) · [2. Installer astroportd](#etape-1) · [3. Donner une identité à la station (Y-Level)](#etape-2) · [4. Choisir sa constellation](#etape-3) · [5. Démarrer la station](#etape-4) · [6. Créer votre compte de Capitaine, puis ceux des membres](#etape-5) · [7. Vérifier que tout va bien](#etape-6) · [8. Entrer dans l'interface web](#etape-7) · [9. Le cockpit du Capitaine](#etape-7b)
 - [**Partie 2 — Ce que la station offre à vos membres**](#partie-2) : [FaceCloud](#etape-8) · [Inviter quelqu'un à recevoir des photos](#etape-8quater) · [La clé de secours](#secours) · [Contacts, agenda et Mon compte](#etape-8b) · [Messages privés, et une personne dans plusieurs UPlanet](#etape-8bis-j) · [Appeler en visio](#visio) · [Le coffre de mots de passe (KeePass)](#etape-8bis-b) · [Le site public](#etape-8bis-m) · [Un jeton par appareil (téléphones, tablettes, ordinateurs)](#etape-8bis-f) · [Reprendre ses fichiers d'un autre serveur (Nextcloud, ownCloud…)](#etape-8bis-d) · [Ranger son uCloud par type](#etape-8bis-e) · [Connexion par PASS, compte sans email, signature déléguée](#etape-8quinquies) · [Sur un smartphone](#sur-un-smartphone)
-- [**Partie 3 — L'argent de la station**](#partie-3) : [Hébergement facturé et partage de la semaine](#etape-8bis-g) · [Ma UPlanet](#etape-8c) · [Ğ1Billet](#etape-8bis-l)
-- [**Partie 4 — Relier, ouvrir, administrer**](#partie-4) : [Être trouvé](#annuaire) · [Relier sa station aux autres Capitaines](#etape-9) · [Options du Capitaine](#etape-8ter) · [Une adresse pour chaque station et chaque MULTIPASS (DNSLink)](#etape-9b) · [Reprendre un uCloud d'Astroport.ONE](#etape-8bis-c) · [Plusieurs astroportd sur une machine](#etape-8bis-h) · [Plusieurs UPlanet dans un seul processus](#etape-8bis-i) · [En cas de problème](#etape-10)
+- [**Partie 3 — Les Ẑen de la station**](#partie-3) : [Hébergement facturé et partage de la semaine](#etape-8bis-g) · [Ma UPlanet](#etape-8c) · [Ğ1Billet](#etape-8bis-l)
+- [**Partie 4 — Relier, ouvrir, administrer**](#partie-4) : [Être trouvé](#annuaire) · [Relier sa station aux autres Capitaines](#etape-9) · [Options du Capitaine](#etape-8ter) · [Une adresse pour chaque station et chaque MULTIPASS (DNSLink)](#etape-9b) · [Reprendre un uCloud d'Astroport.ONE](#etape-8bis-c) · [Les anciens clients (zelkova, coracle) sur astroportd](#etape-8bis-h) · [Plusieurs astroportd sur une machine](#plusieurs-astroportd-sur-une-machine-un-seul-bassin-de-fichiers) · [Plusieurs UPlanet dans un seul processus](#etape-8bis-i) · [En cas de problème](#etape-10)
 
 <a id="partie-1"></a>
 
@@ -31,7 +31,7 @@ Il vous faut :
 - une connexion Internet et environ 15 minutes ;
 - une **horloge à l'heure** : un Raspberry Pi sans pile démarre en 1970, et astroportd refuse alors de calculer ses échéances ;
 - facultatif, pour une station ouverte sur Internet : un nom de domaine et les ports 80 et 443 ouverts ;
-- facultatif : de quoi reconnaître les visages (pour FaceCloud : un service d'inférence, ou les modèles locaux que l'installeur peut mettre en place) et `ffmpeg` (pour les films et séries).
+- facultatif : de quoi reconnaître les visages (pour FaceCloud : un service d'inférence, ou les modèles locaux que l'installeur peut mettre en place).
 
 Deux commandes pour vérifier votre machine :
 
@@ -44,7 +44,7 @@ date       # l'année doit être 2026 ou plus
 
 Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.
 
-> **À savoir.** astroportd est en **préversion 0.5.7-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
+> **À savoir.** astroportd est en **préversion 0.5.8-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
 
 Vous aurez aussi besoin d'un compte **MULTIPASS** (votre identité Nostr) : astroportd le crée pour vous à l'[étape 6](#etape-5).
 
@@ -60,7 +60,7 @@ Le plus simple : l'installeur. Il choisit le bon fichier pour votre machine et *
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 ```
 
-Options utiles : `--version v0.5.7-beta`, `--static` (binaire statique, x86_64 et aarch64), `--prefix DIR`, `--no-init`, `--yes`.
+Options utiles : `--version v0.5.8-beta`, `--static` (binaire statique, x86_64 et aarch64), `--prefix DIR`, `--no-init`, `--yes`.
 
 **Mettre à jour** : relancez simplement le même `install.sh`. Il montre l'installation en place (version, constellation, domaine, Capitaine, service), installe la nouvelle version, garde vos modèles et votre station, puis redémarre le service. Il ne relance jamais `init`, qui changerait l'identité de la station. `--force` réinstalle la même version.
 
@@ -123,7 +123,7 @@ L'assistant `init` fait ce rituel pour vous (c'est sa première étape) :
 astroportd init
 ```
 
-Il part de `~/.ssh/id_ed25519` (il en crée une si elle n'existe pas). L'assistant demande aussi la position de la station, l'email du Capitaine, le domaine et la **visio** : STUN + relais d'appel (recommandé), STUN seul ou aucune, plus d'éventuels serveurs STUN/TURN extérieurs (`--visio relais|stun|aucune`, `--ice-server stun:hôte:port`). Ouvrez alors le port de l'interface **en UDP** sur votre box (443 avec un domaine, sinon 18080). **Votre ancienne clé SSH n'est pas détruite** : elle est conservée sous `~/.ssh/origin.key` et `~/.ssh/origin.pub`. Les secrets de la station sont écrits en `0600` dans `~/.zen/game`.
+Il part de `~/.ssh/id_ed25519` (il en crée une si elle n'existe pas). L'assistant demande aussi la position de la station, l'email du Capitaine, le domaine et la **visio** : STUN + relais d'appel (recommandé), STUN seul ou aucune, plus d'éventuels serveurs STUN/TURN extérieurs (`--visio relais|stun|aucune`, `--ice-server stun:hôte:port`). Les ports à ouvrir sur la box sont résumés à l'étape 5 (« Réseau : ce qu'il faut ouvrir ») ; `init` les affiche aussi à la fin. **Votre ancienne clé SSH n'est pas détruite** : elle est conservée sous `~/.ssh/origin.key` et `~/.ssh/origin.pub`. Les secrets de la station sont écrits en `0600` dans `~/.zen/game`.
 
 Pour voir la correspondance, ou la vérifier plus tard :
 
@@ -214,20 +214,49 @@ Le **premier** choix (ORIGIN ou ẐEN) se fait au terminal avec `astroportd init
 
 ```bash
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs
-# → http://127.0.0.1:18080
+# → http://127.0.0.1:8090
 ```
 
-**Station publique** (HTTPS automatique, réseau P2P, 20h12 solaire) — ajoutez vos coordonnées, elles règlent l'entretien de nuit sur le soleil :
+**Station publique.** Deux cas, et `init` choisit seul le bon :
 
-```bash
-astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs \
-  --domain station.exemple.org --acme-email moi@exemple.org \
-  --p2p-listen /ip4/0.0.0.0/tcp/4101 \
-  --lat 45.76 --lon 4.84
-# en ẐEN, ajoutez : --swarm-key ./swarm.key
-```
+- **La machine n'a pas de reverse proxy** : la station obtient et renouvelle elle-même son certificat (Let's Encrypt). Elle tient les ports 80 et 443.
 
-**Derrière un reverse proxy** (Nginx Proxy Manager… tient déjà 80/443) : `init` le détecte, fait écouter la station sur `127.0.0.1:8090` et demande le domaine que sert le proxy, écrit en `--public-domain`. La station ne demande alors pas de certificat mais se présente sous `https://<domaine>` (balise 30850 et bouton « Rejoindre », liens, NIP-98, relai annoncé), lit l'adresse des visiteurs dans `X-Forwarded-For` quand la connexion vient du proxy (boucle locale ou réseau privé ; seule la dernière adresse, posée par le proxy, est crue) et sert la visio sur le port UDP 8090 de toutes les interfaces. Dans le proxy : un seul hôte vers `http://127.0.0.1:8090`, WebSockets activés. Proxy sur une autre machine : `--http-listen 0.0.0.0:8090`.
+  ```bash
+  astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs \
+    --domain station.exemple.org --acme-email moi@exemple.org \
+    --lat 45.76 --lon 4.84          # vos coordonnées règlent l'entretien de nuit (20h12 solaire)
+  # en ẐEN, ajoutez : --swarm-key ./swarm.key
+  ```
+
+- **Un reverse proxy sert déjà vos sites** (Nginx Proxy Manager, Caddy…), sur cette machine ou une autre du réseau local : il garde le certificat, la station écoute sur le **port 8090** et se présente sous `https://<domaine>`.
+
+  ```bash
+  astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs \
+    --public-domain station.exemple.org --lat 45.76 --lon 4.84
+  ```
+
+  `init` le reconnaît quand le proxy est sur cette machine (ports 80/443 déjà pris), ou quand le domaine arrive sur un autre serveur web. S'il ne peut pas trancher, il pose la question ; `astroportd init --proxy` le dit d'avance. Le cockpit a la même case : *Nom de domaine › Un reverse proxy sert ce domaine*.
+
+### 🌐 Réseau : ce qu'il faut ouvrir
+
+| Port | Sur la box, vers… | À quoi il sert | |
+|---|---|---|---|
+| **443 et 80** (TCP) | la station, ou la machine du proxy | les pages web, l'application, le relai Nostr, WebDAV, CardDAV, CalDAV | indispensable avec un domaine |
+| **8090** (TCP) | rien : seul le proxy y accède (même machine, Docker ou réseau local) | l'interface de la station derrière le proxy | derrière un proxy |
+| **4101** (TCP) | la station | le maillage entre stations de la constellation | indispensable pour une station relais ; conseillé sinon |
+| **443** ou **8090** (UDP) | la station (un proxy ne transmet pas l'UDP) | la visio : STUN et relais d'appel. 443 quand la station a son certificat, 8090 derrière un proxy | pour la visio entre deux box |
+
+**Dans Nginx Proxy Manager**, un seul *Proxy Host* :
+
+- *Domain* : `station.exemple.org` ; *Forward* : `http`, l'adresse de la machine de la station, port `8090`. NPM dans Docker sur la même machine : `172.17.0.1` (et non `127.0.0.1`, qui désigne le conteneur lui-même) ; NPM sur une autre machine : l'adresse de la station sur le réseau local ;
+- **Websockets Support** coché ; *Block Common Exploits* décoché ;
+- *SSL* : certificat Let's Encrypt, *Force SSL* ;
+- onglet *Advanced* : `proxy_read_timeout 1h; proxy_send_timeout 1h;` (sinon nginx coupe au bout d'une minute une connexion où rien ne passe) ;
+- aucune règle par chemin : tout le domaine va à la station, `/.well-known/carddav` et `/.well-known/caldav` compris.
+
+Sur une station Astroport.ONE, `~/.zen/Astroport.ONE/admin/system/setup_npm_dynamic.sh astroportd 8090` crée cet hôte (`astroportd.<votre domaine>`), et `firewall.sh ON` ouvre 4101 et 8090/UDP.
+
+> **Détails techniques.** Derrière un proxy, la station écoute sur `0.0.0.0:8090` (pour être joignable depuis Docker et le réseau local) ; ne redirigez jamais 8090/TCP depuis la box. Elle croit l'en-tête `X-Forwarded-For` seulement quand la connexion vient de la machine elle-même ou d'une adresse privée, et seulement sa dernière adresse, celle que le proxy a posée. Avec son propre certificat, la station a besoin du droit d'ouvrir les ports sous 1024 : `sudo setcap 'cap_net_bind_service=+ep' $(command -v astroportd)`. Pour essayer sans quota : `--acme-staging`. Le relai et la console envoient un ping toutes les 30 s : un proxy ne les coupe pas faute de trafic.
 
 **Qu'elle démarre toute seule** (systemd, sans droits administrateur) :
 
@@ -239,9 +268,11 @@ loginctl enable-linger "$USER"   # démarrer au boot sans session ouverte
 journalctl --user -u astroportd -f   # suivre les journaux
 ```
 
+`init --systemd` choisit seul le mode : si `planes.json` existe (station à plusieurs UPlanet), l'unité lance `astroportd planes`, sinon `astroportd serve`. `--systemd-mode serve|planes` impose l'un ou l'autre ; `planes` est refusé, sans rien écrire, si `planes.json` est absent ou invalide. Quand vous ajoutez un plan avec `astroportd plane-setup add`, une unité qui lance encore `serve` est **basculée sur `planes`** (seules `ExecStart` et `Description` changent, l'ancienne unité est gardée à côté en `astroportd.service.bak-<date>` et les options propres à la station, comme `--lat`, passent dans `args` du plan ORIGIN). Le service n'est pas redémarré pour vous : `systemctl --user daemon-reload && systemctl --user restart astroportd`.
+
 ### 🌐 Navigateur (Web)
 
-Rien à cliquer pour démarrer : c'est le terminal qui lance le programme. Quand il tourne, ouvrez [http://127.0.0.1:18080](http://127.0.0.1:18080) (essai local) ou `https://votre-domaine/`.
+Rien à cliquer pour démarrer : c'est le terminal qui lance le programme. Quand il tourne, ouvrez [http://127.0.0.1:8090](http://127.0.0.1:8090) (essai local) ou `https://votre-domaine/`.
 
 Sur une **même adresse**, un navigateur reçoit l'application, et un client Nostr reçoit le relai de la station.
 
@@ -308,22 +339,22 @@ Trois vérifications, de la plus complète à la plus rapide. Aucune ne modifie 
 ```bash
 astroportd doctor --db ~/.zen/astroportd/uplanet.db --game-dir ~/.zen/game
 astroportd ylevel --verify
-curl http://127.0.0.1:18080/health
+curl http://127.0.0.1:8090/health
 ```
 
-`doctor` contrôle l'identité, les permissions `0600` des secrets, la base, les certificats HTTPS et l'horloge (il affiche le prochain 20h12 solaire). Code de sortie `1` si une vérification échoue.
+`doctor` contrôle l'identité, les permissions `0600` des secrets, la base, les certificats HTTPS et l'horloge (il affiche le prochain 20h12 solaire), puis les réglages de la machine qu'il lit sans jamais les changer : limite de fichiers ouverts et `LimitNOFILE` de l'unité, `loginctl enable-linger`, `PasswordAuthentication no` dans `sshd_config`, plafond `SystemMaxUse` du journal. Ce sont des avertissements, avec la ligne à écrire. Code de sortie `1` si une vérification échoue.
 
 Pour voir le relai Nostr de la station :
 
 ```bash
-curl -H 'Accept: application/nostr+json' http://127.0.0.1:18080/
+curl -H 'Accept: application/nostr+json' http://127.0.0.1:8090/
 ```
 
 ### 🌐 Navigateur (Web)
 
-Ouvrez `http://127.0.0.1:18080/health` : une page courte indique l'état de chaque partie de la station (OK ou en panne).
+Ouvrez `http://127.0.0.1:8090/health` : une page courte indique l'état de chaque partie de la station (OK ou en panne).
 
-Si l'application se charge sur `http://127.0.0.1:18080/`, c'est que le serveur web fonctionne.
+Si l'application se charge sur `http://127.0.0.1:8090/`, c'est que le serveur web fonctionne.
 
 <a id="etape-7"></a>
 
@@ -351,7 +382,6 @@ Le même jeton sert de mot de passe pour monter votre cloud en WebDAV (Finder, E
 2. Une fenêtre **Connexion** s'affiche : saisissez votre email (ou votre clé) et le jeton.
 3. L'**Accueil** vous propose d'envoyer vos premières photos, de **synchroniser votre smartphone** (photos, contacts, agenda : on quitte Google et Apple), de reconnaître un visage, de retrouver un proche, de mettre vos fichiers à l'abri chez un ami. Les étapes se cochent toutes seules ; la liste disparaît quand tout est fait. Une alerte n'apparaît que si votre espace dépasse 90 %.
 4. En bas de l'accueil, **Mes chiffres** montre votre solde en Ẑen, votre autonomie, votre empreinte sur les communs, vos fichiers chiffrés, et deux cartes distinctes : **Ẑen Opex** (ce que vous dépensez : loyer) et **Ẑen Capex** (ce que vous possédez : parts de matériel, avec leur amortissement).
-5. La carte **Copie privée** vous demande d'attester, une fois, que vos films et séries sont des copies pour votre usage privé.
 
 ![L'Accueil d'un membre : trois gestes (photos, proches, assistant ou smartphone) et la liste « Bien démarrer ».](img/ui-accueil.png)
 
@@ -446,6 +476,22 @@ curl -u vous@exemple.org:JETON -T photo.jpg https://votre-domaine/dav/Photos/pho
 5. Les liens expirés sont supprimés chaque nuit, avec leurs copies chiffrées.
 
 > **À savoir.** Les films et séries déposés (copie privée) ne sont publiés que pour votre cercle N¹, jamais pour tout le cercle N².
+
+### 🎬 Films, séries, vidéos et musiques (plugin `media`)
+
+astroportd reste un serveur WebDAV qui partage en P2P, N¹ ou N² : **il ne traite pas les médias**. Le plugin système [`media`](https://github.com/papiche/astroportd-plugins/tree/main/media) (dépôt `astroportd-plugins`) remplace `ajouter_media.sh` et fait tout :
+
+- il sonde (`ffprobe`), réencode en H.264/AAC avec la piste française en premier (`ffmpeg`), télécharge (`yt-dlp`), interroge le catalogue TMDB ;
+- il **écrit lui-même dans votre uCloud**, par WebDAV et avec votre jeton : `/Vidéos/Films`, `/Vidéos/Séries/<série>/Saison NN`, `/Vidéos/Autres`, `/Musique/<artiste>/<album>`, avec à côté la fiche `<nom>.media.json` (contrat `media/v1`, base de la vidéothèque), les images et les sous-titres WebVTT ;
+- avec `--level circle`, il **signe avec votre clé** (lue sur la machine, jamais copiée) et publie l'événement vidéo (NIP-71, kind 21 ou 22, réservé à votre cercle N¹) sur le relai, comme n'importe quel client Nostr. `private` : vous seul, aucun événement. L'attestation de copie privée (CPI L. 122-5) est posée automatiquement au premier dépôt, en local : rien n'est publié.
+
+```bash
+media-add film.mkv --title "Le Voyage de Chihiro" --year 2001 --level circle      # catalogue TMDB si TMDB_API_KEY
+media-add https://www.youtube.com/watch?v=… --level private                       # vidéo web (yt-dlp)
+media-add S01E03.mkv --type episode --series "Ma Série" --season 1 --episode 3
+```
+
+L'événement désigne `/ipfs/<cid>`, le CID que la station a donné au blob chiffré (lu par `PROPFIND`, propriété `getetag`). Le partage de la clé aux amis suit le partage N¹ de la station, comme pour tout fichier. Les événements signés par le plugin sont vérifiés par astroportd comme n'importe quels autres (test d'interopérabilité `tests/plugin_media_interop.rs`).
 
 <a id="etape-8quater"></a>
 
@@ -588,7 +634,7 @@ Dans **Messages**, le bouton 📹 en haut d'une conversation appelle votre proch
 - **Sans tiers** : le son et l'image vont directement d'un navigateur à l'autre. La station ne transporte que la sonnerie et la mise en relation, chiffrées comme un message privé, dans une enveloppe que les relais oublient au bout de dix minutes. Seul un proche qui vous suit peut vous faire sonner.
 - **Adresse sécurisée obligatoire** : un navigateur n'ouvre la caméra et le micro que sur une adresse `https` (ou `localhost`). Une station sans nom de domaine ne permet donc la visio que depuis la machine elle-même : `astroportd init --domain votre.domaine`.
 - **Relais d'appel** : quand deux navigateurs ne peuvent pas se joindre en direct (réseaux mobiles, réseaux d'entreprise), le son et l'image passent par la station de l'appelant. Ce relais est **réservé aux membres de la station et à leurs amis N¹** (amis réciproques) : un membre reçoit ses accès de sa station, un ami ne les reçoit que dans l'appel chiffré qui lui est destiné, pour lui seul. Le relais ne fait passer le trafic qu'entre deux appels de la station : il ne peut servir à joindre ni Internet ni le réseau de la station.
-- **Pour le Capitaine** : STUN et relais écoutent en **UDP sur le même port** que l'interface (443 avec un domaine) : ouvrez ce port **en UDP** sur la box, en plus du TCP. Sur une machine à plusieurs adresses (box, VPN, conteneurs), la station ouvre une prise par adresse, pour répondre depuis l'adresse que le navigateur a jointe. `--stun-listen ip:port` change ce port, `--no-turn` garde STUN sans relais, `--no-stun` coupe les deux, `--ice-server stun:…|turn:…` (répétable) ajoute des serveurs. Derrière un reverse proxy qui ne transmet pas l'UDP, donnez un `--stun-listen` joignable directement.
+- **Pour le Capitaine** : STUN et relais écoutent en **UDP sur le même port** que l'interface (443 quand la station a son certificat, 8090 derrière un reverse proxy) : ouvrez ce port **en UDP** sur la box, en plus du TCP. Sur une machine à plusieurs adresses (box, VPN, conteneurs), la station ouvre une prise par adresse, pour répondre depuis l'adresse que le navigateur a jointe. `--stun-listen ip:port` change ce port, `--no-turn` garde STUN sans relais, `--no-stun` coupe les deux, `--ice-server stun:…|turn:…` (répétable) ajoute des serveurs. Un reverse proxy ne transmet pas l'UDP : la box doit renvoyer ce port UDP directement vers la machine de la station.
 - **Appel de groupe** (4 personnes au plus) : pendant un appel que vous avez lancé, *＋ Ajouter* invite un autre proche. Chacun voit les autres en tuiles ; qui raccroche quitte l'appel, les autres continuent. Les invités n'ont pas besoin d'être amis entre eux : la station de chacun n'admet les autres participants que dans la salle ouverte par un ami, et tout le monde peut passer par le relais de la station de l'hôte.
 - **Limites** : 4 personnes au plus (chaque navigateur envoie son image à tous les autres) ; si les réseaux bloquent aussi l'UDP vers la station, l'appel échoue et l'écran le dit.
 
@@ -743,20 +789,20 @@ Deux façons de s'en servir, de la plus simple à la plus aventureuse.
 pkg install curl openssh            # ssh-keygen sert au rituel Y-Level
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash   # bash, pas sh : l'installeur en a besoin
 astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blobs \
-  --game-dir ~/.zen/game --http-listen 127.0.0.1:18080
+  --game-dir ~/.zen/game --http-listen 127.0.0.1:8090
 ```
 
-Puis ouvrez `http://127.0.0.1:18080` dans le navigateur du téléphone (« localhost » est un contexte sécurisé : l'application s'installe) et, dans votre gestionnaire de fichiers, ajoutez un serveur WebDAV `http://127.0.0.1:18080/dav`. Le téléphone devient alors une station : ses photos sont chiffrées sur place, et vos proches les voient par le maillage.
+Puis ouvrez `http://127.0.0.1:8090` dans le navigateur du téléphone (« localhost » est un contexte sécurisé : l'application s'installe) et, dans votre gestionnaire de fichiers, ajoutez un serveur WebDAV `http://127.0.0.1:8090/dav`. Le téléphone devient alors une station : ses photos sont chiffrées sur place, et vos proches les voient par le maillage.
 
 Limites à connaître (non vérifiées sur un appareil réel) :
 - **DNS** : un binaire statique musl lit `/etc/resolv.conf`, que Android n'a pas. Si la station n'arrive pas à joindre un nom d'hôte (nœuds Duniter, pairs), lancez-la dans `termux-chroot` (paquet `proot`), qui fournit ce fichier.
 - **Veille** : Android coupe les applications en arrière-plan. Lancez `termux-wake-lock` et retirez Termux de l'optimisation de batterie, sans quoi la station s'endort.
 - **Reconnaissance de visages et embeddings locaux** : ils demandent `libonnxruntime` (glibc), indisponible pour un binaire statique. Pointez `--face-engine` vers le service d'une autre station, et `--ollama` vers une machine qui héberge Ollama pour les vecteurs de la mémoire.
-- **Réseau** : un téléphone est derrière un NAT d'opérateur ; pour être joignable par ses pairs, utilisez `--p2p-use-relay` avec une station qui sert de relais. iOS n'est pas supporté.
+- **Réseau** : un téléphone est derrière un NAT d'opérateur ; il est joignable par ses pairs grâce aux stations relais de la constellation (`P2P_RELAYS`, voir [Relier sa station aux autres Capitaines](#etape-9)). iOS n'est pas supporté.
 
 <a id="partie-3"></a>
 
-## Partie 3 — L'argent de la station
+## Partie 3 — Les Ẑen de la station
 
 Votre station peut être gratuite, ou demander à chaque membre un prix à la semaine : c'est vous qui décidez. Ce qui est encaissé se partage chaque semaine, dans cet ordre, et seulement si le montant le permet :
 
@@ -891,7 +937,7 @@ L'écran du Capitaine **Maillage et Capitaines amis** (`#/mesh`, lien « Capitai
 
 > **Détails techniques.** **Bail géographique.** Par le maillage, chaque station dit aux autres stations de son UPlanet sa position (`--lat`/`--lon`) et ses cases de quartier : UMAP (0,01°), SECTOR (0,1°) et REGION (1°), les siennes et celles de ses membres qui ont indiqué leur quartier. Toutes calculent le même propriétaire de chaque case : **la station la plus proche de son centre**, le PeerID départageant deux distances égales. Seule celle-là publiera avec les clés du quartier, si bien que deux stations voisines n'écrivent jamais deux versions concurrentes. Une station muette depuis 36 h sort du calcul et la suivante reprend. L'API `mesh` du Capitaine en donne l'état (champ `geo` : cases tenues, cases cédées et à qui). Les noms de cases sont ceux d'Astroport.ONE (`_43.61_1.44`, `_43.6_1.4`, `_43_1`).
 
-Quand le maillage P2P est actif, la station **offre aussi son relai Nostr** aux autres stations (service `strfry`, tunnel `/x/strfry-<PeerID>`) : c'est par là que la synchronisation N¹/N² et l'écran « Réplication » joignent les relais des autres stations, sans port public.
+Quand le maillage P2P est actif, la station **offre aussi son relai Nostr** aux autres stations (service `strfry`, tunnel `/x/strfry-<PeerID>`) : c'est par là que la synchronisation N¹/N² et l'écran « Réplication » joignent les relais des autres stations, sans port public **une fois les deux stations reliées** (voir « Stations derrière une box » ci-dessous).
 
 Sur la station qui **offre** son accès SSH :
 
@@ -908,11 +954,58 @@ ssh -p 2222 utilisateur@127.0.0.1
 
 > ⚠️ **Attention.** Le tunnel transporte les octets : c'est toujours `sshd` qui décide. Ajoutez volontairement la clé publique de l'autre Capitaine dans `~/.ssh/authorized_keys`, et en réseau **ORIGIN (ouvert)** n'exposez SSH que si `PasswordAuthentication no`.
 
-Pour choisir le meilleur nœud du réseau pour un service (GPU, Ollama…) :
+### 📶 Stations derrière une box : comment elles se trouvent
+
+Partager la même `swarm.key` donne le **droit** d'entrer dans le maillage. Pour qu'un partage passe entre deux stations, il faut aussi un **chemin** : le message part vers la station de l'ami, puis sa station vient chercher le fichier chiffré chez vous. Ce chemin se fait tout seul dans la plupart des cas.
+
+| Où sont les deux stations | Ce qu'il faut faire |
+|---|---|
+| Sur la même station | Rien. |
+| Sur le **même réseau local** (même box, même association) | Rien : elles se trouvent par **mDNS** et se relient seules, sans adresse ni nom de domaine. Une station d'une autre constellation est refusée. |
+| Une des deux est **joignable** depuis internet | Rien de plus que la station relais ci-dessous ; à défaut, gardez son adresse dans *Stations*. |
+| Les deux derrière une box, sur des réseaux différents | Une **station relais** dans la constellation. |
+
+**La station relais.** C'est une station joignable depuis internet : **port TCP 4101 ouvert** sur sa box, à une IP publique ou à un **nom de domaine** (une IP qui change va très bien avec un nom DynDNS). Une adresse web en HTTPS ne suffit pas : c'est le port 4101 qui compte. Il en faut **au moins une par constellation** ; deux ou trois, c'est mieux, pour qu'une panne ne coupe personne.
+
+Un Capitaine l'inscrit **une fois pour toute la constellation**, dans *Configuration coopérative › Essentiel › Stations relais du maillage* (clé `P2P_RELAYS`), une adresse par ligne :
+
+```text
+/dns4/relais.exemple.org/tcp/4101/p2p/12D3Koo…
+/ip4/203.0.113.7/tcp/4101/p2p/12D3Koo…
+```
+
+L'adresse d'une station se lit dans son écran `#/mesh` (*Ma station*). Ensuite, sans autre réglage :
+
+1. la station inscrite **devient relais** à son prochain démarrage ;
+2. chaque autre station y **réserve sa place** dans la minute, et la refait si elle se perd (relais redémarré, coupure) ;
+3. chaque station annonce dans sa **balise** (kind 30850, tag `p2p:addrs`) l'adresse qui passe par le relais, jamais l'IP de sa box ni ses adresses de réseau local ;
+4. toutes les 5 minutes, chaque station lit l'annuaire des balises de son UPlanet et **joint les stations qu'elle ne connaît pas encore** ;
+5. une fois reliées, deux stations essaient de se parler **en direct à travers leurs box** ; sinon tout passe par le relais. Le relais ne peut rien lire (tout est chiffré), mais il transporte alors les photos : choisissez une station avec un bon débit montant.
+
+**Le dossier de l'essaim.** Chaque station décrit la sienne aux stations reliées (une **carte** au format `12345.json`), et astroportd range ces cartes dans `~/.zen/tmp/swarm/<PeerID>/`. La synchronisation N¹/N², l'envoi des partages, la réplication et le routage y trouvent les stations de l'essaim, même sans Astroport.ONE. Un `12345.json` écrit par Astroport.ONE n'est jamais remplacé. Avec `astroportd planes`, chaque UPlanet autre qu'ORIGIN a son propre dossier, pour que deux constellations ne se mêlent pas.
+
+> ⚠️ **Attention.** **Le premier contact.** Une station neuve apprend les stations relais par la configuration coopérative, qu'elle reçoit… d'une station à laquelle elle est déjà reliée. Il lui faut donc **un** premier lien, l'un des trois :
+> - une station de la constellation sur le **même réseau local** (mDNS, rien à faire) ;
+> - le relai Nostr de la coopérative au démarrage : `--relay wss://relay.<zone de la coopérative>` ;
+> - **une** adresse de station collée une fois dans `#/mesh` › *Joindre une station*, case « Garder » cochée.
+>
+> Ensuite tout suit seul.
+
+> **Détails techniques.** Options de `astroportd serve` : `--p2p-relay-server` (servir de relais sans être inscrit dans `P2P_RELAYS`), `--p2p-use-relay <adresse>` (un relais de plus, répétable), `--p2p-external <adresse>` (adresse publique annoncée dans la balise), `--no-mdns` (ne pas chercher sur le réseau local). La liste `P2P_RELAYS` est lue au démarrage pour décider si la station est relais, et chaque minute pour les réservations. Les adresses acceptées : `/ip4/`, `/ip6/`, `/dns4/` ou `/dns6/` suivies de `/tcp/<port>/p2p/<PeerID>` ; huit stations relais au plus. En ORIGIN, la configuration coopérative est signée par une clé que tout le monde peut calculer : n'importe qui peut y inscrire un relais ; il ne verrait que des flux chiffrés.
+
+Pour vérifier : l'écran `#/mesh` montre, sous *Ma station*, chaque station relais avec son état (**place réservée**, reliée sans place, injoignable), puis les stations **connectées**. Une station qui n'y est pas reliée ne reçoit aucun partage.
+
+Pour utiliser le service d'une autre station (GPU, Ollama, ComfyUI, SSH…), la ligne de commande parle au démon qui tourne (même utilisateur, socket `control.sock` à côté de la base : aucun jeton, aucun port de plus) :
 
 ```bash
-astroportd route ollama --mode closest --lat 45.7 --lon 4.8
+astroportd tunnel list                          # les stations, ce qu'elles vous ouvrent, vos accès locaux
+astroportd tunnel connect ollama --port 11434   # la meilleure station qui vous ouvre ollama, sur 127.0.0.1:11434
+astroportd tunnel connect ssh --peer 12D3Koo…   # une station précise ; --hours 1 à 168 (8 par défaut)
+astroportd tunnel close ollama
+astroportd route ollama --mode closest          # affiche seulement le PeerID retenu (power, closest ou random)
 ```
+
+Le choix part de l'annuaire des balises (Power-Score, position) et ne retient que les stations qui **vous** ouvrent le service : un service fermé, même sur la machine la plus puissante, n'est jamais proposé. La politique de **cette** station se règle de la même façon : `astroportd tunnel policy`, `tunnel mode ssh listed`, `tunnel allow ollama 12D3Koo… --hours 24`, `tunnel revoke …`, `tunnel share vnc 127.0.0.1:5900`, `tunnel unshare vnc`. Ces commandes passent par la même politique que l'écran Options › Tunnels.
 
 ### 🌐 Navigateur (Web)
 
@@ -982,6 +1075,37 @@ Ce qui change pour ces fichiers : ils se lisent et se téléchargent comme les a
 **Avant un import réel, mettez le démon à jour** : cette version migre le schéma de `uplanet.db` à l'ouverture, un démon d'une version antérieure qui tourne encore ne s'y retrouverait pas. Arrêtez-le, sauvegardez la base, lancez l'import, redémarrez.
 
 <a id="etape-8bis-h"></a>
+
+## Les anciens clients (zelkova, coracle) sur astroportd
+
+Ces clients attendaient les conventions d'Astroport.ONE (`u.<domaine>`, `relay.<domaine>`, `ipfs.<domaine>`, ports 54321 / 7777 / 12345). astroportd tient tout sur **un seul hôte** et répond, sans compte, à ce qui sert à les reconnaître (cartes publiques, rien de privé : ni e-mail, ni jeton, ni solde) :
+
+| Adresse | Contenu |
+|---|---|
+| `/12345` | carte de la station : `_source: "astroportd"`, `ipfsnodeid`, `NODEHEX`, `captainHEX`, `UPLANETG1PUB`, `UPLANETNAME_G1`, `myRELAY`, `uSPOT`, position arrondie. `UPLANETG1PUB` et `UPLANETNAME_G1` sont deux portefeuilles distincts. |
+| `/UPLANET/HEX`, `/UPLANET/G1HEX` | clés Nostr publiques de l'UPlanet (profil de la station ; configuration coopérative) |
+| `/.well-known/nostr/nip96.json` | sonde « une station UPlanet répond » et annonce de l'envoi d'images (`api_url`) |
+| `POST /api/upload/image` | envoi d'une image par un membre (NIP-96) : voir ci-dessous |
+| `POST /api/v1/attachments?days=N` | pièce jointe d'un message privé (octets déjà chiffrés, UENC v1) : voir ci-dessous |
+| `/check_balance?g1pub=` | solde d'une **adresse Ğ1** (jamais d'e-mail) : `balance`, `g1_cents`, `zen`, `zen_cents`. Public, résultat gardé 20 s, 4 lectures Duniter simultanées au plus. |
+| `POST /api/v1/feedback` | retour d'un utilisateur (authentifié) : voir ci-dessous |
+| `GET /api/v1/account/oc` | le compte appelant est-il inscrit sur OpenCollective ? (authentifié) |
+| `/ipfs/<cid>` | **désactivée par défaut** (`serve --ipfs-gateway`). Lecture seule, un blob à la fois, jamais de dossier. |
+
+**Envoi d'images (`POST /api/upload/image`).** Un client Nostr (coracle…) envoie une image en `multipart/form-data` (champ `file`) avec une authentification NIP-98 (ou Basic) : **jamais anonyme**. La station la **relit et la réencode** (JPEG sans aucune métadonnée, donc sans la position GPS d'une photo, ou PNG si elle est transparente ; 2 048 px de côté au plus), la range sous `/Public/uploads/<empreinte>.jpg` du membre (elle compte dans son quota, la renvoyer ne crée pas de doublon) et rend `url`, l'adresse publique `…/site/<nom>/uploads/…`. Formats : JPEG, PNG, WebP, 8 Mo au plus ; GIF, SVG, HTML et tout le reste sont refusés. Les routes `POST /api/upload/image`, `/api/v1/account/unlock` et `/api/v1/account/keys` répondent aux requêtes de pré-vérification CORS (`Access-Control-Allow-Origin: *`, sans cookie : l'authentification est dans l'en-tête `Authorization`), pour qu'un client servi depuis un autre domaine puisse les appeler.
+
+**Pièces jointes de messages (`POST /api/v1/attachments?days=N`).** L'expéditeur chiffre le fichier **chez lui** (AES-256-GCM, format UENC v1 : `UENC` + `01` + `01` + IV de 12 octets + chiffré + étiquette) et l'envoie en `application/octet-stream`, authentifié (Basic ou NIP-98), jamais anonyme. La station ne connaît pas la clé, qui voyage dans le message privé chiffré de bout en bout (`{"_uenc_img": {cid, enc_key, …}}`). Elle **refuse tout ce qui n'a pas l'en-tête UENC** (elle n'héberge pas de fichiers lisibles), plus de 20 Mo, `days` hors 1–90 (30 par défaut), et au-delà de 200 pièces jointes ou 1 Go actifs par compte. Réponse : `{cid, size, expires_at, gateway, url}` ; `cid` est le CIDv1 raw sha2-256 des octets reçus, servi par `GET /ipfs/<cid>` (CORS `*`, CSP `sandbox`) tant que l'échéance n'est pas passée. Il faut `--ipfs-gateway`. L'enregistrement est celui des liens d'invité (même purge à l'échéance, même porte) ; des octets déjà connus de la station ne créent pas de second enregistrement, pour que l'échéance courte d'un tiers ne supprime pas le blob de l'expéditeur d'origine. L'adresse désigne un **contenu** : tout lecteur peut recalculer le CID et vérifier ce qu'une passerelle lui a rendu. **Copie chez les amis hébergeurs.** Dès le dépôt, la station envoie la pièce jointe (message NIP-59 `op: attachment`, avec `cid`, `size`, `expires`, `station`) aux amis qui hébergent la sauvegarde de l'expéditeur, ceux qui gardent sa part P3 (trois au plus, accord accepté). L'ami rapatrie le blob par le maillage (CID vérifié, plafonné à 20 Mo et 60 s : un pair qui annonce plus gros est refusé avant le moindre octet reçu) et le sert à son tour à `/ipfs/<cid>` jusqu'à l'échéance, puis la purge le supprime : pas de semaine de grâce, pas d'entrée dans son uCloud. Il refuse, avant tout rapatriement, ce qui dépasse le volume qu'il a accordé (la copie y compte), plus de 20 Mo, une échéance passée ou au-delà de 90 jours ; il refuse aussi après, d'après le blob réellement reçu, ce qui n'a pas l'en-tête UENC v1 (jamais de clair) et le retire s'il l'a lui-même apporté. Un ami sans volume ou hors ligne ne retarde rien. Le message porte seulement l'adresse de la station de l'expéditeur dans `gw` : les amis hébergeurs ne sont pas annoncés au destinataire (c'est une information sociale).
+
+**Retours des utilisateurs (`POST /api/v1/feedback`).** Toute application cliente (coracle, zelkova, une autre) envoie `{title, description, source, category?, app_version?, platform?}`, authentifiée. La station crée une **issue Git** dans `<GIT_OWNER>/<source>` (`source` = nom du dépôt de l'application) avec les réglages de la coopérative (écran Station › Clés d'API) : `GIT_HOST` (GitHub par défaut, ou l'adresse `https://…` d'un GitLab), `GIT_OWNER`, `GIT_TOKEN` (secret). Sans forge réglée, ou si elle ne répond pas, le retour est **gardé sur la station** (journal) et le Capitaine est prévenu : l'utilisateur n'a jamais d'erreur à lire. Garde-fous : compte authentifié obligatoire, 5 retours par heure et par compte, textes bornés et nettoyés, nom de dépôt réduit à un identifiant simple, et la clé publique n'est jointe à l'issue que si l'utilisateur le demande (`share_identity`).
+
+**Inscription OpenCollective (`GET /api/v1/account/oc`).** Avec `OCSLUG` et `OCAPIKEY` réglés (secret) et, pour le lien de rappel, `OC_URL_MEMBRE`, la station lit les membres du collectif (jusqu'à 1 000) et répond **seulement pour l'adresse du compte qui demande** : `{configured, is_member, url}`. `is_member` vaut `null` si la vérification n'est pas réglée ou en panne : un client ne doit jamais rappeler de s'inscrire dans ce cas. Résultat gardé 10 minutes.
+
+**Codes d'erreur de la connexion par PASS.** Le verrouillage après des PASS faux est décidé **par la station seule** ; les clients n'ont aucun compteur. Les réponses portent un code stable : `pass_denied` (PASS faux ; le message dit les essais restants), `pass_locked` (compte verrouillé quelques minutes), `rate_limited` (limite de débit du réseau ou des exports). `POST /api/v1/account/keys` renvoie aussi `g1pub` (adresse Ğ1 du compte) pour que le client vérifie le portefeuille qu'il reconstruit.
+
+La passerelle `/ipfs/<cid>` ne sert que des **octets chiffrés** : un blob d'un **lien de partage actif** (révoquer ou laisser échoir le lien ferme aussi cette porte), ou, sur ORIGIN avec `--kubo`, un ancien blob `Qm…` **épinglé dans le Kubo local** (jamais cherché sur le réseau IPFS). Les blobs d'un compte qui ne sont pas partagés ne sont jamais servis. Sans leur clé (le `#clé` du lien), elle ne donne que du bruit.
+
+**CID.** Pour un contenu qui tient dans un seul bloc (jusqu'à 262 144 octets), le CID d'astroportd (CID v1, `raw`, sha2-256) est **identique** à celui de `ipfs add --cid-version=1 --raw-leaves` : un fichier ajouté plus tard dans Kubo garde la même adresse. Au-delà, Kubo nomme le fichier par la racine d'un arbre de blocs (`bafybei…`), qui n'est plus le CID `raw` : les deux ne sont pas interchangeables, et astroportd accepte les deux préfixes en lecture.
+
 
 ## Plusieurs astroportd sur une machine : un seul bassin de fichiers
 

@@ -1,3 +1,23 @@
+## astroportd 0.5.8-beta
+
+Cette version **recentre astroportd sur son rôle de serveur** : il garde, chiffre et partage les fichiers (WebDAV, P2P, N¹, N²) et **ne traite plus aucun média**. Tout le travail sur les films, séries et musiques passe dans le plugin `media`. Les **pièces jointes** des messages ont leur propre chemin, vérifiable et répliqué chez les amis.
+
+### Pièces jointes des messages
+- **Dépôt** : `POST /api/v1/attachments` (NIP-98) reçoit un fichier **déjà chiffré** par le client (UENC v1). Plafond de **20 Mo** et de 90 jours.
+- **Lien servi par n'importe quelle passerelle** : l'adresse est le CID du contenu ; le destinataire le vérifie après téléchargement. Une pièce jointe ne peut pas être supprimée par un rejeu ni par la date d'expiration d'un tiers.
+- **Copie chez les amis** : la station envoie la pièce jointe, en protocole de blobs P2P (`/astro/blob/1.0.0`), aux stations qui hébergent la part P3 du membre (3 au plus). Le plafond de réception est de 20 Mo, vérifié avant le premier octet reçu.
+- **coracle** : envoi et affichage des images chiffrées par ce chemin ; les messages vocaux sont retirés.
+
+### Médias : tout est dans le plugin
+- **Retirés de la station** : la commande `astroportd media`, le pipeline `ffprobe`/`ffmpeg` et son branchement dans `serve`, la carte « Copie privée » de l'accueil et les routes `/api/v1/consent/private-copy`.
+- **Plus de lecture de l'attestation** : la station ne lit plus le kind 31903 `d = private_copy` ; la table `private_copy_consent` disparaît du schéma (projection rejouable : rien à migrer).
+- **Plugin `media`** (dépôt `astroportd-plugins`) : sonde, réencode, télécharge (`yt-dlp`), interroge TMDB, extrait les sous-titres, écrit par WebDAV dans `/Vidéos/Films`, `/Vidéos/Séries/<série>/Saison NN`, `/Vidéos/Autres`, `/Musique/<artiste>/<album>`, et signe puis publie lui-même l'événement vidéo (kind 21 ou 22) avec la clé du membre.
+- **Doublon** : refusé avant tout réencodage. **Copie privée** : l'attestation est posée automatiquement, en local, au premier dépôt ; rien n'est publié.
+
+### À savoir en mettant à jour
+- `astroportd media` n'existe plus : installer le plugin `media`.
+- Les tests d'interopérabilité (`tests/plugin_media_interop.rs`) vérifient que les événements signés par le plugin sont acceptés par la station.
+
 ## astroportd 0.5.7-beta
 
 Cette version aide les futurs membres à **trouver une station** : chaque station publie une balise, et un annuaire les envoie vers la plus proche qui a encore de la place. La station fonctionne aussi **derrière un reverse proxy** et affiche son **énergie**. La **documentation publique** est refondue : une page d'accueil pour le grand public et les futurs Capitaines, et un guide du Capitaine en quatre parties.

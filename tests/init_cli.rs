@@ -95,3 +95,50 @@ fn ylevel_verify_fails_when_the_ssh_key_does_not_match_the_node() {
     assert!(soft.status.success(), "sans --verify, on informe sans échouer");
     let _ = std::fs::remove_dir_all(home);
 }
+
+fn unit(home: &Path) -> String {
+    std::fs::read_to_string(home.join(".config/systemd/user/astroportd.service")).unwrap()
+}
+
+#[test]
+fn systemd_unit_follows_serve_or_planes_and_plane_setup_add_switches_it() {
+    let home = fresh("systemd");
+    std::fs::write(home.join(".ssh/id_ed25519"), LEGACY_KEY).unwrap();
+    let common = ["init", "--mode", "origin", "--lat", "43.6", "--lon", "1.44", "--email", "cap@example.org", "--yes", "--systemd"];
+
+    // Sans planes.json : `serve`, avec les options de la station.
+    assert!(bin(&home, &common).status.success());
+    let u = unit(&home);
+    assert!(u.contains(" serve --db ") && u.contains("--lat 43.6") && !u.contains(" planes"), "{u}");
+
+    // plane-setup add : l'unité existante passe à `planes`, l'ancienne est sauvegardée, les options de la station sont reportées.
+    let add = bin(&home, &["plane-setup", "add", "--name", "zen1", "--found"]);
+    assert!(add.status.success(), "{}", text(&add));
+    let t = text(&add);
+    assert!(t.contains("Unité systemd mise à jour") && t.contains("reportées sur le plan origin"), "{t}");
+    let u = unit(&home);
+    assert!(u.contains(" planes\n") && u.contains("Description=astroportd (plans : origin, zen1)") && !u.contains(" serve "), "{u}");
+    let backups = std::fs::read_dir(home.join(".config/systemd/user")).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().contains(".bak-")).count();
+    assert_eq!(backups, 1);
+    let planes = std::fs::read_to_string(home.join(".zen/astroportd/planes.json")).unwrap();
+    assert!(planes.contains("--lat") && planes.contains("43.6"), "{planes}");
+
+    // Un second plan : l'unité lance déjà `planes`, rien de plus à basculer.
+    let again = bin(&home, &["plane-setup", "add", "--name", "zen2", "--found"]);
+    assert!(again.status.success() && text(&again).contains("lance déjà `planes`"), "{}", text(&again));
+    assert!(unit(&home).contains("Description=astroportd (plans : origin, zen1, zen2)"));
+
+    // init --systemd rejoué avec planes.json : `planes` détecté ; forcer `serve` reste possible.
+    assert!(bin(&home, &common).status.success());
+    assert!(unit(&home).contains(" planes\n"), "{}", unit(&home));
+    assert!(bin(&home, &[&common[..], &["--systemd-mode", "serve"]].concat()).status.success());
+    assert!(unit(&home).contains(" serve --db "), "{}", unit(&home));
+
+    // planes.json invalide : refus net, l'unité n'est pas réécrite.
+    std::fs::write(home.join(".zen/astroportd/planes.json"), "{ pas du json").unwrap();
+    let before = unit(&home);
+    let bad = bin(&home, &[&common[..], &["--systemd-mode", "planes"]].concat());
+    assert!(!bad.status.success(), "{}", text(&bad));
+    assert_eq!(unit(&home), before);
+    let _ = std::fs::remove_dir_all(home);
+}

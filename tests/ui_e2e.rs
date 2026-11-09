@@ -149,7 +149,8 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
     };
     let account_svc = Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), relay_publish, None).with_activity(bus.clone()));
     let address_book = Arc::new(astroportd::address_book::AddressBook::new(db.clone(), dav.clone(), links.clone(), Some(account_svc.clone())));
-    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_planes_home(dir.join("home")).with_agents(agents).with_ai(member_ai).with_registrar(registrar).with_invites(invites.clone()).with_welcome(Arc::new(astroportd::welcome::Welcome::new(db.clone(), invites, Some(bus.clone())))).with_account(account_svc).with_book(address_book).with_chat(chat.clone()).with_people(people).with_contacts(links).with_coop(
+    let site = Arc::new(astroportd::public_site::Site::new(dav.clone(), "ConstellationDeTest".into()));
+    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_stations(Arc::new(astroportd::beacon::Stations::new(db.clone(), "ConstellationDeTest".into(), Some("12D3KooWTest".into())))).with_feedback(Arc::new(astroportd::feedback::Feedback::new(db.clone(), "ConstellationDeTest".into(), bus.clone()))).with_oc(Arc::new(astroportd::oc_member::OcMember::new(db.clone(), "ConstellationDeTest".into()))).with_site(site.clone()).with_planes_home(dir.join("home")).with_agents(agents).with_ai(member_ai).with_registrar(registrar).with_invites(invites.clone()).with_welcome(Arc::new(astroportd::welcome::Welcome::new(db.clone(), invites, Some(bus.clone())))).with_account(account_svc).with_book(address_book).with_chat(chat.clone()).with_people(people).with_contacts(links).with_coop(
         Arc::new(|| Box::pin(async { Ok(json!({ "exists": false, "sections": [] })) })),
         Arc::new(|values| Box::pin(async move { Ok(json!({ "saved": values.keys().collect::<Vec<_>>() })) })),
     ).with_admin(Arc::new(|section, body| Box::pin(async move {
@@ -161,6 +162,7 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
         }
     }))));
     let app = astro_dav::router(dav)
+        .merge(site.clone().router())
         .merge(relay.router())
         .merge(astro_ui::web::static_router())
         .merge(astro_ui::api::router(ui, bus.clone(), Some("https://station.test".into())))
@@ -552,13 +554,6 @@ async fn the_footprint_shows_disk_quota_and_the_opex_capex_accounts() {
     assert_eq!((cx["zencard"].as_bool(), cx["value_cents"].as_i64(), cx["amortized_cents"].as_i64(), cx["net_cents"].as_i64()), (Some(false), Some(12_050), Some(2_025), Some(10_025)), "{cx}");
     assert_eq!(cx["assets"][0]["label"], "Serveur (part)");
 
-    // Copie privée : sans le dépôt de médias branché, l'API le dit au lieu de mentir.
-    let (s, c) = b.get("/api/v1/consent/private-copy", &alice).await;
-    assert_eq!((s, c["accepted"].as_bool(), c["available"].as_bool(), c["article"].as_str()), (StatusCode::OK, Some(false), Some(false), Some("CPI L. 122-5")), "{c}");
-    assert!(c["text"].as_str().unwrap().contains("usage strictement privé"));
-    assert_eq!(b.post("/api/v1/consent/private-copy", &alice, json!({ "version": 1 })).await.0, StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(call(&b.app, Method::GET, "/api/v1/consent/private-copy", None, &[], vec![]).await.0, StatusCode::UNAUTHORIZED);
-
     // Le Capex d'Alice n'est pas visible de Bob.
     let bob = basic("bob@example.org", &BOB);
     assert!(b.get("/api/v1/me/footprint", &bob).await.1["capex"]["assets"].as_array().unwrap().is_empty());
@@ -598,15 +593,14 @@ async fn the_library_answers_have_search_timeline_and_duplicates_for_the_account
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_captain_screens_show_the_constellation_the_regie_and_the_hosted_accounts() {
-    let swarm = std::env::temp_dir().join(format!("astroportd-swarm-{}", std::process::id()));
-    for (id, json) in [
-        ("12D3KooWnexus", json!({ "capacities": { "power_score": 160 }, "STATION_LAT": "43.30", "STATION_LON": "5.37", "dragon_services": "ollama.sh comfyui" })),
-        ("12D3KooWrasp", json!({ "capacities": { "power_score": 8 }, "STATION_LAT": "48.85", "STATION_LON": "2.35", "dragon_services": "ssh" })),
-    ] {
-        std::fs::create_dir_all(swarm.join(id)).unwrap();
-        std::fs::write(swarm.join(id).join("12345.json"), json.to_string()).unwrap();
+    let b = bench_with("captain", None, |_| {}, None).await;
+    // L'annuaire : les balises (30850) des autres stations de l'UPlanet, avec Power-Score et position ; plus de `12345.json`.
+    let swarm_id = astroportd::coop_wallets::uplanet_g1pub("ConstellationDeTest").unwrap();
+    for (id, power, lat, lon) in [("12D3KooWnexus", "160", "43.30", "5.37"), ("12D3KooWrasp", "8", "48.85", "2.35")] {
+        let summary = json!({ "tags": { "station": id, "swarm_id": swarm_id, "hw:power_score": power, "geo:lat": lat, "geo:lon": lon }, "created_at": 1 }).to_string();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        b.db.writer().execute("INSERT INTO kv(scope, key, value, updated_at) VALUES ('economic_health', ?1, ?2, ?3)", vec![V::Text(id.into()), V::Text(summary), V::Integer(i64::try_from(now).unwrap())]).await.unwrap();
     }
-    let b = bench_with("captain", None, |_| {}, Some(swarm.clone())).await;
     let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB)); // bob = Capitaine
     // Un MULTIPASS n'entre pas.
     for uri in ["/api/v1/station/constellation", "/api/v1/station/economy", "/api/v1/station/accounts"] {
@@ -623,7 +617,7 @@ async fn the_captain_screens_show_the_constellation_the_regie_and_the_hosted_acc
     let nexus = &c["nodes"][1];
     assert_eq!((nexus["tier"].as_str(), nexus["status"].as_str()), (Some("Brain"), Some("known")));
     assert!((nexus["distance_km"].as_f64().unwrap() - 277.0).abs() < 8.0, "Lyon → Marseille : {}", nexus["distance_km"]);
-    assert_eq!(nexus["services"], json!(["ollama", "comfyui"]));
+    assert_eq!(nexus["services"], json!([]), "sans maillage joint, on ne sait rien de ce qu'elle nous ouvre : jamais d'invention");
     assert_eq!(c["nodes"][0]["self"], true);
     assert_eq!(c["nodes"][0]["services"], json!(["comfyui", "ssh"]));
 
@@ -658,7 +652,6 @@ async fn the_captain_screens_show_the_constellation_the_regie_and_the_hosted_acc
     let audits: i64 = b.db.readers().read(|c| Ok(c.query_row("SELECT COUNT(*) FROM journal WHERE stream = 'audit.token'", [], |r| r.get(0))?)).await.unwrap();
     assert_eq!(audits, 1);
     assert_eq!(b.post_empty(&format!("/api/v1/station/accounts/{}/token", hex(&[9; 32])), &bob).await.0, StatusCode::NOT_FOUND);
-    let _ = std::fs::remove_dir_all(swarm);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1234,7 +1227,7 @@ async fn the_captain_sets_up_planes_from_the_web_and_nobody_else_can() {
     // Fonder une UPlanet : une clé neuve est rendue (à copier), le plan attend un redémarrage.
     let (s, v) = b.post("/api/v1/station/planes", &bob, json!({ "name": "zen1" })).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert!(v["created_key"].as_str().unwrap().contains("/key/swarm/psk/1.0.0/") && v["http"] == "127.0.0.1:18081");
+    assert!(v["created_key"].as_str().unwrap().contains("/key/swarm/psk/1.0.0/") && v["http"] == "127.0.0.1:8091");
     let (_, v) = b.get("/api/v1/station/planes", &bob).await;
     assert_eq!((v["configured"].as_bool(), v["planes"].as_array().unwrap().len(), v["restart_needed"].as_bool()), (Some(true), 2, Some(true)));
     // Refus : doublon, clé illisible ; ORIGIN jamais retiré ; un plan privé l'est.
@@ -1413,6 +1406,7 @@ async fn a_new_station_opens_only_to_its_captain_with_the_setup_code_from_the_jo
     let (s, _, body) = call(&app, Method::GET, "/api/v1/station/domain", Some(&cap), &[], vec![]).await;
     let info: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!((s, info["domain"].is_null(), info["restart"].as_bool()), (StatusCode::OK, true, Some(false)), "{info}");
+    assert_eq!((info["mode"].as_str(), info["proxy"].as_bool(), info["steps"].as_array().map(Vec::len)), (Some("local"), Some(false), Some(0)), "essai local : rien à régler hors de la station");
     assert_eq!(call(&app, Method::GET, "/api/v1/station/domain", Some(&mem), &[], vec![]).await.0, StatusCode::FORBIDDEN);
     let (s, _, body) = call(&app, Method::POST, "/api/v1/station/domain", Some(&cap), json_post, post(json!({ "domain": "pas un domaine" }))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{}", String::from_utf8_lossy(&body));
@@ -1516,4 +1510,243 @@ async fn an_old_style_invitation_follows_the_living_ucloud_after_migration() {
     assert_eq!(invites.migrate_legacy().await.unwrap(), 1);
     assert_eq!(invites.migrate_legacy().await.unwrap(), 0, "idempotent");
     assert_eq!(count().await, Some(0), "après : l'invitation suit le uCloud vivant, rien n'est promis à tort");
+}
+
+/// Compatibilité des clients historiques (zelkova, coracle) : la carte de station, les clés de l'UPlanet et la sonde NIP-96,
+/// sans compte, avec les noms d'Astroport.ONE — et rien de privé dedans.
+#[tokio::test(flavor = "multi_thread")]
+async fn legacy_clients_find_the_station_card_the_uplanet_keys_and_the_probe_without_any_account() {
+    let b = bench("legacy-card", None).await;
+    let raw = |uri: &'static str| {
+        let app = b.app.clone();
+        async move {
+            let resp = app.oneshot(Request::builder().uri(uri).header(header::HOST, "station.test").header(header::ORIGIN, "https://coracle.example").body(Body::empty()).unwrap()).await.unwrap();
+            let (status, cors) = (resp.status(), resp.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).and_then(|v| v.to_str().ok()).map(str::to_owned));
+            let body = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+            (status, cors, String::from_utf8(body.to_vec()).unwrap())
+        }
+    };
+
+    for uri in ["/12345", "/12345/"] {
+        let (status, cors, body) = raw(uri).await;
+        assert_eq!((status, cors.as_deref()), (StatusCode::OK, Some("*")), "{uri}");
+        let card: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(card["_source"], "astroportd");
+        assert_eq!((card["ipfsnodeid"].as_str(), card["NODEHEX"].as_str()), (Some("12D3KooWTest"), Some(hex(&[1; 32]).as_str())));
+        assert_eq!((card["myRELAY"].as_str(), card["uSPOT"].as_str()), (Some("wss://station.test"), Some("https://station.test")));
+        assert!(card.get("myIPFS").is_none(), "pas de passerelle /ipfs/ : pas d'adresse annoncée");
+        assert_eq!((card["STATION_LAT"].as_str(), card["STATION_LON"].as_str()), (Some("45.76"), Some("4.83")), "arrondis à la case UMAP");
+        assert_eq!(card["captainHEX"], hex(&BOB), "le Capitaine hébergé par le banc d'essai");
+        let g1pub = astroportd::coop_wallets::uplanet_g1pub("ConstellationDeTest").unwrap();
+        let name_g1 = astroportd::coop_wallets::uplanet_name_g1("ConstellationDeTest").unwrap();
+        assert_eq!((card["UPLANETG1PUB"].as_str(), card["UPLANETNAME_G1"].as_str()), (Some(g1pub.as_str()), Some(name_g1.as_str())));
+        assert_ne!(g1pub, name_g1, "deux portefeuilles distincts : jamais confondus");
+        // Rien de privé : ni e-mail, ni jeton, ni solde.
+        for secret in ["alice@example.org", "bob@example.org", "@"] {
+            assert!(!body.contains(secret), "{uri} ne doit pas contenir {secret:?}");
+        }
+    }
+    // Clés Nostr de l'UPlanet : 64 hex, la seconde est celle de la configuration coopérative.
+    let (_, cors, h) = raw("/UPLANET/HEX").await;
+    let (_, _, g1h) = raw("/UPLANET/G1HEX").await;
+    assert_eq!(cors.as_deref(), Some("*"));
+    assert!([&h, &g1h].iter().all(|k| k.len() == 64 && k.bytes().all(|c| c.is_ascii_hexdigit())) && h != g1h, "{h} {g1h}");
+    assert_eq!(g1h, astroportd::coop_config::coop_keys("ConstellationDeTest").unwrap().1);
+    // Sonde NIP-96 : 200, CORS, et l'adresse d'envoi d'images.
+    let (status, cors, body) = raw("/.well-known/nostr/nip96.json").await;
+    let probe: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!((status, cors.as_deref(), probe["api_url"].as_str()), (StatusCode::OK, Some("*"), Some("https://station.test/api/upload/image")));
+    // `/check_balance` : une adresse Ğ1, jamais un e-mail ; sans nœud Duniter relié (banc d'essai), indisponible mais pas inventé.
+    let (status, cors, _) = raw("/check_balance?g1pub=alice@example.org").await;
+    assert_eq!((status, cors.as_deref()), (StatusCode::BAD_REQUEST, Some("*")), "un e-mail ne donne jamais un portefeuille");
+    assert_eq!(raw("/check_balance?g1pub=pas-une-adresse").await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(raw("/check_balance").await.0, StatusCode::BAD_REQUEST, "g1pub manquant");
+    let valid = astroportd::coop_wallets::uplanet_g1pub("ConstellationDeTest").unwrap();
+    let uri: &'static str = Box::leak(format!("/check_balance?g1pub={valid}").into_boxed_str());
+    let (status, cors, body) = raw(uri).await;
+    assert_eq!((status, cors.as_deref()), (StatusCode::NOT_IMPLEMENTED, Some("*")), "{body}");
+    // La passerelle /ipfs/ est coupée par défaut : même un CID bien formé n'ouvre rien.
+    let (status, _, _) = raw("/ipfs/bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+fn multipart(parts: &[(&str, &[u8])]) -> (String, Vec<u8>) {
+    let mut out = Vec::new();
+    for (head, data) in parts {
+        out.extend_from_slice(format!("--BND\r\n{head}\r\n\r\n").as_bytes());
+        out.extend_from_slice(data);
+        out.extend_from_slice(b"\r\n");
+    }
+    out.extend_from_slice(b"--BND--\r\n");
+    ("multipart/form-data; boundary=BND".into(), out)
+}
+
+/// Envoi d'une image (NIP-96) : authentifié, réencodé, rangé dans `/Public/uploads` du membre ; refus nets pour tout le reste ;
+/// CORS pour un client servi ailleurs ; la sonde annonce l'adresse d'envoi.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_member_uploads_an_image_to_her_public_folder_and_nothing_else_gets_in() {
+    let b = bench("upload-image", None).await;
+    let alice = basic("alice@example.org", &ALICE);
+    let png = {
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(3000, 40, image::Rgb([9, 99, 199]))).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        out
+    };
+    let file_part = |data: &[u8]| multipart(&[("Content-Disposition: form-data; name=\"npub\"", b"npub1x"), ("Content-Disposition: form-data; name=\"file\"; filename=\"photo.png\"\r\nContent-Type: image/png", data)]);
+
+    // Anonyme : refusé, jamais d'écriture dans le dossier de quelqu'un d'après un npub du formulaire.
+    let (ct, body) = file_part(&png);
+    let (status, _, _) = call(&b.app, Method::POST, "/api/upload/image", None, &[("content-type", &ct)], body.clone()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Authentifié : réponse NIP-96 avec `url` à la racine, image réduite à 2 048 px, rangée chez Alice.
+    let (status, headers, bytes) = call(&b.app, Method::POST, "/api/upload/image", Some(&alice), &[("content-type", &ct)], body).await;
+    let r: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!((status, r["status"].as_str(), headers.get("access-control-allow-origin").and_then(|v| v.to_str().ok())), (StatusCode::OK, Some("success"), Some("*")), "{r}");
+    let url = r["url"].as_str().unwrap();
+    assert!(url.starts_with("https://station.test/site/") && url.contains("/uploads/") && url.ends_with(".jpg"), "{url}");
+    let tags = r["nip94_event"]["tags"].as_array().unwrap();
+    let tag = |k: &str| tags.iter().find(|t| t[0] == k).map(|t| t[1].as_str().unwrap().to_owned());
+    assert_eq!((tag("url").as_deref(), tag("m").as_deref()), (Some(url), Some("image/jpeg")));
+    let name = url.rsplit('/').next().unwrap();
+    let stored: i64 = b.db.readers().read({ let (h, n) = (hex(&ALICE), format!("/Public/uploads/{name}")); move |c| Ok(c.query_row("SELECT count(*) FROM ucloud_entries WHERE owner_hex = ?1 AND path = ?2", rusqlite::params![h, n], |r| r.get(0))?) }).await.unwrap();
+    assert_eq!(stored, 1, "rangée dans /Public/uploads du compte authentifié");
+    assert_eq!(name.len(), 32 + 4, "nommée par le hachage du résultat");
+    // L'adresse rendue sert bien l'image, sans mot de passe, comme tout ce qui est dans /Public.
+    let (status, h, served) = call(&b.app, Method::GET, url.strip_prefix("https://station.test").unwrap(), None, &[], Vec::new()).await;
+    assert_eq!((status, h["content-type"].to_str().unwrap()), (StatusCode::OK, "image/jpeg"), "{}", String::from_utf8_lossy(&served[..served.len().min(120)]));
+    assert_eq!(image::load_from_memory(&served).unwrap().width(), 2048);
+    // Même image renvoyée : même adresse, pas de doublon.
+    let (ct, body) = file_part(&png);
+    let (_, _, again) = call(&b.app, Method::POST, "/api/upload/image", Some(&alice), &[("content-type", &ct)], body).await;
+    assert_eq!(serde_json::from_slice::<Value>(&again).unwrap()["url"], url);
+
+    // NIP-98 (ce que font coracle et zelkova) : événement kind 27235 lié à l'URL, SANS tag `payload` (le navigateur construit le
+    // multipart) ; accepté une fois, puis refusé s'il est rejoué ; et lié à l'URL signée.
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let nip98 = astro_crypto::nip98::authorization_header(&ALICE, "POST", "http://station.test/api/upload/image", None, now).unwrap();
+    let (ct, body) = file_part(&png);
+    let (status, _, _) = call(&b.app, Method::POST, "/api/upload/image", Some(&nip98), &[("content-type", &ct)], body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "NIP-98 sans payload");
+    let (status, _, _) = call(&b.app, Method::POST, "/api/upload/image", Some(&nip98), &[("content-type", &ct)], body.clone()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "le même événement rejoué");
+    let elsewhere = astro_crypto::nip98::authorization_header(&ALICE, "POST", "http://station.test/api/v1/account/image", None, now).unwrap();
+    let (status, _, _) = call(&b.app, Method::POST, "/api/upload/image", Some(&elsewhere), &[("content-type", &ct)], body).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "signature faite pour une autre URL");
+
+    // Refus : pas une image, GIF, HTML déguisé en PNG, champ `file` absent, corps non multipart.
+    for (what, ct, body) in [
+        ("html", file_part(b"<html><script>alert(1)</script>").0, file_part(b"<html><script>alert(1)</script>").1),
+        ("gif", file_part(b"GIF89a\x01\x00").0, file_part(b"GIF89a\x01\x00").1),
+        ("sans fichier", multipart(&[("Content-Disposition: form-data; name=\"npub\"", b"x")]).0, multipart(&[("Content-Disposition: form-data; name=\"npub\"", b"x")]).1),
+        ("json", "application/json".to_owned(), b"{}".to_vec()),
+    ] {
+        let (status, _, _) = call(&b.app, Method::POST, "/api/upload/image", Some(&alice), &[("content-type", &ct)], body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{what}");
+    }
+    // Trop gros : refusé avant d'être lu en entier.
+    let (ct, huge) = file_part(&vec![0u8; 9 * 1024 * 1024]);
+    let (status, _, _) = call(&b.app, Method::POST, "/api/upload/image", Some(&alice), &[("content-type", &ct)], huge).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+
+    // Pré-vérification CORS d'un client servi ailleurs (envoi, récupération par PASS) ; la sonde annonce l'adresse d'envoi.
+    for uri in ["/api/upload/image", "/api/v1/account/unlock", "/api/v1/account/keys"] {
+        let (status, h, _) = call(&b.app, Method::OPTIONS, uri, None, &[("origin", "https://coracle.example"), ("access-control-request-method", "POST"), ("access-control-request-headers", "authorization")], Vec::new()).await;
+        assert_eq!((status, h["access-control-allow-origin"].to_str().unwrap(), h["access-control-allow-headers"].to_str().unwrap()), (StatusCode::NO_CONTENT, "*", "Authorization, Content-Type"), "{uri}");
+    }
+    let (_, _, probe) = call(&b.app, Method::GET, "/.well-known/nostr/nip96.json", None, &[], Vec::new()).await;
+    let probe: Value = serde_json::from_slice(&probe).unwrap();
+    assert_eq!(probe["api_url"], "https://station.test/api/upload/image");
+    assert_eq!(probe["plans"]["free"]["is_nip98_required"], true);
+}
+
+/// Retours des utilisateurs et vérification OpenCollective : authentifiés, bornés, jamais d'invention.
+#[tokio::test(flavor = "multi_thread")]
+async fn feedback_is_authenticated_bounded_and_kept_on_the_station_without_a_forge() {
+    let b = bench("feedback", None).await;
+    let alice = basic("alice@example.org", &ALICE);
+    let report = json!({ "title": "Le bouton ne répond pas", "description": "Je clique et rien ne se passe.", "source": "coracle", "category": "bug" });
+    // Anonyme : refusé (le jeton Git de la coopérative n'est jamais offert à un anonyme).
+    let (status, _, _) = call(&b.app, Method::POST, "/api/v1/feedback", None, &[("content-type", "application/json")], report.to_string().into_bytes()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // Saisies refusées : source qui viserait un autre dépôt, titre trop court, JSON absent.
+    for bad in [json!({ "title": "ab", "description": "xxx", "source": "coracle" }), json!({ "title": "abc", "description": "xxx", "source": "../x" }), json!({ "title": "abc", "description": "xxx" })] {
+        assert_eq!(b.post("/api/v1/feedback", &alice, bad).await.0, StatusCode::BAD_REQUEST);
+    }
+    // Sans forge réglée (ni GIT_TOKEN ni GIT_OWNER) : gardé sur la station, le Capitaine est prévenu, l'utilisateur n'a pas d'erreur.
+    let (status, r) = b.post("/api/v1/feedback", &alice, report.clone()).await;
+    assert_eq!((status, r["ok"].as_bool(), r["stored"].as_str()), (StatusCode::OK, Some(true), Some("local")), "{r}");
+    let kept: i64 = b.db.readers().read(|c| Ok(c.query_row("SELECT count(*) FROM journal WHERE stream = 'feedback'", [], |r| r.get(0))?)).await.unwrap();
+    assert_eq!(kept, 1);
+    // 5 par heure et par compte : la limite est dite avec un code stable.
+    for _ in 0..4 {
+        assert_eq!(b.post("/api/v1/feedback", &alice, report.clone()).await.0, StatusCode::OK);
+    }
+    let (status, h, body) = call(&b.app, Method::POST, "/api/v1/feedback", Some(&alice), &[("content-type", "application/json")], report.to_string().into_bytes()).await;
+    assert_eq!((status, h.get("access-control-allow-origin").and_then(|v| v.to_str().ok())), (StatusCode::TOO_MANY_REQUESTS, Some("*")));
+    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["code"], "rate_limited");
+    // OpenCollective : sans clé réglée, « non configurée » (jamais « pas membre ») ; anonyme refusé ; préflight CORS.
+    let (status, v) = b.get("/api/v1/account/oc", &alice).await;
+    assert_eq!((status, v["configured"].as_bool(), v["is_member"].is_null()), (StatusCode::OK, Some(false), true), "{v}");
+    assert_eq!(call(&b.app, Method::GET, "/api/v1/account/oc", None, &[], Vec::new()).await.0, StatusCode::UNAUTHORIZED);
+    for uri in ["/api/v1/feedback", "/api/v1/account/oc"] {
+        let (status, h, _) = call(&b.app, Method::OPTIONS, uri, None, &[("origin", "https://zelkova.example"), ("access-control-request-method", "POST")], Vec::new()).await;
+        assert_eq!((status, h["access-control-allow-origin"].to_str().unwrap()), (StatusCode::NO_CONTENT, "*"), "{uri}");
+    }
+}
+
+/// Pièces jointes de messages : octets déjà chiffrés par l'expéditeur, jamais de clair, servis par `/ipfs/<cid>` à qui connaît
+/// l'adresse (CORS), un seul enregistrement par contenu (l'échéance d'un tiers ne supprime pas le blob d'un autre).
+#[tokio::test]
+async fn message_attachments_are_stored_encrypted_served_by_cid_and_cannot_be_deleted_by_a_replay() {
+    let b = bench_with("attachments", None, |c| c.ipfs_gateway = true, None).await;
+    let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
+    // Format UENC v1 : MAGIC + version 1 + AES-256-GCM + IV(12) + chiffré + étiquette(16).
+    let uenc = |fill: u8| {
+        let mut v = b"UENC\x01\x01".to_vec();
+        v.extend([fill; 12 + 40 + 16]);
+        v
+    };
+    let octets = ("content-type", "application/octet-stream");
+    let (ok, plain) = (uenc(7), b"\x89PNG\r\n\x1a\n pas chiffre, 100 octets au moins ........................................".to_vec());
+
+    let (status, _, _) = call(&b.app, Method::POST, "/api/v1/attachments", None, &[octets], ok.clone()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "jamais anonyme");
+    let (status, _, body) = call(&b.app, Method::POST, "/api/v1/attachments", Some(&alice), &[octets], plain).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "du clair n'est pas hébergé : {}", String::from_utf8_lossy(&body));
+    for uri in ["/api/v1/attachments?days=0", "/api/v1/attachments?days=91", "/api/v1/attachments?days=x"] {
+        assert_eq!(call(&b.app, Method::POST, uri, Some(&alice), &[octets], ok.clone()).await.0, StatusCode::BAD_REQUEST, "{uri}");
+    }
+    assert_eq!(call(&b.app, Method::POST, "/api/v1/attachments", Some(&alice), &[octets], b"UENC\x01\x01".to_vec()).await.0, StatusCode::BAD_REQUEST, "tronqué");
+
+    let mut huge = uenc(1);
+    huge.resize(20 * 1024 * 1024 + 4096, 1);
+    assert_eq!(call(&b.app, Method::POST, "/api/v1/attachments", Some(&alice), &[octets], huge).await.0, StatusCode::PAYLOAD_TOO_LARGE, "20 Mo au plus");
+
+    let (status, headers, body) = call(&b.app, Method::POST, "/api/v1/attachments?days=7", Some(&alice), &[octets], ok.clone()).await;
+    let r: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!((status, headers.get("access-control-allow-origin").and_then(|v| v.to_str().ok())), (StatusCode::OK, Some("*")), "{r}");
+    let cid = r["cid"].as_str().unwrap().to_owned();
+    assert!(cid.starts_with("bafkrei"), "CID v1 raw : {cid}");
+    assert_eq!((r["size"].as_u64(), r["gateway"].as_str(), r["url"].as_str()), (Some(ok.len() as u64), Some("https://station.test"), Some(format!("https://station.test/ipfs/{cid}").as_str())));
+
+    // La passerelle rend exactement les octets, lisibles depuis un autre site, sans pouvoir être interprétés.
+    let (status, h, served) = call(&b.app, Method::GET, &format!("/ipfs/{cid}"), None, &[], Vec::new()).await;
+    assert_eq!((status, served), (StatusCode::OK, ok.clone()));
+    assert_eq!(h["access-control-allow-origin"], "*");
+    assert!(h["content-security-policy"].to_str().unwrap().contains("sandbox"));
+
+    // Même contenu envoyé par un tiers : même réponse, aucun second enregistrement, donc rien à supprimer plus tôt.
+    let (status, _, again) = call(&b.app, Method::POST, "/api/v1/attachments?days=1", Some(&bob), &[octets], ok.clone()).await;
+    let again: Value = serde_json::from_slice(&again).unwrap();
+    assert_eq!((status, again["cid"].as_str(), again["expires_at"] == r["expires_at"]), (StatusCode::OK, Some(cid.as_str()), true), "{again}");
+    let records: i64 = b.db.readers().read(|c| Ok(c.query_row("SELECT count(*) FROM kv WHERE scope = 'guest_share'", [], |r| r.get(0))?)).await.unwrap();
+    assert_eq!(records, 1);
+
+    // Échéance dépassée : la passerelle ferme, puis la purge supprime le blob.
+    b.db.writer().execute("UPDATE kv SET value = json_set(value, '$.expires_at', 1) WHERE scope = 'guest_share'", vec![]).await.unwrap();
+    assert_eq!(call(&b.app, Method::GET, &format!("/ipfs/{cid}"), None, &[], Vec::new()).await.0, StatusCode::NOT_FOUND);
+    // Hors des octets : le préambule CORS est présent pour un client servi d'ailleurs.
+    let (status, h, _) = call(&b.app, Method::OPTIONS, "/api/v1/attachments", None, &[], Vec::new()).await;
+    assert_eq!((status, h["access-control-allow-origin"].to_str().unwrap()), (StatusCode::NO_CONTENT, "*"));
 }

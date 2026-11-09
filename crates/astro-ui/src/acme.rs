@@ -1,4 +1,4 @@
-//! Certificats TLS automatiques (ACME, défi HTTP-01) : Let's Encrypt, ZeroSSL ou toute autorité ACME.
+//! Certificats TLS automatiques (ACME, défi HTTP-01) : Let's Encrypt.
 //!
 //! Le compte et les certificats sont persistés dans `kv` (scope `acme`) ; le renouvellement est automatique
 //! (30 jours avant l'expiration par défaut) et le nouveau certificat est installé à chaud dans le
@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use arc_swap::ArcSwapOption;
 use astro_db::Db;
-use instant_acme::{Account, AccountCredentials, AuthorizationStatus, ChallengeType, ExternalAccountKey, HttpClient, Identifier, NewAccount, NewOrder, OrderStatus, RetryPolicy};
+use instant_acme::{Account, AccountCredentials, AuthorizationStatus, ChallengeType, HttpClient, Identifier, NewAccount, NewOrder, OrderStatus, RetryPolicy};
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -26,8 +26,6 @@ use tokio::sync::watch;
 pub const LETS_ENCRYPT: &str = "https://acme-v02.api.letsencrypt.org/directory";
 /// Annuaire de test de Let's Encrypt (certificats non reconnus, quotas larges).
 pub const LETS_ENCRYPT_STAGING: &str = "https://acme-staging-v02.api.letsencrypt.org/directory";
-/// Annuaire de ZeroSSL (exige un compte à liaison externe, voir [`AcmeConfig::eab`]).
-pub const ZEROSSL: &str = "https://acme.zerossl.com/v2/DV90";
 
 const SCOPE: &str = "acme";
 
@@ -67,14 +65,12 @@ pub struct AcmeConfig {
     pub renew_before: Duration,
     /// Période de vérification en tâche de fond.
     pub check_every: Duration,
-    /// Liaison de compte externe `(kid, clé HMAC en octets)` : ZeroSSL et autres autorités à compte préalable.
-    pub eab: Option<(String, Vec<u8>)>,
 }
 
 impl AcmeConfig {
     /// Let's Encrypt de production, renouvellement 30 jours avant expiration, vérification toutes les 12 h.
     pub fn new(domains: Vec<String>, email: Option<String>) -> Self {
-        Self { domains, email, directory_url: LETS_ENCRYPT.to_owned(), renew_before: Duration::from_secs(30 * 24 * 3600), check_every: Duration::from_secs(12 * 3600), eab: None }
+        Self { domains, email, directory_url: LETS_ENCRYPT.to_owned(), renew_before: Duration::from_secs(30 * 24 * 3600), check_every: Duration::from_secs(12 * 3600) }
     }
 }
 
@@ -292,9 +288,8 @@ impl AcmeManager {
         }
         let contact = self.config.email.as_ref().map(|e| format!("mailto:{e}"));
         let contacts: Vec<&str> = contact.iter().map(String::as_str).collect();
-        let eab = self.config.eab.as_ref().map(|(kid, key)| ExternalAccountKey::new(kid.clone(), key));
         let (account, creds) = builder(self)?
-            .create(&NewAccount { contact: &contacts, terms_of_service_agreed: true, only_return_existing: false }, self.config.directory_url.clone(), eab.as_ref())
+            .create(&NewAccount { contact: &contacts, terms_of_service_agreed: true, only_return_existing: false }, self.config.directory_url.clone(), None)
             .await?;
         self.store.save_account(&self.config.directory_url, &creds).await?;
         Ok(account)

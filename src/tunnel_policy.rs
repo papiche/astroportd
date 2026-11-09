@@ -146,6 +146,15 @@ pub struct TunnelPolicy {
 /// que la politique lui ouvre maintenant : un pair ne découvre jamais ce qui ne lui est pas destiné.
 pub const SERVICES_PROTOCOL: &str = "/astroport/services/1";
 
+/// Demande à la station `peer` les services qu'elle nous ouvre maintenant ([`SERVICES_PROTOCOL`]). Elle ne répond qu'avec ce
+/// que sa politique nous permet : la liste dit donc ce qui est **utilisable**, jamais ce qui existe.
+pub async fn ask_services(handle: &P2pHandle, peer: &str) -> Result<Vec<String>, String> {
+    let id: PeerId = peer.parse().map_err(|_| "PeerID illisible".to_owned())?;
+    let body = astro_p2p::ask::ask(handle, id, SERVICES_PROTOCOL, std::time::Duration::from_secs(4)).await?;
+    let v: Value = serde_json::from_slice(&body).map_err(|_| "réponse illisible (version trop ancienne ?)".to_owned())?;
+    Ok(v["services"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|s| s.len() <= 32).take(64).map(str::to_owned).collect())
+}
+
 /// Vérifie la cible d'un service partagé : `IP:port` (ou `localhost:port`) de cette machine ou du réseau local privé.
 /// Pas de nom d'hôte (résolution détournable) ni d'adresse publique.
 pub fn check_target(target: &str) -> Result<String, String> {

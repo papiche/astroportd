@@ -54,7 +54,38 @@ pub const SECTIONS: &[Section] = &[
     Section { id: "api", title: "Clés d'API", keys: &["PLANTNET_API_KEY", "GIT_HOST", "GIT_TOKEN", "GIT_OWNER"], level: "services" },
     Section { id: "mj", title: "Mailjet", keys: &["MJ_APIKEY_PUBLIC", "MJ_APIKEY_PRIVATE", "MJ_SENDER_EMAIL"], level: "services" },
     Section { id: "ovh", title: "DNSLink OVH", keys: &["OVH_APP_KEY", "OVH_APP_SECRET", "OVH_CONSUMER_KEY", "OVH_ZONE"], level: "essential" },
+    Section { id: "mesh", title: "Stations relais du maillage", keys: &["P2P_RELAYS"], level: "essential" },
 ];
+
+/// Stations relais de la constellation, au plus.
+pub const MAX_RELAYS: usize = 8;
+
+/// Lit `P2P_RELAYS` : adresses de maillage séparées par des espaces, des virgules ou des retours à la ligne. Chacune finit
+/// par `/p2p/<PeerID>`, passe par TCP et désigne la station elle-même (pas un circuit relais).
+pub fn parse_relays(value: &str) -> Result<Vec<(astro_p2p::Multiaddr, astro_p2p::PeerId)>, String> {
+    let mut out: Vec<(astro_p2p::Multiaddr, astro_p2p::PeerId)> = Vec::new();
+    for raw in value.split(|c: char| c.is_whitespace() || c == ',').filter(|s| !s.is_empty()) {
+        let (addr, peer) = crate::mesh_admin::parse_station(raw).map_err(|e| format!("P2P_RELAYS : {raw} : {e}"))?;
+        let text = addr.to_string();
+        if text.contains("/p2p-circuit") || !text.contains("/tcp/") {
+            return Err(format!("P2P_RELAYS : {raw} : adresse directe attendue (/ip4/, /ip6/ ou /dns4/…/tcp/4101/p2p/<PeerID>)"));
+        }
+        if !out.iter().any(|(_, p)| *p == peer) {
+            out.push((addr, peer));
+        }
+    }
+    if out.len() > MAX_RELAYS {
+        return Err(format!("P2P_RELAYS : {MAX_RELAYS} stations relais au plus"));
+    }
+    Ok(out)
+}
+
+/// Stations relais publiées par la coopérative de `uplanet_name` (liste vide si rien n'est publié ou si la valeur est illisible).
+pub async fn p2p_relays(db: &Db, uplanet_name: &str) -> Vec<(astro_p2p::Multiaddr, astro_p2p::PeerId)> {
+    let Ok((_, hex)) = coop_keys(uplanet_name) else { return Vec::new() };
+    let Some(stored) = load(db, &hex).await else { return Vec::new() };
+    stored.values.get("P2P_RELAYS").and_then(|v| parse_relays(v).ok()).unwrap_or_default()
+}
 
 /// Charte proposée tant que le Capitaine n'en a pas publié une (même texte que `docs/CHARTE_UPLANET.md`).
 pub const DEFAULT_CHARTER: &str = include_str!("../docs/CHARTE_UPLANET.md");
@@ -96,7 +127,11 @@ pub fn is_secret(key: &str) -> bool {
 /// Contrôle d'une valeur en clair avant écriture.
 pub fn validate(key: &str, value: &str) -> Result<(), String> {
     // La charte est un texte : 6000 caractères au plus et des retours à la ligne ; toute autre valeur tient sur une ligne.
-    let (max, text) = if key == "CHARTER_TEXT" { (6000, true) } else { (1024, false) };
+    let (max, text) = match key {
+        "CHARTER_TEXT" => (6000, true),
+        "P2P_RELAYS" => (1024, true),
+        _ => (1024, false),
+    };
     if value.len() > max || value.chars().any(|c| c.is_control() && !(text && c == '\n')) {
         return Err(format!("{key} : {max} caractères au plus, sans caractère de contrôle"));
     }
@@ -112,6 +147,9 @@ pub fn validate(key: &str, value: &str) -> Result<(), String> {
     }
     if (key.starts_with("OC_URL_") || key == "GIT_HOST") && !value.starts_with("https://") {
         return Err(format!("{key} : une adresse https:// est attendue"));
+    }
+    if key == "P2P_RELAYS" {
+        parse_relays(value)?;
     }
     if key == "OVH_ZONE" && !value.is_empty() && !valid_domain(value) {
         return Err(format!("{key} : un nom de domaine est attendu (ex. copylaradio.com)"));
@@ -132,6 +170,15 @@ pub async fn domain(db: &Db, uplanet_name: &str) -> Option<String> {
     let (_, hex) = coop_keys(uplanet_name).ok()?;
     let stored = load(db, &hex).await?;
     stored.values.get("OVH_ZONE").map(|d| d.trim().to_ascii_lowercase()).filter(|d| valid_domain(d))
+}
+
+/// Valeur d'un réglage de la coopérative, secret déchiffré, `None` si absent ou vide.
+pub async fn setting(db: &Db, uplanet_name: &str, key: &str) -> Option<String> {
+    let (_, hex) = coop_keys(uplanet_name).ok()?;
+    let stored = load(db, &hex).await?;
+    let v = stored.values.get(key)?;
+    let v = if astro_crypto::coop::is_encrypted(v) { astro_crypto::coop::decrypt(uplanet_name, v).ok()? } else { v.clone() };
+    Some(v.trim().to_owned()).filter(|v| !v.is_empty())
 }
 
 /// Clé coopérative `<UPLANETNAME>.G1` : `(secret Nostr, clé publique hexadécimale)`.
@@ -290,6 +337,19 @@ mod tests {
         assert_eq!(level("ovh"), Some("essential"), "le cockpit envoie ici pour activer les adresses : en tête d'écran");
         assert_eq!((level("fiscal"), level("3x13")), (Some("experts"), Some("experts")), "la fiscalité reste repliée");
         assert!(LEVELS.iter().all(|l| SECTIONS.iter().any(|s| s.level == *l)), "aucun niveau vide");
+    }
+
+    #[test]
+    fn relay_stations_are_direct_addresses_of_named_stations_in_clear() {
+        let a = "/ip4/203.0.113.7/tcp/4101/p2p/12D3KooWRxhgiLtvqhypB6uyQNbDD1D6wMV7Zt6vYYZF68czb9aG";
+        let b = "/dns4/relais.exemple.org/tcp/4101/p2p/12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8";
+        assert!(!is_secret("P2P_RELAYS"), "les adresses des relais doivent rester lisibles par toutes les stations");
+        assert_eq!(parse_relays(&format!("{a}\n{b}, {a}")).unwrap().len(), 2, "doublon de station écarté");
+        assert!(validate("P2P_RELAYS", &format!("{a}\n{b}")).is_ok());
+        for bad in ["/ip4/203.0.113.7/tcp/4101", "relais.exemple.org:4101", "/ip4/203.0.113.7/udp/4101/quic-v1/p2p/12D3KooWRxhgiLtvqhypB6uyQNbDD1D6wMV7Zt6vYYZF68czb9aG", &format!("{a}/p2p-circuit/p2p/12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8")] {
+            assert!(parse_relays(bad).is_err(), "{bad}");
+        }
+        assert!(parse_relays(a).is_ok() && parse_relays("").unwrap().is_empty());
     }
 
     #[test]

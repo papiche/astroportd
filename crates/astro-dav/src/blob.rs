@@ -56,6 +56,12 @@ pub trait BlobStore: Send + Sync + 'static {
     fn open(&self, cid: &str) -> impl Future<Output = Result<(Self::Reader, u64), BlobError>> + Send;
     /// Supprime un blob (sans erreur s'il est déjà absent).
     fn remove(&self, cid: &str) -> impl Future<Output = Result<(), BlobError>> + Send;
+    /// Un ancien blob d'Astroport.ONE (CID v0 `Qm…`) est-il **épinglé ici** (donc lisible sans aller le chercher sur le réseau
+    /// IPFS) ? Garde de la passerelle `/ipfs/` : sans elle, elle ferait de la station un relais ouvert vers IPFS. `false` par
+    /// défaut : seul un magasin adossé à Kubo (ORIGIN) en a.
+    fn pinned_legacy(&self, _cid: &str) -> impl Future<Output = bool> + Send {
+        async { false }
+    }
     /// Espace disque physique `(libre, total)` de la partition qui porte le stockage ; `None` si le magasin n'est pas
     /// sur le disque local (Kubo distant) ou si la mesure est impossible : aucune garde dans ce cas.
     fn disk_space(&self) -> Option<(u64, u64)> {
@@ -231,6 +237,35 @@ impl BlobStore for FsBlobStore {
 
 #[cfg(test)]
 mod tests {
+    /// Compatibilité CID v1 avec Kubo : pour un contenu tenant dans **un seul bloc** (≤ 262 144 octets, le découpage par défaut
+    /// de `ipfs add`), le CID natif `raw` + sha2-256 est exactement celui de Kubo. Vecteurs relevés avec Kubo 0.40.0 :
+    /// `ipfs add -n -Q --cid-version=1 --raw-leaves <fichier>`. Ne pas les modifier pour faire passer un test.
+    #[test]
+    fn the_native_cid_is_the_one_kubo_gives_to_a_single_block_file() {
+        let vectors = [
+            ("75965145a8b3ad78a6c32d7a77762fe435cd99122b0ea380a3854849024646c0", "bafkreidvsziulkftvv4knqznpj3xml7egxgzserlb2rybi4fjbeqersgya"), // « astroportd cid v1 compat\n »
+            ("05ece9bde690bf39239aca4213a06d0a5ddb2eb6ec9ce0c2a5593bb1832f5b2a", "bafkreiaf5tu33zuqx44shgwkiij2a3iklxns5nxmttqmfjkzhoyygl23fi"), // 200 000 octets
+            ("20d3effbc34432ed1794f527de40543380c513d1facea061575d93f03557c7ce", "bafkreiba2px7xq2eglwrpfhve7peavbtqdcrhup2z2qgcv25spydkv6hzy"), // 262 144 octets : le dernier bloc unique
+        ];
+        for (sha, kubo) in vectors {
+            let digest: [u8; 32] = hex::decode(sha).unwrap().try_into().unwrap();
+            assert_eq!(super::cid_raw_sha256(&digest), kubo);
+            assert!(super::is_cid(kubo));
+        }
+    }
+
+    /// Au-delà d'un bloc, Kubo rend la racine `dag-pb` d'un arbre de blocs (`bafybei…`), pas le CID `raw` du fichier entier :
+    /// les deux ne sont **pas** égaux. Le blob natif d'astroportd garde son CID `raw` ; un blob que Kubo a lui-même découpé
+    /// garde le sien (`is_cid` accepte les deux préfixes). Vecteur : 262 145 octets.
+    #[test]
+    fn beyond_one_block_kubo_names_the_file_by_its_dag_root_not_by_the_raw_hash() {
+        let digest: [u8; 32] = hex::decode("b8bcbba8d5046866a33edf97090d8ddbb2f3dc557c39c8ac2b59e2fc256a0d71").unwrap().try_into().unwrap();
+        let kubo = "bafybeic54ggur77oamccaa44omnsezmbhsdcjisl5l3hswcigrcecpd7oq";
+        assert!(super::is_cid(kubo));
+        assert_ne!(super::cid_raw_sha256(&digest), kubo);
+        assert!(super::cid_raw_sha256(&digest).starts_with("bafkrei"));
+    }
+
     #[test]
     fn disk_reserve_is_the_larger_of_500_mib_and_5_percent() {
         assert_eq!(super::disk_reserve(8 << 30), 500 << 20);

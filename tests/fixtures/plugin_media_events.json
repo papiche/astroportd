@@ -1,0 +1,124 @@
+{
+  "video": {
+    "pubkey": "7e7e9c42a91bfef19fa929e5fda1b72e0ebc1a4c1141673e2794234d86addf4e",
+    "created_at": 1794000000,
+    "kind": 21,
+    "tags": [
+      [
+        "title",
+        "Test S01E02 — Pilote"
+      ],
+      [
+        "url",
+        "/ipfs/bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+      ],
+      [
+        "m",
+        "video/mp4"
+      ],
+      [
+        "dim",
+        "1280x720"
+      ],
+      [
+        "imeta",
+        "dim 1280x720",
+        "url /ipfs/bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+        "m video/mp4",
+        "x aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size 5000000",
+        "duration 1500.000",
+        "bitrate 26666",
+        "encrypted uenc-v2"
+      ],
+      [
+        "size",
+        "5000000"
+      ],
+      [
+        "duration",
+        "1500"
+      ],
+      [
+        "published_at",
+        "1794230230"
+      ],
+      [
+        "x",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      [
+        "encrypted",
+        "uenc-v2"
+      ],
+      [
+        "t",
+        "series"
+      ],
+      [
+        "t",
+        "tv-show"
+      ],
+      [
+        "t",
+        "regular"
+      ],
+      [
+        "-"
+      ],
+      [
+        "L",
+        "genre"
+      ],
+      [
+        "L",
+        "license"
+      ],
+      [
+        "t",
+        "private-copy"
+      ],
+      [
+        "l",
+        "private-copy-cpi-l122-5",
+        "license"
+      ],
+      [
+        "l",
+        "Science-Fiction",
+        "genre"
+      ],
+      [
+        "t",
+        "science-fiction"
+      ],
+      [
+        "year",
+        "2019"
+      ],
+      [
+        "i",
+        "tmdb:99"
+      ],
+      [
+        "series_name",
+        "Test"
+      ],
+      [
+        "season_number",
+        "1"
+      ],
+      [
+        "episode_number",
+        "2"
+      ],
+      [
+        "episode_name",
+        "Pilote"
+      ]
+    ],
+    "content": "Un résumé é",
+    "id": "3870793358fb58a2686d4aa9f5adf3044aaffbcaa8d7c0fc2bac5f4c07c32112",
+    "sig": "6e9a07adb028b7494f00cd07d39e4fb1b1a9b700b91b86cf824f3f593a2b66e05d249495faac5cafdc29dfa0602c4f2accc5d0c62220bb0145cc6dbbdaad813c"
+  }
+}

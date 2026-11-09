@@ -23,7 +23,6 @@ use astro_sync::{Projector, RelayOutbox, WsClient};
 use astro_ui::acme::{LETS_ENCRYPT, LETS_ENCRYPT_STAGING};
 use astro_ui::{AcmeConfig, AcmeManager, Frontend, Gate, KvCertStore, ProxyRoute, proxy_router};
 use astro_nostr_proto::{Event, pubkey_of};
-use base64::Engine;
 use clap::Args;
 
 use crate::identity;
@@ -69,27 +68,19 @@ pub struct ServeArgs {
     #[arg(long = "domain")]
     domains: Vec<String>,
     /// Domaine public d'une station **derrière un reverse proxy** (Nginx Proxy Manager…) qui tient déjà les ports 80/443
-    /// et renvoie ce domaine vers `--http-listen` : la station ne demande pas de certificat, mais se présente sous
-    /// `https://<domaine>` (balise 30850, liens, NIP-98, relai annoncé), lit l'IP des visiteurs dans `X-Forwarded-For`
-    /// (posé par le proxy local) et sert la visio (STUN) sur toutes les interfaces. Repris de `station.conf` si absent.
+    /// et renvoie ce domaine vers `--http-listen` (défaut `0.0.0.0:8090`) : la station ne demande pas de certificat, mais se
+    /// présente sous `https://<domaine>` (balise 30850, liens, NIP-98, relai annoncé), lit l'IP des visiteurs dans
+    /// `X-Forwarded-For` (posé par un proxy de la machine ou du réseau local) et sert la visio (STUN) en UDP sur le même port.
+    /// Repris de `station.conf` si absent (`domain`, avec `web = proxy`).
     #[arg(long, conflicts_with = "domains")]
     public_domain: Option<String>,
     /// Email de contact du compte ACME.
     #[arg(long)]
     acme_email: Option<String>,
-    /// Annuaire ACME (Let's Encrypt par défaut ; ZeroSSL : https://acme.zerossl.com/v2/DV90).
-    #[arg(long)]
-    acme_directory: Option<String>,
     /// Utiliser l'annuaire de test de Let's Encrypt (certificats non reconnus, quotas larges).
     #[arg(long)]
     acme_staging: bool,
-    /// Liaison de compte externe ACME : identifiant de clé (ZeroSSL).
-    #[arg(long, requires = "acme_eab_hmac")]
-    acme_eab_kid: Option<String>,
-    /// Liaison de compte externe ACME : clé HMAC en base64url (ZeroSSL).
-    #[arg(long, requires = "acme_eab_kid")]
-    acme_eab_hmac: Option<String>,
-    /// Écoute HTTP (défi ACME + redirection vers HTTPS avec `--domain`, sinon service en clair ; défaut sans domaine : 127.0.0.1:18080).
+    /// Écoute HTTP (défi ACME + redirection vers HTTPS avec `--domain`, sinon service en clair ; défaut sans domaine : 127.0.0.1:8090, derrière un reverse proxy : 0.0.0.0:8090).
     #[arg(long)]
     http_listen: Option<SocketAddr>,
     /// Écoute HTTPS (avec `--domain`).
@@ -117,6 +108,10 @@ pub struct ServeArgs {
     /// API RPC d'IPFS Kubo ; sans elle les blobs restent sur disque.
     #[arg(long)]
     kubo: Option<String>,
+    /// Passerelle de compatibilité `GET /ipfs/<cid>` pour les clients historiques (zelkova, coracle) : lecture seule des
+    /// blobs chiffrés d'un lien de partage actif, et des anciens `Qm…` épinglés dans Kubo (ORIGIN). Désactivée par défaut.
+    #[arg(long)]
+    ipfs_gateway: bool,
     /// URL du moteur d'inférence faciale (Brain GPU) : active FaceCloud.
     #[arg(long, conflicts_with = "face_models")]
     face_engine: Option<String>,
@@ -146,9 +141,13 @@ pub struct ServeArgs {
     /// Adresses publiques annoncées aux pairs.
     #[arg(long = "p2p-external")]
     p2p_external: Vec<Multiaddr>,
-    /// Servir de relais (circuit relay v2) aux stations derrière une box.
+    /// Servir de relais (circuit relay v2) aux stations derrière une box. Automatique quand la configuration coopérative
+    /// (`P2P_RELAYS`) liste cette station.
     #[arg(long)]
     p2p_relay_server: bool,
+    /// Ne pas chercher les stations du réseau local (mDNS).
+    #[arg(long)]
+    no_mdns: bool,
     /// Réserver une place de relais chez ce pair (station derrière une box).
     #[arg(long = "p2p-use-relay")]
     p2p_use_relay: Vec<Multiaddr>,
@@ -356,12 +355,17 @@ fn publish_fn(publisher: &Arc<EventPublisher>) -> astroportd::register::PublishF
 
 /// Rapatriement d'un blob depuis la station d'un ami (maillage P2P), pour le partage de fichiers et la sauvegarde privée.
 fn blob_prefetch(handle: &astro_p2p::P2pHandle, local: &Arc<AutoBlobStore>) -> astroportd::share_inbox::Prefetch {
+    blob_prefetch_max(handle, local, 1 << 30, Duration::from_secs(120))
+}
+
+/// Comme [`blob_prefetch`], avec un plafond et un délai : le pair qui annonce plus gros est refusé avant le moindre octet reçu.
+fn blob_prefetch_max(handle: &astro_p2p::P2pHandle, local: &Arc<AutoBlobStore>, max_bytes: u64, timeout: Duration) -> astroportd::share_inbox::Prefetch {
     let (handle, local) = (handle.clone(), local.clone());
     Arc::new(move |cid: String, peer: String| {
         let (handle, local) = (handle.clone(), local.clone());
         Box::pin(async move {
             let peer: astro_p2p::PeerId = peer.parse().map_err(|e| format!("PeerID illisible : {e}"))?;
-            astro_p2p::blob::fetch_blob(&handle, &[peer], &cid, local.as_ref(), 1 << 30, Duration::from_secs(120)).await.map(|_| ()).map_err(|e| e.to_string())
+            astro_p2p::blob::fetch_blob(&handle, &[peer], &cid, local.as_ref(), max_bytes, timeout).await.map(|_| ()).map_err(|e| e.to_string())
         })
     })
 }
@@ -439,32 +443,50 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
 
 /// Comme [`run`], mais s'arrête quand `shutdown` se termine : plusieurs plans d'un même processus partagent un seul signal d'arrêt.
 pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Output = ()>) -> Result<(), Failure> {
-    // Domaine réglé depuis le cockpit : repris de station.conf quand la commande n'en donne pas.
+    // Domaine réglé depuis le cockpit ou `init` : repris de station.conf quand la commande n'en donne pas.
     if a.domains.is_empty() {
+        use astroportd::station_domain as sd;
         let conf = a.db.parent().map_or_else(|| PathBuf::from("station.conf"), |d| d.join("station.conf"));
-        if let Some((domain, email)) = astroportd::station_domain::domain_from_conf(&conf).filter(|_| a.public_domain.is_none()) {
-            // Filet : une station qui ne peut pas ouvrir 80/443 resterait en échec au démarrage, donc injoignable. Elle
-            // garde alors son accès local et le cockpit dit pourquoi le domaine attend.
-            let blocked: Vec<String> = [80, a.https_listen.port()].into_iter().filter(|p| astroportd::station_domain::port_state(*p) != "free").map(|p| p.to_string()).collect();
-            if a.http_listen.is_some() {
-                // Écoute locale choisie (`init` derrière un proxy) : le domaine est celui que sert le proxy.
-                println!("domaine public repris de {} : {domain} (derrière un reverse proxy, vers {})", conf.display(), a.http_listen.map(|l| l.to_string()).unwrap_or_default());
+        if let Some((domain, email)) = sd::domain_from_conf(&conf).filter(|_| a.public_domain.is_none()) {
+            let ports = [80, a.https_listen.port()];
+            let state = |p: u16| sd::port_state(p);
+            if a.http_listen.is_some() || sd::proxy_from_conf(&conf) {
+                // Le Capitaine a dit qu'un reverse proxy sert ce domaine (`web = proxy`, ou écoute imposée par la commande).
+                println!("domaine public repris de {} : {domain} (servi par un reverse proxy)", conf.display());
                 a.public_domain = Some(domain);
-            } else if blocked.is_empty() {
-                println!("domaine repris de {} : {domain}", conf.display());
-                a.domains = vec![domain];
-                a.acme_email = a.acme_email.take().or(email);
-            } else if [80, a.https_listen.port()].iter().all(|p| astroportd::station_domain::port_state(*p) == "busy") {
-                // 80 et 443 tenus par un autre programme : très probablement un reverse proxy (NPM…). La station reste en
-                // HTTP local et se présente sous le domaine qu'il sert.
-                println!("domaine {domain} : les ports 80 et 443 sont tenus par un autre programme (reverse proxy ?) : la station se présente sous https://{domain} ; le proxy doit renvoyer ce domaine vers http://127.0.0.1:18080 (WebSockets activés)");
+            } else if ports.iter().all(|p| state(*p) == "busy") {
+                // 80 et 443 tenus par un autre programme de cette machine : très probablement un reverse proxy (NPM…).
+                println!("domaine {domain} : les ports 80 et 443 de cette machine sont tenus par un autre programme (reverse proxy ?) : la station se présente sous https://{domain}");
                 a.public_domain = Some(domain);
+            } else if ports.iter().all(|p| state(*p) == "free") {
+                // Ports libres ici, mais le domaine peut arriver sur un reverse proxy d'une autre machine : la station le
+                // demande à son propre nom avant de réclamer un certificat qu'elle n'obtiendrait jamais.
+                let d = domain.clone();
+                match tokio::task::spawn_blocking(move || sd::who_answers(&d)).await.unwrap_or(sd::Answer::Unknown) {
+                    sd::Answer::Other(server) => {
+                        println!("domaine {domain} : http://{domain}/ arrive sur un autre serveur web ({server}), pas sur cette machine : un reverse proxy d'une autre machine sert ce domaine ; la station se présente sous https://{domain}");
+                        a.public_domain = Some(domain);
+                    }
+                    _ => {
+                        println!("domaine repris de {} : {domain}", conf.display());
+                        a.domains = vec![domain];
+                        a.acme_email = a.acme_email.take().or(email);
+                    }
+                }
             } else {
-                let why = format!("domaine {domain} enregistré mais pas appliqué : le(s) port(s) {} de cette machine sont pris ou interdits à la station (droits : sudo setcap 'cap_net_bind_service=+ep' sur le binaire). La station reste en accès local ; redémarrez une fois le port libéré.", blocked.join(" et "));
+                // Filet : une station qui ne peut pas ouvrir 80/443 resterait en échec au démarrage, donc injoignable. Elle
+                // garde son accès local et le cockpit dit pourquoi le domaine attend.
+                let blocked: Vec<String> = ports.iter().filter(|p| state(**p) != "free").map(ToString::to_string).collect();
+                let why = format!("domaine {domain} enregistré mais pas appliqué : le(s) port(s) {} de cette machine sont pris ou interdits à la station (droits : sudo setcap 'cap_net_bind_service=+ep' sur le binaire). La station reste en accès local ; redémarrez une fois le port libéré, ou indiquez dans le cockpit qu'un reverse proxy sert ce domaine.", blocked.join(" et "));
                 eprintln!("{why}");
-                astroportd::station_domain::set_refused(why);
+                sd::set_refused(why);
             }
         }
+    }
+    // Sans HTTPS par la station, l'interface écoute sur le port 8090 : en local pour un essai, sur toutes les interfaces
+    // derrière un reverse proxy (NPM dans Docker ou sur une autre machine doit pouvoir la joindre).
+    if a.domains.is_empty() && a.http_listen.is_none() {
+        a.http_listen = Some(if a.public_domain.is_some() { astroportd::station_domain::proxy_listen() } else { astroportd::station_domain::local_listen() });
     }
     if let Some(d) = a.public_domain.take() {
         let d = astroportd::station_domain::normalize_domain(&d).map_err(|e| format!("--public-domain : {e}"))?;
@@ -509,7 +531,14 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
         (None, None) => String::new(),
     };
 
-    let (mut p2p_guards, p2p_handle) = p2p::start(&a, station.p2p_seed, &local, &tunnel_policy, &mut exposed_names).await?;
+    // Constellation = secret partagé de la swarm.key (ẐEN) ou 64 zéros (ORIGIN).
+    let uplanet_name = match &a.swarm_key {
+        Some(path) => std::fs::read_to_string(path)?.lines().map(str::trim).rfind(|l| !l.is_empty()).map(str::to_owned).ok_or("swarm.key vide")?,
+        None => astroportd::init::ORIGIN_UPLANETNAME.to_owned(),
+    };
+    // Stations relais publiées par la coopérative : la station s'y trouve-t-elle ? Alors elle sert de relais.
+    let coop_relays = astroportd::coop_config::p2p_relays(&db, &uplanet_name).await;
+    let (mut p2p_guards, p2p_handle, p2p_role) = p2p::start(&a, station.p2p_seed, &coop_relays, &local, &tunnel_policy, &mut exposed_names).await?;
     let blobs = Arc::new(match &p2p_handle {
         Some(h) => P2pBlobStore::new(local.clone(), h.clone(), vec![]),
         None => P2pBlobStore::local_only(local.clone()),
@@ -518,7 +547,6 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     // Services.
     let keys: Arc<dyn KeySource> = Arc::new(FileKeySource::new(&secrets_dir));
     let ui_keys = keys.clone();
-    let media_keys = keys.clone();
     let publisher = ManifestPublisher::spawn(db.clone(), blobs.clone(), keys.clone(), Duration::from_secs(a.debounce_secs));
     let circle = Arc::new(DbCircle::new());
     circle.refresh(&db).await?;
@@ -540,6 +568,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     // Première connexion authentifiée d'un MULTIPASS créé ici = preuve qu'il a reçu ses clés (crate::member_primo).
     let proofs = astroportd::member_primo::Proofs::new(db.clone());
     dav_config.on_login = Some(Arc::new(move |hex: &str| proofs.note(hex)));
+    dav_config.ipfs_gateway = a.ipfs_gateway;
     if let Some(domain) = public_domain(&a) {
         dav_config.public_base_url = Some(format!("https://{domain}")); // liaison NIP-98 derrière notre propre TLS
     }
@@ -635,11 +664,6 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     let embedder = ollama.as_ref().map(|o| local_embedder(&a, o)).transpose()?;
     let memory = ollama.as_ref().zip(embedder).map(|(o, e)| Arc::new(MemoryStore::new(db.clone(), Arc::new(e), o.clone(), Some(activity.clone()))));
     let hardware = tokio::task::spawn_blocking(Hardware::detect).await?;
-    // Constellation = secret partagé de la swarm.key (ẐEN) ou 64 zéros (ORIGIN).
-    let uplanet_name = match &a.swarm_key {
-        Some(path) => std::fs::read_to_string(path)?.lines().map(str::trim).rfind(|l| !l.is_empty()).map(str::to_owned).ok_or("swarm.key vide")?,
-        None => astroportd::init::ORIGIN_UPLANETNAME.to_owned(),
-    };
     // Nœuds Duniter : ceux donnés, sinon découverts (cache d'une heure dans la base ; échec = amorces, dit au démarrage).
     let discovered = if a.no_duniter || (!a.duniter_rpc.is_empty() && a.squid_url.is_some()) {
         None
@@ -739,6 +763,8 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
             .with_rescue(station.node_secret.as_ref().map(|s| **s), Some(public_domain(&a).cloned().unwrap_or_else(astroportd::init::hostname)), Some(crawl_nudge.clone()));
         if let Some(handle) = &p2p_handle {
             b = b.with_prefetch(blob_prefetch(handle, &local));
+            // Copies de pièces jointes d'un ami : jamais plus que la taille d'une pièce jointe, annoncée avant tout octet reçu.
+            b = b.with_attachment_prefetch(blob_prefetch_max(handle, &local, astro_dav::share::ATTACHMENT_MAX as u64, Duration::from_secs(60)));
         }
         Arc::new(b)
     };
@@ -794,25 +820,6 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
         println!("Ğ1Billets : vérification et encaissement actifs → /scan{}", if squid_urls.is_empty() { " (sans indexeur Ğ1 --squid-url : l'origine du billet et le destinataire ne peuvent pas être vérifiés, l'encaissement est refusé)" } else { "" });
     }
     tasks::nightly(&parts, &memory, &backup, &billets, &mut background).await?;
-    // Dépôt de films et de séries : attestation de copie privée depuis l'interface (kind 31903 signé du titulaire).
-    let ffmpeg_found = tokio::process::Command::new("ffmpeg").arg("-version").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().await.is_ok_and(|s| s.success());
-    let media_pipeline = Arc::new(astroportd::media::MediaPipeline {
-        dav: dav.clone(),
-        keys: media_keys,
-        publisher: Some(event_publisher.clone()),
-        activity: Some(activity.clone()),
-        tools: astroportd::media::Tools::default(),
-        mode: if ffmpeg_found { astroportd::media::Transcode::Auto } else { astroportd::media::Transcode::Notify },
-        work_dir: a.db.parent().map_or_else(|| PathBuf::from("work"), |p| p.join("work")),
-    });
-    println!("médias : dépôt de films et séries (copie privée attestée, plafond 1024 Mo, encodage {})", if ffmpeg_found { "H.264/AAC automatique" } else { "recommandé seulement : ffmpeg introuvable" });
-    let consent_fn: astroportd::ui_backend::ConsentFn = {
-        let p = media_pipeline.clone();
-        Arc::new(move |owner| {
-            let p = p.clone();
-            Box::pin(async move { p.record_consent(&owner).await.map(|_| ()).map_err(|e| e.to_string()) })
-        })
-    };
     // Inscription d'un MULTIPASS : `uplanet_name` (voir plus haut) désigne la constellation.
     let registrar = {
         let secret = station.secret.clone();
@@ -831,7 +838,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     };
     // Station sans Capitaine : un code d'installation, écrit dans le journal seulement, ouvre la page /welcome.
     let setup_code = if registrar.awaiting_captain().await {
-        let url = public_domain(&a).map_or_else(|| a.http_listen.map_or_else(|| "http://127.0.0.1:18080".to_owned(), |l| format!("http://{l}")), |d| format!("https://{d}"));
+        let url = public_domain(&a).map_or_else(|| format!("http://{}", a.http_listen.unwrap_or_else(astroportd::station_domain::local_listen)), |d| format!("https://{d}"));
         let code = astroportd::first_run::SetupCode::new(Box::new(move |code| println!("\n⚓ Station sans Capitaine : ouvrez {url}/welcome et saisissez le code d'installation {code}\n   (ou, sur cette machine : astroportd multipass create <votre@email> --captain)\n")))?;
         Some(Arc::new(code))
     } else {
@@ -873,6 +880,8 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
             station_home: a.db.parent().map(std::path::Path::to_path_buf),
             nudge: beacon_nudge.clone(),
             activity: Some(activity.clone()),
+            p2p: p2p_handle.clone(),
+            p2p_announce: p2p_role.announce.clone(),
         });
         background.push(tokio::spawn(beacon.run(stop_watch.clone())));
         println!("balise de station (30850) : publiée au démarrage, à chaque changement de places et toutes les 6 h{}", if a.lat.is_some() { ", position arrondie à la case UMAP" } else { ", sans position (--lat/--lon absents)" });
@@ -900,7 +909,9 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     let consoles_ui = consoles.clone();
     let assist_admin = admin::assist_admin(&assist, &forwards, &consoles);
     // Maillage (stations, bootstrap gardé) et Capitaines (suivre, services des amis, accès à chaud) pour l'écran du Capitaine.
-    let mut mesh = astroportd::mesh_admin::Mesh::new(db.clone(), p2p_handle.clone(), a.p2p_bootstrap.clone(), station_planes(&a.db).0, activity.clone());
+    let mut mesh = astroportd::mesh_admin::Mesh::new(db.clone(), p2p_handle.clone(), a.p2p_bootstrap.clone(), station_planes(&a.db).0, activity.clone())
+        .with_relays(a.p2p_use_relay.clone(), Some(uplanet_name.to_string()), p2p_role.relay_server)
+        .with_directory(stations.clone(), beacon_nudge.clone());
     // Bail géographique : une seule station de l'UPlanet tient chaque quartier (UMAP, SECTOR, REGION), la plus proche.
     if let Some(handle) = &p2p_handle {
         let geo = astroportd::geo_lease::GeoLease::new(db.clone(), handle.peer_id().to_string(), a.lat.zip(a.lon), activity.clone());
@@ -909,6 +920,26 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     }
     let mesh = Arc::new(mesh);
     background.push(tokio::spawn(mesh.clone().keep_alive(Duration::from_secs(300), stop_watch.clone())));
+    // Cartes de station : chacune décrit la sienne par le maillage ; le dossier des `12345.json` des pairs se remplit des
+    // stations connectées (synchronisation N¹/N², envoi des partages, réplication, routage), même sans Astroport.ONE.
+    if let Some(h) = &p2p_handle {
+        let card = Arc::new(astroportd::swarm_cards::Card {
+            db: db.clone(),
+            handle: h.clone(),
+            hostname: astroportd::init::hostname(),
+            node_hex: node_hex.clone(),
+            my_relay: public_domain(&a).map(|d| format!("wss://{d}")),
+            origin: a.lat.zip(a.lon),
+        });
+        match card.serve() {
+            Ok(answers) => p2p_guards.push(Box::new(answers)),
+            Err(e) => eprintln!("essaim : carte de station non servie : {e}"),
+        }
+        match a.swarm_dir.clone().or_else(default_swarm_dir) {
+            Some(dir) => background.push(tokio::spawn(astroportd::swarm_cards::keep(h.clone(), dir, stop_watch.clone()))),
+            None => eprintln!("essaim : HOME introuvable et --swarm-dir absent : les cartes des stations ne sont pas gardées"),
+        }
+    }
     let captains = Arc::new(astroportd::captains::Captains::new(db.clone(), captains_keys, Some(publish_fn(&event_publisher)), p2p_handle.clone(), forwards.clone(), Some(consoles.clone()), activity.clone()));
     let (mesh_admin, captains_admin) = admin::mesh_admins(&mesh, &captains);
     let account_origin = public_domain(&a).map(|d| format!("https://{d}"));
@@ -929,8 +960,8 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
         if !a.domains.is_empty() {
             return a.https_listen;
         }
-        let local = a.http_listen.unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 18080)));
-        // Derrière un proxy, l'interface écoute en local mais la visio doit rester joignable de dehors (même port, en UDP).
+        let local = a.http_listen.unwrap_or_else(astroportd::station_domain::local_listen);
+        // Derrière un proxy, la visio doit rester joignable de dehors (même port, en UDP), même si l'interface écoute en local.
         if a.public_domain.is_some() && local.ip().is_loopback() { SocketAddr::new(std::net::Ipv4Addr::UNSPECIFIED.into(), local.port()) } else { local }
     };
     let stun_port = match (!a.no_stun).then(|| a.stun_listen.unwrap_or_else(stun_default)) {
@@ -995,8 +1026,26 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     if let Some(bad) = a.ice_servers.iter().find(|u| !["stun:", "stuns:", "turn:", "turns:"].iter().any(|p| u.starts_with(p)) || u.len() > 200 || u.chars().any(char::is_whitespace)) {
         return Err(format!("--ice-server « {bad} » : stun:hôte:port ou turn:hôte:port attendu").into());
     }
-    let mut ui = StationUi::new(services.clone(), dav.clone(), memory, ollama, true).with_setup(setup_code).with_conf_path(conf_path.clone()).with_ice(stun_port, turn.map(|t| t.0), a.ice_servers.clone()).with_presence(presence).with_chat(chat).with_people(people.clone()).with_console(consoles_ui).with_consent(consent_fn).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_stations(stations.clone()).with_invites(invites).with_welcome(welcome).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
-        .with_admin(Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), targets: service_targets(&a), dnslink: Some(dnslink.clone()), assist: Some(assist_admin), tasks: Some(db.clone()), mesh: Some(mesh_admin), captains: Some(captains_admin) }).handler());
+    let admin_fn = Arc::new(astroportd::station_admin::Admin { face: face_control, kinds: kinds_control, tunnels: Some((tunnel_policy.clone(), exposed_names.clone())), targets: service_targets(&a), dnslink: Some(dnslink.clone()), assist: Some(assist_admin), tasks: Some(db.clone()), mesh: Some(mesh_admin), captains: Some(captains_admin) }).handler();
+    // Prise de contrôle locale (`astroportd tunnel …`) : la politique des tunnels et le routage vers les services des autres stations.
+    let swarm_route = Arc::new(astroportd::swarm_route::SwarmRoute::new(stations.clone(), p2p_handle.clone(), forwards.clone(), a.lat.zip(a.lon)));
+    let mut control_sections: std::collections::BTreeMap<&'static str, astroportd::ui_backend::AdminFn> = std::collections::BTreeMap::new();
+    control_sections.insert("tunnels", admin_fn.clone());
+    control_sections.insert("tunnel", Arc::new(move |_section, body| {
+        let route = swarm_route.clone();
+        Box::pin(async move { route.act(&body.unwrap_or(serde_json::Value::Null)).await })
+    }));
+    let control_path = astroportd::control::socket_path(&a.db);
+    match astroportd::control::serve(control_path.clone(), control_sections) {
+        Ok(task) => {
+            println!("contrôle local : {} (astroportd tunnel …)", control_path.display());
+            p2p_guards.push(Box::new(task));
+        }
+        Err(e) => eprintln!("contrôle local indisponible : {e}"),
+    }
+    let mut ui = StationUi::new(services.clone(), dav.clone(), memory, ollama, true).with_setup(setup_code).with_conf_path(conf_path.clone()).with_ice(stun_port, turn.map(|t| t.0), a.ice_servers.clone()).with_presence(presence).with_chat(chat).with_people(people.clone()).with_console(consoles_ui).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_stations(stations.clone()).with_invites(invites).with_welcome(welcome).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
+        .with_admin(admin_fn.clone());
+    ui = ui.with_feedback(Arc::new(astroportd::feedback::Feedback::new(db.clone(), uplanet_name.to_string(), activity.clone()))).with_oc(Arc::new(astroportd::oc_member::OcMember::new(db.clone(), uplanet_name.to_string())));
     if let Some(f) = thumbs_fn {
         ui = ui.with_face_thumbs(f);
     }
@@ -1047,7 +1096,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
 
     // Écoute : HTTPS automatique avec un domaine, sinon HTTP en clair.
     let frontend = if a.domains.is_empty() {
-        let addr = a.http_listen.unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 18080)));
+        let addr = a.http_listen.unwrap_or_else(astroportd::station_domain::local_listen);
         let listener = tokio::net::TcpListener::bind(addr).await?;
         match &a.public_domain {
             Some(d) => println!("astroportd à l'écoute sur http://{} derrière un reverse proxy : se présente sous https://{d} (le proxy tient le TLS et renvoie ce domaine ici, WebSockets activés)", listener.local_addr()?),
@@ -1059,10 +1108,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
         None
     } else {
         let mut acme = AcmeConfig::new(a.domains.clone(), a.acme_email.clone());
-        acme.directory_url = a.acme_directory.clone().unwrap_or_else(|| (if a.acme_staging { LETS_ENCRYPT_STAGING } else { LETS_ENCRYPT }).to_owned());
-        if let (Some(kid), Some(hmac)) = (&a.acme_eab_kid, &a.acme_eab_hmac) {
-            acme.eab = Some((kid.clone(), base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(hmac.trim_end_matches('='))?));
-        }
+        acme.directory_url = (if a.acme_staging { LETS_ENCRYPT_STAGING } else { LETS_ENCRYPT }).to_owned();
         let manager = AcmeManager::new(acme, KvCertStore::new(db.clone()));
         services.set_tls(a.domains.clone(), manager.status.clone());
         let http = a.http_listen.unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 80)));

@@ -64,6 +64,11 @@ impl KuboBlobStore {
         check_status(resp).await
     }
 
+    /// `cid` est-il épinglé dans ce Kubo (`/api/v0/pin/ls`, tous types) ? Une erreur ou un CID mal formé vaut « non ».
+    pub async fn is_pinned(&self, cid: &str) -> bool {
+        (is_cid(cid) || is_legacy_cid(cid)) && self.json(&format!("/api/v0/pin/ls?arg={cid}&type=all&quiet=true")).await.is_ok()
+    }
+
     async fn json(&self, path_and_query: &str) -> Result<serde_json::Value, BlobError> {
         let resp = self.post(path_and_query, empty()).await?;
         let body = resp.into_body().collect().await.map_err(|e| BlobError::Io(io_err(e)))?.to_bytes();
@@ -476,6 +481,13 @@ impl BlobStore for AutoBlobStore {
             }
         }
         Ok(AutoWriter::Fs(Box::new(self.fs.begin().await?)))
+    }
+
+    async fn pinned_legacy(&self, cid: &str) -> bool {
+        match self.kubo_up().await {
+            Some(kubo) if is_legacy_cid(cid) => kubo.is_pinned(cid).await,
+            _ => false,
+        }
     }
 
     async fn open(&self, cid: &str) -> Result<(AutoReader, u64), BlobError> {

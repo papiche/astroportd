@@ -42,6 +42,13 @@ export default {
 "aucun service partagé": "no shared service",
 "L'essaim": "The swarm",
 "Seulement celles qui offrent l'IA (Ollama)": "Only those offering AI (Ollama)",
-"Aucun dossier de pairs configuré (--swarm-dir) : seules les stations jointes apparaissent.": "No peer folder configured (--swarm-dir): only joined stations appear.",
-"Plans (UPlanet)": "Planes (UPlanet)"
+"Plans (UPlanet)": "Planes (UPlanet)",
+"Stations relais": "Relay stations",
+"Cette station sert de relais aux stations de la constellation qui sont derrière une box.": "This station relays for the constellation's stations that are behind a home router.",
+"cette station": "this station",
+"reliée, sans place": "linked, no slot",
+"injoignable": "unreachable",
+"configuration coopérative": "cooperative settings",
+"Aucune station relais. Derrière une box, la station ne joint que celles de son réseau local et celles qui sont joignables. Ajoutez-en dans la configuration coopérative (P2P_RELAYS).": "No relay station. Behind a home router, this station only reaches stations on its local network and reachable ones. Add some in the cooperative settings (P2P_RELAYS).",
+"Configurer": "Configure"
 };

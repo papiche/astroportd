@@ -25,8 +25,10 @@ pub enum AccountError {
     Invalid(String),
     /// Compte inconnu ici.
     NotFound,
-    /// Trop d'essais.
+    /// Limite de débit (réseau, signatures, exports) : réessayer plus tard. Code stable `rate_limited`.
     Limited(String),
+    /// Compte verrouillé après trop de PASS faux : décidé ici, jamais par le client. Code stable `pass_locked`.
+    Locked(String),
     /// Identifiants refusés (PASS faux, compte inconnu).
     Denied(String),
     /// Panne de la station (détail pour le journal).
@@ -36,7 +38,7 @@ pub enum AccountError {
 impl std::fmt::Display for AccountError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Invalid(m) | Self::Limited(m) | Self::Denied(m) | Self::Internal(m) => f.write_str(m),
+            Self::Invalid(m) | Self::Limited(m) | Self::Locked(m) | Self::Denied(m) | Self::Internal(m) => f.write_str(m),
             Self::NotFound => f.write_str("compte non hébergé ici"),
         }
     }
@@ -253,7 +255,7 @@ impl AccountService {
         let _gate = self.pass_gate.lock().await;
         let (mut fails, last, until) = self.guard_state(&hex).await;
         if until > at {
-            return Err(AccountError::Limited(format!("compte verrouillé après trop d'essais : réessayez dans {} min", (until - at).div_ceil(60))));
+            return Err(AccountError::Locked(format!("compte verrouillé après trop d'essais : réessayez dans {} min", (until - at).div_ceil(60))));
         }
         if fails > 0 && fails < PASS_LOCK_AFTER && at.saturating_sub(last) > PASS_FORGET_AFTER {
             fails = 0;
@@ -279,7 +281,7 @@ impl AccountService {
             bus.publish_to(Audience::Captain, "alert", "pass", format!("PASS de {email} verrouillé {minutes} min après {fails} codes faux consécutifs (dernier essai depuis {from})"), None);
             bus.publish_to(Audience::Owner(hex.clone()), "alert", "pass", format!("Des codes PASS incorrects ont été saisis pour votre compte ({fails} essais) : connexion par PASS suspendue {minutes} min"), None);
         }
-        Err(AccountError::Limited(format!("trop d'essais : compte verrouillé {minutes} min")))
+        Err(AccountError::Locked(format!("trop d'essais : compte verrouillé {minutes} min")))
     }
 
     /// Signe, avec la clé du compte, l'événement non signé `{ kind, content, tags?, created_at? }` : la clé secrète ne quitte
@@ -438,7 +440,9 @@ impl AccountService {
         // Sentinelle visible plutôt que champ absent : un compte sans clé Ğ1 le dit.
         let dunikey = std::fs::read_to_string(dir.join(".secret.dunikey")).map_err(|e| format!("ERROR:{e}"));
         self.audit("audit.keys", json!({ "for": hex })).await;
-        Ok(json!({ "nsec": nsec, "npub": npub_of(hex), "dunikey": dunikey.as_ref().ok(), "dunikey_error": dunikey.err() }))
+        // Adresse Ğ1 (SS58) du dunikey : le client la compare à celle qu'il dérive de la graine avant d'importer le portefeuille.
+        let g1pub = dunikey.as_ref().ok().and_then(|t| astro_lifecycle::dunikey::Dunikey::parse(t).ok()).and_then(|d| d.seed().g1_ss58().ok());
+        Ok(json!({ "nsec": nsec, "npub": npub_of(hex), "g1pub": g1pub, "dunikey": dunikey.as_ref().ok(), "dunikey_error": dunikey.err() }))
     }
 
     async fn audit(&self, stream: &'static str, data: Value) {
@@ -549,11 +553,14 @@ mod tests {
         let k = svc.export_keys(&hex, true).await.unwrap();
         assert!(k["nsec"].as_str().unwrap().starts_with("nsec1") && k["dunikey"].as_str().unwrap().contains("sec: def"));
         assert_eq!(k["npub"], svc.view(&hex).await.unwrap()["npub"]);
+        assert!(k["g1pub"].is_null(), "dunikey illisible : pas d'adresse inventée");
+        // Un vrai dunikey : l'adresse Ğ1 (SS58) accompagne la clé, pour que le client vérifie celle qu'il dérive.
+        std::fs::write(dir.join("nostr/ana@example.org/.secret.dunikey"), astro_lifecycle::dunikey::render(&[5; 32])).unwrap();
+        let k = svc.export_keys(&hex, true).await.unwrap();
+        assert_eq!(k["g1pub"].as_str(), astro_core::Seed::from_ed25519_seed([5; 32]).g1_ss58().ok().as_deref());
         let audited: i64 = svc.db.readers().read(|c| Ok(c.query_row("SELECT count(*) FROM journal WHERE stream = 'audit.keys'", [], |r| r.get(0))?)).await.unwrap();
-        assert_eq!(audited, 1);
-        for _ in 0..2 {
-            svc.export_keys(&hex, true).await.unwrap();
-        }
+        assert_eq!(audited, 2);
+        svc.export_keys(&hex, true).await.unwrap();
         assert!(matches!(svc.export_keys(&hex, true).await, Err(AccountError::Limited(_))), "quatrième export dans l'heure");
         // Clé Ğ1 absente : dit explicitement, sans cacher l'erreur.
         std::fs::remove_file(dir.join("nostr/ana@example.org/.secret.dunikey")).unwrap();
@@ -578,8 +585,8 @@ mod tests {
             assert!(matches!(svc.unlock(None, "Ana@Example.org", "000000").await, Err(AccountError::Denied(m)) if m.contains(&format!("{left} essai"))));
         }
         let locked = svc.unlock(None, "ana@example.org", "000000").await.unwrap_err();
-        assert!(matches!(&locked, AccountError::Limited(m) if m.contains("15 min")), "{locked:?}");
-        assert!(matches!(svc.unlock(None, "ana@example.org", "123456").await, Err(AccountError::Limited(_))), "verrouillé : même le bon code");
+        assert!(matches!(&locked, AccountError::Locked(m) if m.contains("15 min")), "{locked:?}");
+        assert!(matches!(svc.unlock(None, "ana@example.org", "123456").await, Err(AccountError::Locked(_))), "verrouillé : même le bon code");
         assert!(svc.pass_locked_until(&hex).await.is_some());
         // Le PASS n'est pas détruit : le Capitaine lève le verrou et le bon code fonctionne.
         assert!(dir.join("nostr/ana@example.org/.pass").is_file());

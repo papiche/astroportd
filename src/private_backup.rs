@@ -178,6 +178,8 @@ pub struct PrivateBackup<O: Outbox, B: BlobStore> {
     activity: ActivityBus,
     notify: Option<Notify>,
     prefetch: Option<Prefetch>,
+    /// Rapatriement plafonné à la taille d'une pièce jointe, pour les copies de pièces jointes (sinon `prefetch`).
+    attachment_prefetch: Option<Prefetch>,
     /// Clé NODE de la station (hex, secret) : expéditrice et destinataire des messages de secours.
     node: Option<(String, astro_crypto::SecretBytes)>,
     /// Nom de la station montré au gardien (« sur la station … »).
@@ -189,7 +191,7 @@ pub struct PrivateBackup<O: Outbox, B: BlobStore> {
 impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
     /// `sharing` fournit la liste des proches réciproques ; `station_peer` est indiqué à l'hébergeur pour rapatrier les blobs.
     pub fn new(db: Arc<Db>, keys: Arc<dyn KeySource>, outbox: Arc<O>, blobs: Arc<B>, sharing: Arc<Sharing<O>>, activity: ActivityBus) -> Self {
-        Self { db, keys, outbox, blobs, sharing, publisher: None, station_peer: None, home: None, publish: None, accounts_dir: None, activity, notify: None, prefetch: None, node: None, label: None, crawl_nudge: None }
+        Self { db, keys, outbox, blobs, sharing, publisher: None, station_peer: None, home: None, publish: None, accounts_dir: None, activity, notify: None, prefetch: None, attachment_prefetch: None, node: None, label: None, crawl_nudge: None }
     }
 
     /// Republie le manifeste de l'hébergeur après chaque rangement, et indique la station aux amis.
@@ -223,6 +225,12 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
     /// Prévient le titulaire (message privé de BRO).
     pub fn with_notify(mut self, notify: Option<Notify>) -> Self {
         self.notify = notify;
+        self
+    }
+
+    /// Rapatriement plafonné (taille d'une pièce jointe) des copies de pièces jointes.
+    pub fn with_attachment_prefetch(mut self, f: Prefetch) -> Self {
+        self.attachment_prefetch = Some(f);
         self
     }
 
@@ -866,6 +874,8 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
             }
             // Un blob chiffré à ranger.
             Some("item") if rumor.kind == kind::FILE => self.store_item(me, &sender, &wrap.id, &rumor, at, stats).await,
+            // La copie d'une pièce jointe de message, servie ici jusqu'à son échéance.
+            Some("attachment") if rumor.kind == kind::FILE => self.store_replica(me, &sender, &wrap.id, &rumor, at, stats).await,
             // Mon ami, rétabli sur une autre station, demande ce que je détiens pour lui.
             Some("restore") => {
                 self.accept_restore(me, &sender, &rumor, at).await;
@@ -884,8 +894,12 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
     /// Le blob `cid` est-il disponible ici ? Sinon le rapatrie depuis la station indiquée par l'expéditeur ; en cas d'échec,
     /// remet le message à plus tard (reculade exponentielle), ou l'écarte après [`MAX_TRIES`] essais.
     async fn ensure_blob(&self, cid: &str, rumor: &Rumor, wrap_id: &str, at: i64, stats: &mut BackupStats) -> bool {
+        self.ensure_blob_with(self.prefetch.as_ref(), cid, rumor, wrap_id, at, stats).await
+    }
+
+    async fn ensure_blob_with(&self, prefetch: Option<&Prefetch>, cid: &str, rumor: &Rumor, wrap_id: &str, at: i64, stats: &mut BackupStats) -> bool {
         if self.blobs.open(cid).await.is_err() {
-            if let (Some(peer), Some(prefetch)) = (tag(&rumor.tags, "station"), &self.prefetch) {
+            if let (Some(peer), Some(prefetch)) = (tag(&rumor.tags, "station"), prefetch) {
                 let _ = prefetch(cid.to_owned(), peer.to_owned()).await;
             }
         }
@@ -943,6 +957,120 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
                 stats.deferred += 1;
             }
         }
+    }
+
+    /// Volume que `host` met à disposition de `owner` s'il a accepté (octets), sinon 0.
+    async fn pact_quota(&self, owner: &str, host: &str) -> u64 {
+        let (o, h) = (owner.to_owned(), host.to_owned());
+        let pact: Option<(String, i64)> = self.db.readers().read(move |c| Ok(c.query_row("SELECT status, quota_bytes FROM backup_pacts WHERE owner_hex = ?1 AND host_hex = ?2", [&o, &h], |r| Ok((r.get(0)?, r.get(1)?))).optional()?)).await.ok().flatten();
+        match pact {
+            Some((status, q)) if status == "accepted" => u64::try_from(q).unwrap_or(0),
+            _ => 0,
+        }
+    }
+
+    /// Côté hébergeur : une copie de pièce jointe de `sender`. Mêmes garde-fous que [`Self::store_item`] (accord accepté, volume
+    /// du pacte, blob vérifié par son CID), plus : octets chiffrés (UENC v1, jamais de clair), taille et durée bornées. Elle compte
+    /// dans le volume accordé et disparaît d'elle-même à l'échéance (purge des liens), sans la semaine de grâce des sauvegardes.
+    async fn store_replica(&self, me: &str, sender: &str, wrap_id: &str, rumor: &Rumor, at: i64, stats: &mut BackupStats) {
+        let expires = tag(&rumor.tags, "expires").and_then(|e| e.parse::<i64>().ok());
+        let (Some(cid), Some(expires)) = (tag(&rumor.tags, "cid"), expires) else {
+            self.claim(wrap_id, at).await;
+            stats.ignored += 1;
+            return;
+        };
+        let quota = self.pact_quota(sender, me).await;
+        // Avant tout rapatriement : accord accepté, durée raisonnable, et la taille annoncée tient dans le volume restant.
+        let announced = tag(&rumor.tags, "size").and_then(|n| n.parse::<u64>().ok()).unwrap_or(u64::MAX);
+        let used_before = self.used(sender, me).await.saturating_add(astro_dav::share::replica_bytes(&self.db, sender, at).await);
+        if !astro_dav::blob::is_cid(cid) || expires <= at || expires > at + astro_dav::share::ATTACHMENT_MAX_TTL || announced > astro_dav::share::ATTACHMENT_MAX as u64 || used_before.saturating_add(announced) > quota {
+            self.claim(wrap_id, at).await;
+            stats.ignored += 1;
+            return;
+        }
+        let existed = self.blobs.open(cid).await.is_ok();
+        if !self.ensure_blob_with(self.attachment_prefetch.as_ref().or(self.prefetch.as_ref()), cid, rumor, wrap_id, at, stats).await {
+            return;
+        }
+        // La taille et la forme sont celles du blob reçu, jamais celles que l'expéditeur annonce.
+        let verdict = async {
+            use tokio::io::AsyncReadExt as _;
+            let (mut reader, size) = self.blobs.open(cid).await.map_err(|e| e.to_string())?;
+            let mut head = [0u8; 6];
+            reader.read_exact(&mut head).await.map_err(|e| e.to_string())?;
+            if !astro_dav::share::is_uenc_v1(&head) {
+                return Err("pas une pièce jointe chiffrée".to_owned());
+            }
+            if size > astro_dav::share::ATTACHMENT_MAX as u64 {
+                return Err("trop lourde".to_owned());
+            }
+            Ok(size)
+        }
+        .await;
+        let refuse = |why: String| {
+            self.activity.publish_to(Audience::Captain, "alert", "backup", format!("copie de pièce jointe refusée : {why}"), None);
+        };
+        let size = match verdict {
+            Ok(size) => size,
+            Err(why) => {
+                if !existed {
+                    let _ = self.blobs.remove(cid).await; // seulement ce que ce message vient d'apporter
+                }
+                refuse(why);
+                self.claim(wrap_id, at).await;
+                stats.ignored += 1;
+                return;
+            }
+        };
+        if used_before.saturating_add(size) > quota {
+            if !existed {
+                let _ = self.blobs.remove(cid).await;
+            }
+            self.claim(wrap_id, at).await; // hors accord ou volume dépassé : refusé, sans bruit
+            stats.ignored += 1;
+            return;
+        }
+        match astro_dav::share::record_attachment(&self.db, sender, "replica", cid, size, expires, at).await {
+            Ok(_) => {
+                self.claim(wrap_id, at).await;
+                stats.stored += 1;
+            }
+            Err(e) => {
+                self.activity.publish_to(Audience::Captain, "alert", "backup", format!("copie de pièce jointe non rangée : {e}"), None);
+                stats.deferred += 1;
+            }
+        }
+    }
+
+    /// Côté propriétaire : copie tout de suite la pièce jointe `cid` (déjà conservée ici jusqu'à `expires_at`) chez les amis qui
+    /// hébergent sa sauvegarde (ceux qui gardent sa part P3), avec l'échéance. Rend le nombre de copies parties ou rangées.
+    /// Un hébergeur sans volume ou hors ligne ne retarde rien : la pièce jointe reste servie par cette station.
+    pub async fn replicate_attachment(&self, owner: &str, cid: &str, size: u64, expires_at: i64) -> usize {
+        // Trois amis au plus : le but est la disponibilité, pas de répandre le fichier.
+        let o = owner.to_owned();
+        let hosts: Vec<String> = self
+            .db
+            .readers()
+            .read(move |c| {
+                let mut stmt = c.prepare("SELECT host_hex FROM backup_pacts WHERE owner_hex = ?1 AND status = 'accepted' ORDER BY decided_at LIMIT 3")?;
+                Ok(stmt.query_map([&o], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap_or_default();
+        let mut done = 0;
+        for host in hosts {
+            if self.hosted_here(&host).await {
+                continue; // même station : le blob est déjà servi ici, une copie n'ajouterait aucune disponibilité
+            }
+            let mut tags = vec![vec!["cid".to_owned(), cid.to_owned()], vec!["size".into(), size.to_string()], vec!["expires".into(), expires_at.to_string()], vec!["op".into(), "attachment".into()]];
+            if let Some(peer) = &self.station_peer {
+                tags.push(vec!["station".into(), peer.clone()]);
+            }
+            if self.send_to(owner, &host, kind::FILE, tags, &format!("ipfs://{cid}")).await.is_ok() {
+                done += 1;
+            }
+        }
+        done
     }
 
     // ───────────────────────────── Restauration ─────────────────────────────
@@ -2508,5 +2636,100 @@ mod tests {
         for n in [&old, &new, &station] {
             let _ = std::fs::remove_dir_all(&n.dir);
         }
+    }
+
+    // ───────────────── Pièces jointes de messages copiées chez les amis hébergeurs ─────────────────
+
+    async fn blob_in(n: &Node, bytes: &[u8]) -> String {
+        use astro_dav::BlobWriter as _;
+        use tokio::io::AsyncWriteExt as _;
+        let mut w = n.blobs.begin().await.unwrap();
+        w.write_all(bytes).await.unwrap();
+        w.commit().await.unwrap().cid
+    }
+
+    fn uenc(fill: u8, len: usize) -> Vec<u8> {
+        let mut v = b"UENC\x01\x01".to_vec();
+        v.resize(len, fill);
+        v
+    }
+
+    #[tokio::test]
+    async fn an_attachment_is_copied_to_the_friend_who_hosts_the_backup_only_if_encrypted_within_his_volume_and_until_its_expiry() {
+        let (alice, carol) = (hex(&ALICE), hex(&CAROL));
+        let owner = node("att-o", &[(&ALICE, "alice@example.org")], &[(&CAROL, "carol@example.org")], "12D3KooWAttOwner", None, None).await;
+        let host = node("att-h", &[(&CAROL, "carol@example.org")], &[(&ALICE, "alice@example.org")], "12D3KooWAttHost", None, Some(owner.blobs.clone())).await;
+        for (n, a, b) in [(&owner, &ALICE, &CAROL), (&host, &CAROL, &ALICE)] {
+            n.db.writer().execute("INSERT INTO social_graph(owner_hex, pubkey, level, updated_at) VALUES (?1, ?2, 1, 0)", vec![hex(a).into(), hex(b).into()]).await.unwrap();
+        }
+        give(&host.db, follows(&ALICE, &[&CAROL])).await;
+        let at = now();
+        let expires = at + 3 * 86_400;
+
+        // Sans accord d'hébergement : rien ne part.
+        let good = blob_in(&owner, &uenc(7, 200)).await;
+        assert_eq!(owner.backup.replicate_attachment(&alice, &good, 200, expires).await, 0);
+        assert!(owner.outbox.0.lock().unwrap().is_empty());
+
+        // Accord accepté (volume de 1 000 octets) : la copie part, avec l'échéance et sans aucune clé.
+        accept_pact(&owner.db, &ALICE, &CAROL).await;
+        accept_pact(&host.db, &ALICE, &CAROL).await;
+        assert_eq!(owner.backup.replicate_attachment(&alice, &good, 200, expires).await, 1);
+        let sent = owner.outbox.0.lock().unwrap().clone();
+        let rumor = nip59::unwrap(&CAROL, &sent[0].1).unwrap().rumor;
+        assert_eq!((tag(&rumor.tags, "op"), tag(&rumor.tags, "cid"), tag(&rumor.tags, "expires")), (Some("attachment"), Some(good.as_str()), Some(expires.to_string().as_str())));
+        pump(&owner, &host).await;
+        let stats = host.backup.poll_once(at).await;
+        assert_eq!((stats.stored, stats.ignored), (1, 0), "{stats:?}");
+        assert!(host.blobs.open(&good).await.is_ok(), "le blob est chez l'ami, vérifié par son CID");
+        assert_eq!(scalar(&host.db, "SELECT count(*) FROM kv WHERE scope = 'guest_share' AND json_extract(value, '$.kind') = 'replica' AND json_extract(value, '$.owner') = ?1 AND json_extract(value, '$.expires_at') = CAST(?2 AS INTEGER)", vec![alice.clone(), expires.to_string()]).await, 1, "servi par la passerelle jusqu'à l'échéance");
+        assert_eq!(astro_dav::share::replica_bytes(&host.db, &alice, at).await, 200);
+        assert_eq!(scalar(&host.db, "SELECT count(*) FROM ucloud_entries WHERE path LIKE '/Sauvegardes/%'", vec![]).await, 0, "hors du VFS : pas de semaine de grâce, pas de nettoyage de nuit");
+        assert_eq!(scalar(&host.db, "SELECT count(*) FROM ucloud_keyring", vec![]).await, 0, "l'ami n'a jamais de clé");
+
+        // Du clair n'est jamais hébergé, et le blob apporté par ce message est retiré.
+        let plain = blob_in(&owner, b"PNG pas chiffre pas chiffre pas chiffre").await;
+        owner.backup.replicate_attachment(&alice, &plain, 39, expires).await;
+        pump(&owner, &host).await;
+        let stats = host.backup.poll_once(at).await;
+        assert_eq!((stats.stored, stats.ignored), (0, 1), "{stats:?}");
+        assert!(host.blobs.open(&plain).await.is_err());
+        let (log, _) = host.backup.activity.subscribe(0);
+        assert!(log.iter().any(|a| a.message.contains("copie de pièce jointe refusée")), "le Capitaine est prévenu");
+
+        // Volume dépassé (800 octets annoncés, 200 déjà pris sur 1 000, puis 900) : refusé avant tout rapatriement.
+        let big = blob_in(&owner, &uenc(9, 900)).await;
+        owner.backup.replicate_attachment(&alice, &big, 900, expires).await;
+        pump(&owner, &host).await;
+        let stats = host.backup.poll_once(at).await;
+        assert_eq!((stats.stored, stats.ignored), (0, 1), "{stats:?}");
+        assert!(host.blobs.open(&big).await.is_err(), "rien n'a été rapatrié");
+
+        // Échéance dépassée ou au-delà de 90 jours : refusé. Un mensonge sur la taille annoncée ne passe pas non plus.
+        for exp in [at - 10, at + astro_dav::share::ATTACHMENT_MAX_TTL + 100] {
+            let c = blob_in(&owner, &uenc(3, 100)).await;
+            owner.backup.replicate_attachment(&alice, &c, 100, exp).await;
+            pump(&owner, &host).await;
+            assert_eq!(host.backup.poll_once(at).await.stored, 0, "{exp}");
+        }
+        let liar = blob_in(&owner, &uenc(5, 950)).await;
+        owner.backup.replicate_attachment(&alice, &liar, 10, expires).await;
+        pump(&owner, &host).await;
+        assert_eq!(host.backup.poll_once(at).await.stored, 0, "la taille réelle (950) dépasse le volume restant");
+        assert!(host.blobs.open(&liar).await.is_err());
+
+        // Même copie renvoyée : pas de second enregistrement.
+        owner.backup.replicate_attachment(&alice, &good, 200, expires).await;
+        pump(&owner, &host).await;
+        host.backup.poll_once(at).await;
+        assert_eq!(scalar(&host.db, "SELECT count(*) FROM kv WHERE scope = 'guest_share'", vec![]).await, 1);
+
+        // À l'échéance la passerelle ferme, puis la purge supprime le blob de chez l'ami.
+        assert_eq!(astro_dav::share::purge_expired(&host.db, host.blobs.as_ref(), expires - 1).await.unwrap(), 0);
+        assert_eq!(astro_dav::share::purge_expired(&host.db, host.blobs.as_ref(), expires + 1).await.unwrap(), 1);
+        assert!(host.blobs.open(&good).await.is_err());
+        assert_eq!(astro_dav::share::replica_bytes(&host.db, &alice, expires + 1).await, 0, "le volume est libéré");
+        let _ = (std::fs::remove_dir_all(&owner.dir), std::fs::remove_dir_all(&host.dir));
+        let _ = carol;
     }
 }

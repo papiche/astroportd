@@ -5,13 +5,12 @@
 //! accepte ou refuse chaque flux.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use astro_core::{ActivityBus, Audience};
 use astro_crypto::KeySource;
 use astro_db::Db;
 use astro_nostr_proto::{UnsignedEvent, kind};
-use astro_p2p::{P2pHandle, PeerId};
+use astro_p2p::P2pHandle;
 use astro_sync::Projector;
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
@@ -19,7 +18,6 @@ use serde_json::{Value, json};
 use crate::console::Consoles;
 use crate::forwards::Forwards;
 use crate::register::PublishFn;
-use crate::tunnel_policy::SERVICES_PROTOCOL;
 
 /// Capitaines listés au plus (les plus récemment actifs d'abord).
 const MAX_LISTED: i64 = 200;
@@ -168,10 +166,7 @@ impl Captains {
     /// Services que la station de `peer` nous ouvre (question posée par le maillage).
     async fn services_of(&self, peer: &str) -> Result<Vec<String>, String> {
         let h = self.handle.as_ref().ok_or("maillage P2P coupé")?;
-        let id: PeerId = peer.parse().map_err(|_| "PeerID illisible".to_owned())?;
-        let body = astro_p2p::ask::ask(h, id, SERVICES_PROTOCOL, Duration::from_secs(4)).await?;
-        let v: Value = serde_json::from_slice(&body).map_err(|_| "réponse illisible (version trop ancienne ?)".to_owned())?;
-        Ok(v["services"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|s| s.len() <= 32).take(64).map(str::to_owned).collect())
+        crate::tunnel_policy::ask_services(h, peer).await
     }
 
     fn local_id(peer: &str, service: &str) -> String {

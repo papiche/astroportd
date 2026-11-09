@@ -14,7 +14,14 @@ export default async function mesh(root, K) {
   const me = m.error ? h('p', { class: 'degraded' }, m.error) : !m.active
     ? h('p', { class: 'degraded', role: 'status' }, t('Maillage coupé : relancez la station sans --no-p2p pour rejoindre les autres stations.'))
     : [h('p', {}, t('UPlanet : {0} · {1} station(s) connectée(s).', m.plane, m.connected.length)),
-      h('p', { class: 'muted' }, t('Adresse à donner aux autres Capitaines :')), m.addrs.length ? h('ul', {}, m.addrs.map(a => h('li', {}, h('code', {}, a)))) : h('p', { class: 'muted' }, m.peer_id)];
+      h('p', { class: 'muted' }, t('Adresse à donner aux autres Capitaines :')), m.addrs.length ? h('ul', {}, m.addrs.map(a => h('li', {}, h('code', {}, a)))) : h('p', { class: 'muted' }, m.peer_id),
+      // Stations relais (`--p2p-use-relay`, `P2P_RELAYS` de la coopérative) : la place réservée rend la station joignable derrière sa box.
+      h('h3', {}, t('Stations relais')),
+      m.relay_server ? h('p', {}, K.pill('ok'), ' ', t('Cette station sert de relais aux stations de la constellation qui sont derrière une box.')) : null,
+      (m.relays || []).length ? h('ul', {}, m.relays.map(r => h('li', {},
+        r.self ? h('span', { class: 'pill' }, t('cette station')) : r.reserved ? K.pill('ok') : h('span', { class: 'pill disabled' }, r.connected ? t('reliée, sans place') : t('injoignable')),
+        ' ', h('code', {}, r.addr), ` (${r.source === 'coopérative' ? t('configuration coopérative') : t('démarrage')})`)))
+        : h('p', { class: 'muted' }, t('Aucune station relais. Derrière une box, la station ne joint que celles de son réseau local et celles qui sont joignables. Ajoutez-en dans la configuration coopérative (P2P_RELAYS).'), ' ', h('a', { href: '#/coop' }, t('Configurer')))];
 
   // ── Stations ──
   let stations = null;
@@ -57,7 +64,6 @@ export default async function mesh(root, K) {
   only.onchange = paint; paint();
   const swarm = h('section', { class: 'card wide' }, h('h2', {}, t('L\'essaim'), h('small', { class: 'muted' }, ` · ${nodes.length}`)),
     h('p', {}, h('label', { for: 'ms-ia' }, only, ' ', t('Seulement celles qui offrent l\'IA (Ollama)'))), grid,
-    cs && !cs.swarm_dir_configured ? h('p', { class: 'muted' }, t('Aucun dossier de pairs configuré (--swarm-dir) : seules les stations jointes apparaissent.')) : null,
     h('p', {}, h('a', { class: 'ck-btn', href: '#/planes' }, t('Plans (UPlanet)'))));
 
   root.replaceChildren(...[captains, swarm, stations, h('section', { class: 'card wide' }, h('h2', {}, t('Ma station')), me)].filter(Boolean));

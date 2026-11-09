@@ -71,7 +71,6 @@ impl Projector {
             "DELETE FROM social_graph",
             "DELETE FROM ledger_n2",
             "DELETE FROM rent_payments",
-            "DELETE FROM private_copy_consent",
             "DELETE FROM capital_assets",
             "DELETE FROM kv WHERE scope = 'lifecycle'",
             "DELETE FROM identities WHERE hosted = 0",
@@ -378,8 +377,8 @@ fn tag_map(e: &Event) -> Json {
 }
 
 /// Kind 31903 : paramètres applicatifs (un `d` par usage). Sont projetés : le registre des agents (`d = agents`, voir
-/// `src/agents.rs`) et l'attestation de copie privée (`d = private_copy`) ; elle n'est valable que signée par le titulaire et avec le texte légal exact (voir
-/// `astro_dav::media::parse_consent`). La plus récente remplace l'ancienne, quel que soit l'ordre d'arrivée.
+/// `src/agents.rs`), les paramètres IA du membre et le lien entre deux clés (`plane-link`). La plus récente remplace
+/// l'ancienne, quel que soit l'ordre d'arrivée.
 fn app_params(e: &Event) -> Vec<Statement> {
     // Registre des agents du membre : contenu chiffré pour lui seul, gardé tel quel (le plus récent l'emporte).
     // Même principe pour les paramètres IA du membre (`d = ai`) : chiffrés pour lui seul, gardés tels quels.
@@ -398,13 +397,7 @@ fn app_params(e: &Event) -> Vec<Statement> {
     if e.tag_value("d") == Some(PLANE_LINK) {
         return plane_link(e);
     }
-    let Some(version) = astro_dav::media::parse_consent(&e.tags, &e.content) else { return Vec::new() };
-    vec![Statement::new(
-        "INSERT INTO private_copy_consent(owner_hex, version, accepted_at, src_event) VALUES (?1, ?2, ?3, ?4) \
-         ON CONFLICT(owner_hex) DO UPDATE SET version = excluded.version, accepted_at = excluded.accepted_at, src_event = excluded.src_event \
-         WHERE excluded.accepted_at >= private_copy_consent.accepted_at",
-        vec![text(&e.pubkey), Value::Integer(i64::from(version)), int(e.created_at), text(&e.id)],
-    )]
+    Vec::new()
 }
 
 /// `d`-tag du lien entre deux clés d'une même personne (voir [`plane_link`]).

@@ -150,16 +150,9 @@ const LIFE = { active_rental: 'Locataire actif', cooperative_member: 'Membre coo
 const tone = s => (s === 'grace_period' ? 'degraded' : s === 'suspended' ? 'down' : s ? 'ok' : 'disabled');
 const day = t => (t ? new Date(t * 1000).toLocaleDateString('fr', { dateStyle: 'medium' }) : '—');
 const table = (cap, head, rows) => h('table', {}, h('caption', { class: 'muted' }, cap), h('thead', {}, h('tr', {}, head.map(x => h('th', { scope: 'col' }, x)))), h('tbody', {}, rows.map(r => h('tr', {}, r.map(c => h('td', {}, Array.isArray(c) ? c.flat(Infinity) : c))))));
-function consentForm(cp, redraw) {
-const ok = h('input', { type: 'checkbox', id: 'cp-ok' }), go = h('button', { disabled: true, onclick: async () => {
-try { await api('/api/v1/consent/private-copy', { method: 'POST', body: { version: cp.current_version } }); toast('Copie privée attestée', 1); redraw(); } catch (e) { toast(e.message, 0); }
-} }, 'J\'atteste');
-ok.onchange = () => { go.disabled = !ok.checked; };
-return [h('p', {}, cp.text), h('p', {}, ok, h('label', { for: 'cp-ok' }, ' J\'ai lu et j\'accepte ce texte.')), h('p', {}, go)];
-}
 async function viewHome(root) {
 const draw = async () => {
-const [d, fp, cp] = await Promise.all([api('/api/v1/dashboard'), api('/api/v1/me/footprint'), api('/api/v1/consent/private-copy').catch(() => null)]);
+const [d, fp] = await Promise.all([api('/api/v1/dashboard'), api('/api/v1/me/footprint')]);
 const b = d.balance, e = d.energy, w = d.sovereignty, k = fp.disk, pct = k.quota_bytes ? k.used_bytes / k.quota_bytes : 0, ox = fp.opex, cx = fp.capex;
 root.replaceChildren(h('div', { class: 'grid' },
 h('section', { class: 'card' }, h('h2', {}, 'Solde'),
@@ -182,9 +175,7 @@ h('p', { class: 'muted' }, 'Dépenses courantes : elles paient l\'usage du nœud
 h('section', { class: 'card' }, h('h2', {}, 'Ẑen Capex ', h('small', {}, 'parts d\'investissement · ZenCard')),
 cx.assets.length ? [h('p', { class: 'big' }, zen(cx.net_cents), h('small', { class: 'muted' }, ' Ẑen nets')), h('p', { class: 'muted' }, `valeur ${zen(cx.value_cents)} · amortis ${zen(cx.amortized_cents)}`), h('ul', { class: 'muted' }, cx.assets.map(a => h('li', {}, `${a.label || a.id} : ${zen(a.net_cents)} Ẑ`)))]
 : h('p', { class: 'muted' }, cx.zencard ? 'Sociétaire ZenCard : aucune part de matériel enregistrée à votre nom.' : 'Aucune part. Une ZenCard fait de vous sociétaire : le matériel financé reste votre capital, il s\'amortit.'),
-h('p', { class: 'muted' }, 'Investissement : acheté une fois, jamais confondu avec les redevances.')),
-cp && cp.available && h('section', { class: 'card wide' }, h('h2', {}, 'Copie privée ', h('small', {}, cp.article)),
-cp.accepted ? h('p', { class: 'ok' }, `Attestée le ${when(cp.accepted_at)} : vous pouvez déposer films et séries ; ils ne sont montrés qu'à vos amis N¹.`) : consentForm(cp, draw))));
+h('p', { class: 'muted' }, 'Investissement : acheté une fois, jamais confondu avec les redevances.'))));
 };
 await draw();
 every(30000, () => draw().catch(() => {}));

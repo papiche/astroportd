@@ -103,6 +103,8 @@ pub struct StationServices {
     chain_seen: Mutex<Option<(Instant, bool)>>,
     /// Dernier solde lu par compte : affiché quand le nœud est lent, pour ne jamais bloquer une page.
     last_balance: Mutex<std::collections::HashMap<String, BalanceView>>,
+    /// Soldes demandés par adresse sur la route publique `/check_balance` : `(lu à, centimes de Ğ1)`, bornés et de courte durée.
+    public_balance: Mutex<std::collections::HashMap<String, (Instant, u64)>>,
     /// Certificat HTTPS (domaines, état du gestionnaire ACME) : posé au démarrage du frontal TLS, lu par `/health`.
     tls: std::sync::OnceLock<(Vec<String>, Arc<Mutex<astro_ui::acme::AcmeStatus>>)>,
 }
@@ -110,7 +112,7 @@ pub struct StationServices {
 impl StationServices {
     /// Assemble le contexte.
     pub fn new(d: StationDeps) -> Self {
-        Self { db: d.db, info: d.info, nostr_dir: d.nostr_dir, chain: d.chain, hardware: d.hardware, p2p: d.p2p, weekly_rent_cents: d.weekly_rent_cents, activity: d.activity, swarm_dir: d.swarm_dir, origin: d.origin, exposed: d.exposed, chain_seen: Mutex::new(None), last_balance: Mutex::new(std::collections::HashMap::new()), tls: std::sync::OnceLock::new() }
+        Self { db: d.db, info: d.info, nostr_dir: d.nostr_dir, chain: d.chain, hardware: d.hardware, p2p: d.p2p, weekly_rent_cents: d.weekly_rent_cents, activity: d.activity, swarm_dir: d.swarm_dir, origin: d.origin, exposed: d.exposed, chain_seen: Mutex::new(None), last_balance: Mutex::new(std::collections::HashMap::new()), public_balance: Mutex::new(std::collections::HashMap::new()), tls: std::sync::OnceLock::new() }
     }
 
     /// Branche l'état du certificat HTTPS (une seule fois, quand le frontal TLS démarre).
@@ -167,6 +169,39 @@ impl StationServices {
             }
             Err(_) => Err(format!("le nœud Duniter ne répond pas ({} s)", BALANCE_TIMEOUT.as_secs())),
         }
+    }
+
+    /// Solde d'une adresse Ğ1 quelconque, pour la route publique `/check_balance` (un solde est public sur la chaîne). La route
+    /// n'exige aucun compte : elle est donc **bornée** — résultat gardé 20 s, 512 adresses au plus en mémoire, 4 lectures
+    /// Duniter simultanées au plus — pour ne pas faire de la station un amplificateur vers les nœuds.
+    pub async fn balance_of_address(&self, address: &str) -> Result<BalanceView, String> {
+        const TTL: Duration = Duration::from_secs(20);
+        const MAX_CACHED: usize = 512;
+        static LOOKUPS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+        let account = Account::from_str(address).map_err(|_| "adresse Ğ1 invalide".to_owned())?;
+        let key = account.ss58();
+        let view = |g1_cents: u64| BalanceView { g1_cents, zen_cents: zen_of_g1(g1_cents) };
+        if let Some((at, g1)) = self.public_balance.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+            if at.elapsed() < TTL {
+                return Ok(view(*g1));
+            }
+        }
+        let chain = self.chain.as_ref().ok_or("solde indisponible : cette station n'est pas reliée à la Ğ1")?;
+        let _permit = LOOKUPS.try_acquire().map_err(|_| "trop de lectures de solde en cours : réessayez dans un instant".to_owned())?;
+        let b = match tokio::time::timeout(BALANCE_TIMEOUT, chain.balance(&account)).await {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => return Err(format!("lecture du solde impossible : {e}")),
+            Err(_) => return Err(format!("le nœud Duniter ne répond pas ({} s)", BALANCE_TIMEOUT.as_secs())),
+        };
+        let mut cache = self.public_balance.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.len() >= MAX_CACHED {
+            cache.retain(|_, (at, _)| at.elapsed() < TTL);
+            if cache.len() >= MAX_CACHED {
+                cache.clear();
+            }
+        }
+        cache.insert(key, (Instant::now(), b.total.0));
+        Ok(view(b.total.0))
     }
 
     /// Solde pour une page : attend au plus `QUICK_BALANCE`, puis rend le dernier solde connu (marqué périmé) ou l'erreur.

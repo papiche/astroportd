@@ -34,6 +34,12 @@ impl Forwards {
 
     /// Ouvre (ou retrouve) l'accès local à `service` de la station `peer` pour la demande `id`, jusqu'à `until` (secondes Unix).
     pub async fn open(&self, id: &str, peer: &str, service: &str, until: i64, now: i64) -> Result<SocketAddr, String> {
+        self.open_on(id, peer, service, until, now, 0).await
+    }
+
+    /// Comme [`Forwards::open`], sur le port `port` de `127.0.0.1` (0 : choisi par le système). Un port fixe donne à un
+    /// client local (Ollama sur 11434, ComfyUI sur 8188) l'adresse qu'il attend ; l'écoute reste sur la boucle locale.
+    pub async fn open_on(&self, id: &str, peer: &str, service: &str, until: i64, now: i64, port: u16) -> Result<SocketAddr, String> {
         self.sweep(now);
         // Tout nom de service bien formé : c'est la politique de la station aidée qui décide (SSH, ComfyUI, Ollama, ou un
         // service que son Capitaine partage à chaud, comme un bureau à distance).
@@ -45,7 +51,7 @@ impl Forwards {
             return Ok(o.fwd.local_addr);
         }
         let handle = self.handle.as_ref().ok_or("maillage P2P inactif sur cette station")?;
-        let fwd = forward(handle, SocketAddr::from(([127, 0, 0, 1], 0)), peer, service).await.map_err(|e| e.to_string())?;
+        let fwd = forward(handle, SocketAddr::from(([127, 0, 0, 1], port)), peer, service).await.map_err(|e| e.to_string())?;
         let addr = fwd.local_addr;
         self.lock().insert(id.to_owned(), Open { fwd, until });
         // L'accès se referme à l'échéance, même si personne n'ouvre plus l'écran d'assistance : sans minuteur, le port local

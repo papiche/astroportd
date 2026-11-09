@@ -376,15 +376,6 @@ CREATE VIEW IF NOT EXISTS rents(owner_hex, at, amount_cents) AS
   UNION ALL
   SELECT json_extract(data, '$.owner'), at, CAST(json_extract(data, '$.zen') AS INTEGER) * 100 FROM journal WHERE stream = 'hosting_fee';
 
--- Attestation de copie privée (CPI L. 122-5) : kind 31903, d = private_copy, signée du titulaire. Sans elle, aucun
--- film ni série n'est déposé ni publié.
-CREATE TABLE IF NOT EXISTS private_copy_consent (
-  owner_hex   TEXT PRIMARY KEY,
-  version     INTEGER NOT NULL,
-  accepted_at INTEGER NOT NULL,
-  src_event   TEXT NOT NULL
-) STRICT, WITHOUT ROWID;
-
 -- Permis Oracle (kinds 30500-30504).
 CREATE TABLE IF NOT EXISTS permit_defs (
   id                  TEXT PRIMARY KEY,

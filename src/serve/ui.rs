@@ -50,6 +50,13 @@ pub(super) fn wire<B: astro_dav::BlobStore>(mut ui: StationUi<B>, db: &Arc<Db>, 
     });
     ui = ui.with_sharing(friends, send);
     let (b1, b2, b3, b4, b5, b6) = (backup.clone(), backup.clone(), backup.clone(), backup.clone(), backup.clone(), backup.clone());
+    let for_replicas = backup.clone();
+    ui = ui.with_attachment_replication(Arc::new(move |owner: String, cid: String, size: u64, expires_at: i64| {
+        let b = for_replicas.clone();
+        Box::pin(async move {
+            b.replicate_attachment(&owner, &cid, size, expires_at).await;
+        })
+    }));
     ui = ui.with_backup(astroportd::ui_backend::BackupFns {
         status: Arc::new(move |owner: String| {
             let b = b1.clone();

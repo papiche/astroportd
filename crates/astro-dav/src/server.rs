@@ -62,6 +62,8 @@ pub struct DavConfig {
     /// Appelé à chaque authentification réussie (jeton Basic, jeton d'appareil ou NIP-98) avec la clé (hex) du compte :
     /// c'est la preuve que le membre a bien reçu et utilise ses clés. Doit rester bon marché (appelé à chaque requête).
     pub on_login: Option<LoginHook>,
+    /// Passerelle de compatibilité `GET /ipfs/<cid>` (clients historiques) : désactivée par défaut, voir [`crate::share::ipfs_gateway`].
+    pub ipfs_gateway: bool,
 }
 
 /// Rappel d'authentification réussie (voir [`DavConfig::on_login`]).
@@ -100,6 +102,7 @@ impl DavConfig {
             station_secret: Zeroizing::new(station_secret),
             on_read_failure: None,
             on_login: None,
+            ipfs_gateway: false,
         }
     }
 
@@ -166,6 +169,7 @@ pub fn router<B: BlobStore>(state: Arc<DavState<B>>) -> Router {
         .route("/s/{slug}", axum::routing::get(crate::share::page::<B>))
         .route("/s/{slug}/m", axum::routing::get(crate::share::manifest::<B>))
         .route("/s/{slug}/b/{cid}", axum::routing::get(crate::share::blob::<B>))
+        .route("/ipfs/{cid}", axum::routing::get(crate::share::ipfs_gateway::<B>))
         .fallback(any(dispatch::<B>))
         .with_state(state)
 }

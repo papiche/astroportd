@@ -144,7 +144,16 @@ C'est ce qui relie les stations entre elles, sans annuaire central.
 2. Chaque station publie ses rapports économiques sur Nostr (événement de type **kind 30850**).
 3. Un Capitaine **suit** les autres Capitaines. Deux Capitaines qui se suivent l'un l'autre sont des **Capitaines amis**. Dans l'interface, l'écran *Capitaines* montre qui suit qui et propose **Suivre / Ne plus suivre** (voir, dans le guide, [Relier sa station aux autres Capitaines](GUIDE.md#etape-9)).
 4. Comme la clé SSH d'un Capitaine se déduit de l'identité de sa station, ce suivi suffit à savoir quelles machines sont dignes de confiance : un Capitaine peut **aider un autre à distance**, pour du support technique mutuel.
-5. Cet accès passe par un **tunnel** (un passage chiffré) entre les deux stations, à travers le maillage P2P : aucun port n'est à ouvrir sur la box internet de l'hôte.
+5. Cet accès passe par un **tunnel** (un passage chiffré) entre les deux stations, à travers le maillage P2P : aucun port n'est à ouvrir sur la box internet de l'hôte, **à condition qu'une station de la constellation au moins soit joignable** et serve de relais, ou que les deux stations soient sur le même réseau local (voir ci-dessous).
+
+### Ce qu'il faut pour que les stations se joignent
+
+La même `swarm.key` donne le droit d'entrer ; le chemin entre les stations se fait ensuite presque seul :
+
+- **sur un même réseau local**, les stations se trouvent et se relient sans rien régler (mDNS) ;
+- **sur des réseaux différents, derrière des box**, elles passent par une **station relais** : une station dont le **port TCP 4101** est ouvert, à une IP publique ou à un nom de domaine. Une adresse web (HTTPS) ne suffit pas.
+
+**Il en faut au moins une par constellation ; deux ou trois, c'est mieux.** Un Capitaine l'inscrit une fois dans la **configuration coopérative** (clé `P2P_RELAYS`) : toutes les stations de la constellation la reçoivent, y réservent leur place, s'annoncent dans leur balise et se joignent entre elles. Chaque station range la description des autres dans `~/.zen/tmp/swarm/`, comme le fait Astroport.ONE. Une station neuve a seulement besoin d'un premier lien : une voisine sur le même réseau local, le relai de la coopérative, ou une adresse collée une fois. Les détails : [Relier sa station aux autres Capitaines](GUIDE.md#etape-9), paragraphe « Stations derrière une box ».
 
 ### Ce que vous décidez : qui ouvre quoi
 
@@ -179,7 +188,7 @@ La reconnaissance des visages se fait soit par un service externe (`--face-engin
 
 ### Vos copies chez les autres : la réplication
 
-Votre station va chercher régulièrement les profils et messages publics de ses membres, de leurs amis (N¹) et des amis de leurs amis (N²), auprès des autres stations de la constellation. Par défaut, un passage toutes les 15 minutes (`--crawl-every`, 900 secondes ; `--no-crawl` pour couper). Elle passe **par le maillage P2P**, sans port public. Si une station annonce aussi une adresse publique, celle-ci ne sert que de **solution de repli** quand le maillage échoue.
+Votre station va chercher régulièrement les profils et messages publics de ses membres, de leurs amis (N¹) et des amis de leurs amis (N²), auprès des autres stations de la constellation. Par défaut, un passage toutes les 15 minutes (`--crawl-every`, 900 secondes ; `--no-crawl` pour couper). Elle passe **par le maillage P2P**, sans port public, auprès des stations auxquelles elle est reliée. Si une station annonce aussi une adresse publique, celle-ci ne sert que de **solution de repli** quand le maillage échoue.
 
 L'écran **Réplication** de l'interface vous montre, pour vos derniers messages et vos derniers fichiers, **où** ils existent aussi (sur quelles stations) et **chez qui** (vos proches, les proches de vos proches, ou d'autres stations). Il indique aussi par quelle voie chaque station a été jointe. Une station qui ne répond pas est marquée « injoignable », jamais comptée comme « 0 copie ». La mesure des fichiers demande l'option `--kubo`.
 
@@ -199,7 +208,7 @@ S'il manque de l'argent (recettes inférieures à la PAF), le manque est couvert
 
 ## Qui fait quoi : astroportd et Astroport.ONE
 
-astroportd (version 0.5.7-beta, une préversion) remplace peu à peu les scripts bash d'[Astroport.ONE](https://github.com/papiche/Astroport.ONE). Les deux fonctionnent ensemble ; voici ce que chacun fait aujourd'hui.
+astroportd (version 0.5.8-beta, une préversion) remplace peu à peu les scripts bash d'[Astroport.ONE](https://github.com/papiche/Astroport.ONE). Les deux fonctionnent ensemble ; voici ce que chacun fait aujourd'hui.
 
 | Fonction | astroportd | Astroport.ONE |
 |---|:---:|:---:|
@@ -276,7 +285,7 @@ ssh -p 2222 utilisateur@127.0.0.1
 
 astroportd tient dans `~/.ssh/authorized_keys` (ou le dossier de `--ssh-dir`) un **bloc balisé `astroportd`** aligné sur la politique du SSH : les stations nommées et les Capitaines amis y figurent sous la forme de leur clé SSH jumelle. Rien n'est modifié hors de ce bloc.
 
-`astroportd route <service>` choisit le meilleur nœud de l'essaim (Power-Score, distance, tirage).
+`astroportd route <service>` choisit la meilleure station de l'essaim qui **ouvre** ce service au Capitaine (Power-Score des balises, distance, tirage) ; `astroportd tunnel connect <service>` ouvre l'accès local correspondant.
 
 Côté Astroport.ONE, le suivi automatique des Capitaines est fait par `DRAGON_p2p_ssh.sh`, selon les règles de `AUTOfollow.rules.md` : le Capitaine suit ses passagers, les passagers suivent leur Capitaine, les Capitaines d'un même essaim se suivent.
 

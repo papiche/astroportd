@@ -419,8 +419,15 @@ astroportd ylevel --verify   # code de sortie 1 si la clé SSH ne correspond pas
 <li>Chaque station publie ses rapports économiques sur Nostr (événement de type <strong>kind 30850</strong>).</li>
 <li>Un Capitaine <strong>suit</strong> les autres Capitaines. Deux Capitaines qui se suivent l'un l'autre sont des <strong>Capitaines amis</strong>. Dans l'interface, l'écran <em>Capitaines</em> montre qui suit qui et propose <strong>Suivre / Ne plus suivre</strong> (voir, dans le guide, <a href="guide.html#etape-9">Relier sa station aux autres Capitaines</a>).</li>
 <li>Comme la clé SSH d'un Capitaine se déduit de l'identité de sa station, ce suivi suffit à savoir quelles machines sont dignes de confiance : un Capitaine peut <strong>aider un autre à distance</strong>, pour du support technique mutuel.</li>
-<li>Cet accès passe par un <strong>tunnel</strong> (un passage chiffré) entre les deux stations, à travers le maillage P2P : aucun port n'est à ouvrir sur la box internet de l'hôte.</li>
+<li>Cet accès passe par un <strong>tunnel</strong> (un passage chiffré) entre les deux stations, à travers le maillage P2P : aucun port n'est à ouvrir sur la box internet de l'hôte, <strong>à condition qu'une station de la constellation au moins soit joignable</strong> et serve de relais, ou que les deux stations soient sur le même réseau local (voir ci-dessous).</li>
 </ol>
+<h3>Ce qu'il faut pour que les stations se joignent</h3>
+<p>La même <code>swarm.key</code> donne le droit d'entrer ; le chemin entre les stations se fait ensuite presque seul :</p>
+<ul>
+<li><strong>sur un même réseau local</strong>, les stations se trouvent et se relient sans rien régler (mDNS) ;</li>
+<li><strong>sur des réseaux différents, derrière des box</strong>, elles passent par une <strong>station relais</strong> : une station dont le <strong>port TCP 4101</strong> est ouvert, à une IP publique ou à un nom de domaine. Une adresse web (HTTPS) ne suffit pas.</li>
+</ul>
+<p><strong>Il en faut au moins une par constellation ; deux ou trois, c'est mieux.</strong> Un Capitaine l'inscrit une fois dans la <strong>configuration coopérative</strong> (clé <code>P2P_RELAYS</code>) : toutes les stations de la constellation la reçoivent, y réservent leur place, s'annoncent dans leur balise et se joignent entre elles. Chaque station range la description des autres dans <code>~/.zen/tmp/swarm/</code>, comme le fait Astroport.ONE. Une station neuve a seulement besoin d'un premier lien : une voisine sur le même réseau local, le relai de la coopérative, ou une adresse collée une fois. Les détails : <a href="guide.html#etape-9">Relier sa station aux autres Capitaines</a>, paragraphe « Stations derrière une box ».</p>
 <h3>Ce que vous décidez : qui ouvre quoi</h3>
 <p>Votre station offre au maillage trois services : <strong>SSH</strong> (l'accès à distance), <strong>Ollama</strong> (un moteur d'IA) et <strong>ComfyUI</strong> (un générateur d'images), plus ceux que vous ajoutez. Pour chacun, vous choisissez dans <em>Options › Tunnels</em> qui peut l'ouvrir :</p>
 <div class="tw"><table>
@@ -508,7 +515,7 @@ astroportd ylevel --verify   # code de sortie 1 si la clé SSH ne correspond pas
 </ul>
 <p>La reconnaissance des visages se fait soit par un service externe (<code>--face-engine</code>), soit sur la station elle-même (<code>--face-models</code>, voir <a href="guide.html#etape-8">FaceCloud dans le guide</a>). Aucun modèle n'est livré avec le programme.</p>
 <h3>Vos copies chez les autres : la réplication</h3>
-<p>Votre station va chercher régulièrement les profils et messages publics de ses membres, de leurs amis (N¹) et des amis de leurs amis (N²), auprès des autres stations de la constellation. Par défaut, un passage toutes les 15 minutes (<code>--crawl-every</code>, 900 secondes ; <code>--no-crawl</code> pour couper). Elle passe <strong>par le maillage P2P</strong>, sans port public. Si une station annonce aussi une adresse publique, celle-ci ne sert que de <strong>solution de repli</strong> quand le maillage échoue.</p>
+<p>Votre station va chercher régulièrement les profils et messages publics de ses membres, de leurs amis (N¹) et des amis de leurs amis (N²), auprès des autres stations de la constellation. Par défaut, un passage toutes les 15 minutes (<code>--crawl-every</code>, 900 secondes ; <code>--no-crawl</code> pour couper). Elle passe <strong>par le maillage P2P</strong>, sans port public, auprès des stations auxquelles elle est reliée. Si une station annonce aussi une adresse publique, celle-ci ne sert que de <strong>solution de repli</strong> quand le maillage échoue.</p>
 <p>L'écran <strong>Réplication</strong> de l'interface vous montre, pour vos derniers messages et vos derniers fichiers, <strong>où</strong> ils existent aussi (sur quelles stations) et <strong>chez qui</strong> (vos proches, les proches de vos proches, ou d'autres stations). Il indique aussi par quelle voie chaque station a été jointe. Une station qui ne répond pas est marquée « injoignable », jamais comptée comme « 0 copie ». La mesure des fichiers demande l'option <code>--kubo</code>.</p>
 <hr />
 <h2>L'économie d'une station</h2>
@@ -521,7 +528,7 @@ astroportd ylevel --verify   # code de sortie 1 si la clé SSH ne correspond pas
 <p>S'il manque de l'argent (recettes inférieures à la PAF), le manque est couvert par la trésorerie ou par le bénévolat déclaré (Love Ledger), <strong>jamais</strong> par un prélèvement sur TREASURY, R&amp;D ou ASSETS.</p>
 <hr />
 <h2>Qui fait quoi : astroportd et Astroport.ONE</h2>
-<p>astroportd (version 0.5.7-beta, une préversion) remplace peu à peu les scripts bash d'<a href="https://github.com/papiche/Astroport.ONE">Astroport.ONE</a>. Les deux fonctionnent ensemble ; voici ce que chacun fait aujourd'hui.</p>
+<p>astroportd (version 0.5.8-beta, une préversion) remplace peu à peu les scripts bash d'<a href="https://github.com/papiche/Astroport.ONE">Astroport.ONE</a>. Les deux fonctionnent ensemble ; voici ce que chacun fait aujourd'hui.</p>
 <div class="tw"><table>
 <thead>
 <tr>
@@ -636,7 +643,7 @@ astroportd serve ... --p2p-forward 127.0.0.1:2222=&lt;PeerID de l'hôte&gt;/ssh
 ssh -p 2222 utilisateur@127.0.0.1
 </code></pre></div>
 <p>astroportd tient dans <code>~/.ssh/authorized_keys</code> (ou le dossier de <code>--ssh-dir</code>) un <strong>bloc balisé <code>astroportd</code></strong> aligné sur la politique du SSH : les stations nommées et les Capitaines amis y figurent sous la forme de leur clé SSH jumelle. Rien n'est modifié hors de ce bloc.</p>
-<p><code>astroportd route &lt;service&gt;</code> choisit le meilleur nœud de l'essaim (Power-Score, distance, tirage).</p>
+<p><code>astroportd route &lt;service&gt;</code> choisit la meilleure station de l'essaim qui <strong>ouvre</strong> ce service au Capitaine (Power-Score des balises, distance, tirage) ; <code>astroportd tunnel connect &lt;service&gt;</code> ouvre l'accès local correspondant.</p>
 <p>Côté Astroport.ONE, le suivi automatique des Capitaines est fait par <code>DRAGON_p2p_ssh.sh</code>, selon les règles de <code>AUTOfollow.rules.md</code> : le Capitaine suit ses passagers, les passagers suivent leur Capitaine, les Capitaines d'un même essaim se suivent.</p>
 <h3>FaceCloud et réplication</h3>
 <ul>

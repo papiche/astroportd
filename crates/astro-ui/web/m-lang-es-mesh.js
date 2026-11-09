@@ -42,6 +42,13 @@ export default {
 "aucun service partagé": "ningún servicio compartido",
 "L'essaim": "El enjambre",
 "Seulement celles qui offrent l'IA (Ollama)": "Solo las que ofrecen IA (Ollama)",
-"Aucun dossier de pairs configuré (--swarm-dir) : seules les stations jointes apparaissent.": "Ninguna carpeta de pares configurada (--swarm-dir): solo aparecen las estaciones unidas.",
-"Plans (UPlanet)": "Planos (UPlanet)"
+"Plans (UPlanet)": "Planos (UPlanet)",
+"Stations relais": "Estaciones relé",
+"Cette station sert de relais aux stations de la constellation qui sont derrière une box.": "Esta estación sirve de relé a las estaciones de la constelación que están detrás de un router.",
+"cette station": "esta estación",
+"reliée, sans place": "unida, sin plaza",
+"injoignable": "inalcanzable",
+"configuration coopérative": "configuración cooperativa",
+"Aucune station relais. Derrière une box, la station ne joint que celles de son réseau local et celles qui sont joignables. Ajoutez-en dans la configuration coopérative (P2P_RELAYS).": "Ninguna estación relé. Detrás de un router, la estación solo alcanza las de su red local y las alcanzables. Añádalas en la configuración cooperativa (P2P_RELAYS).",
+"Configurer": "Configurar"
 };

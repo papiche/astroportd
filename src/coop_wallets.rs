@@ -76,6 +76,20 @@ pub fn uplanet_g1pub(uplanet_name: &str) -> Result<String, String> {
     derive_bare(uplanet_name, None).map(|a| a.ss58())
 }
 
+/// Adresse ss58 du portefeuille coopératif `<UPLANETNAME>.G1` (le `UPLANETNAME_G1` du legacy), distincte de [`uplanet_g1pub`].
+/// Dérivation lente : à appeler depuis `spawn_blocking`.
+pub fn uplanet_name_g1(uplanet_name: &str) -> Result<String, String> {
+    derive_bare(uplanet_name, Some("G1")).map(|a| a.ss58())
+}
+
+/// Clé publique Nostr (64 hex) de `<UPLANETNAME>` seul (le `/UPLANET/HEX` du legacy : profil de la station). La clé
+/// `<UPLANETNAME>.G1` (`/UPLANET/G1HEX`, configuration coopérative) est [`crate::coop_config::coop_keys`]. Dérivation lente.
+pub fn uplanet_nostr_hex(uplanet_name: &str) -> Result<String, String> {
+    let input = FormulaInput { salt: "", pepper: "", uplanet_name, coop_suffix: None };
+    let credentials = KeyFormula::CoopPrefix.credentials(&input).map_err(|e| e.to_string())?;
+    Ok(credentials.seed().map_err(|e| e.to_string())?.nostr_keys().map_err(|e| e.to_string())?.pubkey_hex())
+}
+
 /// Adresse du portefeuille `<UPLANETNAME>[.<suffixe>]`.
 fn derive_bare(uplanet_name: &str, suffix: Option<&str>) -> Result<Account, String> {
     let input = FormulaInput { salt: "", pepper: "", uplanet_name, coop_suffix: suffix };

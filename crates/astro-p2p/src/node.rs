@@ -1,4 +1,5 @@
-//! Nœud libp2p : transport, comportements (relais, DCUtR, identify, flux) et boucle d'événements.
+//! Nœud libp2p : transport (TCP, QUIC hors réseau privé, résolution `/dns4/` `/dns6/` `/dnsaddr/`), comportements (relais,
+//! DCUtR, identify, flux, découverte mDNS du réseau local) et boucle d'événements.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -12,7 +13,7 @@ use libp2p::pnet::{PnetConfig, PreSharedKey};
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::swarm::{ConnectionId, NetworkBehaviour, SwarmEvent};
-use libp2p::{Multiaddr, PeerId, Swarm, SwarmBuilder, Transport, dcutr, identify, noise, ping, relay, tcp, yamux};
+use libp2p::{Multiaddr, PeerId, Swarm, SwarmBuilder, Transport, dcutr, identify, mdns, noise, ping, relay, tcp, yamux};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -21,6 +22,9 @@ use crate::identity::keypair_from_seed;
 
 /// Protocole d'identification annoncé aux pairs.
 const IDENTIFY_PROTOCOL: &str = "/astro/id/1.0.0";
+/// Pairs dont identify garde les adresses d'écoute : ce qui permet de rouvrir un flux vers un PeerID après la fermeture d'une
+/// connexion inactive.
+const IDENTIFY_CACHE: usize = 512;
 
 /// Réglages du nœud.
 #[derive(Clone)]
@@ -38,12 +42,15 @@ pub struct P2pConfig {
     pub external: Vec<Multiaddr>,
     /// Rendre service de relais (circuit relay v2) aux stations derrière une box.
     pub relay_server: bool,
+    /// Découvrir les stations du même réseau local (mDNS) et les joindre. Avec une `swarm.key`, seules celles de la même
+    /// constellation acceptent la connexion.
+    pub mdns: bool,
 }
 
 impl P2pConfig {
     /// Configuration minimale : écoute TCP sur un port libre de la boucle locale.
     pub fn local(seed: [u8; 32]) -> Self {
-        Self { seed, psk: None, listen: vec![Multiaddr::from(std::net::Ipv4Addr::LOCALHOST).with(Protocol::Tcp(0))], bootstrap: Vec::new(), external: Vec::new(), relay_server: false }
+        Self { seed, psk: None, listen: vec![Multiaddr::from(std::net::Ipv4Addr::LOCALHOST).with(Protocol::Tcp(0))], bootstrap: Vec::new(), external: Vec::new(), relay_server: false, mdns: false }
     }
 }
 
@@ -55,30 +62,33 @@ struct Behaviour {
     identify: identify::Behaviour,
     ping: ping::Behaviour,
     stream: libp2p_stream::Behaviour,
+    mdns: Toggle<mdns::tokio::Behaviour>,
 }
 
-fn behaviour(key: &Keypair, relay_client: relay::client::Behaviour, relay_server: bool) -> Behaviour {
+fn behaviour(key: &Keypair, relay_client: relay::client::Behaviour, relay_server: bool, lan: bool) -> Result<Behaviour, std::io::Error> {
     let peer = key.public().to_peer_id();
     let relay_config = relay::Config { max_circuit_duration: Duration::from_secs(3600), max_circuit_bytes: 0, ..relay::Config::default() };
-    Behaviour {
+    let mdns = if lan { Some(mdns::tokio::Behaviour::new(mdns::Config::default(), peer)?) } else { None };
+    Ok(Behaviour {
         relay_client,
         relay_server: relay_server.then(|| relay::Behaviour::new(peer, relay_config)).into(),
         dcutr: dcutr::Behaviour::new(peer),
-        identify: identify::Behaviour::new(identify::Config::new(IDENTIFY_PROTOCOL.to_owned(), key.public())),
+        identify: identify::Behaviour::new(identify::Config::new(IDENTIFY_PROTOCOL.to_owned(), key.public()).with_cache_size(IDENTIFY_CACHE)),
         ping: ping::Behaviour::default(),
         stream: libp2p_stream::Behaviour::new(),
-    }
+        mdns: mdns.into(),
+    })
 }
 
 fn build_swarm(cfg: &P2pConfig, keypair: Keypair) -> Result<Swarm<Behaviour>, P2pError> {
-    let relay_server = cfg.relay_server;
+    let (relay_server, lan) = (cfg.relay_server, cfg.mdns);
     let build_err = |e: &dyn std::fmt::Display| P2pError::Build(e.to_string());
     macro_rules! finish {
         ($builder:expr) => {
             $builder
                 .with_relay_client(noise::Config::new, yamux::Config::default)
                 .map_err(|e| build_err(&e))?
-                .with_behaviour(|key, relay_client| behaviour(key, relay_client, relay_server))
+                .with_behaviour(|key, relay_client| behaviour(key, relay_client, relay_server, lan).map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) }))
                 .map_err(|e| build_err(&e))?
                 .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(120)))
                 .build()
@@ -95,6 +105,8 @@ fn build_swarm(cfg: &P2pConfig, keypair: Keypair) -> Result<Swarm<Behaviour>, P2
                     Ok::<_, Box<dyn std::error::Error + Send + Sync>>(private.upgrade(Version::V1Lazy).authenticate(noise_config).multiplex(yamux::Config::default()))
                 })
                 .map_err(|e| build_err(&e))?
+                .with_dns()
+                .map_err(|e| build_err(&e))?
         ),
         None => finish!(
             SwarmBuilder::with_existing_identity(keypair)
@@ -102,13 +114,17 @@ fn build_swarm(cfg: &P2pConfig, keypair: Keypair) -> Result<Swarm<Behaviour>, P2
                 .with_tcp(tcp::Config::default().nodelay(true), noise::Config::new, yamux::Config::default)
                 .map_err(|e| build_err(&e))?
                 .with_quic()
+                .with_dns()
+                .map_err(|e| build_err(&e))?
         ),
     })
 }
 
 #[derive(Default)]
 struct Shared {
-    listen_addrs: Vec<Multiaddr>,
+    /// Adresses d'écoute ouvertes, par écouteur : retirées quand l'adresse expire ou que l'écouteur ferme (réservation
+    /// de relais perdue, par exemple).
+    listen_addrs: Vec<(libp2p::core::transport::ListenerId, Multiaddr)>,
     connected: HashMap<PeerId, usize>,
 }
 
@@ -205,7 +221,15 @@ impl P2pHandle {
 
     /// Adresses d'écoute actuelles.
     pub fn listen_addrs(&self) -> Vec<Multiaddr> {
-        self.shared.lock().unwrap_or_else(|e| e.into_inner()).listen_addrs.clone()
+        self.shared.lock().unwrap_or_else(|e| e.into_inner()).listen_addrs.iter().map(|(_, a)| a.clone()).collect()
+    }
+
+    /// Relais chez qui la station tient une réservation active (adresse d'écoute `…/p2p/<relais>/p2p-circuit`).
+    pub fn reserved_relays(&self) -> Vec<PeerId> {
+        let mut v: Vec<PeerId> = self.listen_addrs().iter().filter_map(relay_of_circuit).collect();
+        v.sort();
+        v.dedup();
+        v
     }
 
     /// Pairs actuellement connectés.
@@ -214,6 +238,19 @@ impl P2pHandle {
         v.sort();
         v
     }
+}
+
+/// Relais d'une adresse de circuit : le `/p2p/<relais>` qui précède `/p2p-circuit`.
+pub(crate) fn relay_of_circuit(addr: &Multiaddr) -> Option<PeerId> {
+    let mut last = None;
+    for p in addr {
+        match p {
+            Protocol::P2p(id) => last = Some(id),
+            Protocol::P2pCircuit => return last,
+            _ => {}
+        }
+    }
+    None
 }
 
 async fn run(mut swarm: Swarm<Behaviour>, mut rx: mpsc::Receiver<Command>, shared: Arc<Mutex<Shared>>) {
@@ -248,12 +285,16 @@ async fn run(mut swarm: Swarm<Behaviour>, mut rx: mpsc::Receiver<Command>, share
             },
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { listener_id, address } => {
-                    shared.lock().unwrap_or_else(|e| e.into_inner()).listen_addrs.push(address.clone());
+                    shared.lock().unwrap_or_else(|e| e.into_inner()).listen_addrs.push((listener_id, address.clone()));
                     if let Some(reply) = pending_listen.remove(&listener_id) {
                         let _ = reply.send(Ok(address));
                     }
                 }
+                SwarmEvent::ExpiredListenAddr { listener_id, address } => {
+                    shared.lock().unwrap_or_else(|e| e.into_inner()).listen_addrs.retain(|(l, a)| !(*l == listener_id && *a == address));
+                }
                 SwarmEvent::ListenerClosed { listener_id, reason, .. } => {
+                    shared.lock().unwrap_or_else(|e| e.into_inner()).listen_addrs.retain(|(l, _)| *l != listener_id);
                     if let Some(reply) = pending_listen.remove(&listener_id) {
                         let _ = reply.send(Err(P2pError::Listen(format!("{reason:?}"))));
                     }
@@ -268,6 +309,15 @@ async fn run(mut swarm: Swarm<Behaviour>, mut rx: mpsc::Receiver<Command>, share
                 SwarmEvent::ConnectionClosed { peer_id, num_established, .. } => {
                     if num_established == 0 {
                         shared.lock().unwrap_or_else(|e| e.into_inner()).connected.remove(&peer_id);
+                    }
+                }
+                // Station du réseau local : jointe dès qu'elle est vue (une autre constellation refuse la poignée de main).
+                SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(found))) => {
+                    let mut seen = HashSet::new();
+                    for (peer, addr) in found {
+                        if seen.insert(peer) && !swarm.is_connected(&peer) {
+                            let _ = swarm.dial(DialOpts::peer_id(peer).addresses(vec![addr]).build());
+                        }
                     }
                 }
                 SwarmEvent::OutgoingConnectionError { connection_id, error, .. } => {

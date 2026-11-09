@@ -16,6 +16,11 @@
 //! d'énergie de la station (tags `hw:energy_*`, `hw:solar_*` et contenu `hardware.energy` / `hardware.solar`, voir
 //! [`crate::energy`]).
 //!
+//! Maillage : le tag `p2p:addrs` donne les adresses par lesquelles **les autres stations de l'UPlanet** peuvent joindre
+//! celle-ci (adresse publique annoncée, place réservée chez une station relais), jamais ses adresses de réseau local.
+//! Chaque station relit l'annuaire et joint les stations sœurs qu'elle ne connaît pas encore ([`Stations::p2p_addrs`]) :
+//! c'est ainsi qu'une station derrière une box trouve les autres sans qu'aucun Capitaine ait à copier d'adresse.
+//!
 //! L'annuaire relit ces mêmes relais toutes les [`REFRESH_SECS`] et rend les stations de **la même UPlanet**
 //! (`swarm_id`), vues depuis moins de [`MAX_AGE_SECS`] : c'est ce que sert `GET /api/v1/stations` (page `/stations`),
 //! pour qu'un futur membre trouve la station la plus proche qui a encore de la place.
@@ -70,12 +75,26 @@ pub struct Stations {
     uplanet_name: String,
     peer_id: Option<String>,
     swarm: OnceCell<String>,
+    keys: OnceCell<PublicKeys>,
+}
+
+/// Identités publiques de l'UPlanet, calculées une fois (dérivations lentes) : ce que `GET /12345` et `/UPLANET/*` publient.
+#[derive(Debug, Clone)]
+pub struct PublicKeys {
+    /// `UPLANETG1PUB` : portefeuille `<UPLANETNAME>` (identité de l'essaim).
+    pub g1pub: String,
+    /// `UPLANETNAME_G1` : portefeuille coopératif `<UPLANETNAME>.G1`.
+    pub name_g1: String,
+    /// Clé Nostr de `<UPLANETNAME>` (`/UPLANET/HEX`).
+    pub hex: String,
+    /// Clé Nostr de `<UPLANETNAME>.G1` (`/UPLANET/G1HEX`).
+    pub g1hex: String,
 }
 
 impl Stations {
     /// Annuaire de l'UPlanet `uplanet_name`, vu par la station `peer_id`.
     pub fn new(db: Arc<Db>, uplanet_name: String, peer_id: Option<String>) -> Self {
-        Self { db, uplanet_name, peer_id, swarm: OnceCell::new() }
+        Self { db, uplanet_name, peer_id, swarm: OnceCell::new(), keys: OnceCell::new() }
     }
 
     /// `swarm_id` de l'UPlanet : adresse ss58 du portefeuille `<UPLANETNAME>` (calculée une fois).
@@ -87,6 +106,26 @@ impl Stations {
             })
             .await
             .cloned()
+    }
+
+    /// Nom de l'UPlanet (`UPLANETNAME`).
+    pub fn uplanet_name(&self) -> &str {
+        &self.uplanet_name
+    }
+
+    /// Identités publiques de l'UPlanet (calculées une fois, hors du fil asynchrone).
+    pub async fn public_keys(&self) -> Result<&PublicKeys, String> {
+        self.keys
+            .get_or_try_init(|| async {
+                let name = self.uplanet_name.clone();
+                let g1pub = self.swarm_id().await?;
+                tokio::task::spawn_blocking(move || {
+                    Ok::<_, String>(PublicKeys { g1pub, name_g1: crate::coop_wallets::uplanet_name_g1(&name)?, hex: crate::coop_wallets::uplanet_nostr_hex(&name)?, g1hex: crate::coop_config::coop_keys(&name)?.1 })
+                })
+                .await
+                .map_err(|e| e.to_string())?
+            })
+            .await
     }
 
     /// Stations de la même UPlanet vues depuis moins de [`MAX_AGE_SECS`], la plus récente d'abord (une ligne par
@@ -113,6 +152,39 @@ impl Stations {
             }
         }
         Ok(json!({ "swarm_id": swarm, "self": self.peer_id, "max_age_secs": MAX_AGE_SECS, "stations": out }))
+    }
+}
+
+/// Tag des adresses de maillage (séparées par des espaces).
+pub const P2P_TAG: &str = "p2p:addrs";
+/// Adresses de maillage publiées par une station, au plus.
+pub const MAX_P2P_ADDRS: usize = 8;
+
+/// Adresses de maillage lisibles d'une balise : chacune finit par le PeerID de la station qui publie.
+fn p2p_addrs_of(value: Option<&str>, station: &str) -> Vec<String> {
+    value
+        .unwrap_or_default()
+        .split_whitespace()
+        .filter(|a| crate::mesh_admin::parse_station(a).is_ok_and(|(_, p)| p.to_string() == station))
+        .take(MAX_P2P_ADDRS)
+        .map(str::to_owned)
+        .collect()
+}
+
+impl Stations {
+    /// Adresses de maillage des **autres** stations de l'UPlanet, d'après leurs balises récentes.
+    pub async fn p2p_addrs(&self, at: u64) -> Vec<(astro_p2p::Multiaddr, astro_p2p::PeerId)> {
+        let Ok(list) = self.list(at).await else { return Vec::new() };
+        list["stations"]
+            .as_array()
+            .map(|rows| {
+                rows.iter()
+                    .filter(|r| r["self"] != Value::Bool(true))
+                    .flat_map(|r| r["p2p"].as_array().cloned().unwrap_or_default())
+                    .filter_map(|a| a.as_str().and_then(|a| crate::mesh_admin::parse_station(a).ok()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -149,6 +221,7 @@ pub fn station_row(summary: &Value, swarm: &str, me: Option<&str>, updated: i64)
         "url": url,
         "join": join,
         "relay": tag("relay"),
+        "p2p": p2p_addrs_of(tag(P2P_TAG), station),
         "lat": lat,
         "lon": lon,
         "used": used,
@@ -206,9 +279,33 @@ pub struct Beacon<P: Publisher> {
     pub nudge: Arc<Notify>,
     /// Journal d'activité.
     pub activity: Option<ActivityBus>,
+    /// Maillage de la station : ses places réservées chez les relais sont annoncées.
+    pub p2p: Option<astro_p2p::P2pHandle>,
+    /// Adresses publiques de maillage annoncées telles quelles (`--p2p-external`, entrée de la station dans `P2P_RELAYS`).
+    pub p2p_announce: Vec<astro_p2p::Multiaddr>,
 }
 
 impl<P: Publisher> Beacon<P> {
+    /// Adresses de maillage annoncées : publiques, puis places chez les relais ; toutes finissent par le PeerID.
+    pub fn p2p_addrs(&self) -> Vec<String> {
+        let Some(h) = &self.p2p else { return Vec::new() };
+        let me = h.peer_id();
+        let with_me = |a: &astro_p2p::Multiaddr| {
+            let t = a.to_string();
+            if t.ends_with(&format!("/p2p/{me}")) { t } else { format!("{t}/p2p/{me}") }
+        };
+        let circuits = h.listen_addrs().into_iter().filter(|a| a.to_string().contains("/p2p-circuit"));
+        let mut out: Vec<String> = Vec::new();
+        for a in self.p2p_announce.iter().cloned().chain(circuits) {
+            let t = with_me(&a);
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        }
+        out.truncate(MAX_P2P_ADDRS);
+        out
+    }
+
     async fn seats(&self) -> Result<Seats, String> {
         let limits = self.registrar.limits();
         let used = self.registrar.hosted_accounts().await.map_err(|e| e.to_string())?;
@@ -254,6 +351,10 @@ impl<P: Publisher> Beacon<P> {
         add("hw:ram_gb", format!("{:.1}", hw.ram_gb));
         add("hw:gpu_vram_gb", format!("{:.0}", hw.vram_gb));
         add("software", format!("astroportd/{}", env!("CARGO_PKG_VERSION")));
+        let p2p = self.p2p_addrs();
+        if !p2p.is_empty() {
+            add(P2P_TAG, p2p.join(" "));
+        }
         Ok(tags)
     }
 
@@ -403,5 +504,17 @@ mod tests {
         assert_eq!((row["open"].as_bool(), row["self"].as_bool(), row["join"].as_str()), (Some(false), Some(true), Some("https://st.exemple.org/register")), "fermée par son Capitaine malgré les places");
         assert!(row["lat"].is_null(), "0,0 = position inconnue");
         assert!(station_row(&summary(&[("swarm_id", "g1X")], 1), "g1X", None, 1).is_none(), "sans PeerID, pas de station");
+    }
+    #[test]
+    fn only_mesh_addresses_of_the_publishing_station_are_kept() {
+        let me = "12D3KooWRxhgiLtvqhypB6uyQNbDD1D6wMV7Zt6vYYZF68czb9aG";
+        let relay = "12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8";
+        let via = format!("/dns4/relais.exemple.org/tcp/4101/p2p/{relay}/p2p-circuit/p2p/{me}");
+        let public = format!("/ip4/203.0.113.7/tcp/4101/p2p/{me}");
+        let other = format!("/ip4/198.51.100.1/tcp/4101/p2p/{relay}");
+        let s = summary(&[("station", me), ("swarm_id", "g1X"), (P2P_TAG, &format!("{via} {public} {other} n-importe-quoi"))], 100);
+        let row = station_row(&s, "g1X", None, 90).unwrap();
+        assert_eq!(row["p2p"], json!([via, public]), "une adresse qui désigne une autre station, ou illisible, est écartée");
+        assert_eq!(station_row(&summary(&[("station", me), ("swarm_id", "g1X")], 100), "g1X", None, 90).unwrap()["p2p"], json!([]));
     }
 }

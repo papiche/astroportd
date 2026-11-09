@@ -352,8 +352,9 @@ pub trait Backend: Send + Sync + 'static {
     fn domain_info(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("réglage du domaine non disponible sur cette station")) }
     }
-    /// Vérifie (forme, DNS, ports) et enregistre le nom de domaine ; effectif au redémarrage (Capitaine).
-    fn domain_set(&self, _who: &Principal, _domain: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+    /// Vérifie (forme, DNS, ports, qui répond au nom) et enregistre le nom de domaine, servi par la station ou par un
+    /// reverse proxy (`proxy` : `None` = détecter) ; effectif au redémarrage (Capitaine).
+    fn domain_set(&self, _who: &Principal, _domain: String, _proxy: Option<bool>) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("réglage du domaine non disponible sur cette station")) }
     }
     /// Redémarre la station (systemd la relance) pour appliquer la configuration enregistrée (Capitaine).
@@ -455,14 +456,6 @@ pub trait Backend: Send + Sync + 'static {
     }
     /// Dialogue avec BRO.
     fn bro_say(&self, who: &Principal, text: String) -> impl Future<Output = Result<Value, ApiError>> + Send;
-    /// Attestation de copie privée du compte : `{ accepted, version, accepted_at, text }`.
-    fn consent(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
-        async { Err(ApiError::unavailable("dépôt de médias non disponible sur cette station")) }
-    }
-    /// Enregistre l'attestation de copie privée (signée de la clé du titulaire) ; `version` = texte affiché.
-    fn consent_accept(&self, _who: &Principal, _version: u32) -> impl Future<Output = Result<Value, ApiError>> + Send {
-        async { Err(ApiError::unavailable("dépôt de médias non disponible sur cette station")) }
-    }
     /// Agents déclarés par le membre (sans jeton ni empreinte).
     fn agents_list(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("agents non disponibles sur cette station")) }
@@ -748,6 +741,41 @@ pub trait Backend: Send + Sync + 'static {
     fn stations(&self) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("annuaire des stations non disponible")) }
     }
+    /// Carte publique de la station (`GET /12345`) : identités publiques et adresses, jamais d'adresse e-mail ni de secret.
+    fn station_card(&self) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("carte de station non disponible")) }
+    }
+    /// Adresse publique de la station telle que les clients la voient : `https://<domaine>` si elle en a un, sinon
+    /// `http://<hôte demandé>` (essai local).
+    fn public_origin(&self, host: &str) -> String {
+        format!("http://{host}")
+    }
+    /// Envoi d'une image par un membre (NIP-96) : relue, réencodée sans métadonnées, rangée dans son `/Public/uploads`.
+    /// `host` : l'hôte demandé (adresse publique si la station n'a pas de domaine).
+    fn upload_image(&self, _who: &Principal, _data: Vec<u8>, _host: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("envoi d'images non disponible sur cette station")) }
+    }
+    /// Pièce jointe d'un message : octets déjà chiffrés par l'expéditeur (UENC v1), conservés `days` jours et servis par
+    /// `/ipfs/<cid>`. `origin` : adresse publique de cette station.
+    fn attach(&self, _who: &Principal, _data: Vec<u8>, _days: i64, _origin: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("pièces jointes non disponibles sur cette station")) }
+    }
+    /// Retour d'un utilisateur (`POST /api/v1/feedback`) : issue Git de la coopérative, ou gardé sur la station.
+    fn feedback(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("retours non activés sur cette station")) }
+    }
+    /// Le compte est-il inscrit sur OpenCollective ? (`GET /api/v1/account/oc`) : seulement pour l'adresse du compte appelant.
+    fn account_oc(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("vérification OpenCollective non activée sur cette station")) }
+    }
+    /// Solde d'une adresse Ğ1 (`GET /check_balance?g1pub=`, public) : `{ g1pub, balance, g1_cents, zen, zen_cents }`.
+    fn check_balance(&self, _g1pub: &str) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("solde indisponible sur cette station")) }
+    }
+    /// Clé Nostr publique de l'UPlanet (`GET /UPLANET/HEX`, ou `/UPLANET/G1HEX` si `g1`), en hexadécimal.
+    fn uplanet_hex(&self, _g1: bool) -> impl Future<Output = Result<String, ApiError>> + Send {
+        async { Err(ApiError::unavailable("clé de l'UPlanet non disponible")) }
+    }
     /// Crée un MULTIPASS (public). `ip` : adresse du client, pour la limite de débit.
     fn register(&self, _ip: Option<std::net::IpAddr>, _email: String, _lang: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("inscription non disponible sur cette station")) }
@@ -880,7 +908,6 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/faces/{id}/accept", post(face_accept::<B>))
         .route("/api/v1/faces/{id}/name", post(face_name::<B>))
         .route("/api/v1/bro/say", post(bro_say::<B>))
-        .route("/api/v1/consent/private-copy", get(consent::<B>).post(consent_accept::<B>))
         .route("/api/v1/agents", get(agents_list::<B>).post(agents_enroll::<B>))
         .route("/api/v1/agents/revoke", post(agents_revoke::<B>))
         .route("/api/v1/agents/requests", get(agents_requests::<B>))
@@ -900,6 +927,15 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/me/footprint", get(footprint::<B>))
         .route("/api/v1/register", get(register_info::<B>).post(register::<B>))
         .route("/api/v1/stations", get(stations::<B>))
+        // Compatibilité des clients historiques (zelkova, coracle) : mêmes noms qu'Astroport.ONE, sur le port unique.
+        .route("/check_balance", get(check_balance::<B>))
+        .route("/api/v1/feedback", post(feedback::<B>).options(cors_preflight))
+        .route("/api/v1/account/oc", get(account_oc::<B>).options(cors_preflight))
+        .route("/12345", get(station_card::<B>))
+        .route("/12345/", get(station_card::<B>))
+        .route("/UPLANET/HEX", get(uplanet_hex::<B>))
+        .route("/UPLANET/G1HEX", get(uplanet_g1hex::<B>))
+        .route("/.well-known/nostr/nip96.json", get(nip96_info::<B>))
         .route("/api/v1/restore", post(restore::<B>))
         .route("/api/v1/restore/ask", post(restore_ask::<B>))
         .route("/api/v1/replication", get(replication::<B>))
@@ -925,11 +961,13 @@ pub fn router<B: Backend>(backend: Arc<B>, activity: ActivityBus, public_origin:
         .route("/api/v1/public/images", get(public_images::<B>))
         .route("/api/v1/profile/{hex}/{file}", get(profile_image::<B>))
         .route("/api/v1/account/token", post(account_token_rotate::<B>))
-        .route("/api/v1/account/unlock", post(account_unlock::<B>))
+        .route("/api/v1/account/unlock", post(account_unlock::<B>).options(cors_preflight))
         .route("/api/v1/account/sign", post(account_sign::<B>))
         .route("/api/v1/station/accounts/{hex}/unlock-pass", post(pass_unlock::<B>))
         .route("/api/v1/station/accounts/{hex}/eject", post(account_eject::<B>))
-        .route("/api/v1/account/keys", post(account_keys::<B>))
+        .route("/api/v1/account/keys", post(account_keys::<B>).options(cors_preflight))
+        .route("/api/v1/attachments", post(attach::<B>).options(cors_preflight).layer(axum::extract::DefaultBodyLimit::max(ATTACHMENT_BODY_MAX)))
+        .route("/api/upload/image", post(upload_image::<B>).options(cors_preflight).layer(axum::extract::DefaultBodyLimit::max(UPLOAD_MAX + 64 * 1024)))
         .route("/api/v1/station/admin/{section}", get(admin_get::<B>).post(admin_set::<B>))
         .route("/api/v1/station/console", get(console_ws::<B>))
         .route("/api/v1/station/coop", get(coop_get::<B>).post(coop_set::<B>))
@@ -1536,8 +1574,8 @@ async fn domain_info<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): 
 }
 
 async fn domain_set<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Json(b): Json<Value>) -> Response {
-    let Some(domain) = b["domain"].as_str().map(str::to_owned) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"domain\": \"station.exemple.org\" }"))) };
-    reply(st.backend.domain_set(&p, domain).await)
+    let Some(domain) = b["domain"].as_str().map(str::to_owned) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"domain\": \"station.exemple.org\", \"proxy\": true|false|null }"))) };
+    reply(st.backend.domain_set(&p, domain, b["proxy"].as_bool()).await)
 }
 
 async fn restart<B: Backend>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
@@ -1718,19 +1756,6 @@ async fn set_hosting_defaults<B: Backend>(State(st): State<Arc<UiState<B>>>, hea
 #[derive(Deserialize)]
 struct SayBody {
     text: String,
-}
-
-async fn consent<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
-    reply(st.backend.consent(&p).await)
-}
-
-#[derive(Deserialize)]
-struct ConsentBody {
-    version: u32,
-}
-
-async fn consent_accept<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<ConsentBody>) -> Response {
-    reply(st.backend.consent_accept(&p, body.version).await)
 }
 
 async fn agents_list<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
@@ -2085,7 +2110,7 @@ async fn account_unlock<B: Backend>(State(st): State<Arc<UiState<B>>>, req: axum
     let ip = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|c| c.0.ip());
     let Ok(bytes) = axum::body::to_bytes(req.into_body(), 1024).await else { return reply(Err(ApiError::bad_request("requête trop grande"))) };
     let Ok(body) = serde_json::from_slice::<UnlockBody>(&bytes) else { return reply(Err(ApiError::bad_request("JSON attendu : { \"email\": \"…\", \"pass\": \"123456\" }"))) };
-    reply(st.backend.account_unlock(ip, body.email, body.pass).await)
+    any_origin(reply(st.backend.account_unlock(ip, body.email, body.pass).await))
 }
 
 async fn account_sign<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
@@ -2121,7 +2146,7 @@ struct KeysBody {
 }
 
 async fn account_keys<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<KeysBody>) -> Response {
-    reply(st.backend.account_export_keys(&p, body.confirm).await)
+    any_origin(reply(st.backend.account_export_keys(&p, body.confirm).await))
 }
 
 fn valid_section(s: &str) -> bool {
@@ -2151,8 +2176,12 @@ async fn console_ws<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: Head
 
 async fn bridge_console(mut sock: WebSocket, link: ConsoleLink) {
     let ConsoleLink { input, mut output } = link;
+    // Une console inactive reste muette : le ping la garde ouverte derrière un reverse proxy (nginx coupe après 60 s).
+    let every = Duration::from_secs(30);
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
     loop {
         tokio::select! {
+            _ = ping.tick() => if sock.send(Message::Ping(Default::default())).await.is_err() { break },
             out = output.recv() => match out {
                 Some(data) => if sock.send(Message::Binary(data.into())).await.is_err() { break },
                 None => {
@@ -2263,6 +2292,116 @@ async fn replication<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): A
 /// Inscription ouverte ? (aucun compte requis : c'est la porte d'entrée.)
 async fn register_info<B: Backend>(State(st): State<Arc<UiState<B>>>) -> Response {
     any_origin(reply(st.backend.register_info().await))
+}
+
+/// Retour d'un utilisateur : authentifié (le jeton Git de la coopérative n'est jamais offert à un anonyme).
+async fn feedback<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, headers: HeaderMap, body: axum::body::Bytes) -> Response {
+    if body.len() > 32 * 1024 {
+        return any_origin(reply(Err(ApiError::bad_request("retour trop long (32 Ko au plus)"))));
+    }
+    let _ = headers;
+    let Ok(v) = serde_json::from_slice::<Value>(&body) else { return any_origin(reply(Err(ApiError::bad_request("JSON attendu : { \"title\", \"description\", \"source\", \"category\"? }")))) };
+    any_origin(reply(st.backend.feedback(&p, v).await))
+}
+
+async fn account_oc<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    any_origin(reply(st.backend.account_oc(&p).await))
+}
+
+#[derive(Deserialize)]
+struct BalanceQuery {
+    g1pub: String,
+}
+
+/// Solde d'une adresse Ğ1, au format de l'ancien UPassport. Une adresse seulement : jamais d'e-mail (ce serait un moyen de
+/// retrouver le portefeuille d'une personne à partir de son adresse).
+async fn check_balance<B: Backend>(State(st): State<Arc<UiState<B>>>, Query(q): Query<BalanceQuery>) -> Response {
+    if q.g1pub.contains('@') || q.g1pub.len() > 64 {
+        return any_origin(reply(Err(ApiError::bad_request("une adresse Ğ1 est attendue (pas d'adresse e-mail)"))));
+    }
+    any_origin(reply(st.backend.check_balance(&q.g1pub).await))
+}
+
+/// Carte de la station au format `12345.json` réduit (public, lecture seule).
+async fn station_card<B: Backend>(State(st): State<Arc<UiState<B>>>) -> Response {
+    any_origin(reply(st.backend.station_card().await))
+}
+
+async fn uplanet_hex_text<B: Backend>(st: &UiState<B>, g1: bool) -> Response {
+    any_origin(match st.backend.uplanet_hex(g1).await {
+        Ok(hex) => private(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], hex).into_response()),
+        Err(e) => reply(Err(e)),
+    })
+}
+
+async fn uplanet_hex<B: Backend>(State(st): State<Arc<UiState<B>>>) -> Response {
+    uplanet_hex_text(&st, false).await
+}
+
+async fn uplanet_g1hex<B: Backend>(State(st): State<Arc<UiState<B>>>) -> Response {
+    uplanet_hex_text(&st, true).await
+}
+
+/// Octets au plus d'une image envoyée (avant réduction).
+const UPLOAD_MAX: usize = 8 * 1024 * 1024;
+
+/// `/.well-known/nostr/nip96.json` : annonce l'envoi d'images de la station (JPEG, PNG, WebP, jusqu'à 8 Mo, authentifié par
+/// NIP-98) et sert de sonde aux clients. Les fichiers vont dans `/Public/uploads` du membre ; l'adresse de téléchargement est
+/// celle que la réponse d'envoi donne (`url`), pas une adresse déductible du seul hachage.
+async fn nip96_info<B: Backend>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap) -> Response {
+    let origin = st.backend.public_origin(&host_of(&headers));
+    any_origin(private(
+        Json(json!({
+            "api_url": format!("{origin}/api/upload/image"), "download_url": origin, "supported_nips": [98],
+            "content_types": ["image/jpeg", "image/png", "image/webp"],
+            "plans": { "free": { "name": "MULTIPASS", "is_nip98_required": true, "max_byte_size": UPLOAD_MAX, "file_expiration": [0, 0], "media_transformations": { "image": ["resizing", "metadata_stripping"] } } },
+            "_source": "astroportd",
+        }))
+        .into_response(),
+    ))
+}
+
+/// Hôte demandé, tel que le client l'a écrit (sans schéma).
+fn host_of(headers: &HeaderMap) -> String {
+    headers.get(header::HOST).and_then(|v| v.to_str().ok()).filter(|h| !h.is_empty() && h.len() <= 255 && h.bytes().all(|b| b.is_ascii_alphanumeric() || b"-.:[]".contains(&b))).unwrap_or("localhost").to_owned()
+}
+
+/// Réponse à une requête de pré-vérification CORS d'une route publique **sans cookie** (l'authentification est portée par
+/// l'en-tête `Authorization`) : `*` ne donne alors accès à rien qu'un client sans le jeton ne pourrait déjà obtenir.
+async fn cors_preflight() -> Response {
+    let mut r = StatusCode::NO_CONTENT.into_response();
+    let h = r.headers_mut();
+    h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    h.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("GET, POST, OPTIONS"));
+    h.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("Authorization, Content-Type"));
+    h.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("600"));
+    r
+}
+
+/// Octets chiffrés d'une pièce jointe au plus (aligné sur `astro_dav::share::ATTACHMENT_MAX`, avec une marge pour l'en-tête).
+const ATTACHMENT_BODY_MAX: usize = 20 * 1024 * 1024 + 1024;
+
+/// Pièce jointe d'un message (`POST /api/v1/attachments?days=N`, corps `application/octet-stream` UENC) : authentifiée.
+async fn attach<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, headers: HeaderMap, axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>, body: axum::body::Bytes) -> Response {
+    let days = match q.get("days") {
+        None => 30,
+        Some(d) => match d.parse::<i64>() {
+            Ok(d) if (1..=90).contains(&d) => d,
+            _ => return any_origin(reply(Err(ApiError::bad_request("days : 1 à 90")))),
+        },
+    };
+    any_origin(reply(st.backend.attach(&p, body.to_vec(), days, st.backend.public_origin(&host_of(&headers))).await))
+}
+
+/// Envoi d'une image (`multipart/form-data`, champ `file`) : authentifié (Basic ou NIP-98), jamais anonyme.
+async fn upload_image<B: Backend>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, headers: HeaderMap, body: axum::body::Bytes) -> Response {
+    let ct = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let part = match crate::multipart::first_file(ct, &body) {
+        Ok(p) if p.data.len() <= UPLOAD_MAX && !p.data.is_empty() => p,
+        Ok(_) => return any_origin(reply(Err(ApiError::bad_request("fichier vide ou trop lourd (8 Mo au plus)")))),
+        Err(e) => return any_origin(reply(Err(ApiError::bad_request(e)))),
+    };
+    any_origin(reply(st.backend.upload_image(&p, part.data, host_of(&headers)).await))
 }
 
 /// Annuaire des stations de l'UPlanet (public).

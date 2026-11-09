@@ -18,8 +18,8 @@
 //! ```json
 //! { "pool": "~/.zen/astroportd/pool", "game_dir": "~/.zen/game",
 //!   "planes": [
-//!     { "name": "origin", "dir": "~/.zen/astroportd", "http_listen": "127.0.0.1:18080", "kubo": "http://127.0.0.1:5001" },
-//!     { "name": "zen1", "swarm_key": "~/.zen/game/zen1/swarm.key", "http_listen": "127.0.0.1:18081", "p2p_listen": ["/ip4/0.0.0.0/tcp/4101"] }
+//!     { "name": "origin", "dir": "~/.zen/astroportd", "http_listen": "127.0.0.1:8090", "kubo": "http://127.0.0.1:5001" },
+//!     { "name": "zen1", "swarm_key": "~/.zen/game/zen1/swarm.key", "http_listen": "127.0.0.1:8091", "p2p_listen": ["/ip4/0.0.0.0/tcp/4101"] }
 //!   ] }
 //! ```
 
@@ -80,7 +80,7 @@ pub struct PlaneSpec {
     /// Clé de réseau privé : sa présence fait de ce plan une UPlanet privée ; absente, c'est ORIGIN.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swarm_key: Option<String>,
-    /// Écoute HTTP du plan (défaut : `127.0.0.1:18080` + rang).
+    /// Écoute HTTP du plan (défaut : `127.0.0.1:8090` + rang).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http_listen: Option<String>,
     /// Écoutes libp2p du plan.
@@ -181,13 +181,18 @@ pub fn plan(file: &PlanesFile, home: &Path) -> Result<Vec<Plane>, PlaneError> {
         if !games.insert(game.clone()) {
             return Err(rule(&s.name, format!("le dossier de comptes {} sert déjà un autre plan", game.display())));
         }
-        let http = s.http_listen.clone().unwrap_or_else(|| format!("127.0.0.1:{}", 18_080 + rank));
+        let http = s.http_listen.clone().unwrap_or_else(|| format!("127.0.0.1:{}", 8_090 + rank));
         if !ports.insert(http.clone()) {
             return Err(rule(&s.name, format!("l'écoute {http} sert déjà un autre plan")));
         }
         let mut args: Vec<String> = ["--db".into(), db.display().to_string(), "--blobs".into(), pool.display().to_string(), "--game-dir".into(), game.display().to_string(), "--http-listen".into(), http.clone()].to_vec();
         if let Some(k) = &s.swarm_key {
             args.extend(["--swarm-key".into(), expand(k, home).display().to_string()]);
+        }
+        // Les cartes des stations d'une constellation ne se mêlent pas à celles d'une autre : ORIGIN garde `~/.zen/tmp/swarm`
+        // (celui qu'Astroport.ONE lit aussi), chaque autre plan a le sien.
+        if !origin && !s.args.iter().any(|x| x == "--swarm-dir" || x.starts_with("--swarm-dir=")) {
+            args.extend(["--swarm-dir".into(), dir.join("swarm").display().to_string()]);
         }
         if let Some(k) = &s.kubo {
             args.extend(["--kubo".into(), k.clone()]);
@@ -304,7 +309,7 @@ pub fn load(path: &Path, home: &Path) -> Result<(PlanesFile, bool), PlaneError> 
     match std::fs::read_to_string(path) {
         Ok(text) => Ok((parse(&text)?, true)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let origin = PlaneSpec { name: "origin".into(), dir: Some("~/.zen/astroportd".into()), game: None, swarm_key: None, http_listen: Some("127.0.0.1:18080".into()), p2p_listen: Vec::new(), kubo: Some("http://127.0.0.1:5001".into()), args: Vec::new() };
+            let origin = PlaneSpec { name: "origin".into(), dir: Some("~/.zen/astroportd".into()), game: None, swarm_key: None, http_listen: Some("127.0.0.1:8090".into()), p2p_listen: Vec::new(), kubo: Some("http://127.0.0.1:5001".into()), args: Vec::new() };
             let _ = home;
             Ok((PlanesFile { pool: None, game_dir: None, root: None, planes: vec![origin] }, false))
         }
@@ -329,7 +334,7 @@ pub struct NewPlane {
     pub name: String,
     /// Contenu d'une `swarm.key` reçue d'un Capitaine ; `None` : en créer une neuve (on fonde cette UPlanet).
     pub swarm_key: Option<String>,
-    /// Écoute HTTP ; défaut : la première libre à partir de `127.0.0.1:18080`.
+    /// Écoute HTTP ; défaut : la première libre à partir de `127.0.0.1:8090`.
     pub http_listen: Option<String>,
     /// Port libp2p ; défaut : le premier libre à partir de 4101.
     pub p2p_port: Option<u16>,
@@ -367,10 +372,10 @@ pub fn add(file: &mut PlanesFile, new: &NewPlane, home: &Path) -> Result<Added, 
     if key_path.exists() {
         return Err(rule(name, format!("{} existe déjà : on n'écrase jamais une clé de réseau privé", key_path.display())));
     }
-    let used_http: HashSet<u16> = file.planes.iter().enumerate().filter_map(|(i, p)| p.http_listen.as_deref().and_then(port_of).or(u16::try_from(18_080 + i).ok())).collect();
+    let used_http: HashSet<u16> = file.planes.iter().enumerate().filter_map(|(i, p)| p.http_listen.as_deref().and_then(port_of).or(u16::try_from(8_090 + i).ok())).collect();
     let used_p2p: HashSet<u16> = file.planes.iter().flat_map(|p| p.p2p_listen.iter().filter_map(|a| port_of(a))).collect();
     let free = |start: u16, used: &HashSet<u16>| (start..start + 200).find(|p| !used.contains(p));
-    let http = new.http_listen.clone().or_else(|| free(18_080, &used_http).map(|p| format!("127.0.0.1:{p}"))).ok_or_else(|| rule(name, "aucun port HTTP libre"))?;
+    let http = new.http_listen.clone().or_else(|| free(8_090, &used_http).map(|p| format!("127.0.0.1:{p}"))).ok_or_else(|| rule(name, "aucun port HTTP libre"))?;
     let p2p_port = new.p2p_port.or_else(|| free(4_101, &used_p2p)).ok_or_else(|| rule(name, "aucun port libp2p libre"))?;
     let p2p = format!("/ip4/0.0.0.0/tcp/{p2p_port}");
     let (text, created) = match &new.swarm_key {
@@ -475,7 +480,7 @@ mod tests {
     #[test]
     fn origin_and_a_private_plane_share_one_pool_and_each_declares_the_other_as_peer() {
         let planes = plan(
-            &file(r#"{ "planes": [ { "name": "origin", "dir": "~/.zen/astroportd", "kubo": "http://127.0.0.1:5001" }, { "name": "zen1", "swarm_key": "~/.zen/game/zen1/swarm.key", "http_listen": "127.0.0.1:18081", "p2p_listen": ["/ip4/0.0.0.0/tcp/4101"] } ] }"#),
+            &file(r#"{ "planes": [ { "name": "origin", "dir": "~/.zen/astroportd", "kubo": "http://127.0.0.1:5001" }, { "name": "zen1", "swarm_key": "~/.zen/game/zen1/swarm.key", "http_listen": "127.0.0.1:8091", "p2p_listen": ["/ip4/0.0.0.0/tcp/4101"] } ] }"#),
             &home(),
         )
         .unwrap();
@@ -488,7 +493,7 @@ mod tests {
         assert_eq!(arg_of(z, "--pool-peer"), [o.db.display().to_string()]);
         assert_eq!(arg_of(o, "--game-dir"), ["/home/fred/.zen/game"]);
         assert_eq!(arg_of(z, "--game-dir"), ["/home/fred/.zen/game/zen1"]);
-        assert_eq!(arg_of(o, "--http-listen"), ["127.0.0.1:18080"]);
+        assert_eq!(arg_of(o, "--http-listen"), ["127.0.0.1:8090"]);
         assert_eq!((arg_of(o, "--kubo").len(), arg_of(z, "--kubo").len()), (1, 0));
         assert_eq!(arg_of(z, "--p2p-listen"), ["/ip4/0.0.0.0/tcp/4101"]);
         assert_eq!(arg_of(o, "--p2p-listen"), ["/ip4/0.0.0.0/tcp/4102"], "maillage actif par défaut, sur un port que nul autre plan ne prend");
@@ -522,7 +527,7 @@ mod tests {
     fn a_zen_plane_only_station_needs_no_origin_and_no_kubo() {
         let planes = plan(&file(r#"{ "planes": [ { "name": "zen1", "swarm_key": "/k1" }, { "name": "zen2", "swarm_key": "/k2" } ] }"#), &home()).unwrap();
         assert!(planes.iter().all(|p| !p.origin && arg_of(p, "--kubo").is_empty()));
-        assert_eq!(arg_of(&planes[1], "--http-listen"), ["127.0.0.1:18081"]);
+        assert_eq!(arg_of(&planes[1], "--http-listen"), ["127.0.0.1:8091"]);
     }
 
     #[test]
@@ -532,9 +537,9 @@ mod tests {
         let path = default_path(&home);
         let (mut file, existed) = load(&path, &home).unwrap();
         assert!(!existed && file.planes.len() == 1 && file.planes[0].name == "origin", "sans fichier : la station actuelle, ORIGIN seul");
-        // Fonder une UPlanet : clé neuve, ports libres après ORIGIN (18080).
+        // Fonder une UPlanet : clé neuve, ports libres après ORIGIN (8090).
         let a = add(&mut file, &NewPlane { name: "zen1".into(), ..NewPlane::default() }, &home).unwrap();
-        assert_eq!((a.http_listen.as_str(), a.p2p_listen.as_str()), ("127.0.0.1:18081", "/ip4/0.0.0.0/tcp/4101"));
+        assert_eq!((a.http_listen.as_str(), a.p2p_listen.as_str()), ("127.0.0.1:8091", "/ip4/0.0.0.0/tcp/4101"));
         let key = a.created_key.clone().unwrap();
         assert_eq!(std::fs::read_to_string(&a.swarm_key_path).unwrap(), key);
         #[cfg(unix)]
@@ -542,7 +547,7 @@ mod tests {
         // Rejoindre une UPlanet existante avec la clé reçue ; ports suivants.
         let other = astro_p2p::generate_swarm_key().unwrap();
         let b = add(&mut file, &NewPlane { name: "zen2".into(), swarm_key: Some(other.clone()), ..NewPlane::default() }, &home).unwrap();
-        assert_eq!((b.http_listen.as_str(), b.p2p_listen.as_str(), b.created_key), ("127.0.0.1:18082", "/ip4/0.0.0.0/tcp/4102", None));
+        assert_eq!((b.http_listen.as_str(), b.p2p_listen.as_str(), b.created_key), ("127.0.0.1:8092", "/ip4/0.0.0.0/tcp/4102", None));
         assert_eq!(std::fs::read_to_string(&b.swarm_key_path).unwrap().trim(), other.trim());
         // Refus : doublon, nom invalide, clé illisible (rien n'est écrit), clé existante jamais écrasée.
         assert!(add(&mut file, &NewPlane { name: "zen1".into(), ..NewPlane::default() }, &home).unwrap_err().to_string().contains("nom déjà pris"));
@@ -590,7 +595,7 @@ mod tests {
         std::fs::create_dir_all(&node).unwrap();
         std::fs::write(node.join("secret.nostr"), "NSEC=…").unwrap();
         std::fs::write(node.join("secret.NODE.dunikey"), "pub: …").unwrap();
-        let p = Plane { name: "zen1".into(), origin: false, db: dir.join("zen1/uplanet.db"), game: node.join("zen1"), http: "127.0.0.1:18081".into(), args: Vec::new() };
+        let p = Plane { name: "zen1".into(), origin: false, db: dir.join("zen1/uplanet.db"), game: node.join("zen1"), http: "127.0.0.1:8091".into(), args: Vec::new() };
         assert_eq!(prepare(&p, &node).unwrap(), ["secret.nostr", "secret.NODE.dunikey"]);
         assert_eq!(std::fs::read_link(p.game.join("secret.nostr")).unwrap(), node.join("secret.nostr"), "même clé de NODE : même IPFSNODEID");
         assert!(p.game.join("nostr").is_dir() && dir.join("zen1").is_dir());

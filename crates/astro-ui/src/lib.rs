@@ -6,6 +6,7 @@
 pub mod acme;
 pub mod api;
 pub mod frontend;
+pub mod multipart;
 pub mod proxy;
 pub mod qr;
 pub mod tls;

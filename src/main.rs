@@ -124,25 +124,26 @@ enum Command {
         #[command(subcommand)]
         action: MultipassAction,
     },
-    /// Films et séries : attestation de copie privée (CPI L. 122-5) et dépôt chiffré avec publication NIP-71 (kind 21/22)
-    /// réservée au cercle N¹.
-    Media(Box<MediaArgs>),
-    /// Choisit le meilleur nœud du swarm pour un service (héritage d'`astrosystemctl connect`).
+    /// Choisit la meilleure station de la constellation qui vous ouvre un service (héritage d'`astrosystemctl connect`) :
+    /// affiche son PeerID. Équivaut à `tunnel route`.
     Route {
-        /// Service DRAGON recherché (`ollama`, `comfyui`, `qdrant`…).
+        /// Service recherché (`ollama`, `comfyui`, `qdrant`…).
         service: String,
         /// `power` (Power-Score), `closest` (Haversine) ou `random` (parmi les 3 plus puissants).
         #[arg(long, default_value = "power")]
         mode: astro_p2p::routing::Mode,
-        /// Dossier des `12345.json` des pairs (défaut : `$HOME/.zen/tmp/swarm`).
+        /// Socket de contrôle du démon (défaut : `$HOME/.zen/astroportd/control.sock`).
         #[arg(long)]
-        swarm_dir: Option<PathBuf>,
-        /// Latitude de cette station (mode `closest`).
-        #[arg(long, allow_hyphen_values = true, requires = "lon")]
-        lat: Option<f64>,
-        /// Longitude de cette station.
-        #[arg(long, allow_hyphen_values = true, requires = "lat")]
-        lon: Option<f64>,
+        socket: Option<PathBuf>,
+    },
+    /// Tunnels P2P : les services que les autres stations vous ouvrent, et ceux que cette station offre. Parle au démon qui
+    /// tourne (`astroportd serve`), même utilisateur : `list`, `connect ollama`, `close ollama`, `policy`, `mode ssh listed`…
+    Tunnel {
+        /// Socket de contrôle du démon (défaut : `$HOME/.zen/astroportd/control.sock`).
+        #[arg(long, global = true)]
+        socket: Option<PathBuf>,
+        #[command(subcommand)]
+        action: TunnelAction,
     },
     /// Reconstruit les tables de projection depuis les événements Nostr.
     Replay {
@@ -321,6 +322,94 @@ enum MultipassAction {
 }
 
 #[derive(Subcommand)]
+enum TunnelAction {
+    /// Les stations de la constellation, ce qu'elles vous ouvrent et les accès locaux déjà ouverts.
+    List {
+        /// Sortie JSON (pour un script).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Quelle station vous ouvre ce service ? Affiche son PeerID (détails sur la sortie d'erreur).
+    Route {
+        /// Service recherché.
+        service: String,
+        /// `power`, `closest` ou `random`.
+        #[arg(long, default_value = "power")]
+        mode: astro_p2p::routing::Mode,
+    },
+    /// Ouvre un accès local à un service d'une autre station : `127.0.0.1:<port>`, fermé à l'échéance.
+    Connect {
+        /// Service (`ollama`, `comfyui`, `ssh`…).
+        service: String,
+        /// PeerID de la station ; sans lui, la station choisie par le routage (`--mode`).
+        #[arg(long)]
+        peer: Option<String>,
+        /// Mode de choix sans `--peer`.
+        #[arg(long, default_value = "power")]
+        mode: astro_p2p::routing::Mode,
+        /// Port local (défaut : choisi par le système ; 11434 pour qu'Ollama soit là où ses clients le cherchent).
+        #[arg(long)]
+        port: Option<u16>,
+        /// Durée de l'accès, en heures (1 à 168).
+        #[arg(long, default_value_t = 8)]
+        hours: i64,
+    },
+    /// Ferme l'accès local à un service (celui de `--peer`, sinon tous ceux de ce service).
+    Close {
+        /// Service.
+        service: String,
+        /// PeerID de la station.
+        #[arg(long)]
+        peer: Option<String>,
+    },
+    /// La politique de cette station : pour chaque service offert, qui peut l'ouvrir.
+    Policy {
+        /// Sortie JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Règle qui peut ouvrir un service de cette station : `off`, `listed`, `friends` ou `swarm`.
+    Mode {
+        /// Service offert.
+        service: String,
+        /// `off` | `listed` | `friends` | `swarm`.
+        mode: String,
+    },
+    /// Autorise un pair nommément (mode `listed` si le service était fermé).
+    Allow {
+        /// Service offert.
+        service: String,
+        /// PeerID du pair.
+        peer: String,
+        /// Durée en heures (0 : sans limite ; 720 au plus).
+        #[arg(long, default_value_t = 0)]
+        hours: i64,
+        /// Nom affiché.
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Retire l'autorisation d'un pair.
+    Revoke {
+        /// Service offert.
+        service: String,
+        /// PeerID du pair.
+        peer: String,
+    },
+    /// Partage à chaud un service de cette machine (fermé à tous tant que personne n'est autorisé) : `share vnc 127.0.0.1:5900`.
+    Share {
+        /// Nom du service (minuscules, chiffres, `-`, `_`).
+        name: String,
+        /// `IP:port` de cette machine ou du réseau local privé.
+        target: String,
+    },
+    /// Cesse de partager un service ajouté par `share`.
+    Unshare {
+        /// Nom du service.
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum PluginAction {
     /// Liste les plugins chargés (et ceux qui sont refusés, avec la raison).
     List,
@@ -429,7 +518,7 @@ enum PlaneSetupAction {
         /// Fonde une UPlanet neuve : crée sa `swarm.key` (à copier ensuite sur chaque station qui la rejoint).
         #[arg(long)]
         found: bool,
-        /// Écoute HTTP (défaut : la première libre à partir de `127.0.0.1:18080`).
+        /// Écoute HTTP (défaut : la première libre à partir de `127.0.0.1:8090`).
         #[arg(long)]
         http_listen: Option<String>,
         /// Port libp2p (défaut : le premier libre à partir de 4101).
@@ -505,7 +594,40 @@ fn plane_setup_cmd(args: PlaneSetupArgs) -> Result<(), Failure> {
             if !existed {
                 println!("ORIGIN reste le plan de la station (base et dossier actuels, rien n'est déplacé).");
             }
-            println!("Pour servir tous les plans dans un seul processus : astroportd planes --check, puis astroportd planes (à la place de serve).");
+            let names: Vec<String> = planes.iter().map(|p| p.name.clone()).collect();
+            let default_cfg = plane::default_path(&home);
+            let config = (path != default_cfg).then_some(path.as_path());
+            let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("astroportd"));
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            match astroportd::systemd_unit::switch_to_planes(&astroportd::systemd_unit::unit_path(&home), &exe, config, &names, now)? {
+                astroportd::systemd_unit::Switch::NoUnit => {
+                    println!("Pour servir tous les plans dans un seul processus : astroportd planes --check, puis astroportd planes (à la place de serve).\nPour qu'il démarre seul : astroportd init --systemd.");
+                }
+                astroportd::systemd_unit::Switch::Foreign => {
+                    println!("L'unité systemd {} ne lance pas astroportd serve|planes : je n'y ai pas touché. Faites-lui lancer : {}", astroportd::systemd_unit::unit_path(&home).display(), astroportd::systemd_unit::planes_exec(&exe, config));
+                }
+                astroportd::systemd_unit::Switch::AlreadyPlanes => {
+                    println!("L'unité systemd lance déjà `planes`. Prise en compte du nouveau plan : systemctl --user daemon-reload && systemctl --user restart astroportd");
+                }
+                astroportd::systemd_unit::Switch::Switched { extras, backup } => {
+                    println!("Unité systemd mise à jour : elle lance maintenant `planes` (ancienne unité : {}).", backup.display());
+                    match extras {
+                        Some(e) if !e.is_empty() => {
+                            if let Some(origin) = file.planes.iter_mut().find(|p| p.swarm_key.is_none()).filter(|p| p.args.is_empty()) {
+                                origin.args = e.clone();
+                                let name = origin.name.clone();
+                                plane::save(&path, &file)?;
+                                println!("Options de l'ancien `serve` reportées sur le plan {name} : {}", e.join(" "));
+                            } else {
+                                println!("Options de l'ancien `serve` à reporter dans `args` du plan ORIGIN de {} : {}", path.display(), e.join(" "));
+                            }
+                        }
+                        Some(_) => {}
+                        None => println!("L'ancien `serve` avait des options que je ne sais pas lire : reportez-les à la main (voir la sauvegarde) dans `args` du plan ORIGIN."),
+                    }
+                    println!("Prise en compte : systemctl --user daemon-reload && systemctl --user restart astroportd   (je ne redémarre pas le service moi-même)");
+                }
+            }
         }
         PlaneSetupAction::Remove { name, yes } => {
             if !yes && ask(&format!("Retirer le plan « {name} » de la configuration ? Ses données et sa clé restent sur le disque. (o/N)"), Some("n"))?.to_lowercase() != "o" {
@@ -614,82 +736,6 @@ struct ImportUcloudArgs {
     no_publish: bool,
 }
 
-/// Options communes aux commandes `media`.
-#[derive(clap::Args)]
-struct MediaArgs {
-    #[command(subcommand)]
-    action: MediaAction,
-    /// Email ou clé Nostr (64 hex) du compte titulaire.
-    #[arg(long, global = true)]
-    account: Option<String>,
-    /// Base `uplanet.db`.
-    #[arg(long, global = true)]
-    db: Option<PathBuf>,
-    /// Dossier des blobs chiffrés.
-    #[arg(long, global = true)]
-    blobs: Option<PathBuf>,
-    /// Dossier `~/.zen/game` (défaut : `$ASTRO_GAME_DIR`, sinon `$HOME/.zen/game`).
-    #[arg(long, global = true)]
-    game_dir: Option<PathBuf>,
-    /// API RPC d'IPFS Kubo ; sans elle les blobs restent sur disque.
-    #[arg(long, global = true)]
-    kubo: Option<String>,
-    /// Relais où publier (répétable) ; sans relais, l'événement reste sur le relai local de la base.
-    #[arg(long = "relay", global = true)]
-    relays: Vec<String>,
-}
-
-/// Les options d'un seul `Add` : une commande de ligne de commande, jamais dans une boucle chaude.
-#[allow(clippy::large_enum_variant)]
-#[derive(Subcommand)]
-enum MediaAction {
-    /// Atteste, une fois, que les œuvres déposées sont des copies pour l'usage privé du titulaire (kind 31903).
-    Consent {
-        /// Affiche le texte légal et sort sans rien signer.
-        #[arg(long)]
-        show: bool,
-    },
-    /// Dépose un film ou un épisode, puis publie l'événement vidéo.
-    Add {
-        /// Fichier vidéo (plafond 1 024 Mo).
-        #[arg(long)]
-        file: PathBuf,
-        /// Document TMDB (JSON : title/name, release_date, genres, series_name, season_number, episode_number…).
-        #[arg(long)]
-        tmdb_json: Option<PathBuf>,
-        /// Titre (si pas de document TMDB).
-        #[arg(long)]
-        title: Option<String>,
-        /// Année de sortie.
-        #[arg(long)]
-        year: Option<u32>,
-        /// Genre (répétable).
-        #[arg(long = "genre")]
-        genres: Vec<String>,
-        /// Nom de la série (fait de ce dépôt un épisode ; exige --season et --episode).
-        #[arg(long)]
-        series: Option<String>,
-        /// Saison.
-        #[arg(long)]
-        season: Option<u32>,
-        /// Épisode.
-        #[arg(long)]
-        episode: Option<u32>,
-        /// Titre de l'épisode.
-        #[arg(long)]
-        episode_name: Option<String>,
-        /// `auto` : réencode en H.264/AAC avant le dépôt ; `notify` : dépose tel quel et recommande l'encodage.
-        #[arg(long, default_value = "auto")]
-        transcode: String,
-        /// Chemin de `ffmpeg`.
-        #[arg(long, default_value = "ffmpeg")]
-        ffmpeg: String,
-        /// Chemin de `ffprobe`.
-        #[arg(long, default_value = "ffprobe")]
-        ffprobe: String,
-    },
-}
-
 /// Lit la ligne de commande. `--plane NOM` (partout) remplit base, blobs, dossier de comptes et clé du plan choisi dans `planes.json`
 /// pour la commande demandée, sans remplacer ce que l'on donne soi-même ; avec `serve`, c'est toute la configuration du plan.
 fn parse_cli() -> Cli {
@@ -782,7 +828,6 @@ async fn run(cli: Cli) -> Result<(), Failure> {
                 }
             }
         }
-        Command::Media(args) => media_cmd(*args).await,
         Command::ImportUcloud(args) => import_ucloud_cmd(*args).await,
         Command::PullWebdav(args) => pull_webdav_cmd(*args).await,
         Command::BridgeCopy(args) => bridge_copy_cmd(*args).await,
@@ -790,7 +835,8 @@ async fn run(cli: Cli) -> Result<(), Failure> {
         Command::Planes(args) => planes_cmd(*args).await,
         Command::PlaneSetup(args) => plane_setup_cmd(*args),
         Command::Multipass { action } => multipass_cmd(action).await,
-        Command::Route { service, mode, swarm_dir, lat, lon } => route(&service, mode, swarm_dir, lat.zip(lon)),
+        Command::Route { service, mode, socket } => tunnel_cmd(socket, TunnelAction::Route { service, mode }).await,
+        Command::Tunnel { socket, action } => tunnel_cmd(socket, action).await,
         Command::SwarmKey => {
             print!("{}", astro_p2p::generate_swarm_key()?);
             Ok(())
@@ -914,30 +960,103 @@ async fn run(cli: Cli) -> Result<(), Failure> {
     }
 }
 
-/// `astroportd route` : lit les `12345.json` des pairs et affiche le nœud retenu.
-fn route(service: &str, mode: astro_p2p::routing::Mode, swarm_dir: Option<PathBuf>, origin: Option<(f64, f64)>) -> Result<(), Failure> {
-    use astro_p2p::routing::{Candidate, random_u64, select};
-    let dir = match swarm_dir {
-        Some(d) => d,
-        None => PathBuf::from(std::env::var_os("HOME").ok_or("HOME introuvable : indiquer --swarm-dir")?).join(".zen/tmp/swarm"),
-    };
-    let mut candidates = Vec::new();
-    for entry in std::fs::read_dir(&dir).map_err(|e| format!("{} : {e}", dir.display()))?.flatten() {
-        let file = entry.path().join("12345.json");
-        let Ok(text) = std::fs::read_to_string(&file) else { continue };
-        match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(json) => candidates.push(Candidate::from_station_json(&entry.file_name().to_string_lossy(), &json)),
-            Err(e) => eprintln!("route : {} ignoré : {e}", file.display()),
-        }
+/// Socket de contrôle du démon : `--socket`, sinon `ASTRO_CONTROL_SOCKET`, sinon `~/.zen/astroportd/control.sock`.
+fn control_socket(given: Option<PathBuf>) -> Result<PathBuf, Failure> {
+    if let Some(p) = given.or_else(|| std::env::var_os("ASTRO_CONTROL_SOCKET").map(PathBuf::from)) {
+        return Ok(p);
     }
-    let Some(sel) = select(&candidates, service, mode, origin, random_u64()) else {
-        return Err(format!("aucun nœud ne fournit « {service} » ({} pair(s) lus dans {})", candidates.len(), dir.display()).into());
+    let home = std::env::var_os("HOME").ok_or("HOME introuvable : indiquer --socket")?;
+    Ok(astroportd::control::socket_path(&PathBuf::from(home).join(".zen/astroportd/uplanet.db")))
+}
+
+/// `astroportd tunnel …` et `astroportd route …` : demandes au démon qui tourne.
+async fn tunnel_cmd(socket: Option<PathBuf>, action: TunnelAction) -> Result<(), Failure> {
+    use serde_json::{Value, json};
+    let socket = control_socket(socket)?;
+    let ask = |section: &'static str, body: Value| {
+        let socket = socket.clone();
+        async move { astroportd::control::call(&socket, section, Some(body)).await }
     };
-    println!("{}", sel.node.node_id);
-    let extra = sel.distance_km.map(|d| format!(", à {d:.0} km")).unwrap_or_default();
-    eprintln!("route : {service} → Power-Score {:.1}{extra} (mode {:?})", sel.node.power_score, sel.mode);
-    if sel.fell_back {
-        eprintln!("route : ⚠ mode {mode:?} inapplicable (coordonnées inconnues, --lat/--lon) : repli sur le Power-Score");
+    let until = |t: i64| {
+        let left = (t - std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))).max(0);
+        format!("encore {} h {:02} min", left / 3600, left % 3600 / 60)
+    };
+    match action {
+        TunnelAction::List { json } => {
+            let v = astroportd::control::call(&socket, "tunnel", None).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&v)?);
+                return Ok(());
+            }
+            let stations = v["stations"].as_array().cloned().unwrap_or_default();
+            if stations.is_empty() {
+                println!("aucune autre station connue (annuaire vide ou balises trop anciennes)");
+            }
+            for s in &stations {
+                let dist = s["distance_km"].as_f64().map_or(String::new(), |d| format!(" · {d:.0} km"));
+                println!("{} ({}) — Power-Score {:.0}{dist}", s["name"].as_str().unwrap_or("?"), s["peer"].as_str().unwrap_or("?"), s["power_score"].as_f64().unwrap_or(0.0));
+                match &s["services"] {
+                    Value::Array(list) if list.is_empty() => println!("    (rien d'ouvert pour vous)"),
+                    Value::Array(list) => {
+                        for sv in list {
+                            let local = sv["local"]["addr"].as_str().map_or(String::new(), |a| format!("  → {a} ({})", until(sv["local"]["until"].as_i64().unwrap_or(0))));
+                            println!("    {}{local}", sv["name"].as_str().unwrap_or("?"));
+                        }
+                    }
+                    e => println!("    injoignable : {}", e["error"].as_str().unwrap_or("?")),
+                }
+            }
+            Ok(())
+        }
+        TunnelAction::Route { service, mode } => {
+            let v = ask("tunnel", json!({ "route": { "service": service, "mode": format!("{mode:?}").to_lowercase() } })).await?;
+            println!("{}", v["peer"].as_str().unwrap_or_default());
+            let km = v["distance_km"].as_f64().map(|d| format!(", à {d:.0} km")).unwrap_or_default();
+            eprintln!("route : {service} → Power-Score {:.1}{km} (mode {}, {} station(s) l'offrent)", v["power_score"].as_f64().unwrap_or(0.0), v["mode"].as_str().unwrap_or("?"), v["candidates"]);
+            if v["fell_back"].as_bool() == Some(true) {
+                eprintln!("route : ⚠ mode {mode:?} inapplicable (position inconnue) : repli sur le Power-Score");
+            }
+            Ok(())
+        }
+        TunnelAction::Connect { service, peer, mode, port, hours } => {
+            let v = ask("tunnel", json!({ "connect": { "service": service, "peer": peer, "mode": format!("{mode:?}").to_lowercase(), "port": port, "hours": hours } })).await?;
+            println!("{}", v["addr"].as_str().unwrap_or_default());
+            eprintln!("{service} de {} ouvert sur {} ({})", v["peer"].as_str().unwrap_or("?"), v["addr"].as_str().unwrap_or("?"), until(v["until"].as_i64().unwrap_or(0)));
+            Ok(())
+        }
+        TunnelAction::Close { service, peer } => {
+            let v = ask("tunnel", json!({ "disconnect": { "service": service, "peer": peer } })).await?;
+            eprintln!("{} accès fermé(s)", v["closed"]);
+            Ok(())
+        }
+        TunnelAction::Policy { json } => {
+            let v = astroportd::control::call(&socket, "tunnels", None).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&v)?);
+                return Ok(());
+            }
+            for s in v["services"].as_array().into_iter().flatten() {
+                let flag = if s["customized"].as_bool() == Some(true) { "" } else { " (défaut)" };
+                println!("{:<14} {}{flag}{}", s["name"].as_str().unwrap_or("?"), s["mode"].as_str().unwrap_or("?"), if s["shared"].as_bool() == Some(true) { "  [partagé à chaud]" } else { "" });
+                for g in s["grants"].as_array().into_iter().flatten() {
+                    println!("    {} ({}){}", g["label"].as_str().unwrap_or("?"), g["peer"].as_str().unwrap_or("?"), if g["expired"].as_bool() == Some(true) { " — expiré" } else { "" });
+                }
+            }
+            Ok(())
+        }
+        TunnelAction::Mode { service, mode } => policy_change(&socket, json!({ "service": service, "mode": mode })).await,
+        TunnelAction::Allow { service, peer, hours, label } => policy_change(&socket, json!({ "service": service, "grant": { "peer": peer, "hours": hours, "label": label } })).await,
+        TunnelAction::Revoke { service, peer } => policy_change(&socket, json!({ "service": service, "revoke": peer })).await,
+        TunnelAction::Share { name, target } => policy_change(&socket, json!({ "share": { "name": name, "target": target } })).await,
+        TunnelAction::Unshare { name } => policy_change(&socket, json!({ "unshare": name })).await,
+    }
+}
+
+/// Change la politique des tunnels et montre l'état qui en résulte.
+async fn policy_change(socket: &std::path::Path, body: serde_json::Value) -> Result<(), Failure> {
+    let v = astroportd::control::call(socket, "tunnels", Some(body)).await?;
+    for s in v["services"].as_array().into_iter().flatten() {
+        println!("{:<14} {}", s["name"].as_str().unwrap_or("?"), s["mode"].as_str().unwrap_or("?"));
     }
     Ok(())
 }
@@ -1186,7 +1305,6 @@ async fn stored_birth_events(db: &Db, hex: &str) -> Result<Vec<astro_nostr_proto
         .collect()
 }
 
-/// `astroportd media …` : copie privée et dépôt d'un film ou d'un épisode.
 /// Enveloppe pour relire les options de `serve` d'un plan comme sur la ligne de commande.
 #[derive(Parser)]
 struct PlaneServe {
@@ -1441,84 +1559,6 @@ async fn import_ucloud_cmd(args: ImportUcloudArgs) -> Result<(), Failure> {
     }
     println!("Pour lire ces fichiers, `astroportd serve` doit tourner avec --kubo {kubo}.");
     Ok(())
-}
-
-async fn media_cmd(args: MediaArgs) -> Result<(), Failure> {
-    use astro_nostr_proto::Event;
-    let MediaArgs { action, account, db, blobs, game_dir, kubo, relays } = args;
-    if let MediaAction::Consent { show: true } = &action {
-        println!("{}", astro_dav::media::CONSENT_TEXT);
-        return Ok(());
-    }
-    let account = account.ok_or("--account (email ou clé Nostr) obligatoire")?;
-    let (db_path, blobs_path) = (db.ok_or("--db obligatoire")?, blobs.ok_or("--blobs obligatoire")?);
-    let station = identity::resolve(game_dir.as_deref(), true)?;
-    let found = station.discovered.as_ref().ok_or("identités locales introuvables (--game-dir)")?;
-    let owner = found.multipasses.iter().find(|m| m.email.eq_ignore_ascii_case(&account) || m.hex == account.to_ascii_lowercase()).ok_or_else(|| format!("compte « {account} » non hébergé ici"))?.hex.clone();
-    let secrets_dir = station.nostr_dir.clone().ok_or("dossier des comptes introuvable (--game-dir)")?;
-
-    let db = Arc::new(Db::open(&db_path, 2)?);
-    db.writer().batch(astro_lifecycle::store::identity_statements(found)).await?;
-    let local = Arc::new(AutoBlobStore::new(kubo.as_deref().map(KuboBlobStore::new), FsBlobStore::open(&blobs_path)?));
-    let keys: Arc<dyn KeySource> = Arc::new(FileKeySource::new(&secrets_dir));
-    let manifests = ManifestPublisher::spawn(db.clone(), local.clone(), keys.clone(), Duration::from_secs(3600));
-    let dav = Arc::new(DavState { db: db.clone(), blobs: local, replay: Arc::new(SqliteReplayStore::open(&db_path)?), publisher: Some(manifests.clone()), config: DavConfig::new(station.secret.clone()), on_upload: None });
-    let activity = astro_core::ActivityBus::new();
-    let mut client = WsClient::new(Duration::from_secs(30));
-    if let Some(s) = station.signer.clone() {
-        client = client.with_signer(s);
-    }
-    let (ffmpeg, ffprobe, mode) = match &action {
-        MediaAction::Add { ffmpeg, ffprobe, transcode, .. } => (ffmpeg.clone(), ffprobe.clone(), match transcode.as_str() {
-            "auto" => astroportd::media::Transcode::Auto,
-            "notify" => astroportd::media::Transcode::Notify,
-            other => return Err(format!("--transcode : « auto » ou « notify », pas « {other} »").into()),
-        }),
-        MediaAction::Consent { .. } => ("ffmpeg".into(), "ffprobe".into(), astroportd::media::Transcode::Notify),
-    };
-    let pipeline = astroportd::media::MediaPipeline {
-        dav,
-        keys,
-        publisher: Some(Arc::new(astroportd::media::RelaysPublisher { client, relays })),
-        activity: Some(activity.clone()),
-        tools: astroportd::media::Tools { ffmpeg, ffprobe, ..Default::default() },
-        mode,
-        work_dir: db_path.parent().map_or_else(|| PathBuf::from("work"), |p| p.join("work")),
-    };
-    let mut feed = activity.subscribe(0).1;
-    let printer = tokio::spawn(async move {
-        while let Ok(a) = feed.recv().await {
-            println!("· {}", a.message);
-        }
-    });
-    let result: Result<(), Failure> = async {
-        match action {
-            MediaAction::Consent { .. } => {
-                let ev: Event = pipeline.record_consent(&owner).await?;
-                println!("attestation de copie privée enregistrée (événement {})", &ev.id[..12]);
-            }
-            MediaAction::Add { file, tmdb_json, title, year, genres, series, season, episode, episode_name, .. } => {
-                let doc = match tmdb_json {
-                    Some(p) => serde_json::from_slice(&std::fs::read(&p).map_err(|e| format!("{} : {e}", p.display()))?)?,
-                    None => serde_json::json!({ "title": title, "year": year, "genres": genres, "series_name": series, "season_number": season, "episode_number": episode, "episode_name": episode_name }),
-                };
-                let meta = astro_dav::media::MediaMeta::from_tmdb(&doc)?;
-                let r = pipeline.submit(&owner, &file, &meta).await?;
-                println!("déposé : {} ({} octets{}), événement kind {} {}", r.path, r.size, if r.transcoded { ", réencodé H.264/AAC" } else { "" }, r.kind, &r.event_id[..12]);
-                for n in &r.notes {
-                    println!("note : {n}");
-                }
-            }
-        }
-        Ok(())
-    }
-    .await;
-    for (who, why) in manifests.flush().await {
-        eprintln!("manifeste non publié pour {who} : {why}");
-    }
-    printer.abort();
-    db.writer().shutdown().await?;
-    result
 }
 
 /// `astroportd face-check` : dit ce qui manque pour activer l'inférence faciale locale, et le comment.

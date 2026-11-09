@@ -20,6 +20,9 @@ use crate::circle::CircleProvider;
 use crate::limits::RateLimiter;
 use crate::policy::{AuthState, Policy, ReadAccess, WriteDecision};
 
+/// Ping des connexions WebSocket : sous les 60 s après lesquelles nginx (Nginx Proxy Manager) coupe une connexion muette.
+pub const PING_EVERY: Duration = Duration::from_secs(30);
+
 /// Projection appliquée dans la même transaction que l'insertion d'un événement (ex. `Projector::plan` d'`astro-sync`).
 pub type PlanFn = Arc<dyn Fn(&Event) -> Vec<Statement> + Send + Sync>;
 
@@ -172,8 +175,16 @@ impl Relay {
             return;
         }
         let mut live = self.live.subscribe();
+        // Un abonnement sans nouvel événement laisse la connexion muette ; un reverse proxy (nginx : 60 s par défaut) la
+        // couperait. Le ping la garde ouverte et révèle un client parti.
+        let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + PING_EVERY, PING_EVERY);
         loop {
             tokio::select! {
+                _ = ping.tick() => {
+                    if !matches!(tokio::time::timeout(Duration::from_secs(10), socket.send(Message::Ping(Default::default()))).await, Ok(Ok(()))) {
+                        break;
+                    }
+                }
                 incoming = socket.recv() => match incoming {
                     Some(Ok(Message::Text(text))) => {
                         if !self.on_text(&mut socket, &mut conn, ip, text.as_str()).await {
