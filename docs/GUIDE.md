@@ -1,6 +1,6 @@
 # Guide du Capitaine : ouvrir et tenir sa station
 
-> Version texte du [guide illustré](guide.html). Pour découvrir Astroport sans rien installer : [la page d'accueil](index.html). Préversion **0.5.8-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
+> Version texte du [guide illustré](guide.html). Pour découvrir Astroport sans rien installer : [la page d'accueil](index.html). Préversion **0.6.0-beta**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
 
 **Sommaire** :
 
@@ -44,7 +44,7 @@ date       # l'année doit être 2026 ou plus
 
 Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.
 
-> **À savoir.** astroportd est en **préversion 0.5.8-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
+> **À savoir.** astroportd est en **préversion 0.6.0-beta** : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.
 
 Vous aurez aussi besoin d'un compte **MULTIPASS** (votre identité Nostr) : astroportd le crée pour vous à l'[étape 6](#etape-5).
 
@@ -60,7 +60,9 @@ Le plus simple : l'installeur. Il choisit le bon fichier pour votre machine et *
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 ```
 
-Options utiles : `--version v0.5.8-beta`, `--static` (binaire statique, x86_64 et aarch64), `--prefix DIR`, `--no-init`, `--yes`.
+Options utiles : `--version v0.6.0-beta`, `--static` (binaire statique, x86_64 et aarch64 : l'installeur le choisit seul si la glibc de la machine est plus ancienne que la 2.35, et s'arrête net si le binaire ne démarre pas), `--prefix DIR`, `--no-init`, `--yes`.
+
+**Plugins** : à la fin, l'installeur propose de les présenter (`install-plugins.sh` : `git clone` du dépôt `astroportd-plugins`, puis l'`install.sh` de chacun : films et musique, énergie, DNSLink). Pour y revenir : `curl -fsSL https://raw.githubusercontent.com/papiche/astroportd-plugins/main/install-plugins.sh | bash`.
 
 **Mettre à jour** : relancez simplement le même `install.sh`. Il montre l'installation en place (version, constellation, domaine, Capitaine, service), installe la nouvelle version, garde vos modèles et votre station, puis redémarre le service. Il ne relance jamais `init`, qui changerait l'identité de la station. `--force` réinstalle la même version.
 
@@ -123,7 +125,7 @@ L'assistant `init` fait ce rituel pour vous (c'est sa première étape) :
 astroportd init
 ```
 
-Il part de `~/.ssh/id_ed25519` (il en crée une si elle n'existe pas). L'assistant demande aussi la position de la station, l'email du Capitaine, le domaine et la **visio** : STUN + relais d'appel (recommandé), STUN seul ou aucune, plus d'éventuels serveurs STUN/TURN extérieurs (`--visio relais|stun|aucune`, `--ice-server stun:hôte:port`). Les ports à ouvrir sur la box sont résumés à l'étape 5 (« Réseau : ce qu'il faut ouvrir ») ; `init` les affiche aussi à la fin. **Votre ancienne clé SSH n'est pas détruite** : elle est conservée sous `~/.ssh/origin.key` et `~/.ssh/origin.pub`. Les secrets de la station sont écrits en `0600` dans `~/.zen/game`.
+Il part de `~/.ssh/id_ed25519` (il en crée une si elle n'existe pas). **Une station déjà en niveau Y n'est jamais redérivée** : `secret.june`, le PeerID de kubo (`~/.ipfs/config`, lu seul) et la clé SSH sont comparés, et l'assistant s'arrête plutôt que de changer l'identité (seul `--rederive-y` l'autorise). Si `~/.ipfs/swarm.key` existe, l'assistant propose de reprendre cette constellation ẐEN. L'assistant demande aussi la position de la station, l'email du Capitaine, le domaine et la **visio** : STUN + relais d'appel (recommandé), STUN seul ou aucune, plus d'éventuels serveurs STUN/TURN extérieurs (`--visio relais|stun|aucune`, `--ice-server stun:hôte:port`). Les ports à ouvrir sur la box sont résumés à l'étape 5 (« Réseau : ce qu'il faut ouvrir ») ; `init` les affiche aussi à la fin. **Votre ancienne clé SSH n'est pas détruite** : elle est conservée sous `~/.ssh/origin.key` et `~/.ssh/origin.pub`. Les secrets de la station sont écrits en `0600` dans `~/.zen/game`.
 
 Pour voir la correspondance, ou la vérifier plus tard :
 
@@ -160,7 +162,9 @@ La règle est simple : **pas de `swarm.key` = ORIGIN ; une `swarm.key` présente
 astroportd init --mode origin
 ```
 
-Aucune clé à fournir : le réseau est ouvert. Vous rejoignez les autres stations ORIGIN.
+Aucune clé à fournir : le réseau est ouvert. Vous rejoignez les autres stations ORIGIN, et **vous proposez votre machine au collectif** : quand elle est acceptée et que le Capitaine est inscrit et reconnu, il reçoit la `swarm.key` de la constellation ẐEN (`astroportd plane-setup add`, ou `astroportd init --join`).
+
+L'assistant résume ensuite le réseau selon votre cas (HTTPS direct, derrière un reverse proxy, sans domaine ; maillage ; visio) : ce qu'il faut ouvrir sur la box, et ce qui ne l'est pas.
 
 **Parcours B — Rejoindre une constellation ẐEN existante**
 

@@ -208,7 +208,7 @@ S'il manque de l'argent (recettes inférieures à la PAF), le manque est couvert
 
 ## Qui fait quoi : astroportd et Astroport.ONE
 
-astroportd (version 0.5.8-beta, une préversion) remplace peu à peu les scripts bash d'[Astroport.ONE](https://github.com/papiche/Astroport.ONE). Les deux fonctionnent ensemble ; voici ce que chacun fait aujourd'hui.
+astroportd (version 0.6.0-beta, une préversion) remplace peu à peu les scripts bash d'[Astroport.ONE](https://github.com/papiche/Astroport.ONE). Les deux fonctionnent ensemble ; voici ce que chacun fait aujourd'hui.
 
 | Fonction | astroportd | Astroport.ONE |
 |---|:---:|:---:|

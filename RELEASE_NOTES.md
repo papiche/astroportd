@@ -1,3 +1,20 @@
+## astroportd 0.6.0-beta
+
+Cette version **soigne l'installation** : un binaire qui tourne sur Debian 12 et Ubuntu 22.04, une station déjà en niveau Y qui n'est jamais redérivée, une constellation reprise depuis kubo, un résumé réseau adapté à chaque cas, et des plugins proposés à l'installation.
+
+### Installer
+- **Binaires gnu compilés sur Ubuntu 22.04** (glibc 2.35) : ils démarrent sur Debian 12, Ubuntu 22.04 et plus récent. Avant : `GLIBC_2.38 not found` sur une Debian 12.
+- `install.sh` choisit seul le **binaire statique** si la glibc de la machine est plus ancienne que la 2.35, et **s'arrête** si le binaire installé ne démarre pas, au lieu de lancer `init` avec un binaire inutilisable.
+- **Plugins** : `install.sh` propose de présenter les plugins à la fin. `install-plugins.sh` (dépôt `astroportd-plugins`) les présente, fait le `git clone`, puis lance l'`install.sh` de chacun ; `--list`, `--all`, `--yes` ou des noms.
+
+### Identité et constellation
+- **`init` lit `~/.ipfs/config`** (ou `$IPFS_PATH`) sans qu'on le lui demande : une station dont la clé SSH est déjà la jumelle de l'IPFSNODEID n'est plus redérivée. `astroportd ylevel` vérifie aussi avec ce fichier.
+- **`~/.ipfs/swarm.key`** : si elle existe et qu'aucune constellation n'est choisie, `init` propose de reprendre cette constellation ẐEN (reprise d'office avec `--yes`).
+- **ORIGIN = candidature** : le texte de l'assistant explique que la machine est proposée au collectif, et que le Capitaine, une fois inscrit et reconnu, reçoit la `swarm.key` (`astroportd plane-setup add`, ou `init --join`).
+
+### Réseau
+- Nouvelle étape ④ de l'assistant : **ce qu'il faut ouvrir sur la box** selon le cas (HTTPS direct 80/443, derrière un reverse proxy, sans domaine), le maillage (le port 4101 n'a pas besoin d'être ouvert : relais et « hole punching ») et la visio (UDP).
+
 ## astroportd 0.5.8-beta
 
 Cette version **recentre astroportd sur son rôle de serveur** : il garde, chiffre et partage les fichiers (WebDAV, P2P, N¹, N²) et **ne traite plus aucun média**. Tout le travail sur les films, séries et musiques passe dans le plugin `media`. Les **pièces jointes** des messages ont leur propre chemin, vérifiable et répliqué chez les amis.

@@ -135,6 +135,25 @@ pub struct InitDone {
     pub web_url: String,
 }
 
+/// Dossier de kubo : `$IPFS_PATH`, sinon `~/.ipfs`.
+fn ipfs_dir() -> Option<PathBuf> {
+    std::env::var_os("IPFS_PATH").map(PathBuf::from).or_else(|| home_dir().ok().map(|h| h.join(".ipfs")))
+}
+
+/// `config` de kubo : celui qu'on donne, sinon celui du dossier de kubo s'il existe. Son PeerID sert à reconnaître une station
+/// déjà en niveau Y (IPFSNODEID ⇔ clé SSH) pour ne jamais la dériver à nouveau.
+fn kubo_config_of(given: Option<PathBuf>) -> Option<PathBuf> {
+    given.or_else(|| ipfs_dir().map(|d| d.join("config")).filter(|p| p.is_file()))
+}
+
+/// `swarm.key` posée dans le dossier de kubo (réseau privé IPFS) : elle désigne la constellation ẐEN de cette machine.
+/// Rendue seulement si le fichier est une clé valide.
+fn kubo_swarm_key() -> Option<PathBuf> {
+    let p = ipfs_dir()?.join("swarm.key");
+    let text = std::fs::read_to_string(&p).ok()?;
+    astro_p2p::parse_swarm_key(&text).ok().map(|_| p)
+}
+
 fn home_dir() -> Result<PathBuf, String> {
     std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| "HOME introuvable : renseigner --home, --game-dir et --ssh-dir".to_owned())
 }
@@ -254,11 +273,23 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
             return Err("--mode contredit la constellation de la station marraine : retirez --mode".into());
         }
     }
+    let mut swarm_from_kubo: Option<PathBuf> = None;
     let mode = match joined_mode.or(a.mode) {
         Some(m) => m,
         None => {
-            println!("Quelle constellation rejoindre ?\n  1) ORIGIN — réseau ouvert, bac à sable pour apprendre (1 Ẑen = 0,1 Ğ1)\n  2) ẐEN    — réseau privé de confiance, réelle (1 Ẑen = 1 €), demande une swarm.key");
-            if ask.ask("Votre choix (1 ou 2)", "1") == "2" { Mode::Zen } else { Mode::Origin }
+            let found = if a.swarm_key.is_none() { kubo_swarm_key() } else { None };
+            match found {
+                // Une `swarm.key` de kubo est déjà là : la machine appartient à une constellation privée.
+                Some(p) if a.yes || ask.ask(&format!("Une swarm.key de kubo est présente ({}) : cette machine appartient déjà à une constellation ẐEN. La reprendre ? (O/n)", p.display()), "o").to_lowercase().starts_with('o') => {
+                    println!("   ẐEN : constellation reprise de {}", p.display());
+                    swarm_from_kubo = Some(p);
+                    Mode::Zen
+                }
+                _ => {
+                    println!("Quelle constellation rejoindre ?\n  1) ORIGIN — réseau ouvert : on apprend, et on propose sa machine au collectif. Quand elle est acceptée et que le Capitaine est inscrit et reconnu, il reçoit la swarm.key de la constellation ẐEN (`astroportd plane-setup add`, ou `init --join`)\n  2) ẐEN    — réseau privé de confiance, réelle (1 Ẑen = 1 €), demande une swarm.key reçue d'un Capitaine");
+                    if ask.ask("Votre choix (1 ou 2)", "1") == "2" { Mode::Zen } else { Mode::Origin }
+                }
+            }
         }
     };
     let home = a.home.clone().map_or_else(|| home_dir().map(|h| h.join(".zen/astroportd")), Ok)?;
@@ -279,7 +310,7 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
             } else if a.found_constellation {
                 astro_p2p::generate_swarm_key()?
             } else {
-                let path = match a.swarm_key.clone() {
+                let path = match a.swarm_key.clone().or(swarm_from_kubo.clone()).or_else(|| if a.yes { kubo_swarm_key() } else { None }) {
                     Some(p) => p,
                     None => {
                         let p = ask.ask("Chemin de votre swarm.key (reçue d'un Capitaine) — ou « nouvelle » pour fonder votre constellation", "");
@@ -303,7 +334,7 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
     let paths = Paths { game: game.clone(), ssh };
     let mut rederive = a.rederive_y;
     let report = loop {
-        let opts = InitOptions { no_ssh: a.no_ssh, comment: format!("astroportd@{}", hostname()), kubo_config: a.kubo_config.clone(), rederive };
+        let opts = InitOptions { no_ssh: a.no_ssh, comment: format!("astroportd@{}", hostname()), kubo_config: kubo_config_of(a.kubo_config.clone()), rederive };
         match ylevel::init(&paths, &opts, now()) {
             Err(e @ ylevel::YLevelError::AlreadyY(_)) if !a.yes && !rederive => {
                 println!("   ⚠ {e}.\n     Pour garder votre identité, retrouvez `secret.june` (SALT/PEPPER) dans ~/.zen/game ou une sauvegarde.");
@@ -403,6 +434,23 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
     };
     if let Some(bad) = ice.iter().find(|u| !(u.starts_with("stun:") || u.starts_with("turn:") || u.starts_with("turns:"))) {
         return Err(format!("serveur de visio invalide : {bad} (attendu stun:hôte:port ou turn:hôte:port)").into());
+    }
+
+    // Réseau : ce que la configuration choisie demande, ou non, sur la box (un résumé par cas, jamais de jargon inutile).
+    println!("\n④ Réseau — ce qu'il faut ouvrir sur votre box");
+    let shown = if domain.is_empty() { "votre domaine".to_owned() } else { domain.clone() };
+    match (behind_proxy, domain.is_empty()) {
+        (true, _) => println!("   • Web : votre reverse proxy renvoie https://{shown}/ vers cette machine, port {ui} (TCP). Le certificat reste chez lui."),
+        (false, false) => println!("   • Web : ouvrez 80 et 443 (TCP) vers cette machine ; la station obtient et renouvelle seule son certificat pour {shown}."),
+        (false, true) => println!("   • Web : sans domaine, l'interface reste en HTTP sur votre réseau local (port {ui}). Pour accueillir des membres depuis Internet, relancez avec --domain."),
+    }
+    if mode == Mode::Zen || !a.joined.as_ref().map(|j| j.bootstrap.is_empty()).unwrap_or(true) {
+        println!("   • Maillage entre stations : le port 4101 (TCP) n'a pas besoin d'être ouvert, les relais et le « hole punching » traversent la plupart des box ; l'ouvrir rend les liaisons directes.");
+    } else {
+        println!("   • Maillage entre stations : ORIGIN n'ouvre aucun port de plus ; le réseau privé ẐEN s'ajoute plus tard avec `astroportd plane-setup add`.");
+    }
+    if visio != "aucune" {
+        println!("   • Visio : ouvrez le port {ui_port} en UDP pour que deux membres derrière leurs box s'appellent en direct.");
     }
 
     // 4. Dossiers + station.conf.
@@ -557,7 +605,7 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
 /// `astroportd ylevel`.
 pub fn ylevel_cmd(a: YlevelArgs) -> Res {
     let paths = Paths { game: game_dir(a.game_dir)?, ssh: ssh_dir(a.ssh_dir)? };
-    let checks = ylevel::verify(&paths, a.kubo_config.as_deref());
+    let checks = ylevel::verify(&paths, kubo_config_of(a.kubo_config.clone()).as_deref());
     for c in &checks {
         println!("{} {:<12} {}", if c.ok { "✔" } else { "✘" }, c.name, c.detail);
     }
@@ -601,5 +649,11 @@ mod tests {
         assert_eq!(parse_coord("43,60", "latitude", 90.0), Ok(43.6));
         assert!(parse_coord("91", "latitude", 90.0).is_err());
         assert!(parse_coord("nord", "latitude", 90.0).is_err());
+    }
+
+    #[test]
+    fn a_given_kubo_config_wins_over_the_default_one() {
+        let given = PathBuf::from("/tmp/une-config-kubo");
+        assert_eq!(kubo_config_of(Some(given.clone())), Some(given));
     }
 }

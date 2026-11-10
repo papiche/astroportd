@@ -131,6 +131,19 @@ elif [ "$TARGET" = "x86_64-unknown-linux-gnu" ] && command -v ldd >/dev/null 2>&
   TARGET="x86_64-unknown-linux-musl"
 fi
 
+# --- glibc trop ancienne : les binaires gnu demandent la 2.35 (Debian 12, Ubuntu 22.04) ; en dessous, binaire statique -------
+case "$TARGET" in
+  *-linux-gnu*)
+    glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"
+    if [ -n "$glibc" ] && [ "$(printf '%s\n2.35\n' "$glibc" | sort -V | head -n 1)" != "2.35" ]; then
+      case "$TARGET" in
+        x86_64-*) say "glibc ${glibc} (< 2.35) : utilisation du binaire statique (sans visages ni embeddings locaux)."; TARGET="x86_64-unknown-linux-musl" ;;
+        aarch64-*) say "glibc ${glibc} (< 2.35) : utilisation du binaire statique (sans visages ni embeddings locaux)."; TARGET="aarch64-unknown-linux-musl" ;;
+        *) die "glibc ${glibc} trop ancienne pour ce binaire (2.35 requise) : mettez le système à jour." ;;
+      esac
+    fi ;;
+esac
+
 # --- Horloge : un Raspberry Pi sans pile RTC démarre en 1970 -----------------------------------------------------
 now="$(date +%s)"
 if [ "$now" -lt 1767225600 ]; then
@@ -426,7 +439,10 @@ tar -C "$tmp" -xzf "${tmp}/${ARCHIVE}" || die "archive illisible : ${ARCHIVE}"
 mkdir -p "${PREFIX}/bin"
 install -m 0755 "${tmp}/${NAME}/${BIN}" "${PREFIX}/bin/${BIN}"
 say "  ✔ installé : ${PREFIX}/bin/${BIN}"
-"${PREFIX}/bin/${BIN}" --version 2>/dev/null || warn "le binaire installé ne répond pas à --version (architecture incompatible ?)"
+if ! "${PREFIX}/bin/${BIN}" --version 2>/dev/null; then
+  "${PREFIX}/bin/${BIN}" --version 2>&1 | head -n 3 >&2 || true
+  die "le binaire installé ne démarre pas (architecture ou glibc incompatible ?). Relancez avec --static : le binaire statique n'a aucune dépendance."
+fi
 
 # --- Modèles locaux : visages (SCRFD + ArcFace) et embeddings de BRO (bge-m3) --------------------------------------
 # Binaire glibc = compilé avec `onnx`. Il lui faut libonnxruntime (extraite d'une roue pip) et les modèles. Rien n'est
@@ -601,6 +617,19 @@ if [ "$UPDATE" = 1 ]; then
   exit 0
 fi
 
+# --- Plugins : présentation et « git clone » par install-plugins.sh (media, energy, dnslink…) --------------------------
+PLUGINS_SCRIPT="${ASTRO_PLUGINS_SCRIPT:-https://raw.githubusercontent.com/papiche/astroportd-plugins/main/install-plugins.sh}"
+offer_plugins() {
+  [ "$YES" = 1 ] && return 0
+  [ -r /dev/tty ] || { say "Plugins (films, énergie, DNS…) : curl -fsSL ${PLUGINS_SCRIPT} | bash"; return 0; }
+  printf '\nVoir et installer des plugins (films et musique, énergie, DNSLink) ? [o/N] ' > /dev/tty
+  read -r answer < /dev/tty || answer="n"
+  case "${answer:-n}" in
+    o|O|oui|Oui|y|Y) curl -fsSL --proto '=https' --tlsv1.2 "$PLUGINS_SCRIPT" | bash || warn "installation des plugins interrompue : relancez-la quand vous voulez (${PLUGINS_SCRIPT})." ;;
+    *) say "D'accord. Quand vous voulez : curl -fsSL ${PLUGINS_SCRIPT} | bash" ;;
+  esac
+}
+
 # --- Suite : astroportd init ------------------------------------------------------------------------------------
 if [ "$RUN_INIT" = 0 ]; then
   say ""
@@ -634,6 +663,7 @@ if [ -r /dev/tty ]; then
     n|N|non|Non) say "D'accord. Quand vous voulez : ${PREFIX}/bin/${BIN} init" ;;
     *) "${PREFIX}/bin/${BIN}" init ${init_args[@]+"${init_args[@]}"} < /dev/tty ;;
   esac
+  offer_plugins
 else
   say ""
   say "Pas de terminal interactif. Étape suivante : ${PREFIX}/bin/${BIN} init"

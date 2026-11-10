@@ -74,7 +74,7 @@ details.tech[open] summary{color:var(--acc)}
 <a class="skip" href="#contenu">Aller au contenu</a>
 <header class="top">
 <p class="crumbs"><a href="index.html">Accueil</a></p>
-<p><span class="badge">Préversion 0.5.8-beta</span> <span class="badge">AGPL-3.0</span></p>
+<p><span class="badge">Préversion 0.6.0-beta</span> <span class="badge">AGPL-3.0</span></p>
 <h1>Guide du Capitaine</h1>
 <p class="lead">Vous ouvrez une station pour votre famille, votre association ou votre village. La partie 1 vous mène, en neuf étapes, jusqu'à une station qui tourne. Les suivantes se lisent selon vos besoins : ce que vous offrez à vos membres, où va l'argent, comment vous relier aux autres Capitaines.</p>
 <p class="lead2">Chaque étape se fait au <strong>terminal</strong> ou, quand c'est possible, au <strong>navigateur</strong>. Les détails techniques sont repliés : dépliez-les quand vous en avez besoin.</p>
@@ -106,7 +106,7 @@ date       # l'année doit être 2026 ou plus
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p>Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.</p>
-<div class="box note"><p><span class="lbl">À savoir</span> astroportd est en <strong>préversion 0.5.8-beta</strong> : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.</p></div>
+<div class="box note"><p><span class="lbl">À savoir</span> astroportd est en <strong>préversion 0.6.0-beta</strong> : il fonctionne et il est testé, mais il est jeune. Gardez une sauvegarde de vos clés.</p></div>
 <p>Vous aurez aussi besoin d'un compte <strong>MULTIPASS</strong> (votre identité Nostr) : astroportd le crée pour vous à l'<a href="#etape-5">étape 6</a>.</p>
 </div>
 </div>
@@ -119,7 +119,8 @@ date       # l'année doit être 2026 ou plus
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <div class="code"><pre><code>curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 </code></pre></div>
-<p>Options utiles : <code>--version v0.5.8-beta</code>, <code>--static</code> (binaire statique, x86_64 et aarch64), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>.</p>
+<p>Options utiles : <code>--version v0.6.0-beta</code>, <code>--static</code> (binaire statique, x86_64 et aarch64 : l'installeur le choisit seul si la glibc de la machine est plus ancienne que la 2.35, et s'arrête net si le binaire ne démarre pas), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>.</p>
+<p><strong>Plugins</strong> : à la fin, l'installeur propose de les présenter (<code>install-plugins.sh</code> : <code>git clone</code> du dépôt <code>astroportd-plugins</code>, puis l'<code>install.sh</code> de chacun : films et musique, énergie, DNSLink). Pour y revenir : <code>curl -fsSL https://raw.githubusercontent.com/papiche/astroportd-plugins/main/install-plugins.sh | bash</code>.</p>
 <p><strong>Mettre à jour</strong> : relancez simplement le même <code>install.sh</code>. Il montre l'installation en place (version, constellation, domaine, Capitaine, service), installe la nouvelle version, garde vos modèles et votre station, puis redémarre le service. Il ne relance jamais <code>init</code>, qui changerait l'identité de la station. <code>--force</code> réinstalle la même version.</p>
 <p>Ensuite :</p>
 <div class="code"><pre><code>astroportd --version
@@ -233,7 +234,7 @@ curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh 
 <p>L'assistant <code>init</code> fait ce rituel pour vous (c'est sa première étape) :</p>
 <div class="code"><pre><code>astroportd init
 </code></pre></div>
-<p>Il part de <code>~/.ssh/id_ed25519</code> (il en crée une si elle n'existe pas). L'assistant demande aussi la position de la station, l'email du Capitaine, le domaine et la <strong>visio</strong> : STUN + relais d'appel (recommandé), STUN seul ou aucune, plus d'éventuels serveurs STUN/TURN extérieurs (<code>--visio relais|stun|aucune</code>, <code>--ice-server stun:hôte:port</code>). Les ports à ouvrir sur la box sont résumés à l'étape 5 (« Réseau : ce qu'il faut ouvrir ») ; <code>init</code> les affiche aussi à la fin. <strong>Votre ancienne clé SSH n'est pas détruite</strong> : elle est conservée sous <code>~/.ssh/origin.key</code> et <code>~/.ssh/origin.pub</code>. Les secrets de la station sont écrits en <code>0600</code> dans <code>~/.zen/game</code>.</p>
+<p>Il part de <code>~/.ssh/id_ed25519</code> (il en crée une si elle n'existe pas). <strong>Une station déjà en niveau Y n'est jamais redérivée</strong> : <code>secret.june</code>, le PeerID de kubo (<code>~/.ipfs/config</code>, lu seul) et la clé SSH sont comparés, et l'assistant s'arrête plutôt que de changer l'identité (seul <code>--rederive-y</code> l'autorise). Si <code>~/.ipfs/swarm.key</code> existe, l'assistant propose de reprendre cette constellation ẐEN. L'assistant demande aussi la position de la station, l'email du Capitaine, le domaine et la <strong>visio</strong> : STUN + relais d'appel (recommandé), STUN seul ou aucune, plus d'éventuels serveurs STUN/TURN extérieurs (<code>--visio relais|stun|aucune</code>, <code>--ice-server stun:hôte:port</code>). Les ports à ouvrir sur la box sont résumés à l'étape 5 (« Réseau : ce qu'il faut ouvrir ») ; <code>init</code> les affiche aussi à la fin. <strong>Votre ancienne clé SSH n'est pas détruite</strong> : elle est conservée sous <code>~/.ssh/origin.key</code> et <code>~/.ssh/origin.pub</code>. Les secrets de la station sont écrits en <code>0600</code> dans <code>~/.zen/game</code>.</p>
 <p>Pour voir la correspondance, ou la vérifier plus tard :</p>
 <div class="code"><pre><code>astroportd ylevel            # affiche SSH ↔ PeerID IPFS ↔ Ğ1 ↔ Nostr
 astroportd ylevel --verify   # code de sortie 1 si ça ne correspond pas
@@ -308,7 +309,8 @@ astroportd ylevel --verify   # code de sortie 1 si ça ne correspond pas
 <p><strong>Parcours A — Démarrer une constellation ORIGIN</strong> (le plus simple pour commencer)</p>
 <div class="code"><pre><code>astroportd init --mode origin
 </code></pre></div>
-<p>Aucune clé à fournir : le réseau est ouvert. Vous rejoignez les autres stations ORIGIN.</p>
+<p>Aucune clé à fournir : le réseau est ouvert. Vous rejoignez les autres stations ORIGIN, et <strong>vous proposez votre machine au collectif</strong> : quand elle est acceptée et que le Capitaine est inscrit et reconnu, il reçoit la <code>swarm.key</code> de la constellation ẐEN (<code>astroportd plane-setup add</code>, ou <code>astroportd init --join</code>).</p>
+<p>L'assistant résume ensuite le réseau selon votre cas (HTTPS direct, derrière un reverse proxy, sans domaine ; maillage ; visio) : ce qu'il faut ouvrir sur la box, et ce qui ne l'est pas.</p>
 <p><strong>Parcours B — Rejoindre une constellation ẐEN existante</strong></p>
 <p>Un Capitaine de la constellation vous remet sa <code>swarm.key</code> (après la certification DRAGON, à demander à support@qo-op.com, objet « Candidature Capitaine DRAGON »). Gardez-la secrète.</p>
 <div class="code"><pre><code>chmod 600 swarm.key

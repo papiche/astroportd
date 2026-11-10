@@ -17,6 +17,7 @@ jobs:
   build:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os || 'ubuntu-latest' }}
+    # Les cibles gnu sont compilées sur ubuntu-22.04 (glibc 2.35) : elles tournent sur Debian 12, Ubuntu 22.04 et plus récents.
     # Les cibles statiques (musl) et macOS sont « au mieux » : leur échec ne bloque pas la publication des autres.
     continue-on-error: ${{ matrix.experimental == true }}
     strategy:
@@ -25,10 +26,13 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             apt: ''
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             apt: gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+            os: ubuntu-22.04
           - target: armv7-unknown-linux-gnueabihf
             apt: gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+            os: ubuntu-22.04
           - target: x86_64-unknown-linux-musl
             apt: musl-tools
             experimental: true
