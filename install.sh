@@ -32,6 +32,13 @@ FORCE=0
 MODE=""
 EMAIL=""
 DOMAIN=""
+LAT=""
+LON=""
+LOCATE=0
+DRY=0
+LOG=""
+UPDATE=0
+STEP=0
 
 usage() {
   cat <<'USAGE'
@@ -53,6 +60,10 @@ Usage : install.sh [options]
   --email EMAIL      email du Capitaine (transmis à `astroportd init`)
   --domain NOM       domaine public : HTTPS Let's Encrypt géré par astroportd si les ports 80/443 sont libres
                      (s'ils sont pris par Nginx Proxy Manager, astroportd reste local sur 127.0.0.1:8090)
+  --lat X --lon Y    position de la station (20h12 solaire vrai), transmise à `astroportd init`
+  --locate           devine la position d'après l'adresse IP publique (interroge ip-api.com, à la ville près) ;
+                     sans --lat/--lon, l'assistant interactif la propose de lui-même
+  --dry-run          montre ce qui serait fait (machine, version, fichiers, profil) sans rien installer ni écrire
   --help, -h         cette aide
 
 Profils (recommandés d'après votre machine, que l'assistant détecte et vous montre) :
@@ -65,9 +76,31 @@ armv7l (Raspberry Pi 2/3, Pi OS 32 bits). Linux uniquement.
 USAGE
 }
 
-say()  { printf '%s\n' "$*"; }
-warn() { printf '⚠  %s\n' "$*" >&2; }
-die()  { printf '✘ %s\n' "$*" >&2; exit 1; }
+# Journal : les messages de l'installeur sont aussi consignés dans ~/.zen/astroportd/install.log (dernière exécution ;
+# jamais de secret : les codes affichés par « init » n'y figurent pas).
+_log() { [ -z "$LOG" ] || printf '%s\n' "$*" >> "$LOG" 2>/dev/null || true; }
+# Couleurs : seulement sur un terminal, et jamais si NO_COLOR est défini (no-color.org). Le journal reste sans couleur.
+C_OUT_G=''; C_OUT_R=''; C_OUT_OFF=''; C_ERR_Y=''; C_ERR_R=''; C_ERR_OFF=''
+if [ -z "${NO_COLOR:-}" ]; then
+  if [ -t 1 ]; then C_OUT_G=$'\033[32m'; C_OUT_R=$'\033[31m'; C_OUT_OFF=$'\033[0m'; fi
+  if [ -t 2 ]; then C_ERR_Y=$'\033[33m'; C_ERR_R=$'\033[31m'; C_ERR_OFF=$'\033[0m'; fi
+fi
+say()  { local m="$*"; _log "$m"; m="${m//✔/${C_OUT_G}✔${C_OUT_OFF}}"; m="${m//✘/${C_OUT_R}✘${C_OUT_OFF}}"; printf '%s\n' "$m"; }
+warn() { printf '%s⚠  %s%s\n' "$C_ERR_Y" "$*" "$C_ERR_OFF" >&2; _log "⚠  $*"; }
+die()  { printf '%s✘ %s%s\n' "$C_ERR_R" "$*" "$C_ERR_OFF" >&2; _log "✘ $*"; exit 1; }
+# Échec expliqué : constat, cause probable, remède (les deux derniers facultatifs).
+fail() {
+  printf '%s✘ %s%s\n' "$C_ERR_R" "$1" "$C_ERR_OFF" >&2; _log "✘ $1"
+  [ -z "${2:-}" ] || { printf '  Cause  : %s\n' "$2" >&2; _log "  Cause  : $2"; }
+  [ -z "${3:-}" ] || { printf '  Remède : %s\n' "$3" >&2; _log "  Remède : $3"; }
+  [ -z "$LOG" ] || printf '  Détails: %s\n' "$LOG" >&2
+  exit 1
+}
+# Étape numérotée d'une installation neuve (« [2/5] ») ; sans numéro pour une mise à jour ou un simple diagnostic.
+step() {
+  STEP=$((STEP + 1)); say ""
+  if [ "$CHECK_ONLY" = 0 ] && [ "$UPDATE" = 0 ]; then say "▶ [${STEP}/5] $1"; else say "▶ $1"; fi
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -85,12 +118,20 @@ while [ $# -gt 0 ]; do
     --mode)    shift; MODE="${1:?--mode attend origin ou zen}" ;;
     --domain)  shift; DOMAIN="${1:?--domain attend un nom de domaine}" ;;
     --email)   shift; EMAIL="${1:?--email attend une adresse}" ;;
+    --lat)     shift; LAT="${1:?--lat attend une latitude (ex. 43.60)}" ;;
+    --lon)     shift; LON="${1:?--lon attend une longitude (ex. 1.44)}" ;;
+    --locate)  LOCATE=1 ;;
+    --dry-run) DRY=1 ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; die "option inconnue : $1" ;;
   esac
   shift
 done
 
+[ -z "$LAT" ] && [ -z "$LON" ] || { [ -n "$LAT" ] && [ -n "$LON" ]; } || die "--lat et --lon vont ensemble."
+for _c in "$LAT" "$LON"; do
+  [ -z "$_c" ] || printf '%s' "$_c" | grep -Eq '^-?[0-9]+([.][0-9]+)?$' || die "coordonnée invalide : $_c (attendu : un nombre décimal, ex. 43.60)"
+done
 case "$MODE" in ""|origin|zen) ;; *) die "--mode doit valoir origin ou zen (reçu : $MODE)" ;; esac
 case "$PROFILE" in
   light|léger) PROFILE=leger ;;
@@ -98,11 +139,32 @@ case "$PROFILE" in
 esac
 case "$PROFILE" in auto|leger|standard|confort) ;; *) die "--profile doit valoir auto, leger, standard ou confort (reçu : $PROFILE)" ;; esac
 
+# --- Journal et présentation ------------------------------------------------------------------------------------
+if [ "$CHECK_ONLY" = 0 ] && [ "$DRY" = 0 ]; then
+  LOG="${HOME}/.zen/astroportd/install.log"
+  if mkdir -p "$(dirname "$LOG")" 2>/dev/null && : > "$LOG" 2>/dev/null; then chmod 600 "$LOG" 2>/dev/null || true; else LOG=""; fi
+  _log "install.sh d'astroportd — $(date '+%Y-%m-%d %H:%M:%S') — $(uname -sm)"
+fi
+if [ "$CHECK_ONLY" = 0 ]; then
+  say ""
+  say "════════════════════════════════════════════════════════════════════"
+  say "  astroportd — $([ "$DRY" = 1 ] && printf 'simulation (--dry-run), rien ne sera écrit' || printf 'installation')"
+  say "════════════════════════════════════════════════════════════════════"
+  say "  Parcours : [1/5] examen de la machine   [2/5] téléchargement et empreinte"
+  say "             [3/5] modèles locaux         [4/5] configuration de la station"
+  say "             [5/5] plugins (facultatif)       durée ≈ 2 à 3 minutes"
+  say "  Écrit dans : ${PREFIX}/bin et ~/.zen — aucun sudo, aucun paquet système."
+  say "  Désinstaller : arrêter le service, supprimer ${PREFIX}/bin/${BIN} et ~/.zen/astroportd."
+  say "                 Vos clés (~/.zen/game) ne sont jamais supprimées par ce script."
+  say "  Relançable sans risque : une station existante est conservée (mise à jour seule)."
+  say "════════════════════════════════════════════════════════════════════"
+fi
+
 # --- Système et architecture ------------------------------------------------------------------------------------
 [ "$(uname -s)" = "Linux" ] || die "astroportd ne tourne que sous Linux (système détecté : $(uname -s))."
 
 for tool in curl tar sha256sum; do
-  command -v "$tool" >/dev/null 2>&1 || die "outil manquant : $tool (sudo apt install curl tar coreutils)"
+  command -v "$tool" >/dev/null 2>&1 || fail "outil manquant : $tool" "l'installeur s'appuie sur curl, tar et sha256sum." "sudo apt install curl tar coreutils   (puis relancez install.sh)"
 done
 
 machine="$(uname -m)"
@@ -137,9 +199,9 @@ case "$TARGET" in
     glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"
     if [ -n "$glibc" ] && [ "$(printf '%s\n2.35\n' "$glibc" | sort -V | head -n 1)" != "2.35" ]; then
       case "$TARGET" in
-        x86_64-*) say "glibc ${glibc} (< 2.35) : utilisation du binaire statique (sans visages ni embeddings locaux)."; TARGET="x86_64-unknown-linux-musl" ;;
-        aarch64-*) say "glibc ${glibc} (< 2.35) : utilisation du binaire statique (sans visages ni embeddings locaux)."; TARGET="aarch64-unknown-linux-musl" ;;
-        *) die "glibc ${glibc} trop ancienne pour ce binaire (2.35 requise) : mettez le système à jour." ;;
+        x86_64-*) say "  ✔ glibc ${glibc} (< 2.35) → binaire statique choisi automatiquement (sans visages ni embeddings locaux)."; TARGET="x86_64-unknown-linux-musl" ;;
+        aarch64-*) say "  ✔ glibc ${glibc} (< 2.35) → binaire statique choisi automatiquement (sans visages ni embeddings locaux)."; TARGET="aarch64-unknown-linux-musl" ;;
+        *) fail "glibc ${glibc} trop ancienne pour ce binaire (2.35 requise)." "pas de binaire statique pour ${machine}." "mettez le système à jour (Raspberry Pi OS / Debian récents)." ;;
       esac
     fi ;;
 esac
@@ -170,7 +232,6 @@ service_state() {
   if command -v systemctl >/dev/null 2>&1 && [ -f "$UNIT" ]; then systemctl --user is-active "$BIN" 2>/dev/null || true
   else printf 'absent'; fi
 }
-UPDATE=0
 if [ -n "$INSTALLED" ] && [ -f "${DATA}/station.conf" ]; then
   UPDATE=1
   RUN_INIT=0
@@ -298,7 +359,7 @@ threads_for() {
 }
 
 show_hardware() {
-  say ""; say "▶ Votre machine"
+  step "Examen de la machine"
   say "  Architecture : ${machine} (binaire ${TARGET})"
   say "  Processeur   : ${HW_CORES} cœur(s) — ${HW_CPU}$([ "$HW_INT8_FAST" = 1 ] && printf ' (calcul int8 rapide)')"
   say "  Mémoire      : $(fmt_mb "$HW_RAM_MB") (swap $(fmt_mb "$HW_SWAP_MB"))"
@@ -357,7 +418,7 @@ resolve_version() {
     # Une préversion n'est jamais « latest » pour GitHub : on interroge alors la liste des releases.
     local api="https://api.github.com/repos/${REPO}/releases?per_page=1" tag
     tag="$(curl -fsSL "$api" 2>/dev/null | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1 || true)"
-    [ -n "$tag" ] || die "impossible de lire la dernière release sur $api (réseau ? aucune release publiée ?)."
+    [ -n "$tag" ] || fail "impossible de lire la dernière release." "pas de réseau, GitHub injoignable ou limite de requêtes atteinte (${api})." "vérifiez la connexion, ou imposez la version : install.sh --version vX.Y.Z"
     VERSION="$tag"
   fi
   case "$VERSION" in v*) ;; *) VERSION="v${VERSION}" ;; esac
@@ -379,7 +440,7 @@ if [ "$UPDATE" = 1 ] && [ "$CHECK_ONLY" = 0 ]; then
     exit 0
   fi
   say ""
-  confirm "Mettre à jour ${INSTALLED} → ${VERSION#v} ?" || { say "D'accord, rien n'a changé."; exit 0; }
+  if [ "$DRY" = 0 ]; then confirm "Mettre à jour ${INSTALLED} → ${VERSION#v} ?" || { say "D'accord, rien n'a changé."; exit 0; }; fi
 fi
 
 recommend
@@ -403,45 +464,73 @@ else
 fi
 say ""; say "▶ Profil retenu : $(pname "$PROFILE_CHOSEN") (visages locaux : $([ "$WANT_FACE" = 1 ] && printf oui || printf non), embeddings locaux : $([ "$WANT_EMBED" = 1 ] && printf oui || printf non))"
 
+# --- Simulation : ce qui serait fait, sans rien écrire ----------------------------------------------------------
+if [ "$DRY" = 1 ]; then
+  resolve_version
+  say ""; say "▶ Ce qui serait fait"
+  say "  • télécharger ${BIN}-${VERSION#v}-${TARGET}.tar.gz (github.com/${REPO}/releases) et vérifier son SHA-256"
+  say "  • installer ${PREFIX}/bin/${BIN}"
+  [ "$WANT_FACE" = 1 ] && say "  • modèles de visages (≈ 190 Mo) dans ${MODELS}"
+  [ "$WANT_EMBED" = 1 ] && say "  • modèles d'embeddings bge-m3 (≈ 560 Mo) dans ${MODELS}"
+  { [ "$WANT_FACE" = 1 ] || [ "$WANT_EMBED" = 1 ]; } || say "  • aucun modèle local (profil sans calcul local)"
+  if [ "$UPDATE" = 1 ]; then say "  • proposer de redémarrer le service (station et données conservées)"
+  elif [ "$RUN_INIT" = 1 ]; then say "  • lancer « ${BIN} init » (clés Y-Level, ORIGIN/ẐEN, réseau), puis proposer les plugins"
+  else say "  • s'arrêter avant « init » (--no-init)"; fi
+  say ""; say "Simulation terminée : rien n'a été installé ni écrit."
+  exit 0
+fi
+
 # --- Téléchargement ---------------------------------------------------------------------------------------------
 resolve_version
 BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 NUM="${VERSION#v}"
-NAME="${BIN}-${NUM}-${TARGET}"
-ARCHIVE="${NAME}.tar.gz"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-say "▶ astroportd ${VERSION} pour ${TARGET}"
-say "  Téléchargement de ${ARCHIVE}…"
-curl -fSL --proto '=https' --tlsv1.2 -o "${tmp}/${ARCHIVE}" "${BASE}/${ARCHIVE}" \
-  || die "téléchargement impossible : ${BASE}/${ARCHIVE} (cette cible existe-t-elle dans la release ?)"
-curl -fSL --proto '=https' --tlsv1.2 -o "${tmp}/SHA256SUMS" "${BASE}/SHA256SUMS" \
-  || die "téléchargement impossible : ${BASE}/SHA256SUMS"
+# Télécharge l'archive de ${TARGET}, vérifie son empreinte, l'installe, et dit si le binaire démarre (code retour).
+fetch_and_install() {
+  local name="${BIN}-${NUM}-${TARGET}" archive="${BIN}-${NUM}-${TARGET}.tar.gz" expected actual prog=(-sS)
+  say "  astroportd ${VERSION} pour ${TARGET}"
+  say "  Téléchargement de ${archive}…"
+  [ -t 2 ] && prog=(-#)
+  curl -fL "${prog[@]}" --proto '=https' --tlsv1.2 -o "${tmp}/${archive}" "${BASE}/${archive}" \
+    || fail "téléchargement impossible : ${archive}" "réseau coupé, ou cette cible n'existe pas dans la release ${VERSION} (${BASE})." "vérifiez la connexion, puis relancez ; autre version : install.sh --version vX.Y.Z"
+  curl -fsSL --proto '=https' --tlsv1.2 -o "${tmp}/SHA256SUMS" "${BASE}/SHA256SUMS" \
+    || fail "téléchargement impossible : SHA256SUMS" "la release ${VERSION} n'a pas de fichier d'empreintes." "relancez plus tard ou choisissez une autre version (--version)."
 
-# --- Vérification de l'empreinte --------------------------------------------------------------------------------
-expected="$(awk -v f="$ARCHIVE" '{ n=$2; sub(/^\*/, "", n); if (n == f) { print $1; exit } }' "${tmp}/SHA256SUMS")"
-[ -n "$expected" ] || die "${ARCHIVE} ne figure pas dans SHA256SUMS : installation refusée."
-actual="$(sha256sum "${tmp}/${ARCHIVE}" | awk '{print $1}')"
-if [ "$expected" != "$actual" ]; then
-  die "empreinte SHA-256 incorrecte pour ${ARCHIVE}
-    attendue : ${expected}
-    calculée : ${actual}
-  Le fichier est corrompu ou a été modifié : installation refusée."
-fi
-say "  ✔ empreinte SHA-256 vérifiée"
+  # Vérification de l'empreinte
+  expected="$(awk -v f="$archive" '{ n=$2; sub(/^\*/, "", n); if (n == f) { print $1; exit } }' "${tmp}/SHA256SUMS")"
+  [ -n "$expected" ] || die "${archive} ne figure pas dans SHA256SUMS : installation refusée."
+  actual="$(sha256sum "${tmp}/${archive}" | awk '{print $1}')"
+  if [ "$expected" != "$actual" ]; then
+    say "  attendue : ${expected}"; say "  calculée : ${actual}"
+    fail "empreinte SHA-256 incorrecte pour ${archive} : installation refusée." "fichier corrompu pendant le transfert, ou modifié." "relancez install.sh ; si cela persiste, ne l'utilisez pas et signalez-le : https://github.com/${REPO}/issues"
+  fi
+  say "  ✔ empreinte SHA-256 vérifiée"
 
-# --- Installation -----------------------------------------------------------------------------------------------
-tar -C "$tmp" -xzf "${tmp}/${ARCHIVE}" || die "archive illisible : ${ARCHIVE}"
-[ -f "${tmp}/${NAME}/${BIN}" ] || die "l'archive ne contient pas ${NAME}/${BIN}"
+  # Installation
+  tar -C "$tmp" -xzf "${tmp}/${archive}" || die "archive illisible : ${archive}"
+  [ -f "${tmp}/${name}/${BIN}" ] || die "l'archive ne contient pas ${name}/${BIN}"
+  mkdir -p "${PREFIX}/bin"
+  install -m 0755 "${tmp}/${name}/${BIN}" "${PREFIX}/bin/${BIN}"
+  say "  ✔ installé : ${PREFIX}/bin/${BIN}"
+  "${PREFIX}/bin/${BIN}" --version 2>/dev/null
+}
 
-mkdir -p "${PREFIX}/bin"
-install -m 0755 "${tmp}/${NAME}/${BIN}" "${PREFIX}/bin/${BIN}"
-say "  ✔ installé : ${PREFIX}/bin/${BIN}"
-if ! "${PREFIX}/bin/${BIN}" --version 2>/dev/null; then
+step "Téléchargement et vérification"
+if ! fetch_and_install; then
   "${PREFIX}/bin/${BIN}" --version 2>&1 | head -n 3 >&2 || true
-  die "le binaire installé ne démarre pas (architecture ou glibc incompatible ?). Relancez avec --static : le binaire statique n'a aucune dépendance."
+  # Auto-guérison : un binaire gnu qui ne démarre pas (glibc ou bibliothèque absente) est remplacé par le statique.
+  case "$TARGET" in
+    x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu)
+      warn "Le binaire standard ne démarre pas sur cette machine (glibc ou bibliothèque incompatible)."
+      say "  → Récupération automatique : binaire statique autonome (sans visages ni embeddings locaux)."
+      TARGET="${TARGET%-gnu}-musl"; STATIC=1
+      WANT_FACE=0; WANT_EMBED=0
+      fetch_and_install || fail "le binaire statique ne démarre pas non plus." "architecture non prise en charge ou système très inhabituel." "signalez-le avec le détail ci-dessus : https://github.com/${REPO}/issues" ;;
+    *) fail "le binaire installé ne démarre pas." "architecture incompatible avec cette machine (${TARGET})." "aucune alternative statique pour cette architecture : signalez-le https://github.com/${REPO}/issues" ;;
+  esac
 fi
 
 # --- Modèles locaux : visages (SCRFD + ArcFace) et embeddings de BRO (bge-m3) --------------------------------------
@@ -566,8 +655,11 @@ install_embed_models() {
 }
 
 # Seulement ce que le profil retenu demande.
+if [ "$WANT_FACE" = 0 ] && [ "$WANT_EMBED" = 0 ]; then
+  step "Modèles locaux"; say "  aucun demandé par le profil « $(pname "$PROFILE_CHOSEN") » (rien à télécharger)."
+fi
 if [ "$WANT_FACE" = 1 ] || [ "$WANT_EMBED" = 1 ]; then
-  say ""; say "▶ Modèles locaux"
+  step "Modèles locaux"
   if install_ort; then
     if [ "$WANT_FACE" = 1 ]; then install_models || warn "reconnaissance de visages locale incomplète : voir « astroportd face-check » (ou serve --face-engine http://…)"; fi
     if [ "$WANT_EMBED" = 1 ]; then install_embed_models || warn "embeddings locaux incomplets : voir « astroportd embed-check » (ou serve --ollama http://… pour les vecteurs)"; fi
@@ -621,13 +713,56 @@ fi
 PLUGINS_SCRIPT="${ASTRO_PLUGINS_SCRIPT:-https://raw.githubusercontent.com/papiche/astroportd-plugins/main/install-plugins.sh}"
 offer_plugins() {
   [ "$YES" = 1 ] && return 0
+  step "Plugins (facultatif)"
   [ -r /dev/tty ] || { say "Plugins (films, énergie, DNS…) : curl -fsSL ${PLUGINS_SCRIPT} | bash"; return 0; }
-  printf '\nVoir et installer des plugins (films et musique, énergie, DNSLink) ? [o/N] ' > /dev/tty
+  printf '  Des outils en plus : films et musique, énergie, DNSLink. Vous pourrez les ajouter plus tard.\n  Les voir et en installer ? [o/N] ' > /dev/tty
   read -r answer < /dev/tty || answer="n"
   case "${answer:-n}" in
     o|O|oui|Oui|y|Y) curl -fsSL --proto '=https' --tlsv1.2 "$PLUGINS_SCRIPT" | bash || warn "installation des plugins interrompue : relancez-la quand vous voulez (${PLUGINS_SCRIPT})." ;;
     *) say "D'accord. Quand vous voulez : curl -fsSL ${PLUGINS_SCRIPT} | bash" ;;
   esac
+}
+
+# Carte finale : où aller maintenant (l'adresse est lue dans station.conf, écrit par « init »).
+show_final() {
+  local dom url
+  dom="$(conf_get domain)"
+  if [ -n "$dom" ]; then url="https://${dom}/"; else url="http://127.0.0.1:8090/"; fi
+  say ""
+  say "════════════════════════════════════════════════════════════════════"
+  say "  ✔ Installation terminée"
+  say "════════════════════════════════════════════════════════════════════"
+  if [ -n "$dom" ]; then
+    say "  1. Ouvrez l'interface :"
+    say "       $ ${url}"
+  else
+    # Sans domaine, la station n'écoute que sur 127.0.0.1 : une autre machine (le PC d'où vous êtes en SSH) ne l'atteint pas
+    # directement. Un tunnel SSH la rend joignable sans rien ouvrir sur le réseau.
+    local host; host="$(hostname -I 2>/dev/null | awk '{print $1}')"; host="${host:-$(hostname)}"
+    say "  1. Ouvrez l'interface :"
+    say "     • sur cette machine :              ${url}"
+    if [ -n "${SSH_CONNECTION:-}" ] || [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+      say "     • depuis votre PC (tunnel SSH) :   lancez sur votre PC"
+      say "       $ ssh -L 8090:127.0.0.1:8090 ${USER:-$(id -un)}@${host}"
+      say "       puis ouvrez http://localhost:8090/ dans son navigateur."
+    fi
+    say "     • accès direct sur le réseau ou HTTPS : ${BIN} init --domain votre.domaine"
+  fi
+  local cap; cap="$(conf_get captain_email)"
+  if [ -n "$cap" ]; then say "  2. Capitaine : ${cap} (MULTIPASS créé par l'assistant)."
+  else say "  2. Créez le Capitaine d'abord (l'inscription web n'ouvre qu'après lui) :
+       $ ${BIN} multipass create votre@email --captain"; fi
+  say "  3. Sauvegardez vos clés : ~/.zen/game"
+  if [ "$(service_state)" != active ]; then
+    say "  4. La station n'est pas encore démarrée : lancez la commande « Démarrer » affichée plus haut,"
+    say "     ou installez-la en service : $ ${BIN} init --systemd"
+  fi
+  say "  ─────────────────────────────────────────────────────────────────"
+  say "  État :     $ systemctl --user status ${BIN}      (ou : ${BIN} doctor)"
+  say "  Journal :  $ journalctl --user -u ${BIN} -f"
+  say "  Arrêter :  $ systemctl --user stop ${BIN}"
+  [ -z "$LOG" ] || say "  Compte rendu de cette installation : ${LOG}"
+  say "════════════════════════════════════════════════════════════════════"
 }
 
 # --- Suite : astroportd init ------------------------------------------------------------------------------------
@@ -641,6 +776,28 @@ init_args=()
 [ -n "$MODE" ] && init_args+=(--mode "$MODE")
 [ -n "$EMAIL" ] && init_args+=(--email "$EMAIL")
 [ -n "$DOMAIN" ] && init_args+=(--domain "$DOMAIN")
+
+# Position : donnée par --lat/--lon, ou devinée d'après l'IP avec --locate (rien n'est envoyé sans ce choix explicite).
+if [ -z "$LAT" ] && [ "$LOCATE" = 1 ]; then
+  if command -v curl >/dev/null 2>&1; then
+    geo="$(curl -fsS --max-time 5 'http://ip-api.com/json/?fields=status,country,city,lat,lon' 2>/dev/null || true)"
+    if printf '%s' "$geo" | grep -q '"status":"success"'; then
+      LAT="$(printf '%s' "$geo" | sed -n 's/.*"lat":\(-\?[0-9.]*\).*/\1/p')"
+      LON="$(printf '%s' "$geo" | sed -n 's/.*"lon":\(-\?[0-9.]*\).*/\1/p')"
+      place="$(printf '%s' "$geo" | sed -n 's/.*"city":"\([^"]*\)".*/\1/p')"
+      if [ -n "$LAT" ] && [ -n "$LON" ]; then
+        say "▶ Position devinée d'après l'IP : ${place:-?} (${LAT}, ${LON}) — modifiable dans station.conf"
+      else
+        LAT=""; LON=""; warn "position non lisible dans la réponse : on la demandera dans l'assistant."
+      fi
+    else
+      warn "position introuvable d'après l'IP : on la demandera dans l'assistant."
+    fi
+  else
+    warn "--locate demande curl : position non devinée."
+  fi
+fi
+[ -n "$LAT" ] && [ -n "$LON" ] && init_args+=(--lat "$LAT" --lon "$LON")
 # Fils de calcul choisis d'après la machine (0 = tous les cœurs : on n'écrit rien).
 if [ "$WANT_THREADS" -gt 0 ]; then
   [ "$WANT_FACE" = 1 ] && init_args+=(--face-threads "$WANT_THREADS")
@@ -649,21 +806,24 @@ fi
 
 if [ "$YES" = 1 ]; then
   init_args+=(--yes)
-  say ""
-  say "▶ ${BIN} init ${init_args[*]}"
+  step "Configuration de la station"
+  say "  ${BIN} init ${init_args[*]}"
   "${PREFIX}/bin/${BIN}" init "${init_args[@]}"
+  show_final
   exit 0
 fi
 
 # Lancé par « curl | bash », l'entrée standard est le script : on interroge le terminal s'il existe.
 if [ -r /dev/tty ]; then
-  printf '\nLancer maintenant l'\''assistant « %s init » (clé Y-Level, choix ORIGIN/ẐEN) ? [O/n] ' "$BIN" > /dev/tty
+  step "Configuration de la station"
+  printf '  L'\''assistant « %s init » crée la clé de la station (Y-Level), vous fait choisir ORIGIN ou ẐEN, et règle le réseau.\n  Le lancer maintenant ? [O/n] ' "$BIN" > /dev/tty
   read -r answer < /dev/tty || answer="n"
   case "${answer:-o}" in
     n|N|non|Non) say "D'accord. Quand vous voulez : ${PREFIX}/bin/${BIN} init" ;;
     *) "${PREFIX}/bin/${BIN}" init ${init_args[@]+"${init_args[@]}"} < /dev/tty ;;
   esac
   offer_plugins
+  [ ! -f "${DATA}/station.conf" ] || show_final
 else
   say ""
   say "Pas de terminal interactif. Étape suivante : ${PREFIX}/bin/${BIN} init"
