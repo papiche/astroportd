@@ -74,7 +74,7 @@ details.tech[open] summary{color:var(--acc)}
 <a class="skip" href="#contenu">Aller au contenu</a>
 <header class="top">
 <p class="crumbs"><a href="index.html">Accueil</a></p>
-<p><span class="badge">Préversion 1.1.0</span> <span class="badge">AGPL-3.0</span></p>
+<p><span class="badge">Préversion 1.1.1</span> <span class="badge">AGPL-3.0</span></p>
 <h1>Guide du Capitaine</h1>
 <p class="lead">Vous ouvrez une station pour votre famille, votre association ou votre village. La partie 1 vous mène, en neuf étapes, jusqu'à une station qui tourne. Les suivantes se lisent selon vos besoins : ce que vous offrez à vos membres, où va l'argent, comment vous relier aux autres Capitaines.</p>
 <p class="lead2">Chaque étape se fait au <strong>terminal</strong> ou, quand c'est possible, au <strong>navigateur</strong>. Les détails techniques sont repliés : dépliez-les quand vous en avez besoin.</p>
@@ -106,7 +106,7 @@ date       # l'année doit être 2026 ou plus
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p>Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.</p>
-<div class="box note"><p><span class="lbl">À savoir</span> astroportd est en <strong>version 1.1.0</strong> : il est testé de bout en bout, et les anciens formats d'Astroport.ONE ne sont plus repris (voir les notes de version). Gardez une sauvegarde de vos clés.</p></div>
+<div class="box note"><p><span class="lbl">À savoir</span> astroportd est en <strong>version 1.1.1</strong> : il est testé de bout en bout, et les anciens formats d'Astroport.ONE ne sont plus repris (voir les notes de version). Gardez une sauvegarde de vos clés.</p></div>
 <p>Vous aurez aussi besoin d'un compte <strong>MULTIPASS</strong> (votre identité Nostr) : astroportd le crée pour vous à l'<a href="#etape-5">étape 6</a>.</p>
 </div>
 </div>
@@ -119,7 +119,7 @@ date       # l'année doit être 2026 ou plus
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <div class="code"><pre><code>curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 </code></pre></div>
-<p>Options utiles : <code>--version v1.1.0</code>, <code>--static</code> (binaire statique, x86_64 et aarch64 : l'installeur le choisit seul si la glibc de la machine est plus ancienne que la 2.35, et s'arrête net si le binaire ne démarre pas), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>.</p>
+<p>Options utiles : <code>--version v1.1.1</code>, <code>--static</code> (binaire statique, x86_64 et aarch64 : l'installeur le choisit seul si la glibc de la machine est plus ancienne que la 2.35, et s'arrête net si le binaire ne démarre pas), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>.</p>
 <p><strong>Plugins</strong> : à la fin, l'installeur propose de les présenter (<code>install-plugins.sh</code> : <code>git clone</code> du dépôt <code>astroportd-plugins</code>, puis l'<code>install.sh</code> de chacun : films et musique, énergie, DNSLink). Pour y revenir : <code>curl -fsSL https://raw.githubusercontent.com/papiche/astroportd-plugins/main/install-plugins.sh | bash</code>.</p>
 <p><strong>Mettre à jour</strong> : relancez simplement le même <code>install.sh</code>. Il montre l'installation en place (version, constellation, domaine, Capitaine, service), installe la nouvelle version, garde vos modèles et votre station, puis redémarre le service. Il ne relance jamais <code>init</code>, qui changerait l'identité de la station. <code>--force</code> réinstalle la même version.</p>
 <p>Ensuite :</p>

@@ -1,3 +1,7 @@
+## astroportd 1.1.1 — correctif de CI
+
+- Le test du relais d'appel qui écoute une nouvelle adresse de la machine (`127.0.0.2`) est ignoré sous macOS, dont la boucle locale ne porte que `127.0.0.1`. Aucun changement de comportement.
+
 ## astroportd 1.1.0 — images publiques adressées par leur contenu
 
 Avatars, bandeaux et images envoyées depuis un client Nostr deviennent des **blobs publics en clair, adressés par leur CID** : n'importe quelle station amie les sert, et les rapatrie chez ses pairs si la station d'origine s'éteint.

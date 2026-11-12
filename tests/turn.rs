@@ -271,6 +271,8 @@ fn binding(tx: u8) -> Vec<u8> {
     p
 }
 
+// macOS ne configure que 127.0.0.1 sur `lo0` : 127.0.0.2 n'y est pas une adresse de la machine (« Can't assign requested address »).
+#[cfg_attr(target_os = "macos", ignore = "macOS n'assigne pas 127.0.0.2 à la boucle locale")]
 #[tokio::test]
 async fn a_new_address_of_the_machine_is_listened_to_without_restarting() {
     use std::net::{IpAddr, Ipv4Addr};
