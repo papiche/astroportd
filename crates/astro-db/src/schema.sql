@@ -660,15 +660,17 @@ CREATE TABLE IF NOT EXISTS coop_ledger (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS coop_ledger_at ON coop_ledger(at, block);
 
--- Images de profil publiées par la station pour ses comptes (kind 0 : `picture` et `banner`). ÉTAT LOCAL : le profil Nostr garde
--- l'adresse, l'image elle-même (JPEG réduit) n'est pas rejouable. Publique par nature : un profil Nostr l'est.
-CREATE TABLE IF NOT EXISTS profile_images (
-  hex        TEXT NOT NULL,
-  kind       TEXT NOT NULL CHECK (kind IN ('picture','banner')),
-  data       BLOB NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (hex, kind)
+-- Blobs publics en clair (avatars, bandeaux…) servis à `GET /ipfs/<cid>` : liste explicite des CID (CIDv1 raw sha2-256) que la station
+-- accepte de servir sans authentification. ÉTAT LOCAL : l'octet vit dans le magasin de blobs, le profil Nostr (kind 0) garde le CID.
+-- Une station qui rapatrie un blob chez ses pairs ne l'inscrit que s'il est une image (octets magiques vérifiés).
+CREATE TABLE IF NOT EXISTS public_blobs (
+  cid      TEXT PRIMARY KEY,
+  mime     TEXT NOT NULL CHECK (mime IN ('image/jpeg','image/png','image/webp')),
+  size     INTEGER NOT NULL,
+  owner    TEXT,              -- compte (hex) qui l'a déposé ici : ses octets comptent dans son quota (vfs::used_bytes) ; NULL pour un blob rapatrié
+  added_at INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS public_blobs_owner ON public_blobs(owner) WHERE owner IS NOT NULL;
 
 -- Visites du site public d'un compte (`/Public`) : un compteur par jour et par page, **sans adresse IP ni identifiant de visiteur**. ÉTAT LOCAL,
 -- gardé 90 jours (purgé à l'écriture), au plus 200 pages distinctes par site et par jour (le reste est compté dans « (autres) »).

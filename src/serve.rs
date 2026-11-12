@@ -543,6 +543,10 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     let publisher = ManifestPublisher::spawn(db.clone(), blobs.clone(), keys.clone(), Duration::from_secs(a.debounce_secs));
     let circle = Arc::new(DbCircle::new());
     circle.refresh(&db).await?;
+    // La clé de la coopérative est signée par cette station : ses témoins (Ğ1Billets…) doivent passer le pare-feu social.
+    if let Ok((_, coop_hex)) = astroportd::coop_config::coop_keys(&uplanet_name) {
+        circle.add_station_key(coop_hex);
+    }
     let _refresher = circle.spawn_refresher(db.clone(), Duration::from_secs(15));
     let conf_path = a.db.parent().map_or_else(|| PathBuf::from("station.conf"), |d| d.join("station.conf"));
     let policy = astroportd::station_admin::KindsControl::initial_policy(&db, &conf_path).await;
@@ -562,6 +566,17 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     let proofs = astroportd::member_primo::Proofs::new(db.clone());
     dav_config.on_login = Some(Arc::new(move |hex: &str| proofs.note(hex)));
     dav_config.ipfs_gateway = a.ipfs_gateway;
+    // `GET /ipfs/<cid>` d'une image publique inconnue ici : rapatriée chez les pairs (8 Mo au plus, 10 s), puis inscrite si c'est une image.
+    let public_fetch: Option<astro_dav::PublicFetch> = p2p_handle.clone().map(|h| {
+        let (db, local) = (db.clone(), local.clone());
+        Arc::new(move |cid: String| -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> {
+            let (db, local, h) = (db.clone(), local.clone(), h.clone());
+            Box::pin(async move {
+                astro_dav::public::pull(&db, local.as_ref(), &cid, || async { astro_p2p::blob::fetch_blob(&h, &[], &cid, local.as_ref(), astro_dav::public::MAX_PUBLIC_BYTES, Duration::from_secs(10)).await.is_ok() }).await
+            })
+        }) as astro_dav::PublicFetch
+    });
+    dav_config.public_fetch = public_fetch.clone();
     if let Some(domain) = public_domain(&a) {
         dav_config.public_base_url = Some(format!("https://{domain}")); // liaison NIP-98 derrière notre propre TLS
     }
@@ -642,7 +657,17 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     }
     let inbox_blobs = blobs.clone();
     let backup_blobs = blobs.clone();
+    let images_blobs = blobs.clone();
     let dav = Arc::new(DavState { db: db.clone(), blobs, replay, publisher: Some(publisher.clone()), config: dav_config, on_upload });
+    // Images publiques (avatar, bandeau) : leurs octets entament le quota du compte, comme ses fichiers.
+    let public_images = {
+        let quota_dav = dav.clone();
+        let quota: astroportd::profile_image::QuotaFn = Arc::new(move |hex: String| {
+            let dav = quota_dav.clone();
+            Box::pin(async move { astro_dav::auth::lookup_by_hex(&dav.db, &hex).await.map_or(0, |a| dav.config.limits_for(&a).quota_total) })
+        });
+        Arc::new(astroportd::profile_image::PublicImages::new(db.clone(), images_blobs, public_fetch, Some(quota)))
+    };
     // Reprise d'un dossier d'un autre serveur WebDAV (Nextcloud…), lancée depuis l'interface (onglet « Sources » du uCloud).
     let pull = astroportd::webdav_pull::PullService::new(dav.clone(), pull_keys, Some(activity.clone()));
     // Rangement du uCloud par type (Documents, Images, Musique, Vidéos, Archives), lancé depuis l'onglet « Ranger ».
@@ -678,6 +703,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     let funds_chain = chain.clone();
     let ui_chain = chain.clone();
     let billet_chain = chain.clone();
+    let zen_credit_chain = chain.clone();
     let peer_id = p2p_handle.as_ref().map(|h| h.peer_id().to_string()).or_else(|| station.discovered.as_ref().map(|d| d.node.peer_id.clone()));
     let services_peer = peer_id.clone();
     let info = StationInfo { node_hex: node_hex.clone(), peer_id, domain: public_domain(&a).cloned(), started: std::time::Instant::now() };
@@ -800,7 +826,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     // Ğ1Billets : vérifier la valeur d'un billet papier et la transférer vers un compte de l'UPlanet (page publique /scan).
     let billets = billet_chain.map(|chain| {
         let primal = (!squid_urls.is_empty()).then(|| Arc::new(astroportd::funds::SquidPrimal::new(squid_urls.clone())));
-        let svc = astroportd::billet::Billets::new(db.clone(), chain, ui_wallets.clone(), primal, uplanet_name.to_string(), activity.clone());
+        let svc = astroportd::billet::Billets::new(db.clone(), chain, ui_wallets.clone(), primal, uplanet_name.to_string(), activity.clone()).with_public_images(public_images.clone());
         // Créer des billets exige les comptes (le portefeuille de l'émetteur finance), la clé du NODE (elle chiffre les parts gardées
         // pour le retour automatique) et de quoi publier le témoin.
         Arc::new(match (&station.nostr_dir, &station.node_secret) {
@@ -931,7 +957,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     let captains = Arc::new(astroportd::captains::Captains::new(db.clone(), captains_keys, Some(publish_fn(&event_publisher)), p2p_handle.clone(), forwards.clone(), Some(consoles.clone()), activity.clone()));
     let (mesh_admin, captains_admin) = admin::mesh_admins(&mesh, &captains);
     let account_origin = public_domain(&a).map(|d| format!("https://{d}"));
-    let account_svc = Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone()));
+    let account_svc = Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone()).with_public_images(public_images.clone()));
     let address_book = Arc::new(astroportd::address_book::AddressBook::new(db.clone(), dav.clone(), links.clone(), Some(account_svc.clone())));
     // Une personne, plusieurs UPlanet : les plans voisins de cette station (planes.json), lus en lecture seule.
     let people = {
@@ -1044,6 +1070,23 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
         ui = ui.with_billet(Arc::new(move |ip, op, body| {
             let b = b.clone();
             Box::pin(async move { b.handle(ip, op, &body).await })
+        }));
+    }
+    // Versement de Ẑen par le Capitaine (circuit du `UPLANET.official.sh -l`) : il lui faut la chaîne et les comptes hébergés.
+    if let (Some(chain), Some(dir)) = (zen_credit_chain, &station.nostr_dir) {
+        let svc = Arc::new(astroportd::zen_credit::ZenCredit::new(db.clone(), chain, ui_wallets.clone(), dir.clone(), activity.clone()));
+        // Dons OpenCollective → Ẑen (l'`oc2uplanet.sh` du legacy) : la station liste, le Capitaine confirme.
+        let oc = Arc::new(astroportd::oc_emission::OcEmission::new(db.clone(), uplanet_name.to_string(), svc.clone(), activity.clone()));
+        background.push(tokio::spawn(oc.clone().run(stop_watch.clone())));
+        ui = ui.with_zen_credit(Arc::new(move |_ip, op, body| {
+            let (svc, oc) = (svc.clone(), oc.clone());
+            Box::pin(async move {
+                match (op.strip_prefix("member_"), op.strip_prefix("oc_")) {
+                    (Some(op), _) => svc.handle_member(op, &body).await,
+                    (_, Some(op)) => oc.handle(op, &body).await,
+                    _ => svc.handle(op, &body).await,
+                }
+            })
         }));
     }
     let site = Arc::new(astroportd::public_site::Site::new(dav.clone(), uplanet_name.to_string()));

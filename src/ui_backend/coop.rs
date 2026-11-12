@@ -14,6 +14,7 @@ pub struct CoopBackend<B: BlobStore> {
     pub(super) constellation: Option<ConstellationFn>,
     pub(super) charter: Option<CharterFn>,
     pub(super) billet: Option<BilletFn>,
+    pub(super) zen_credit: Option<BilletFn>,
     pub(super) stations: Option<Arc<crate::beacon::Stations>>,
     pub(super) oc: Option<Arc<crate::oc_member::OcMember>>,
 }
@@ -29,6 +30,10 @@ impl<B: BlobStore> CoopBackend<B> {
 }
 
 impl<B: BlobStore> CoopApi for CoopBackend<B> {
+    async fn zen_credit(&self, who: &Principal, op: &'static str, body: Value) -> Result<Value, ApiError> {
+        let f = self.zen_credit.as_ref().ok_or_else(|| ApiError::unavailable("versement de Ẑen non activé sur cette station"))?;
+        f(None, op, who_body(who, body)).await.map_err(billet_api_error)
+    }
     async fn check_balance(&self, g1pub: &str) -> Result<Value, ApiError> {
         let b = self.services.balance_of_address(g1pub).await.map_err(|e| if e.starts_with("adresse") { ApiError::bad_request(e) } else if e.starts_with("trop de lectures") { ApiError::too_many(e) } else { ApiError::unavailable(e) })?;
         let dec = |cents: u64| format!("{}.{:02}", cents / 100, cents % 100);

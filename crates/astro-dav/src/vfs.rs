@@ -256,10 +256,15 @@ where
     }
 }
 
-/// Octets de clair occupés par le compte.
+/// Octets de clair occupés par le compte : ses fichiers d'uCloud **plus** les images publiques qu'il a déposées (avatar, envois NIP-96),
+/// qui sont des blobs en clair adressés par leur contenu et occupent le disque de la station au même titre.
 pub fn used_bytes(conn: &Connection, owner: &str) -> Result<u64, VfsError> {
-    let n: Option<i64> = conn.query_row("SELECT SUM(size) FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file'", [owner], |r| r.get(0))?;
-    Ok(u64::try_from(n.unwrap_or(0)).unwrap_or(0))
+    let n: i64 = conn.query_row(
+        "SELECT COALESCE((SELECT SUM(size) FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file'), 0) + COALESCE((SELECT SUM(size) FROM public_blobs WHERE owner = ?1), 0)",
+        [owner],
+        |r| r.get(0),
+    )?;
+    Ok(u64::try_from(n).unwrap_or(0))
 }
 
 fn require_dir_parent(tx: &Transaction<'_>, owner: &str, path: &str) -> Result<(), VfsError> {

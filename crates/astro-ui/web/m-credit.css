@@ -1,0 +1,6 @@
+.cr-form { display: grid; gap: .8rem; }
+.cr-form label { display: grid; gap: .25rem; }
+.cr-sum { display: grid; grid-template-columns: auto 1fr; gap: .3rem .8rem; margin: .6rem 0; }
+.cr-sum dt { color: var(--muted); }
+.cr-sum dd { margin: 0; font-variant-numeric: tabular-nums; word-break: break-all; }
+.cr-sum .big { font-size: 1.4rem; font-weight: 600; }

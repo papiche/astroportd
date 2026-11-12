@@ -91,6 +91,8 @@ pub struct DbCircle {
     inner: RwLock<Snapshot>,
     /// `swarm_id` de l'UPlanet de la station (voir [`CircleProvider::accepts_beacon`]) ; aucune balise acceptée sans lui.
     swarm: std::sync::OnceLock<String>,
+    /// Clés que la station signe elle-même (la coopérative) : admises en écriture sans être dans le N¹/N² d'un membre.
+    station_keys: RwLock<HashSet<String>>,
 }
 
 impl DbCircle {
@@ -102,6 +104,12 @@ impl DbCircle {
     /// Fixe l'UPlanet dont les balises de station sont acceptées (une seule fois).
     pub fn set_swarm_id(&self, swarm_id: String) {
         let _ = self.swarm.set(swarm_id);
+    }
+
+    /// Admet une clé que la station détient (clé de la coopérative : témoins de Ğ1Billets, configuration…) : sans cela, ses
+    /// événements sont refusés « author is outside the social circle » tant qu'aucun membre ne la suit.
+    pub fn add_station_key(&self, hex: String) {
+        self.station_keys.write().unwrap_or_else(|e| e.into_inner()).insert(hex);
     }
 
     /// Recharge le cercle depuis la base.
@@ -165,7 +173,7 @@ impl CircleProvider for DbCircle {
     }
 
     fn in_circle(&self, pubkey: &str) -> bool {
-        self.inner.read().unwrap_or_else(|e| e.into_inner()).circle.contains(pubkey)
+        self.inner.read().unwrap_or_else(|e| e.into_inner()).circle.contains(pubkey) || self.station_keys.read().unwrap_or_else(|e| e.into_inner()).contains(pubkey)
     }
 
     fn is_friend_of(&self, author: &str, reader: &str) -> bool {

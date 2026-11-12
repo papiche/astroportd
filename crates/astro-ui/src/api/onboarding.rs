@@ -382,8 +382,8 @@ async fn invite_claim<B: OnboardApi>(State(st): State<Arc<UiState<B>>>, Path(tok
 }
 
 /// `/.well-known/nostr/nip96.json` : annonce l'envoi d'images de la station (JPEG, PNG, WebP, jusqu'à 8 Mo, authentifié par
-/// NIP-98) et sert de sonde aux clients. Les fichiers vont dans `/Public/uploads` du membre ; l'adresse de téléchargement est
-/// celle que la réponse d'envoi donne (`url`), pas une adresse déductible du seul hachage.
+/// NIP-98) et sert de sonde aux clients. Les fichiers deviennent des blobs publics (comptés dans le quota du membre) ; l'adresse de téléchargement est
+/// celle que la réponse d'envoi donne (`url` : `/ipfs/<cid>`, servie par toute station qui a le blob).
 async fn nip96_info<B: OnboardApi>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap) -> Response {
     let origin = st.backend.public_origin(&host_of(&headers));
     any_origin(private(

@@ -37,3 +37,6 @@
 .cs-intr > li.on { background: color-mix(in srgb, var(--bad) 14%, transparent); }
 .cs-intr code { overflow-wrap: anywhere; }
 .cs-chain { display: flex; flex-wrap: wrap; gap: .3rem .5rem; align-items: center; margin: .3rem 0 0; font-size: .85rem; }
+.cs-dep-row { display: flex; gap: 1.2rem; flex-wrap: wrap; align-items: center; }
+.cs-qr { width: 11rem; height: 11rem; flex: none; background: #fff; padding: .5rem; border-radius: .6rem; }
+.cs-addr { word-break: break-all; }

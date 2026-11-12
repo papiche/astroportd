@@ -87,6 +87,21 @@ export default async function account(root, K) {
     h('details', {}, h('summary', {}, t('Exemple de page (index.html)')), h('pre', {}, '<!doctype html>\n<html lang="fr">\n<head>\n  <meta charset="utf-8">\n  <title>Ma page</title>\n  <link rel="stylesheet" href="style.css">\n</head>\n<body>\n  <h1>Bonjour</h1>\n  <p><a href="photos/vacances.jpg">Mes vacances</a></p>\n</body>\n</html>')),
     h('p', { class: 'muted' }, t('Vos fichiers restent chiffrés sur la station : elle ne les déchiffre que pour ce dossier. Les scripts d’une page tournent isolés de la station. Les visites sont comptées par jour et par page, sans garder aucune adresse ni identité de visiteur.')));
 
+  // ── Mes images publiques : avatar, bandeau et images envoyées depuis un client Nostr. Publiques et en clair, elles entament le quota. ──
+  const pics = h('section', { class: 'card', hidden: true }, h('h2', {}, t('Mes images publiques')));
+  const picsList = () => K.api('/api/v1/account/images').then(r => {
+    pics.hidden = false;
+    pics.replaceChildren(h('h2', {}, t('Mes images publiques')),
+      h('p', { class: 'muted' }, t('Images que vous avez publiées (photo de profil, bandeau, images envoyées depuis un client Nostr). Elles sont lisibles par tout le monde et comptent dans votre espace : {0} utilisés sur {1}. En retirer une libère de la place ; les publications qui la montrent ne l’afficheront plus.', K.bytes(r.used), K.bytes(r.quota))),
+      r.images.length ? h('div', { class: 'ac-grid' }, r.images.map(im => h('figure', { class: 'ac-img' },
+        h('img', { src: `/ipfs/${im.cid}`, alt: '', loading: 'lazy' }),
+        h('figcaption', { class: 'muted' }, K.bytes(im.size), ' · ', K.when(im.added_at), im.in_use ? [h('br'), im.in_use === 'banner' ? t('Utilisée comme bandeau') : t('Utilisée comme photo de profil')] : null),
+        h('span', { class: 'row' }, copy(`${location.origin}/ipfs/${im.cid}`, t('Adresse')), ' ',
+          im.in_use ? null : K.sure(t('Retirer'), async ev => { ev.target.disabled = true; try { await K.api(`/api/v1/account/images/${im.cid}`, { method: 'DELETE' }); K.toast(t('Image retirée'), 1); picsList(); } catch (e) { K.toast(e.message); ev.target.disabled = false; } }, t('Retirer cette image ? Elle ne s’affichera plus dans vos publications.'))))))
+        : h('p', { class: 'muted' }, t('Aucune image publiée pour l’instant.')));
+  }, () => { pics.hidden = true; });
+  picsList();
+
   // ── Intelligence artificielle : un Ollama ou une clé d'API déclarés ici font apparaître BRO ──
   const ai = h('section', { class: 'card' }, h('h2', {}, t('Intelligence artificielle')),
     h('p', { class: 'muted' }, t('BRO n\'apparaît dans le menu que si vous déclarez ici un Ollama ou une clé d\'API. La clé est chiffrée pour vous seul : elle n\'est jamais réaffichée.')));
@@ -268,7 +283,7 @@ export default async function account(root, K) {
       h('li', {}, t('Dès qu\'il confirme, votre compte renaît tout seul. Notez le nouveau code PASS affiché.')),
       h('li', {}, t('Vos amis, vos contacts et vos fichiers reviennent d\'eux-mêmes au fil des heures.')))));
   // Trois onglets plutôt qu'une colonne de dix cartes : l'onglet ouvert se garde dans l'adresse (#/account?tab=securite).
-  const TABS = [['moi', t('Moi'), [profile, sitebox, visio, ai, planes]], ['appareils', t('Mes appareils'), [dav, devices]], ['securite', t('Ma sécurité'), [rescue, backup, idCard, keys]]];
+  const TABS = [['moi', t('Moi'), [profile, sitebox, pics, visio, ai, planes]], ['appareils', t('Mes appareils'), [dav, devices]], ['securite', t('Ma sécurité'), [rescue, backup, idCard, keys]]];
   const want = new URLSearchParams(location.hash.split('?')[1] || '').get('tab'), cur = TABS.some(x => x[0] === want) ? want : 'moi';
   const panels = TABS.map(([k, , cards]) => h('div', { class: 'grid', role: 'tabpanel', id: 'ac-p-' + k, 'aria-labelledby': 'ac-t-' + k, hidden: k !== cur }, cards));
   const tabs = TABS.map(([k, label], i) => h('button', { type: 'button', class: 'link', role: 'tab', id: 'ac-t-' + k, 'aria-controls': 'ac-p-' + k, 'aria-selected': String(k === cur), tabIndex: k === cur ? 0 : -1, onclick: () => pick(i),

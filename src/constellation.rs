@@ -577,8 +577,18 @@ impl<C: Chain> Constellation<C> {
         let (count, first, last): (i64, Option<i64>, Option<i64>) = self.db.readers().read(|c| Ok(c.query_row("SELECT COUNT(*), MIN(at), MAX(at) FROM coop_ledger", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?)).await.map_err(|e| e.to_string())?;
         let synced = self.kv(SCOPE, "synced_at".into()).await.and_then(|v| v.parse::<u64>().ok());
         let error = self.kv(SCOPE, "error".into()).await.filter(|e| !e.is_empty());
+        // Alimenter la coopérative : n'importe quel portefeuille Ğ1 (Cesium, Gecko…) peut verser sur le maître, dont la première
+        // réception marque tous les portefeuilles de l'UPlanet. Le Capitaine reçoit l'adresse entière et son QR.
+        let deposit = if vigilance.is_null() {
+            Json::Null
+        } else {
+            wallets.iter().find(|w| w["name"] == "UPLANETNAME_G1").map_or(Json::Null, |w| {
+                let address = w["address"].as_str().unwrap_or_default();
+                json!({ "address": address, "g1_cents": w["g1_cents"], "qr": astro_ui::qr::svg(address) })
+            })
+        };
         Ok(json!({
-            "charter": self.charter(viewer).await, "wallets": wallets, "vigilance": vigilance,
+            "charter": self.charter(viewer).await, "wallets": wallets, "vigilance": vigilance, "deposit": deposit,
             "chain": self.chain.is_some(),
             "billets": match &self.billets { Some(b) => b.stats().await, None => Json::Null },
             // Partiel : pas d'indexeur, jamais lu, ou dernière lecture en échec.

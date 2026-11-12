@@ -1,12 +1,12 @@
 # Guide du Capitaine : ouvrir et tenir sa station
 
-> Version texte du [guide illustré](guide.html). Pour découvrir Astroport sans rien installer : [la page d'accueil](index.html). Version **1.0.0**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
+> Version texte du [guide illustré](guide.html). Pour découvrir Astroport sans rien installer : [la page d'accueil](index.html). Version **1.1.0**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
 
 **Sommaire** :
 
 - [**Partie 1 — Mettre la station en service**](#partie-1) : [1. Avant de commencer](#etape-0) · [2. Installer astroportd](#etape-1) · [3. Donner une identité à la station (Y-Level)](#etape-2) · [4. Choisir sa constellation](#etape-3) · [5. Démarrer la station](#etape-4) · [6. Créer votre compte de Capitaine, puis ceux des membres](#etape-5) · [7. Vérifier que tout va bien](#etape-6) · [8. Entrer dans l'interface web](#etape-7) · [9. Le cockpit du Capitaine](#etape-7b)
 - [**Partie 2 — Ce que la station offre à vos membres**](#partie-2) : [FaceCloud](#etape-8) · [Inviter quelqu'un à recevoir des photos](#etape-8quater) · [La clé de secours](#secours) · [Contacts, agenda et Mon compte](#etape-8b) · [Messages privés, et une personne dans plusieurs UPlanet](#etape-8bis-j) · [Appeler en visio](#visio) · [Le coffre de mots de passe (KeePass)](#etape-8bis-b) · [Le site public](#etape-8bis-m) · [Un jeton par appareil (téléphones, tablettes, ordinateurs)](#etape-8bis-f) · [Reprendre ses fichiers d'un autre serveur (Nextcloud, ownCloud…)](#etape-8bis-d) · [Ranger son uCloud par type](#etape-8bis-e) · [Connexion par PASS, compte sans email, signature déléguée](#etape-8quinquies) · [Sur un smartphone](#sur-un-smartphone)
-- [**Partie 3 — Les Ẑen de la station**](#partie-3) : [Hébergement facturé et partage de la semaine](#etape-8bis-g) · [Ma UPlanet](#etape-8c) · [Ğ1Billet](#etape-8bis-l)
+- [**Partie 3 — Les Ẑen de la station**](#partie-3) : [Hébergement facturé et partage de la semaine](#etape-8bis-g) · [Ma UPlanet](#etape-8c) · [Les Ẑen](#etape-8bis-l) · [Relier une UPlanet à OpenCollective](#relier-une-uplanet-opencollective) · [Ğ1Billet](#1billet-des-billets-papier-en-en)
 - [**Partie 4 — Relier, ouvrir, administrer**](#partie-4) : [Être trouvé](#annuaire) · [Relier sa station aux autres Capitaines](#etape-9) · [Options du Capitaine](#etape-8ter) · [Une adresse pour chaque station et chaque MULTIPASS (DNSLink)](#etape-9b) · [Les anciens clients (zelkova, coracle) sur astroportd](#etape-8bis-h) · [Plusieurs astroportd sur une machine](#plusieurs-astroportd-sur-une-machine-un-seul-bassin-de-fichiers) · [Plusieurs UPlanet dans un seul processus](#etape-8bis-i) · [En cas de problème](#etape-10)
 
 <a id="partie-1"></a>
@@ -44,7 +44,7 @@ date       # l'année doit être 2026 ou plus
 
 Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.
 
-> **À savoir.** astroportd est en **version 1.0.0** : il est testé de bout en bout, et les anciens formats d'Astroport.ONE ne sont plus repris (voir les notes de version). Gardez une sauvegarde de vos clés.
+> **À savoir.** astroportd est en **version 1.1.0** : il est testé de bout en bout, et les anciens formats d'Astroport.ONE ne sont plus repris (voir les notes de version). Gardez une sauvegarde de vos clés.
 
 Vous aurez aussi besoin d'un compte **MULTIPASS** (votre identité Nostr) : astroportd le crée pour vous à l'[étape 6](#etape-5).
 
@@ -60,7 +60,7 @@ Le plus simple : l'installeur. Il choisit le bon fichier pour votre machine et *
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 ```
 
-Options utiles : `--version v1.0.0`, `--static` (binaire statique, x86_64 et aarch64 : l'installeur le choisit seul si la glibc de la machine est plus ancienne que la 2.35, et s'arrête net si le binaire ne démarre pas), `--prefix DIR`, `--no-init`, `--yes`.
+Options utiles : `--version v1.1.0`, `--static` (binaire statique, x86_64 et aarch64 : l'installeur le choisit seul si la glibc de la machine est plus ancienne que la 2.35, et s'arrête net si le binaire ne démarre pas), `--prefix DIR`, `--no-init`, `--yes`.
 
 **Plugins** : à la fin, l'installeur propose de les présenter (`install-plugins.sh` : `git clone` du dépôt `astroportd-plugins`, puis l'`install.sh` de chacun : films et musique, énergie, DNSLink). Pour y revenir : `curl -fsSL https://raw.githubusercontent.com/papiche/astroportd-plugins/main/install-plugins.sh | bash`.
 
@@ -857,6 +857,65 @@ Chaque UPlanet a un **nom**, une **charte** et un **argent commun visible de tou
 
 <a id="etape-8bis-l"></a>
 
+## Les Ẑen : alimenter, verser, encaisser les dons
+
+Tout part du **Ğ1 maître** (`UPLANETNAME_G1`) : un Ẑen n'est jamais créé, il est adossé à de la Ğ1 réellement détenue (**1 Ğ1 = 10 Ẑen**). La première transaction reçue par chaque portefeuille de l'UPlanet vient de lui, ce qui dessine la zone économique Ẑen.
+
+**Alimenter la coopérative.** Dans **Ma UPlanet**, la carte **Alimenter la coopérative** (Capitaine) montre l'adresse du Ğ1 maître en entier, son QR code, un bouton **Copier** et son solde. N'importe quel portefeuille Ğ1 (Cesium, Gecko…) peut y virer des Ğ1. Ce n'est pas un compte personnel : ce qu'un membre y envoie est un don à la coopérative.
+
+**Verser des Ẑen à un MULTIPASS**. Bouton **Verser des Ẑen** (Ma UPlanet ou Mes chiffres), réservé au Capitaine, pour son MULTIPASS comme pour ceux des membres hébergés sur la station :
+
+- **Crédit d'usage** : maître → `UPLANETNAME` → MULTIPASS, avec la référence `UPLANET:<8 car.>:ZENCOIN:<email>`. Si le MULTIPASS est encore vide, le maître lui avance **d'abord** son 1 Ğ1 d'activation (c'est sa transaction primale : sans elle, la vigilance des portefeuilles le prendrait pour un intrus) ; le récapitulatif le montre à part.
+- **Part sociale** (satellite, constellation) : maître → `SOCIETY`, puis 33 % au MULTIPASS, 33 % à R&D, 33 % à ASSETS, le reste au Capitaine. La ZenCard n'est plus une étape de transit.
+
+Garde-fous : **10 000 Ẑen au plus par versement** (plusieurs tranches au-delà), un récapitulatif (destinataire, Ğ1 débitées, solde restant du maître), puis une confirmation en deux clics. Le versement est refusé si le maître ne couvre pas le montant. Chaque versement a un identifiant : s'il s'arrête en route (panne du nœud), le relancer **reprend là où il s'est arrêté** sans payer deux fois. Si l'issue d'un virement est inconnue, il n'est jamais rejoué : vérifiez les soldes dans Ma UPlanet.
+
+**Les dons OpenCollective**. Une fois `OCSLUG` et `OCAPIKEY` réglés dans la configuration coopérative, la station lit les contributions du mois toutes les 30 minutes : don simple → crédit d'usage (1 € = 1 Ẑ), palier infrastructure → part sociale, palier labo → portefeuille R&D (paliers réglables : `TIER_SLUG_*`). Par défaut elle **liste seulement** : la carte **Dons OpenCollective** de Ma UPlanet montre ce qui est à créditer et vous confirmez. Avec `OC_AUTO_CREDIT=1`, la station crédite seule. Un don est versé au plus une fois ; un don dont le MULTIPASS vit sur une autre station est laissé à cette station ; un don sans adresse e-mail ou de plus de 10 000 Ẑ reste bloqué, visible dans la carte.
+
+**Les mouvements des membres.** Sur **Mes chiffres**, **Envoyer des Ẑen** permet à un membre d'envoyer de son propre solde à la **trésorerie de la coopérative** (CASH) ou à un **proche réciproque** hébergé sur la même station. Mêmes plafond et confirmation ; la station signe avec le portefeuille du membre, et la référence du virement ne porte que des préfixes de clés, jamais une adresse e-mail.
+
+## Relier une UPlanet à OpenCollective
+
+OpenCollective est l'**entrée en euros** de la coopérative : un don devient des Ẑen sur le MULTIPASS du donateur (1 € = 1 Ẑ), ou une part sociale, ou un don à R&D. La station lit le collectif, vous montre ce qui est à créditer, et verse depuis le Ğ1 maître (voir « Les Ẑen »). Rien ne passe par un tiers : la station interroge l'API d'OpenCollective avec votre clé.
+
+**Ce qu'il faut avoir.** Un collectif OpenCollective dont vous êtes administrateur, et son identifiant (le *slug*, la fin de l'adresse `opencollective.com/<slug>`). Les donateurs doivent avoir un **MULTIPASS sur cette station avec la même adresse e-mail** que celle de leur don (casse ignorée) : c'est ce qui relie le don à un compte.
+
+**1. Créer la clé.** Dans OpenCollective : votre compte → *For developers* → *Personal tokens*. Donnez au jeton la portée **`email`** (voir la liste des portées dans la [documentation OAuth d'OpenCollective](https://documentation.opencollective.com/development/oauth)). Sans elle, OpenCollective renvoie `emails: null` pour chaque donateur : la carte « Dons OpenCollective » affiche alors tous les dons « bloqués : aucune adresse e-mail (OpenCollective : e-mail null) ». Un jeton ne peut jamais lire plus que son propriétaire : il doit appartenir à un administrateur du collectif.
+
+**2. Renseigner la station.** Dans **Configuration coopérative**, section OpenCollective :
+
+| Réglage | Rôle |
+|---|---|
+| `OCSLUG` | identifiant du collectif |
+| `OCAPIKEY` | la clé (chiffrée avant publication, jamais affichée) |
+| `OC_AUTO_CREDIT` | `1` : la station crédite seule ; `0` ou vide : elle liste, vous confirmez (par défaut) |
+| `TIER_SLUG_SATELLITE`, `TIER_SLUG_CONSTELLATION`, `TIER_SLUG_LABO` | paliers (virgules ; `*` = n'importe quoi ; un mot nu doit former un segment entier entre tirets) |
+| `OC_URL_*` | adresses de contribution proposées aux membres |
+
+Valeurs par défaut des paliers : satellite `*parrainage*128*,extension-128,satellite,*love-box*claude*` · constellation `*parrainage*gpu*,module-gpu,constellation,*love-box*deluxe*,*love-box*gpu*` · labo `infrastructure,labo,genereux-donateur,r-d,recherche`. Tout autre don est un **crédit d'usage**.
+
+**3. Vérifier.** Ouvrez **Ma UPlanet** : la carte **Dons OpenCollective** liste les contributions du mois (lues toutes les 30 minutes). Chaque don est « à créditer », « déjà versé », « pour une autre station » (son MULTIPASS vit ailleurs) ou « bloqué » avec la raison. Le bouton **Créditer N don(s)** demande une confirmation en deux clics. Un donateur sans MULTIPASS sur aucune station de la constellation est marqué « à créer » ; s'il en a déjà un sur une **autre** station, la station vous alerte (collision possible) et ne crée rien.
+
+**4. Ce que fait chaque palier.**
+
+- *Don simple* → crédit d'usage du MULTIPASS : maître → `UPLANETNAME` → MULTIPASS.
+- *Satellite* ou *constellation* → part sociale : maître → `SOCIETY`, puis 33 % MULTIPASS, 33 % R&D, 33 % ASSETS, le reste au Capitaine.
+- *Labo* → portefeuille R&D directement (aucun MULTIPASS nécessaire).
+
+Un don est versé **au plus une fois** (son identité est l'empreinte du compte donateur, du montant et de la date). Les dons de plus de 10 000 Ẑ, ou sans adresse e-mail, restent bloqués : à traiter à la main.
+
+**Sécurité de la clé.** La clé est chiffrée avec `UPLANETNAME`. En **ẐEN**, ce nom vient de la `swarm.key` : seuls les membres du réseau privé peuvent la lire. En **ORIGIN**, `UPLANETNAME` vaut 64 zéros, donc **n'importe qui peut déchiffrer la clé publiée** : n'y mettez pas une clé réelle en production, ou régénérez-la après vos essais. Si vous devez renouveler la clé, remplacez `OCAPIKEY` dans la configuration coopérative.
+
+**Dépannage.**
+
+| Ce que vous voyez | Cause probable |
+|---|---|
+| « OpenCollective n'est pas configuré » | `OCSLUG` ou `OCAPIKEY` absent |
+| « e-mail null » sur tous les dons | portée `email` manquante sur le jeton |
+| « aucun MULTIPASS hébergé ici pour … » | le donateur n'a pas de compte ici, ou son e-mail diffère |
+| « collectif introuvable (OCSLUG ?) » | mauvais identifiant de collectif |
+| don « en échec » | le maître ne couvre pas le montant, ou le nœud Ğ1 ne répond pas : relancez, la reprise est sûre |
+
 ## Ğ1Billet : des billets papier en Ẑen
 
 Des billets papier en Ẑen, que vos membres impriment, donnent de la main à la main, et que n'importe qui encaisse en scannant deux QR codes.
@@ -896,7 +955,7 @@ L'écran propose : le **nombre de billets** (1 à 6 par planche), la **valeur de
 
 Ces billets servent aussi à **remplir le compte d'un MULTIPASS** : le porteur donne son adresse `g1…` comme destination.
 
-**Fond et icône.** Chaque billet prend pour **fond le bandeau (`banner`)** et pour **icône l'image (`picture`)** du profil Nostr (kind 0) de l'émetteur, voilés pour garder les QR lisibles. Dans **Mon compte › Profil**, on envoie une image depuis l'appareil (réduite dans le navigateur puis réencodée par la station, qui la sert publiquement à `/api/v1/profile/<clé>/<picture|banner>.jpg` et republie le profil) ou on colle une adresse `https://`. Une image d'un site tiers est lue par la station (taille limitée, adresses privées refusées) et intégrée au billet ; si elle est illisible, le billet est créé sans fond.
+**Fond et icône.** Chaque billet prend pour **fond le bandeau (`banner`)** et pour **icône l'image (`picture`)** du profil Nostr (kind 0) de l'émetteur, voilés pour garder les QR lisibles. Dans **Mon compte › Profil**, on envoie une image depuis l'appareil (réduite dans le navigateur puis réencodée par la station, qui la range comme **blob public** — CID brut, JPEG sans métadonnées — et republie le profil avec l'adresse `/ipfs/<cid>` plus `picture_cid`/`banner_cid` ; toute station amie qui l'a vue la sert à son tour et la rapatrie chez ses pairs si la station d'origine s'éteint) ou on colle une adresse `https://`. Une image d'un site tiers est lue par la station (taille limitée, adresses privées refusées) et intégrée au billet ; si elle est illisible, le billet est créé sans fond.
 
 > **À savoir.** Pas de verso personnalisé comme dans UPassport. La mise en page a été vérifiée en code et sur la vraie chaîne Ğ1 (création, financement, retour automatique), pas sur du papier imprimé. Le retour automatique se fait à 20h12 : un billet expiré à 9 h revient le soir même.
 
@@ -1080,9 +1139,9 @@ Ces clients attendaient les conventions d'Astroport.ONE (`u.<domaine>`, `relay.<
 | `/check_balance?g1pub=` | solde d'une **adresse Ğ1** (jamais d'e-mail) : `balance`, `g1_cents`, `zen`, `zen_cents`. Public, résultat gardé 20 s, 4 lectures Duniter simultanées au plus. |
 | `POST /api/v1/feedback` | retour d'un utilisateur (authentifié) : voir ci-dessous |
 | `GET /api/v1/account/oc` | le compte appelant est-il inscrit sur OpenCollective ? (authentifié) |
-| `/ipfs/<cid>` | **désactivée par défaut** (`serve --ipfs-gateway`). Lecture seule, un blob à la fois, jamais de dossier. |
+| `/ipfs/<cid>` | Images publiques en clair (avatars, bandeaux) : toujours servies, rapatriées chez les pairs si absentes (8 Mo au plus, octets JPEG/PNG/WebP vérifiés). Blobs chiffrés : **désactivée par défaut** (`serve --ipfs-gateway`). Lecture seule, un blob à la fois, jamais de dossier. |
 
-**Envoi d'images (`POST /api/upload/image`).** Un client Nostr (coracle…) envoie une image en `multipart/form-data` (champ `file`) avec une authentification NIP-98 (ou Basic) : **jamais anonyme**. La station la **relit et la réencode** (JPEG sans aucune métadonnée, donc sans la position GPS d'une photo, ou PNG si elle est transparente ; 2 048 px de côté au plus), la range sous `/Public/uploads/<empreinte>.jpg` du membre (elle compte dans son quota, la renvoyer ne crée pas de doublon) et rend `url`, l'adresse publique `…/site/<nom>/uploads/…`. Formats : JPEG, PNG, WebP, 8 Mo au plus ; GIF, SVG, HTML et tout le reste sont refusés. Les routes `POST /api/upload/image`, `/api/v1/account/unlock` et `/api/v1/account/keys` répondent aux requêtes de pré-vérification CORS (`Access-Control-Allow-Origin: *`, sans cookie : l'authentification est dans l'en-tête `Authorization`), pour qu'un client servi depuis un autre domaine puisse les appeler.
+**Envoi d'images (`POST /api/upload/image`).** Un client Nostr (coracle…) envoie une image en `multipart/form-data` (champ `file`) avec une authentification NIP-98 (ou Basic) : **jamais anonyme**. La station la **relit et la réencode** (JPEG sans aucune métadonnée, donc sans la position GPS d'une photo, ou PNG si elle est transparente ; 2 048 px de côté au plus), la range comme **blob public en clair**, adressé par son contenu (une seule copie, plus de dossier `/Public/uploads` pour les nouveaux envois) ; ses octets **entament le quota du membre** comme ses fichiers (refus net quand il est atteint ; la renvoyer ne crée pas de doublon) ; elle rend `url`, l'adresse `…/ipfs/<cid>` (et `cid`) : n'importe quelle station amie qui a vu l'image la sert à la même adresse de contenu et la rapatrie chez ses pairs si celle-ci s'éteint, de sorte qu'un post Nostr qui la cite reste lisible. Formats : JPEG, PNG, WebP, 8 Mo au plus ; GIF, SVG, HTML et tout le reste sont refusés. Les routes `POST /api/upload/image`, `/api/v1/account/unlock` et `/api/v1/account/keys` répondent aux requêtes de pré-vérification CORS (`Access-Control-Allow-Origin: *`, sans cookie : l'authentification est dans l'en-tête `Authorization`), pour qu'un client servi depuis un autre domaine puisse les appeler. Sur `/ipfs/<cid>`, les CID inconnus sont rapatriés au plus 4 à la fois et 60 par minute (429 au-delà) ; un CID introuvable n'est pas redemandé pendant 2 minutes. **Gestion par le membre** : dans Mon compte › Moi, « Mes images publiques » liste ses images (aperçu, taille, date, espace utilisé) et permet d'en retirer une, ce qui libère son quota (`GET /api/v1/account/images`, `DELETE /api/v1/account/images/<cid>`). Une image qui sert de photo de profil ou de bandeau ne se retire pas avant d'être remplacée. Les stations amies qui l'avaient déjà rapatriée la gardent jusqu'à leur propre nettoyage.
 
 **Pièces jointes de messages (`POST /api/v1/attachments?days=N`).** L'expéditeur chiffre le fichier **chez lui** (AES-256-GCM, format UENC v2 : `UENC` + `02` + `01` + `10` + préfixe de nonce de 7 octets, puis des blocs de 64 Kio chiffrés + étiquette de 16 octets) et l'envoie en `application/octet-stream`, authentifié (Basic ou NIP-98), jamais anonyme. La station ne connaît pas la clé, qui voyage dans le message privé chiffré de bout en bout (`{"_uenc_img": {cid, enc_key, …}}`). Elle **refuse tout ce qui n'a pas l'en-tête UENC** (elle n'héberge pas de fichiers lisibles), plus de 20 Mo, `days` hors 1–90 (30 par défaut), et au-delà de 200 pièces jointes ou 1 Go actifs par compte. Réponse : `{cid, size, expires_at, gateway, url}` ; `cid` est le CIDv1 raw sha2-256 des octets reçus, servi par `GET /ipfs/<cid>` (CORS `*`, CSP `sandbox`) tant que l'échéance n'est pas passée. Il faut `--ipfs-gateway`. L'enregistrement est celui des liens d'invité (même purge à l'échéance, même porte) ; des octets déjà connus de la station ne créent pas de second enregistrement, pour que l'échéance courte d'un tiers ne supprime pas le blob de l'expéditeur d'origine. L'adresse désigne un **contenu** : tout lecteur peut recalculer le CID et vérifier ce qu'une passerelle lui a rendu. **Copie chez les amis hébergeurs.** Dès le dépôt, la station envoie la pièce jointe (message NIP-59 `op: attachment`, avec `cid`, `size`, `expires`, `station`) aux amis qui hébergent la sauvegarde de l'expéditeur, ceux qui gardent sa part P3 (trois au plus, accord accepté). L'ami rapatrie le blob par le maillage (CID vérifié, plafonné à 20 Mo et 60 s : un pair qui annonce plus gros est refusé avant le moindre octet reçu) et le sert à son tour à `/ipfs/<cid>` jusqu'à l'échéance, puis la purge le supprime : pas de semaine de grâce, pas d'entrée dans son uCloud. Il refuse, avant tout rapatriement, ce qui dépasse le volume qu'il a accordé (la copie y compte), plus de 20 Mo, une échéance passée ou au-delà de 90 jours ; il refuse aussi après, d'après le blob réellement reçu, ce qui n'a pas l'en-tête UENC v2 (jamais de clair) et le retire s'il l'a lui-même apporté. Un ami sans volume ou hors ligne ne retarde rien. Le message porte seulement l'adresse de la station de l'expéditeur dans `gw` : les amis hébergeurs ne sont pas annoncés au destinataire (c'est une information sociale).
 

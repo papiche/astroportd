@@ -9,3 +9,6 @@
 .ac-tabs { display: flex; gap: .4rem; overflow-x: auto; margin: 1rem 0; border-bottom: 1px solid var(--line); }
 .ac-tabs [role=tab] { min-height: 48px; padding: .5rem 1rem; background: none; color: var(--muted); border: 0; border-bottom: 3px solid transparent; border-radius: 0; box-shadow: none; white-space: nowrap; font-weight: 600; }
 .ac-tabs [role=tab][aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent); }
+.ac-img { margin: 0; width: 8rem; font-size: .8rem; }
+.ac-img img { width: 8rem; height: 8rem; object-fit: cover; display: block; border-radius: .4rem; }
+.ac-img .row { display: flex; flex-wrap: wrap; gap: .25rem; }

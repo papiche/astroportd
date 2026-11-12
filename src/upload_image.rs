@@ -1,6 +1,6 @@
 //! Envoi d'images par un membre (NIP-96) : **relues et réencodées**, jamais servies telles quelles.
 //!
-//! Le fichier arrive sur une route publique authentifiée et finit dans `/Public/uploads` du membre, donc en clair sur le web.
+//! Le fichier arrive sur une route publique authentifiée et finit en blob public (adressé par son contenu, compté dans le quota du membre), donc en clair sur le web.
 //! Ce qui entre est décodé (une image piégée, une bombe de décompression ou un faux type sont refusés), réduit à 2 048 px de
 //! côté au plus, puis réencodé : JPEG sans aucune métadonnée (la position GPS d'une photo n'est jamais republiée), ou PNG si
 //! l'image a de la transparence. Le nom est le hachage du résultat : renvoyer la même image ne crée pas de doublon.

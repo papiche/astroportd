@@ -92,4 +92,11 @@ export default {
 "Révoquer « {0} » ? Son jeton cesse de fonctionner tout de suite ; ce qu'il a déposé reste dans votre uCloud.": "¿Revocar «{0}»? Su token deja de funcionar enseguida; lo que subió permanece en su uCloud.",
 "Appareil révoqué": "Dispositivo revocado",
 "Révoquer : sa sauvegarde sera supprimée de votre espace.": "Revocar: su copia de seguridad se eliminará de su espacio.",
+"Mes images publiques": "Mis imágenes públicas",
+"Images que vous avez publiées (photo de profil, bandeau, images envoyées depuis un client Nostr). Elles sont lisibles par tout le monde et comptent dans votre espace : {0} utilisés sur {1}. En retirer une libère de la place ; les publications qui la montrent ne l’afficheront plus.": "Imágenes que ha publicado (foto de perfil, banner, imágenes enviadas desde un cliente Nostr). Cualquiera puede verlas y cuentan en su espacio: {0} usados de {1}. Quitar una libera espacio; las publicaciones que la muestran dejarán de mostrarla.",
+"Utilisée comme bandeau": "Usada como banner",
+"Utilisée comme photo de profil": "Usada como foto de perfil",
+"Image retirée": "Imagen quitada",
+"Retirer cette image ? Elle ne s’affichera plus dans vos publications.": "¿Quitar esta imagen? Dejará de mostrarse en sus publicaciones.",
+"Aucune image publiée pour l’instant.": "Ninguna imagen publicada por ahora.",
 };

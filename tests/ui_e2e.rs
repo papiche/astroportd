@@ -1595,6 +1595,57 @@ fn multipart(parts: &[(&str, &[u8])]) -> (String, Vec<u8>) {
     ("multipart/form-data; boundary=BND".into(), out)
 }
 
+/// « Mes images publiques » : la liste ne montre que les images du compte, la suppression libère le quota et la passerelle cesse de
+/// servir l'image ; l'image de profil ne se supprime pas tant qu'elle sert ; un autre compte ne peut rien retirer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_member_lists_and_removes_her_public_images_and_frees_her_quota() {
+    let b = bench("public-images", None).await;
+    let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
+    let png = |w: u32, shade: u8| {
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(w, 40, |x, y| image::Rgb([(x % 251) as u8, shade, y as u8]))).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        out
+    };
+    let upload = |data: Vec<u8>, who: String| {
+        let app = b.app.clone();
+        async move {
+            let (ct, body) = multipart(&[("Content-Disposition: form-data; name=\"file\"; filename=\"p.png\"\r\nContent-Type: image/png", &data)]);
+            let (status, _, bytes) = call(&app, Method::POST, "/api/upload/image", Some(&who), &[("content-type", &ct)], body).await;
+            assert_eq!(status, StatusCode::OK);
+            serde_json::from_slice::<Value>(&bytes).unwrap()["cid"].as_str().unwrap().to_owned()
+        }
+    };
+    let (c1, c2, theirs) = (upload(png(300, 10), alice.clone()).await, upload(png(400, 20), alice.clone()).await, upload(png(500, 30), bob.clone()).await);
+    let list = |who: &str| { let (app, who) = (b.app.clone(), who.to_owned()); async move { let (st, _, by) = call(&app, Method::GET, "/api/v1/account/images", Some(&who), &[], Vec::new()).await; assert_eq!(st, StatusCode::OK); serde_json::from_slice::<Value>(&by).unwrap() } };
+    let l = list(&alice).await;
+    let cids: Vec<&str> = l["images"].as_array().unwrap().iter().map(|i| i["cid"].as_str().unwrap()).collect();
+    assert!(cids.len() == 2 && cids.contains(&c1.as_str()) && cids.contains(&c2.as_str()) && !cids.contains(&theirs.as_str()), "seulement les siennes : {l}");
+    let used_before = l["used"].as_u64().unwrap();
+    assert!(used_before > 0 && l["quota"].as_u64().unwrap() > used_before);
+
+    // L'image de profil ne se supprime pas tant qu'elle sert.
+    let (st, _, by) = call(&b.app, Method::POST, "/api/v1/account/profile", Some(&alice), &[("content-type", "application/json")], serde_json::to_vec(&json!({ "picture": format!("https://station.test/ipfs/{c1}") })).unwrap()).await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&by));
+    let del = |cid: &str, who: &str| { let (app, uri, who) = (b.app.clone(), format!("/api/v1/account/images/{cid}"), who.to_owned()); async move { call(&app, Method::DELETE, &uri, Some(&who), &[], Vec::new()).await.0 } };
+    assert_eq!(del(&c1, &alice).await, StatusCode::BAD_REQUEST, "photo de profil en service");
+    assert_eq!(list(&alice).await["images"].as_array().unwrap().iter().find(|i| i["cid"] == c1.as_str()).unwrap()["in_use"], "picture");
+    // Un autre compte ne retire rien ; un CID quelconque n'existe pas.
+    assert_eq!(del(&c2, &bob).await, StatusCode::NOT_FOUND, "pas son image");
+    assert_eq!(del("pas-un-cid", &alice).await, StatusCode::BAD_REQUEST);
+    // Suppression : plus servie, quota libéré, l'image des autres intacte.
+    assert_eq!(get_status(&b, &format!("/ipfs/{c2}")).await, StatusCode::OK);
+    assert_eq!(del(&c2, &alice).await, StatusCode::OK);
+    assert_eq!(get_status(&b, &format!("/ipfs/{c2}")).await, StatusCode::NOT_FOUND, "la passerelle ne la sert plus");
+    assert_eq!(get_status(&b, &format!("/ipfs/{theirs}")).await, StatusCode::OK);
+    let l = list(&alice).await;
+    assert!(l["used"].as_u64().unwrap() < used_before && l["images"].as_array().unwrap().len() == 1, "{l}");
+    assert_eq!(del(&c2, &alice).await, StatusCode::NOT_FOUND, "déjà retirée");
+}
+
+async fn get_status(b: &Bench, uri: &str) -> StatusCode {
+    call(&b.app, Method::GET, uri, None, &[], Vec::new()).await.0
+}
+
 /// Envoi d'une image (NIP-96) : authentifié, réencodé, rangé dans `/Public/uploads` du membre ; refus nets pour tout le reste ;
 /// CORS pour un client servi ailleurs ; la sonde annonce l'adresse d'envoi.
 #[tokio::test(flavor = "multi_thread")]
@@ -1618,15 +1669,17 @@ async fn a_member_uploads_an_image_to_her_public_folder_and_nothing_else_gets_in
     let r: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!((status, r["status"].as_str(), headers.get("access-control-allow-origin").and_then(|v| v.to_str().ok())), (StatusCode::OK, Some("success"), Some("*")), "{r}");
     let url = r["url"].as_str().unwrap();
-    assert!(url.starts_with("https://station.test/site/") && url.contains("/uploads/") && url.ends_with(".jpg"), "{url}");
+    // Adresse d'un contenu (CID brut), pas d'une station : toute station amie la sert ou la rapatrie.
+    let cid = r["cid"].as_str().unwrap();
+    assert_eq!(url, format!("https://station.test/ipfs/{cid}"));
     let tags = r["nip94_event"]["tags"].as_array().unwrap();
     let tag = |k: &str| tags.iter().find(|t| t[0] == k).map(|t| t[1].as_str().unwrap().to_owned());
     assert_eq!((tag("url").as_deref(), tag("m").as_deref()), (Some(url), Some("image/jpeg")));
-    let name = url.rsplit('/').next().unwrap();
-    let stored: i64 = b.db.readers().read({ let (h, n) = (hex(&ALICE), format!("/Public/uploads/{name}")); move |c| Ok(c.query_row("SELECT count(*) FROM ucloud_entries WHERE owner_hex = ?1 AND path = ?2", rusqlite::params![h, n], |r| r.get(0))?) }).await.unwrap();
-    assert_eq!(stored, 1, "rangée dans /Public/uploads du compte authentifié");
-    assert_eq!(name.len(), 32 + 4, "nommée par le hachage du résultat");
-    // L'adresse rendue sert bien l'image, sans mot de passe, comme tout ce qui est dans /Public.
+    // Une seule copie, publique : ses octets entament le quota du membre (aucun volume caché).
+    let used = b.db.readers().read({ let h = hex(&ALICE); move |c| astro_dav::vfs::used_bytes(c, &h).map_err(|_| astro_db::DbError::Aborted) }).await.unwrap();
+    assert_eq!(used, tag("size").unwrap().parse::<u64>().unwrap(), "l'image compte dans le quota du compte");
+    assert_eq!(astro_dav::public::mime_of(&b.db, cid).await.as_deref(), Some("image/jpeg"), "copie publique en clair inscrite");
+    // L'adresse rendue sert bien l'image, sans mot de passe, même passerelle chiffrée coupée.
     let (status, h, served) = call(&b.app, Method::GET, url.strip_prefix("https://station.test").unwrap(), None, &[], Vec::new()).await;
     assert_eq!((status, h["content-type"].to_str().unwrap()), (StatusCode::OK, "image/jpeg"), "{}", String::from_utf8_lossy(&served[..served.len().min(120)]));
     assert_eq!(image::load_from_memory(&served).unwrap().width(), 2048);

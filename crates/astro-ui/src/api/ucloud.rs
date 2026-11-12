@@ -96,7 +96,7 @@ pub trait UcloudApi: Auth {
     fn replication(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("réplication non mesurée sur cette station")) }
     }
-    /// Envoi d'une image par un membre (NIP-96) : relue, réencodée sans métadonnées, rangée dans son `/Public/uploads`.
+    /// Envoi d'une image par un membre (NIP-96) : relue, réencodée sans métadonnées, rangée comme blob public (CID) compté dans son quota.
     /// `host` : l'hôte demandé (adresse publique si la station n'a pas de domaine).
     fn upload_image(&self, _who: &Principal, _data: Vec<u8>, _host: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("envoi d'images non disponible sur cette station")) }

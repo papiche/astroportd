@@ -385,21 +385,50 @@ pub async fn blob<B: BlobStore>(State(st): State<Arc<DavState<B>>>, Path((slug, 
 }
 
 /// Passerelle de compatibilité `GET /ipfs/<cid>` : les clients historiques (zelkova, coracle) lisent `{passerelle}/ipfs/{cid}`.
-/// **Désactivée par défaut** (`--ipfs-gateway`), lecture seule, un blob à la fois (jamais de dossier ni de sous-chemin) :
-/// - un blob natif (CID v1) n'est servi que s'il appartient à un **lien de partage actif** : la révocation et l'échéance
-///   d'un lien ferment donc aussi cette porte ;
+/// Lecture seule, un blob à la fois (jamais de dossier ni de sous-chemin). Deux sortes de blobs :
+/// - un **blob public** (image en clair inscrite dans `public_blobs`, voir [`crate::public`]) est toujours servi, et rapatrié chez les
+///   pairs s'il manque ici : c'est ce qui rend avatars et bandeaux indépendants de la station d'origine ;
+/// - un blob chiffré (CID v1) n'est servi que si la passerelle est activée (**désactivée par défaut**, `--ipfs-gateway`) et s'il appartient
+///   à un **lien de partage actif** : la révocation et l'échéance d'un lien ferment donc aussi cette porte.
 ///
-/// Ce sont des blobs chiffrés : sans leur clé (dans le lien `#clé`), la passerelle ne donne que du bruit.
+/// Les blobs chiffrés : sans leur clé (dans le lien `#clé`), la passerelle ne donne que du bruit.
 pub async fn ipfs_gateway<B: BlobStore>(State(st): State<Arc<DavState<B>>>, Path(cid): Path<String>, headers: HeaderMap) -> Response {
-    if !st.config.ipfs_gateway {
+    if !is_cid(&cid) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let allowed = if is_cid(&cid) {
-        shared_by_active_link(&st, &cid).await
-    } else {
-        false
-    };
-    if !allowed {
+    // Blob public (image en clair) : servi même passerelle chiffrée coupée, et rapatrié chez les pairs s'il manque ici.
+    let mut mime = crate::public::mime_of(&st.db, &cid).await;
+    if mime.is_none() {
+        if let Some(fetch) = &st.config.public_fetch {
+            // CID inconnu : chaque demande coûte une question aux pairs, d'où le pare-feu (simultanéité, débit, CID déjà cherchés).
+            match st.config.public_gate.admit(&cid) {
+                crate::public::Admit::Go(_permit) => {
+                    if fetch(cid.clone()).await {
+                        mime = crate::public::mime_of(&st.db, &cid).await;
+                    }
+                    if mime.is_none() {
+                        st.config.public_gate.miss(&cid);
+                    }
+                }
+                crate::public::Admit::Busy => return (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, "30")]).into_response(),
+                crate::public::Admit::KnownMiss => {}
+            }
+        }
+    }
+    if let Some(mime) = mime {
+        let mut r = serve_blob(&st, &cid, &headers).await;
+        if r.status().is_success() {
+            let h = r.headers_mut();
+            h.insert(header::CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap_or(HeaderValue::from_static("application/octet-stream")));
+            // Le contenu est adressé par son empreinte : il ne change jamais.
+            h.insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=31536000, immutable"));
+            h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+            h.insert("Cross-Origin-Resource-Policy", HeaderValue::from_static("cross-origin"));
+            h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'none'; sandbox"));
+        }
+        return r;
+    }
+    if !st.config.ipfs_gateway || !shared_by_active_link(&st, &cid).await {
         return StatusCode::NOT_FOUND.into_response();
     }
     let mut r = serve_blob(&st, &cid, &headers).await;

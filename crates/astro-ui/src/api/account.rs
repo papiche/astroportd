@@ -44,9 +44,13 @@ pub trait AccountApi: Auth {
     fn account_image(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("images de profil non disponibles sur cette station")) }
     }
-    /// Image de profil publique d'un compte (JPEG), si la station en garde une.
-    fn profile_image(&self, _hex: &str, _kind: &str) -> impl Future<Output = Option<Vec<u8>>> + Send {
-        async { None }
+    /// Images publiques du compte (avatar, bandeau, envois NIP-96) : `{ images: [{ cid, mime, size, added_at, in_use }], used, quota }`.
+    fn public_images(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("images publiques non disponibles sur cette station")) }
+    }
+    /// Retire une image publique du compte : libère son quota. Refusée tant qu'elle sert d'image ou de bandeau de profil.
+    fn public_image_delete(&self, _who: &Principal, _cid: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("images publiques non disponibles sur cette station")) }
     }
     /// Position du membre (arrondie par la station à la maille UMAP de 0,01°) : la station la plus proche tient ses
     /// informations de quartier. `{lat, lon}`, ou `{}` pour l'effacer.
@@ -106,9 +110,10 @@ pub(super) fn routes<B: AccountApi>() -> Router<Arc<UiState<B>>> {
         .route("/api/v1/account/profile", post(account_profile::<B>))
         .route("/api/v1/account/position", post(account_position::<B>))
         .route("/api/v1/account/image", post(account_image::<B>))
+        .route("/api/v1/account/images", get(public_images::<B>))
+        .route("/api/v1/account/images/{cid}", axum::routing::delete(public_image_delete::<B>))
         .route("/api/v1/account/site", get(account_site::<B>))
         .route("/api/v1/account/site/example", post(account_site_example::<B>))
-        .route("/api/v1/profile/{hex}/{file}", get(profile_image::<B>))
         .route("/api/v1/account/token", post(account_token_rotate::<B>))
         .route("/api/v1/account/unlock", post(account_unlock::<B>).options(cors_preflight))
         .route("/api/v1/account/sign", post(account_sign::<B>))
@@ -190,16 +195,12 @@ async fn account_image<B: AccountApi>(State(st): State<Arc<UiState<B>>>, Authed(
     reply(st.backend.account_image(&p, body).await)
 }
 
-/// Image de profil : publique (un profil Nostr l'est), servie telle qu'elle a été réencodée, mise en cache une heure.
-async fn profile_image<B: AccountApi>(State(st): State<Arc<UiState<B>>>, Path((hex, file)): Path<(String, String)>) -> Response {
-    let kind = file.strip_suffix(".jpg").unwrap_or("");
-    if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return reply(Err(ApiError::not_found("image inconnue")));
-    }
-    match st.backend.profile_image(&hex.to_ascii_lowercase(), kind).await {
-        Some(bytes) => (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "image/jpeg"), (axum::http::header::CACHE_CONTROL, "public, max-age=3600"), (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff")], bytes).into_response(),
-        None => reply(Err(ApiError::not_found("image inconnue"))),
-    }
+async fn public_images<B: AccountApi>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    reply(st.backend.public_images(&p).await)
+}
+
+async fn public_image_delete<B: AccountApi>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Path(cid): Path<String>) -> Response {
+    reply(st.backend.public_image_delete(&p, cid).await)
 }
 
 async fn account_profile<B: AccountApi>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {

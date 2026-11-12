@@ -50,6 +50,8 @@ pub mod bridge;
 pub mod coop_wallets;
 pub mod constellation;
 pub mod billet;
+pub mod zen_credit;
+pub mod oc_emission;
 pub mod oc_member;
 pub mod public_site;
 pub mod upload_image;

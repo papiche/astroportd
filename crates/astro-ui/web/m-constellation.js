@@ -16,6 +16,14 @@ export function charterNodes(text, h) {
   });
 }
 
+// Un SVG de QR rendu par la station, inséré sans `innerHTML` (CSP) : on le relit comme un document XML.
+function svg(text, cls) {
+  if (!text) return document.createTextNode('');
+  const doc = new DOMParser().parseFromString(text, 'image/svg+xml'), n = document.importNode(doc.documentElement, true);
+  n.setAttribute('class', cls); n.removeAttribute('width'); n.removeAttribute('height');
+  return n;
+}
+
 export default async function constellation(box, K) {
   const { h, t } = K;
   box.replaceChildren(h('h2', {}, t('Ma UPlanet')), h('p', { class: 'muted' }, t('Chargement…')));
@@ -34,6 +42,25 @@ export default async function constellation(box, K) {
     h('div', { class: 'tw' }, h('table', { class: 'cs-wallets' }, h('thead', {}, h('tr', {}, h('th', {}, t('Portefeuille')), h('th', {}, t('Adresse')), h('th', { class: 'n' }, 'Ğ1'), h('th', { class: 'n' }, 'Ẑen'), h('th', {}, t('Transaction primale')))), h('tbody', {}, rows))),
     h('p', {}, h('strong', {}, t('Total : {0} Ẑen', g1(total)))));
 
+  // Alimenter la coopérative (Capitaine) : n'importe quel portefeuille Ğ1 (Cesium, Gecko…) peut verser sur le Ğ1 maître.
+  const dp = ov.deposit, qr = svg(dp?.qr, 'cs-qr');
+  const deposit = dp ? h('section', { class: 'card wide cs-dep' }, h('h2', {}, t('Alimenter la coopérative')),
+    h('p', { class: 'muted' }, t('Depuis n\'importe quel portefeuille Ğ1 (Cesium, Gecko…), virez des Ğ1 sur l\'adresse du Ğ1 maître : il finance les Ẑen et sa première transaction marque tous les portefeuilles de l\'UPlanet.')),
+    h('div', { class: 'cs-dep-row' }, qr, h('div', {}, h('p', {}, h('strong', {}, t('Adresse du Ğ1 maître'))),
+      h('p', { class: 'cs-addr' }, h('code', {}, dp.address), ' ', h('button', { type: 'button', class: 'ghost', 'aria-label': t('Copier l\'adresse'), onclick: () => navigator.clipboard.writeText(dp.address).then(() => K.toast(t('Adresse copiée'), 1), e => K.toast(e.message)) }, '📋 ', t('Copier'))),
+      h('p', {}, t('Solde du Ğ1 maître : {0} Ğ1', g1(dp.g1_cents))),
+      h('p', {}, h('button', { type: 'button', onclick: async () => (await K.mod('m-credit.js')).default(K, { to: me.hex }) }, t('Verser des Ẑen à un membre')))))) : null;
+  // Dons OpenCollective (Capitaine) : ce qui est à créditer en Ẑen (l'`oc2uplanet.sh` du legacy). La station liste, le Capitaine confirme.
+  const oc = me.captain ? await K.api('/api/v1/station/oc/donations').catch(() => null) : null;
+  const OCK = { usage: 'crédit d\'usage', satellite: 'part satellite', constellation: 'part constellation', labo: 'R&D' };
+  const ocPending = (oc?.donations || []).filter(d => d.status === 'pending' || d.status === 'failed');
+  const ocCard = oc?.configured ? h('section', { class: 'card wide' }, h('h2', {}, t('Dons OpenCollective')),
+    oc.error ? h('p', { class: 'degraded', role: 'status' }, oc.error) : null,
+    h('p', {}, t('{0} don(s) déjà versé(s) ce mois-ci · {1} à créditer ({2} Ẑen)', oc.done || 0, oc.pending || 0, g1(oc.pending_zen_cents || 0)), oc.blocked ? ' · ' + t('{0} bloqué(s)', oc.blocked) : '', oc.elsewhere ? ' · ' + t('{0} pour une autre station', oc.elsewhere) : ''),
+    ocPending.length ? h('ul', {}, ocPending.slice(0, 10).map(d => h('li', {}, `${d.email} : ${g1(d.zen_cents)} Ẑen (${t(OCK[d.kind] || d.kind)})`, d.detail ? ` — ${d.detail}` : ''))) : null,
+    (oc.donations || []).some(d => d.status === 'blocked') ? h('details', {}, h('summary', {}, t('Dons bloqués')), h('ul', {}, oc.donations.filter(d => d.status === 'blocked').map(d => h('li', {}, `${d.email || '?'} : ${g1(d.zen_cents)} — ${d.detail}`)))) : null,
+    oc.pending ? K.sure(t('Créditer {0} don(s)', oc.pending), async () => { try { await K.api('/api/v1/station/oc/sync', { method: 'POST', body: { confirm: true } }); K.toast(t('Dons crédités'), 1); constellation(box, K); } catch (e) { K.toast(e.message); } }, t('{0} Ẑen quittent le Ğ1 maître vers les membres et la coopérative', g1(oc.pending_zen_cents))) : null,
+    h('p', { class: 'muted' }, oc.auto ? t('Crédit automatique activé (OC_AUTO_CREDIT) : la station verse seule.') : t('Crédit automatique désactivé : la station liste, vous confirmez (réglage OC_AUTO_CREDIT).'))) : null;
   // Ğ1Billets de l'UPlanet : suivi agrégé, visible de tous (aucun détail personnel).
   const bl = ov.billets, cell = (n, label) => h('div', {}, h('b', {}, String(n)), h('span', { class: 'muted' }, t(label)));
   const billets = bl && bl.issued ? h('section', { class: 'card wide' }, h('h2', {}, t('Ğ1Billets en circulation')),
@@ -113,5 +140,5 @@ export default async function constellation(box, K) {
     h('p', {}, h('a', { class: 'ck-btn', href: '#/coop' }, t('Configuration coopérative'))));
 
   const banner2 = vg?.alert ? h('p', { class: 'card cs-alert down', role: 'alert' }, '🚨 ', vg.intruders?.length ? t('Des Ğ1 venus de l\'extérieur de cette UPlanet ont été renvoyés vers INTRUSION.') : t('INTRUSION détient des Ğ1 au-delà de sa réserve.'), ' ', h('button', { type: 'button', onclick: () => document.getElementById('cs-vigil')?.scrollIntoView({ behavior: 'smooth' }) }, t('Voir les intrus'))) : null;
-  box.replaceChildren(...[banner2, h('h2', {}, c.name || t('Ma UPlanet')), h('p', { class: 'muted' }, c.name ? t('Le nom de cette constellation') : t('Cette constellation n\'a pas encore de nom : le Capitaine le choisit dans la configuration coopérative.')), map, wallets, billets, regie, charter].filter(Boolean));
+  box.replaceChildren(...[banner2, h('h2', {}, c.name || t('Ma UPlanet')), h('p', { class: 'muted' }, c.name ? t('Le nom de cette constellation') : t('Cette constellation n\'a pas encore de nom : le Capitaine le choisit dans la configuration coopérative.')), map, wallets, deposit, ocCard, billets, regie, charter].filter(Boolean));
 }

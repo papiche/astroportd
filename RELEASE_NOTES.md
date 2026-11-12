@@ -1,3 +1,16 @@
+## astroportd 1.1.0 — images publiques adressées par leur contenu
+
+Avatars, bandeaux et images envoyées depuis un client Nostr deviennent des **blobs publics en clair, adressés par leur CID** : n'importe quelle station amie les sert, et les rapatrie chez ses pairs si la station d'origine s'éteint.
+
+- **`GET /ipfs/<cid>`** sert toute image inscrite dans la nouvelle table `public_blobs`, même passerelle chiffrée (`--ipfs-gateway`) coupée. Un CID inconnu est demandé aux pairs (8 Mo au plus, 10 s, empreinte vérifiée) et n'est gardé que si ses octets sont ceux d'un JPEG, d'un PNG ou d'un WebP ; le reste est retiré du disque. Les blobs chiffrés de l'uCloud ne sont jamais exposés par ce chemin.
+- **Pare-feu des CID inconnus** : 4 rapatriements simultanés, 60 par minute (429 au-delà), un CID introuvable n'est pas redemandé pendant 2 minutes.
+- **Profil** : `picture` et `banner` valent `<station>/ipfs/<cid>` ; le kind 0 porte aussi `picture_cid` et `banner_cid`. Les billets lisent le fond et l'icône par le CID, chez les pairs si besoin.
+- **Envoi NIP-96** (`POST /api/upload/image`) : une seule copie, publique ; `url` = `<station>/ipfs/<cid>`, plus `cid` dans la réponse. Les nouveaux envois ne vont plus dans `/Public/uploads`.
+- **Quota** : les images publiques d'un compte entament son quota d'uCloud (`vfs::used_bytes`, tableau de bord compris) ; l'inscription échoue en SQL quand il est atteint.
+- **Mon compte › Moi › « Mes images publiques »** : liste, adresse à copier, retrait (`GET /api/v1/account/images`, `DELETE /api/v1/account/images/<cid>`). Une image en service comme photo de profil ou bandeau ne se retire pas.
+- **Retraits** : la route `/api/v1/profile/<clé>/<picture|banner>.jpg` et la table `profile_images`. **Les profils déjà publiés avec l'ancienne adresse ne se chargent plus : le membre renvoie son image** pour obtenir un CID.
+- Versement de Ẑen par le Capitaine et synchronisation OpenCollective (`zen_credit`, `oc_emission`) : voir le guide.
+
 ## astroportd 1.0.0 — fin des ponts avec Astroport.ONE
 
 Aucun compte existant n'est repris : ces retraits **cassent la lecture des anciennes données**.

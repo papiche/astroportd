@@ -64,6 +64,10 @@ pub struct DavConfig {
     pub on_login: Option<LoginHook>,
     /// Passerelle de compatibilité `GET /ipfs/<cid>` (clients historiques) : désactivée par défaut, voir [`crate::share::ipfs_gateway`].
     pub ipfs_gateway: bool,
+    /// Rapatriement d'un blob public (image) absent chez les pairs du maillage, pour `GET /ipfs/<cid>` : voir [`crate::public`].
+    pub public_fetch: Option<crate::public::PublicFetch>,
+    /// Limite des rapatriements de `GET /ipfs/<cid>` sur des CID inconnus.
+    pub public_gate: crate::public::PullGate,
 }
 
 /// Rappel d'authentification réussie (voir [`DavConfig::on_login`]).
@@ -103,6 +107,8 @@ impl DavConfig {
             on_read_failure: None,
             on_login: None,
             ipfs_gateway: false,
+            public_fetch: None,
+            public_gate: crate::public::PullGate::default(),
         }
     }
 

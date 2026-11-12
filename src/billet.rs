@@ -186,6 +186,7 @@ pub struct Billets<C: Chain, P: PrimalSource> {
     recent: Mutex<HashMap<(IpAddr, bool), Vec<u64>>>,
     inflight: Mutex<HashSet<[u8; 32]>>,
     issuing: Option<Issuing>,
+    images: Option<Arc<crate::profile_image::PublicImages>>,
     retry_delay: Duration,
 }
 
@@ -205,13 +206,20 @@ pub struct Issuing {
 impl<C: Chain, P: PrimalSource> Billets<C, P> {
     /// Service pour la constellation `uplanet_name` ; `primal` : indexeur qui lit le premier émetteur d'un portefeuille.
     pub fn new(db: Arc<Db>, chain: Arc<C>, wallets: Arc<Wallets>, primal: Option<Arc<P>>, uplanet_name: String, activity: ActivityBus) -> Self {
-        Self { db, chain, wallets, primal, uplanet_name, activity, recent: Mutex::new(HashMap::new()), inflight: Mutex::new(HashSet::new()), issuing: None, retry_delay: Duration::from_secs(15) }
+        Self { db, chain, wallets, primal, uplanet_name, activity, recent: Mutex::new(HashMap::new()), inflight: Mutex::new(HashSet::new()), issuing: None, images: None, retry_delay: Duration::from_secs(15) }
     }
 
     /// Active la création de billets.
     #[must_use]
     pub fn with_issuing(mut self, issuing: Issuing) -> Self {
         self.issuing = Some(issuing);
+        self
+    }
+
+    /// Images publiques (blobs) où lire le fond et l'icône de l'émetteur, ici ou chez les pairs.
+    #[must_use]
+    pub fn with_public_images(mut self, images: Arc<crate::profile_image::PublicImages>) -> Self {
+        self.images = Some(images);
         self
     }
 
@@ -588,9 +596,8 @@ impl<C: Chain, P: PrimalSource> Billets<C, P> {
         let profile: Value = self.db.readers().read(move |c| Ok(c.query_row("SELECT content FROM nostr_events WHERE kind = 0 AND pubkey = ?1 ORDER BY created_at DESC LIMIT 1", [&h], |r| r.get::<_, String>(0)).optional()?)).await.ok().flatten().and_then(|c| serde_json::from_str(&c).ok()).unwrap_or(Value::Null);
         let load = |field: &'static str, kind: crate::profile_image::Kind| {
             let url = profile[field].as_str().unwrap_or("").to_owned();
-            let db = self.db.clone();
-            let hex = hex.to_owned();
-            async move { if url.is_empty() { None } else { crate::profile_image::data_uri(&db, &hex, &url, kind).await } }
+            let images = self.images.clone();
+            async move { if url.is_empty() { None } else { crate::profile_image::data_uri(images.as_deref(), &url, kind).await } }
         };
         json!({ "background": load("banner", crate::profile_image::Kind::Banner).await, "icon": load("picture", crate::profile_image::Kind::Picture).await })
     }
@@ -1209,13 +1216,15 @@ mod tests {
             image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(w, h, |x, y| image::Rgb([(x % 255) as u8, (y % 255) as u8, 9]))).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
             out
         };
-        use crate::profile_image::{Kind, normalize, store, url_for};
+        use crate::profile_image::{Kind, PublicImages, normalize, url_for};
         let secret = [0xAA; 32];
         let hex = astro_nostr_proto::pubkey_of(&secret).unwrap();
-        store(&r.db, &hex, Kind::Banner, normalize(&img(1600, 500), Kind::Banner).unwrap(), 3).await.unwrap();
-        store(&r.db, &hex, Kind::Picture, normalize(&img(200, 200), Kind::Picture).unwrap(), 3).await.unwrap();
-        // Le profil (kind 0) de l'émetteur pointe vers ces deux images, hébergées par la station.
-        let profile = json!({ "name": "Émetteur", "banner": url_for("https://station.exemple", &hex, Kind::Banner, 3), "picture": url_for("https://station.exemple", &hex, Kind::Picture, 3) });
+        let images = Arc::new(PublicImages::new(r.db.clone(), Arc::new(astro_dav::FsBlobStore::open(r.dir.join("blobs")).unwrap()), None, None));
+        let svc = svc.with_public_images(images.clone());
+        let banner = images.put(&hex, normalize(&img(1600, 500), Kind::Banner).unwrap()).await.unwrap();
+        let icon = images.put(&hex, normalize(&img(200, 200), Kind::Picture).unwrap()).await.unwrap();
+        // Le profil (kind 0) de l'émetteur pointe vers ces deux images (blobs publics, adressées par leur CID).
+        let profile = json!({ "name": "Émetteur", "banner": url_for("https://station.exemple", &banner), "picture": url_for("https://station.exemple", &icon) });
         let ev = UnsignedEvent { created_at: 10, kind: 0, tags: vec![], content: profile.to_string() }.sign(&secret).unwrap();
         r.db.writer().transaction(move |tx| astro_db::events::insert_event(tx, &ev).map(|_| ())).await.unwrap();
         let style = svc.issuer_style(&hex).await;

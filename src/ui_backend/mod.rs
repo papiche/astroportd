@@ -87,6 +87,8 @@ pub struct StationUi<B: BlobStore> {
     constellation: Option<ConstellationFn>,
     charter: Option<CharterFn>,
     billet: Option<BilletFn>,
+    /// Versement de Ẑen par le Capitaine (même forme d'appel que les billets).
+    zen_credit: Option<BilletFn>,
     site: Option<Arc<crate::public_site::Site<B>>>,
     admin: Option<AdminFn>,
     console: Option<Arc<crate::console::Consoles>>,
@@ -183,7 +185,7 @@ pub type SendFn = Arc<dyn Fn(String, Vec<String>, Vec<String>) -> std::pin::Pin<
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, replicate_fn: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, site: None, admin: None, console: None, account: None, contacts: None, invites: None, welcome: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, stations: None, feedback: None, oc: None, setup: None, conf_path: None, planes_home: None, unit_exe: None, ai: None, book: None, chat: None, people: None, ice: (None, None, Vec::new()), presence: None }
+        Self { services, dav, memory, ollama, faces_enabled, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, replicate_fn: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, zen_credit: None, site: None, admin: None, console: None, account: None, contacts: None, invites: None, welcome: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, stations: None, feedback: None, oc: None, setup: None, conf_path: None, planes_home: None, unit_exe: None, ai: None, book: None, chat: None, people: None, ice: (None, None, Vec::new()), presence: None }
     }
 
     /// Annuaire des clés d'une même personne dans plusieurs UPlanet.
@@ -315,6 +317,12 @@ impl<B: BlobStore> StationUi<B> {
         self
     }
 
+    /// Active le versement de Ẑen par le Capitaine.
+    pub fn with_zen_credit(mut self, f: BilletFn) -> Self {
+        self.zen_credit = Some(f);
+        self
+    }
+
     /// Active l'envoi de fichiers à des proches.
     pub fn with_sharing(mut self, friends: FriendsFn, send: SendFn) -> Self {
         self.friends_fn = Some(friends);
@@ -390,7 +398,7 @@ impl<B: BlobStore> StationUi<B> {
         astro_ui::api::Routes::new(activity, public_origin)
             .ucloud(Arc::new(UcloudBackend { services: self.services.clone(), dav: self.dav.clone(), friends_fn: self.friends_fn.clone(), backup: self.backup.clone(), replicate_fn: self.replicate_fn.clone(), site: self.site.clone(), pull: self.pull.clone(), organize: self.organize.clone(), send_fn: self.send_fn.clone() }))
             .faces(Arc::new(FacesBackend { services: self.services.clone(), dav: self.dav.clone(), faces_enabled: self.faces_enabled, thumbs_fn: self.thumbs_fn.clone(), pending_fn: self.pending_fn.clone(), contacts: self.contacts.clone(), board: self.board, book: self.book.clone() }))
-            .coop(Arc::new(CoopBackend { services: self.services.clone(), dav: self.dav.clone(), coop: self.coop.clone(), constellation: self.constellation.clone(), charter: self.charter.clone(), billet: self.billet.clone(), stations: self.stations.clone(), oc: self.oc.clone() }))
+            .coop(Arc::new(CoopBackend { services: self.services.clone(), dav: self.dav.clone(), coop: self.coop.clone(), constellation: self.constellation.clone(), charter: self.charter.clone(), billet: self.billet.clone(), zen_credit: self.zen_credit.clone(), stations: self.stations.clone(), oc: self.oc.clone() }))
             .social(Arc::new(SocialBackend { services: self.services.clone(), dav: self.dav.clone(), memory: self.memory.clone(), contacts: self.contacts.clone(), agents: self.agents.clone(), ai: self.ai.clone(), book: self.book.clone(), chat: self.chat.clone(), ice: self.ice.clone(), presence: self.presence.clone(), people: self.people.clone() }))
             .account(Arc::new(AccountBackend { services: self.services.clone(), dav: self.dav.clone(), billet: self.billet.clone(), site: self.site.clone(), account: self.account.clone(), registrar: self.registrar.clone(), feedback: self.feedback.clone(), ai: self.ai.clone() }))
             .onboarding(Arc::new(OnboardBackend { services: self.services.clone(), dav: self.dav.clone(), backup: self.backup.clone(), invites: self.invites.clone(), welcome: self.welcome.clone(), registrar: self.registrar.clone(), stations: self.stations.clone(), setup: self.setup.clone() }))

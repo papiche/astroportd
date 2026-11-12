@@ -49,7 +49,7 @@ pub const SECTIONS: &[Section] = &[
     Section { id: "fiscal", title: "Paramètres fiscaux", keys: &["TVA_RATE", "IS_RATE_REDUCED", "IS_RATE_NORMAL", "IS_THRESHOLD"], level: "experts" },
     Section { id: "shares", title: "Parts coopératives", keys: &["ZENCARD_SATELLITE", "ZENCARD_CONSTELLATION", "PAF", "NCARD", "ZCARD"], level: "experts" },
     Section { id: "3x13", title: "Règle 3×1/3 + 1 %", keys: &["TREASURY_PERCENT", "RND_PERCENT", "ASSETS_PERCENT", "CAPTAIN_BONUS_PERCENT"], level: "experts" },
-    Section { id: "oc", title: "OpenCollective", keys: &["OCSLUG", "OCAPIKEY", "OC_URL_CLOUD", "OC_URL_MEMBRE", "OC_URL_SATELLITE", "OC_URL_CONSTELLATION"], level: "services" },
+    Section { id: "oc", title: "OpenCollective", keys: &["OCSLUG", "OCAPIKEY", "OC_AUTO_CREDIT", "OC_URL_CLOUD", "OC_URL_MEMBRE", "OC_URL_SATELLITE", "OC_URL_CONSTELLATION"], level: "services" },
     Section { id: "tiers", title: "Routage des paliers", keys: &["TIER_SLUG_SATELLITE", "TIER_SLUG_CONSTELLATION", "TIER_SLUG_LABO", "TIER_SLUG_CLOUD"], level: "experts" },
     Section { id: "api", title: "Clés d'API", keys: &["PLANTNET_API_KEY", "GIT_HOST", "GIT_TOKEN", "GIT_OWNER"], level: "services" },
     Section { id: "mj", title: "Mailjet", keys: &["MJ_APIKEY_PUBLIC", "MJ_APIKEY_PRIVATE", "MJ_SENDER_EMAIL"], level: "services" },
@@ -147,6 +147,9 @@ pub fn validate(key: &str, value: &str) -> Result<(), String> {
     }
     if (key.starts_with("OC_URL_") || key == "GIT_HOST") && !value.starts_with("https://") {
         return Err(format!("{key} : une adresse https:// est attendue"));
+    }
+    if key == "OC_AUTO_CREDIT" && !matches!(value, "0" | "1") {
+        return Err(format!("{key} : 1 (la station crédite seule les dons OpenCollective) ou 0 (le Capitaine confirme)"));
     }
     if key == "P2P_RELAYS" {
         parse_relays(value)?;

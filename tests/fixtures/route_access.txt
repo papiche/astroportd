@@ -1,3 +1,4 @@
+DELETE /api/v1/account/images/{cid} anon=401 member=400
 DELETE /api/v1/invites/{token} anon=401 member=404
 GET /.well-known/acme-challenge/{token} anon=404 member=404
 GET /.well-known/nostr/nip96.json anon=200 member=200
@@ -6,6 +7,7 @@ GET /12345/ anon=200 member=200
 GET /UPLANET/G1HEX anon=200 member=200
 GET /UPLANET/HEX anon=200 member=200
 GET /api/v1/account anon=401 member=200
+GET /api/v1/account/images anon=401 member=200
 GET /api/v1/account/oc anon=401 member=200
 GET /api/v1/account/site anon=401 member=200
 GET /api/v1/activity anon=401 member=200
@@ -44,7 +46,6 @@ GET /api/v1/me/footprint anon=401 member=200
 GET /api/v1/me/links anon=401 member=200
 GET /api/v1/organize anon=401 member=501
 GET /api/v1/presence anon=401 member=501
-GET /api/v1/profile/{hex}/{file} anon=404 member=404
 GET /api/v1/public/images anon=401 member=200
 GET /api/v1/pull anon=401 member=501
 GET /api/v1/register anon=200 member=200
@@ -59,6 +60,7 @@ GET /api/v1/station/economy anon=401 member=403
 GET /api/v1/station/energy anon=401 member=403
 GET /api/v1/station/fuel anon=401 member=403
 GET /api/v1/station/hosting anon=401 member=403
+GET /api/v1/station/oc/donations anon=401 member=403
 GET /api/v1/station/planes anon=401 member=403
 GET /api/v1/station/welcome anon=401 member=403
 GET /api/v1/stations anon=200 member=200
@@ -127,6 +129,9 @@ POST /api/v1/invites anon=401 member=400
 POST /api/v1/invites/remote-accept anon=401 member=422
 POST /api/v1/me/ai anon=401 member=200
 POST /api/v1/me/links anon=401 member=200
+POST /api/v1/me/zen/preview anon=401 member=501
+POST /api/v1/me/zen/recipients anon=401 member=501
+POST /api/v1/me/zen/send anon=401 member=501
 POST /api/v1/organize/preview anon=401 member=501
 POST /api/v1/organize/run anon=401 member=501
 POST /api/v1/organize/stop anon=401 member=501
@@ -149,12 +154,16 @@ POST /api/v1/station/admin/{section} anon=401 member=403
 POST /api/v1/station/coop anon=401 member=403
 POST /api/v1/station/domain anon=401 member=403
 POST /api/v1/station/hosting anon=401 member=403
+POST /api/v1/station/oc/sync anon=401 member=403
 POST /api/v1/station/planes anon=401 member=403
 POST /api/v1/station/planes/remove anon=401 member=403
 POST /api/v1/station/planes/service anon=401 member=403
 POST /api/v1/station/restart anon=401 member=403
 POST /api/v1/station/welcome anon=401 member=403
 POST /api/v1/station/welcome/{token}/revoke anon=401 member=403
+POST /api/v1/station/zen-credit/preview anon=401 member=403
+POST /api/v1/station/zen-credit/recipients anon=401 member=403
+POST /api/v1/station/zen-credit/send anon=401 member=403
 POST /api/v1/ucloud/have anon=401 member=422
 POST /api/v1/ucloud/rotate anon=401 member=422
 POST /api/v1/ucloud/send anon=401 member=422

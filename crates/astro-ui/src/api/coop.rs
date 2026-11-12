@@ -45,6 +45,10 @@ pub trait CoopApi: Auth {
     fn charter_accept(&self, _who: &Principal, _sha256: &str) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("acceptation de la charte non disponible sur cette station")) }
     }
+    /// Versement de Ẑen par le Capitaine : `op` = `recipients`, `preview` (devis) ou `send` (confirmé) ; réservé au Capitaine.
+    fn zen_credit(&self, _who: &Principal, _op: &'static str, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("versement de Ẑen non disponible sur cette station")) }
+    }
     /// Autorise (ou retire) un MULTIPASS hébergé à créer des Ğ1Billets (Capitaine).
     fn account_billet_issuer(&self, _who: &Principal, _hex: String, _allowed: bool) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("Ğ1Billets non disponibles sur cette station")) }
@@ -98,6 +102,14 @@ pub(super) fn routes<B: CoopApi>() -> Router<Arc<UiState<B>>> {
         .route("/api/v1/billet/issue", post(billet_issue::<B>))
         .route("/api/v1/billet/fund", post(billet_fund::<B>))
         .route("/api/v1/billet/issued", get(billet_issued::<B>))
+        .route("/api/v1/station/zen-credit/recipients", post(zen_credit_recipients::<B>))
+        .route("/api/v1/station/zen-credit/preview", post(zen_credit_preview::<B>))
+        .route("/api/v1/station/zen-credit/send", post(zen_credit_send::<B>))
+        .route("/api/v1/me/zen/recipients", post(member_zen_recipients::<B>))
+        .route("/api/v1/me/zen/preview", post(member_zen_preview::<B>))
+        .route("/api/v1/me/zen/send", post(member_zen_send::<B>))
+        .route("/api/v1/station/oc/donations", get(oc_donations::<B>))
+        .route("/api/v1/station/oc/sync", post(oc_sync::<B>))
         .route("/api/v1/station/constellation", get(constellation::<B>))
         .route("/api/v1/station/economy", get(economy::<B>))
         .route("/api/v1/station/fuel", get(fuel::<B>))
@@ -223,6 +235,38 @@ async fn billet_issue<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Authed(p): 
 
 async fn billet_fund<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
     no_store(reply(st.backend.billet_fund(&p, body).await))
+}
+
+async fn zen_credit_recipients<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
+    no_store(reply(st.backend.zen_credit(&p, "recipients", Value::Null).await))
+}
+
+async fn zen_credit_preview<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Json(body): Json<Value>) -> Response {
+    no_store(reply(st.backend.zen_credit(&p, "preview", body).await))
+}
+
+async fn zen_credit_send<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Json(body): Json<Value>) -> Response {
+    no_store(reply(st.backend.zen_credit(&p, "send", body).await))
+}
+
+async fn member_zen_recipients<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {
+    no_store(reply(st.backend.zen_credit(&p, "member_recipients", Value::Null).await))
+}
+
+async fn member_zen_preview<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    no_store(reply(st.backend.zen_credit(&p, "member_preview", body).await))
+}
+
+async fn member_zen_send<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    no_store(reply(st.backend.zen_credit(&p, "member_send", body).await))
+}
+
+async fn oc_donations<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
+    no_store(reply(st.backend.zen_credit(&p, "oc_status", Value::Null).await))
+}
+
+async fn oc_sync<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Json(body): Json<Value>) -> Response {
+    no_store(reply(st.backend.zen_credit(&p, "oc_sync", body).await))
 }
 
 async fn billet_issued<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed) -> Response {

@@ -73,6 +73,7 @@ pub struct AccountService {
     station_secret: Vec<u8>,
     publish: PublishFn,
     public_base: Option<String>,
+    images: Option<Arc<crate::profile_image::PublicImages>>,
     exports: Mutex<HashMap<String, Vec<u64>>>,
     activity: Option<ActivityBus>,
     unlocks: Mutex<HashMap<IpAddr, Vec<u64>>>,
@@ -108,7 +109,13 @@ fn clean(field: &str, value: &Value, max: usize) -> Result<Option<String>, Accou
 impl AccountService {
     /// `nostr_root` : dossier des comptes (`<racine>/<email>/.secret.nostr`).
     pub fn new(db: Arc<Db>, nostr_root: PathBuf, keys: Arc<dyn KeySource>, station_secret: Vec<u8>, publish: PublishFn, public_base: Option<String>) -> Self {
-        Self { db, nostr_root, keys, station_secret, publish, public_base, exports: Mutex::default(), activity: None, unlocks: Mutex::default(), signs: Mutex::default(), pass_gate: tokio::sync::Mutex::new(()) }
+        Self { db, nostr_root, keys, station_secret, publish, public_base, images: None, exports: Mutex::default(), activity: None, unlocks: Mutex::default(), signs: Mutex::default(), pass_gate: tokio::sync::Mutex::new(()) }
+    }
+
+    /// Magasin des images publiques : sans lui, la station ne peut pas recevoir d'image de profil.
+    pub fn with_public_images(mut self, images: Arc<crate::profile_image::PublicImages>) -> Self {
+        self.images = Some(images);
+        self
     }
 
     /// Flux d'activité : le Capitaine et le titulaire sont prévenus d'un verrouillage du PASS.
@@ -154,7 +161,7 @@ impl AccountService {
         let wallet = email.as_deref().and_then(|e| std::fs::read_to_string(self.dir_of(e).join(".secret.dunikey")).ok()).and_then(|t| astro_lifecycle::dunikey::Dunikey::parse(&t).ok()).map(|d| astro_duniter::Ed25519Signer::from_seed(*d.ed25519_seed()).account().ss58());
         Ok(json!({
             "hex": hex, "npub": npub.or_else(|| npub_of(hex)), "email": email, "role": role, "wallet": wallet, "g1pub": g1, "home_station": home, "lang": lang, "langs": LANGS,
-            "profile": { "name": profile["name"], "about": profile["about"], "picture": profile["picture"], "banner": profile["banner"] },
+            "profile": { "name": profile["name"], "about": profile["about"], "picture": profile["picture"], "banner": profile["banner"], "picture_cid": profile["picture_cid"], "banner_cid": profile["banner_cid"] },
             "dav": { "url": format!("{}/dav", self.public_base.as_deref().unwrap_or("").trim_end_matches('/')), "login": login },
             "guest": self.is_guest(hex).await, "token_generation": epoch, "keys_exportable": has_dunikey || email.is_some(), "has_g1_key": has_dunikey, "relays": relays,
         }))
@@ -340,9 +347,10 @@ impl AccountService {
         let raw = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|_| AccountError::Invalid("image : base64 attendu".into()))?;
         let jpeg = crate::profile_image::normalize(&raw, kind).map_err(AccountError::Invalid)?;
         let base = self.public_base.clone().filter(|b| b.starts_with("https://")).or_else(|| origin.filter(|o| o.starts_with("https://") && !o[8..].contains(['/', ' ', '?', '#'])).map(str::to_owned)).ok_or_else(|| AccountError::Invalid("adresse publique de la station inconnue (https:// requis)".into()))?;
-        let at = now();
-        crate::profile_image::store(&self.db, hex, kind, jpeg, at).await.map_err(internal)?;
-        let url = crate::profile_image::url_for(&base, hex, kind, at);
+        let images = self.images.as_ref().ok_or_else(|| AccountError::Invalid("images de profil non disponibles sur cette station".into()))?;
+        // Blob public (CID brut, en clair, sans EXIF puisque réencodé) : toute station amie peut le servir et le rapatrier.
+        let cid = images.put(hex, jpeg).await.map_err(AccountError::Invalid)?;
+        let url = crate::profile_image::url_for(&base, &cid);
         self.update_profile(hex, &json!({ kind.name(): url })).await
     }
 
@@ -392,6 +400,18 @@ impl AccountService {
                     }
                     Some(v) => content[key] = json!(v),
                     None => {}
+                }
+            }
+            // `picture_cid` / `banner_cid` : le CID de l'image, pour que les clients (et les stations amies) la retrouvent chez n'importe
+            // quelle passerelle si l'adresse de la station d'origine ne répond plus.
+            for (key, value) in [("picture_cid", &patch["picture"]), ("banner_cid", &patch["banner"])] {
+                if let Some(url) = value.as_str() {
+                    match crate::profile_image::cid_of(url) {
+                        Some(cid) => content[key] = json!(cid),
+                        None => {
+                                            content.as_object_mut().map(|o| o.remove(key));
+                        }
+                    }
                 }
             }
             // Remplaçable : l'horodatage doit dépasser celui du profil précédent.
@@ -476,7 +496,8 @@ mod tests {
                 db.writer().transaction(move |tx| astro_db::events::insert_event(tx, &e).map(|_| ())).await.map_err(|e| e.to_string())
             })
         });
-        let svc = AccountService::new(db, dir.join("nostr"), Arc::new(StaticKeySource::new().with(SECRET)), b"secret-station".to_vec(), publish, Some("https://station.example".into()));
+        let images = Arc::new(crate::profile_image::PublicImages::new(db.clone(), Arc::new(astro_dav::FsBlobStore::open(dir.join("blobs")).unwrap()), None, None));
+        let svc = AccountService::new(db, dir.join("nostr"), Arc::new(StaticKeySource::new().with(SECRET)), b"secret-station".to_vec(), publish, Some("https://station.example".into())).with_public_images(images);
         (dir, svc, hex, sent)
     }
 
@@ -511,9 +532,12 @@ mod tests {
         let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
         let v = svc.set_image(&hex, "banner", &b64, None).await.unwrap();
         let url = v["profile"]["banner"].as_str().unwrap();
-        assert!(url.starts_with(&format!("https://station.example/api/v1/profile/{hex}/banner.jpg?v=")), "{url}");
-        let kept = crate::profile_image::load(&svc.db, &hex, crate::profile_image::Kind::Banner).await.unwrap();
+        let cid = crate::profile_image::cid_of(url).unwrap();
+        assert_eq!(url, format!("https://station.example/ipfs/{cid}"), "{url}");
+        assert_eq!(v["profile"]["banner_cid"], cid, "le CID est aussi publié dans le profil");
+        let kept = svc.images.as_ref().unwrap().get(cid).await.unwrap();
         assert_eq!(image::load_from_memory(&kept).unwrap().width(), 1200, "réduite à la taille du bandeau");
+        assert_eq!(astro_dav::public::mime_of(&svc.db, cid).await.as_deref(), Some("image/jpeg"), "inscrite comme blob public");
         let ev = sent.lock().unwrap().last().unwrap().clone();
         assert!(ev.kind == 0 && ev.verify().is_ok() && ev.content.contains("\"banner\""));
         for (kind, data) in [("avatar", b64.as_str()), ("banner", "pas du base64 !"), ("banner", "aGVsbG8=")] {

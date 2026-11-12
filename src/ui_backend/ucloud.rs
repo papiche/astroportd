@@ -40,23 +40,20 @@ impl<B: BlobStore> UcloudApi for UcloudBackend<B> {
         use sha2::{Digest, Sha256};
         // Deux images décodées à la fois au plus : le décodage est du processeur, et la station a d'autres métiers.
         static BUSY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
-        let email = who.email.clone().ok_or_else(|| ApiError::bad_request("ce compte n'a pas de dossier public : envoi impossible"))?;
-        if self.site.is_none() {
-            return Err(ApiError::unavailable("site public non activé sur cette station"));
-        }
         let _permit = BUSY.try_acquire().map_err(|_| ApiError::too_many("des images sont en cours de traitement : réessayez dans un instant"))?;
         let original = hex::encode(Sha256::digest(&data));
         let prepared = tokio::task::spawn_blocking(move || crate::upload_image::normalize(&data)).await.map_err(|e| ApiError::internal(e.to_string()))?.map_err(ApiError::bad_request)?;
-        let name = format!("{}.{}", &prepared.sha256[..32], prepared.ext);
+        // Une seule copie, **publique et en clair** (CID brut) : servie à `/ipfs/<cid>` par toute station qui l'a vue passer ou qui la
+        // rapatrie chez ses pairs, de sorte qu'un post Nostr qui cite l'adresse reste lisible si cette station s'éteint. Ses octets
+        // entament le quota du membre (`vfs::used_bytes`) : pas de volume caché, et un refus net quand le quota est atteint.
+        let account = astro_dav::auth::lookup_by_hex(&self.services.db, &who.hex).await.ok_or_else(|| ApiError::not_found("compte non hébergé ici"))?;
+        let quota = self.dav.config.limits_for(&account).quota_total;
+        let cid = astro_dav::public::put(&self.dav.db, self.dav.blobs.as_ref(), &prepared.data, prepared.mime, Some(astro_dav::public::Owner { hex: &who.hex, quota })).await.map_err(ApiError::bad_request)?;
         let size = prepared.data.len();
-        astro_dav::ingest::replace(&self.dav, &who.hex, "/Public/uploads", &name, Some(prepared.mime), std::io::Cursor::new(prepared.data)).await.map_err(|e| match e {
-            astro_dav::ingest::IngestError::TooLarge(m) => ApiError::bad_request(m),
-            other => ApiError::internal(other.to_string()),
-        })?;
-        let url = format!("{}/site/{}/uploads/{name}", self.public_origin(&host), crate::public_site::name_of(&email));
+        let url = format!("{}/ipfs/{cid}", self.public_origin(&host));
         // Réponse NIP-96 (`nip94_event`), plus `url` à la racine : c'est ce que lisent les clients historiques.
         Ok(json!({
-            "status": "success", "message": "Upload successful.", "url": url,
+            "status": "success", "message": "Upload successful.", "url": url, "cid": cid,
             "nip94_event": { "tags": [["url", url], ["ox", original], ["x", prepared.sha256], ["m", prepared.mime], ["size", size.to_string()]], "content": "" },
         }))
     }

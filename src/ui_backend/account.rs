@@ -115,7 +115,7 @@ impl<B: BlobStore> AccountApi for AccountBackend<B> {
             .db
             .readers()
             .read(move |c| {
-                Ok(c.query_row("SELECT COALESCE(SUM(size), 0), COUNT(*) FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file'", [&owner], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?)
+                Ok(c.query_row("SELECT COALESCE(SUM(size), 0) + COALESCE((SELECT SUM(size) FROM public_blobs WHERE owner = ?1), 0), COUNT(*) FROM ucloud_entries WHERE owner_hex = ?1 AND type = 'file'", [&owner], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?)
             })
             .await
             .map_err(db_err)?;
@@ -154,8 +154,47 @@ impl<B: BlobStore> AccountApi for AccountBackend<B> {
         };
         svc.set_image(&who.hex, kind, data, body["origin"].as_str()).await.map_err(account_error)
     }
-    async fn profile_image(&self, hex: &str, kind: &str) -> Option<Vec<u8>> {
-        crate::profile_image::load(&self.services.db, hex, crate::profile_image::Kind::parse(kind)?).await
+    async fn public_images(&self, who: &Principal) -> Result<Value, ApiError> {
+        let (db, hex) = (self.services.db.clone(), who.hex.clone());
+        let account = astro_dav::auth::lookup_by_hex(&db, &hex).await.ok_or_else(|| ApiError::not_found("compte non hébergé ici"))?;
+        let quota = self.dav.config.limits_for(&account).quota_total;
+        let h = hex.clone();
+        let (rows, used, profile) = db
+            .readers()
+            .read(move |c| {
+                let mut st = c.prepare("SELECT cid, mime, size, added_at FROM public_blobs WHERE owner = ?1 ORDER BY added_at DESC, cid LIMIT 500")?;
+                let rows = st.query_map([&h], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?)))?.collect::<Result<Vec<_>, _>>()?;
+                let used = astro_dav::vfs::used_bytes(c, &h).map_err(|_| astro_db::DbError::Aborted)?;
+                let profile: Option<String> = rusqlite::OptionalExtension::optional(c.query_row("SELECT content FROM nostr_events WHERE kind = 0 AND pubkey = ?1 ORDER BY created_at DESC LIMIT 1", [&h], |r| r.get(0)))?;
+                Ok((rows, used, profile))
+            })
+            .await
+            .map_err(db_err)?;
+        let profile: Value = profile.and_then(|c| serde_json::from_str(&c).ok()).unwrap_or(Value::Null);
+        let in_use = |cid: &str| -> Option<&'static str> {
+            [("picture", "picture_cid"), ("banner", "banner_cid")].into_iter().find(|(url, cidf)| profile[*cidf].as_str() == Some(cid) || profile[*url].as_str().and_then(crate::profile_image::cid_of) == Some(cid)).map(|(k, _)| k)
+        };
+        let images: Vec<Value> = rows.iter().map(|(cid, mime, size, at)| json!({ "cid": cid, "mime": mime, "size": size, "added_at": at, "in_use": in_use(cid) })).collect();
+        Ok(json!({ "images": images, "used": used, "quota": quota }))
+    }
+    async fn public_image_delete(&self, who: &Principal, cid: String) -> Result<Value, ApiError> {
+        if !astro_dav::blob::is_cid(&cid) {
+            return Err(ApiError::bad_request("image inconnue"));
+        }
+        let listing = self.public_images(who).await?;
+        let Some(image) = listing["images"].as_array().and_then(|a| a.iter().find(|i| i["cid"] == cid.as_str())) else { return Err(ApiError::not_found("image inconnue")) };
+        if let Some(role) = image["in_use"].as_str() {
+            return Err(ApiError::bad_request(if role == "banner" { "cette image est votre bandeau : changez d'abord de bandeau" } else { "cette image est votre photo de profil : changez d'abord de photo" }));
+        }
+        // La ligne d'abord (le quota est libéré et la passerelle cesse de la servir), puis les octets.
+        let done = self.services.db.writer().execute("DELETE FROM public_blobs WHERE cid = ?1 AND owner = ?2", vec![cid.clone().into(), who.hex.clone().into()]).await.map_err(db_err)?;
+        if done.changes == 0 {
+            return Err(ApiError::not_found("image inconnue"));
+        }
+        if let Err(e) = self.dav.blobs.remove(&cid).await {
+            eprintln!("interface : image publique retirée mais octets non supprimés : {e}");
+        }
+        Ok(json!({ "removed": cid }))
     }
     async fn account_profile(&self, who: &Principal, patch: Value) -> Result<Value, ApiError> {
         self.account_service()?.update_profile(&who.hex, &patch).await.map_err(account_error)
@@ -231,7 +270,7 @@ impl<B: BlobStore> AccountApi for AccountBackend<B> {
             .readers()
             .read(|c| {
                 let mut stmt = c.prepare(
-                    "SELECT i.hex, i.role, i.email, i.contract, (SELECT value FROM kv WHERE scope = 'lifecycle' AND key = i.hex),                             COALESCE((SELECT SUM(size) FROM ucloud_entries e WHERE e.owner_hex = i.hex AND e.type = 'file'), 0),                             (SELECT COUNT(*) FROM ucloud_entries e WHERE e.owner_hex = i.hex AND e.type = 'file')                      FROM identities i WHERE i.hosted = 1 AND i.role IN ('multipass', 'captain', 'zencard') ORDER BY i.email, i.hex",
+                    "SELECT i.hex, i.role, i.email, i.contract, (SELECT value FROM kv WHERE scope = 'lifecycle' AND key = i.hex),                             COALESCE((SELECT SUM(size) FROM ucloud_entries e WHERE e.owner_hex = i.hex AND e.type = 'file'), 0) + COALESCE((SELECT SUM(size) FROM public_blobs p WHERE p.owner = i.hex), 0),                             (SELECT COUNT(*) FROM ucloud_entries e WHERE e.owner_hex = i.hex AND e.type = 'file')                      FROM identities i WHERE i.hosted = 1 AND i.role IN ('multipass', 'captain', 'zencard') ORDER BY i.email, i.hex",
                 )?;
                 let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?.collect::<Result<Vec<_>, _>>()?;
                 Ok(rows)

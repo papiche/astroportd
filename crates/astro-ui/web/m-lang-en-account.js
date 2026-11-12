@@ -92,4 +92,11 @@ export default {
 "Révoquer « {0} » ? Son jeton cesse de fonctionner tout de suite ; ce qu'il a déposé reste dans votre uCloud.": "Revoke “{0}”? Its token stops working immediately; what it uploaded stays in your uCloud.",
 "Appareil révoqué": "Device revoked",
 "Révoquer : sa sauvegarde sera supprimée de votre espace.": "Revoke: its backup will be deleted from your space.",
+"Mes images publiques": "My public images",
+"Images que vous avez publiées (photo de profil, bandeau, images envoyées depuis un client Nostr). Elles sont lisibles par tout le monde et comptent dans votre espace : {0} utilisés sur {1}. En retirer une libère de la place ; les publications qui la montrent ne l’afficheront plus.": "Images you have published (profile picture, banner, images sent from a Nostr client). Anyone can read them and they count against your space: {0} used out of {1}. Removing one frees space; posts that show it will no longer display it.",
+"Utilisée comme bandeau": "Used as banner",
+"Utilisée comme photo de profil": "Used as profile picture",
+"Image retirée": "Image removed",
+"Retirer cette image ? Elle ne s’affichera plus dans vos publications.": "Remove this image? It will no longer display in your posts.",
+"Aucune image publiée pour l’instant.": "No image published yet.",
 };
