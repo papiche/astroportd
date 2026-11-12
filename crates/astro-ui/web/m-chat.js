@@ -5,7 +5,6 @@
 export default async function chat(root, K, query) {
   const { h, t, api } = K;
   for (const f of ['m-book.css', 'm-chat.css']) { const l = h('link', { rel: 'stylesheet', href: '/ui/' + f }); document.head.append(l); K.cleanup(() => l.remove()); }
-  let here = ''; // UPlanet de cette interface, connue par l'annuaire
   const s = { peer: null, label: '', convs: [], msgs: [], more: false, open: false };
   const list = h('ul', { class: 'ab-list', role: 'listbox', 'aria-label': t('Conversations') }), thread = h('div', { class: 'ch-thread', role: 'log', 'aria-live': 'polite' });
   const detail = h('section', { class: 'ab-detail ch-detail' }), main = h('div', { class: 'ab' });
@@ -25,12 +24,11 @@ export default async function chat(root, K, query) {
   const hour = at => new Date(at * 1000).toLocaleTimeString('fr', { hour: '2-digit', minute: '2-digit' });
 
   async function loadList() {
-    try { const r = await api('/api/v1/chat'); s.convs = r.conversations; here = r.plane || ''; } catch (e) { list.replaceChildren(h('li', { class: 'err', role: 'alert' }, e.message)); return; }
+    try { const r = await api('/api/v1/chat'); s.convs = r.conversations; } catch (e) { list.replaceChildren(h('li', { class: 'err', role: 'alert' }, e.message)); return; }
     list.replaceChildren(...s.convs.map(c => h('li', { role: 'option', 'aria-selected': String(c.peer === s.peer), class: c.peer === s.peer ? 'on' : '' },
       h('button', { type: 'button', class: 'ab-item', onclick: () => openConv(c.peer, c.label) },
         h('span', { class: 'ab-av' }, initial(c.label), dot(c.peer)),
-        h('span', { class: 'ab-name' }, h('strong', {}, c.label), h('small', { class: 'muted' }, (c.mine ? t('Vous : ') : '') + c.last),
-          here && (c.channels.length > 1 || c.plane !== here) ? h('small', { class: 'ch-planes' }, [...new Set(c.channels.map(x => x.plane))].map(p => h('span', { class: 'pill' + (p === here ? ' ok' : '') }, p + (c.channels.some(x => x.plane === p && x.unread) ? ' ●' : '')))) : null),
+        h('span', { class: 'ab-name' }, h('strong', {}, c.label), h('small', { class: 'muted' }, (c.mine ? t('Vous : ') : '') + c.last)),
         h('span', { class: 'ch-meta' }, h('small', { class: 'muted' }, hour(c.at)), c.unread ? h('span', { class: 'ch-badge', 'aria-label': t('{0} non lu(s)', c.unread) }, String(c.unread)) : null)))));
     if (!s.convs.length) list.replaceChildren(h('li', { class: 'muted ab-empty' }, t('Aucune conversation. Choisissez un proche pour écrire le premier message.')));
     K.chatUnread?.(s.convs.reduce((n, c) => n + c.unread, 0));

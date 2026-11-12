@@ -413,40 +413,13 @@ impl<B: BlobStore> Invites<B> {
             .map_err(internal)?;
         let Some((owner, label, email, contact_path, items, created_at, expires_at, opened_at, claimed_at, claimed_by, revoked_at)) = raw else { return Ok(None) };
         let parsed: Value = serde_json::from_str(&items).map_err(|e| internal(format!("invitation illisible : {e}")))?;
-        // Ancien format : un tableau de fichiers. Format courant : `{ items, person, paths }`.
-        let (list, person, paths) = match &parsed {
-            Value::Array(_) => (parsed.clone(), None, Vec::new()),
-            obj => (obj["items"].clone(), obj["person"].as_str().map(str::to_owned), obj["paths"].as_array().map(|a| a.iter().filter_map(|p| p.as_str().map(str::to_owned)).collect()).unwrap_or_default()),
-        };
+        let (list, person, paths) = (
+            parsed["items"].clone(),
+            parsed["person"].as_str().map(str::to_owned),
+            parsed["paths"].as_array().map(|a| a.iter().filter_map(|p| p.as_str().map(str::to_owned)).collect()).unwrap_or_default(),
+        );
         let items = serde_json::from_value(list).map_err(|e| internal(format!("invitation illisible : {e}")))?;
         Ok(Some(Row { owner, label, email, contact_path, items, person, paths, created_at, expires_at, opened_at, claimed_at, claimed_by, revoked_at }))
-    }
-
-    /// Nom sous lequel l'expéditeur se présente : son profil Nostr, sinon la partie locale de son email.
-    /// Migre les invitations **ancien format** (un tableau de fichiers figé à la création) encore ouvertes vers le format
-    /// courant `{ items, paths }`. Elles suivent alors le uCloud vivant comme les autres : un fichier supprimé entre-temps
-    /// sort de l'invitation au lieu d'être promis puis introuvable (son contenu a pu être libéré). Idempotent. Rend le
-    /// nombre d'invitations migrées.
-    pub async fn migrate_legacy(&self) -> Result<usize, InviteError> {
-        self.db
-            .writer()
-            .transaction(|tx| {
-                let rows: Vec<(String, String)> = tx
-                    .prepare("SELECT token, items FROM invites WHERE json_valid(items) AND json_type(items) = 'array' AND claimed_by IS NULL AND revoked_at IS NULL")?
-                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-                    .collect::<Result<_, _>>()?;
-                let mut n = 0;
-                for (token, items) in rows {
-                    let Ok(Value::Array(list)) = serde_json::from_str::<Value>(&items) else { continue };
-                    let paths: Vec<&str> = list.iter().filter_map(|i| i["path"].as_str()).collect();
-                    let current = json!({ "items": list, "person": null, "paths": paths });
-                    tx.execute("UPDATE invites SET items = ?2 WHERE token = ?1", rusqlite::params![token, current.to_string()])?;
-                    n += 1;
-                }
-                Ok(n)
-            })
-            .await
-            .map_err(internal)
     }
 
     /// Nom affiché d'un compte : son profil, sinon le début de son email (pour les liens d'accueil).
@@ -471,6 +444,7 @@ impl<B: BlobStore> Invites<B> {
         &self.registrar
     }
 
+    /// Nom sous lequel l'expéditeur se présente : son profil Nostr, sinon la partie locale de son email.
     async fn sender_name(&self, owner: &str) -> String {
         let o = owner.to_owned();
         self.db

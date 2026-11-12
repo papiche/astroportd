@@ -19,7 +19,7 @@ Conséquence sur le plan : il ne s'agit plus de « deux plans fixes » mais de *
 |---|---|---|---|
 | `UPLANETNAME` | 64 × `0` | dernière ligne de la `swarm.key` | idem |
 | Réseau | IPFS public par **Kubo** (clé `000…`) | **libp2p privé** (PSK) + protocole interne `astro-p2p::blob` | idem ZEN |
-| Blobs | Kubo (CID v1 `raw` ; anciens CID v0 en lecture) | disque + P2P interne : **UENC v2, blocs de 64 Kio**, `bafkrei…` ; **jamais Kubo** | idem ZEN |
+| Blobs | Kubo (CID v1 `raw`) | disque + P2P interne : **UENC v2, blocs de 64 Kio**, `bafkrei…` ; **jamais Kubo** | idem ZEN |
 | Clés d'un MULTIPASS | formule `isolated` : `PEPPER_<sha256(UPLANETNAME)[:16]>` | idem, d'où **d'autres clés** pour les mêmes `(SALT, PEPPER)` | idem |
 | Charte | règles ORIGIN (développement : 1 Zen = 0,1 Ğ1) | règles ZEN (1 ẐEN = 1 €) | règles propres (admission, savoirs…) |
 
@@ -71,7 +71,7 @@ Une station = une constellation, décidée au démarrage par `--swarm-key` :
 - **Bassin de blobs commun à la station.** Les blobs chiffrés vivent dans **un seul dossier adressé par contenu** (`~/.zen/astroportd/pool/`), lu par tous les plans ; chaque plan garde sa base (entrées, trousseau, événements). Un blob n'est supprimé que si **plus aucun plan ne le référence** (comptage de références : au moment du ramasse-miettes, la station interroge la base de chaque plan, jamais l'inverse). Seul ORIGIN y ajoute Kubo (I1).
 - **Routage HTTP.** Par nom d'hôte (`<plan>.<station>`) ou préfixe de chemin ; en test, un port par plan. Le plan est connu **avant** l'authentification : l'ambiguïté d'email disparaît par construction.
 - **Dossiers.** `~/.zen/astroportd/<plan>/{uplanet.db,blobs,charte.toml}` et `~/.zen/game/<plan>/nostr/<email>/` ; l'actuel `~/.zen/game` reste ORIGIN.
-- **Interface.** Un sélecteur de plan dans l'en-tête ; l'écran « Passerelles » (§7). **CLI** : `--plane <nom>` sur `multipass`, `token`, `import-ucloud`, `replay`, `doctor`.
+- **Interface.** Un sélecteur de plan dans l'en-tête ; l'écran « Passerelles » (§7). **CLI** : `--plane <nom>` sur `multipass`, `token`, `replay`, `doctor`.
 
 ## 5. La charte d'une UPlanet
 
@@ -121,7 +121,6 @@ Un fichier `charte.toml` par plan (et son empreinte publiée), lu au démarrage 
 
 **Premier jalon déjà là** : la reprise `astroportd pull-webdav` (uCloud › Sources) tire un dossier du WebDAV d'un autre serveur, y compris d'une autre station astroportd (testé entre deux instances). C'est la moitié « entrée » d'une règle de synchronisation entre UPlanet : une station peut tirer depuis le WebDAV de l'autre plan, avec la mémoire `pull_imported` pour ne rien reprendre deux fois.
 
-Cette même brique, appliquée **dans une seule UPlanet**, convertit les anciens blobs v1 (CID v0, lisibles seulement par Kubo) en blobs natifs : c'est ce qui permettra de les sauvegarder chez les amis et de les répliquer en P2P (aujourd'hui exclus, voir la reprise du uCloud).
 
 ## 8. Plan d'essai avec `fred@qwantic.com`
 
@@ -140,7 +139,7 @@ Mise en place : ORIGIN (existant, hex `71b4b56f…`), ZEN (`swarm.key` 64 × `1`
 | T9 | Règle révoquée | plus aucun transfert ; rien n'est supprimé |
 | T10 | Événement publié par le compte ZEN | absent du relai ORIGIN et de l'IPFS ; présent seulement chez un pair possédant la `swarm.key` |
 | T11 | Pair **sans** `swarm.key` sur le port P2P ZEN | poignée de main refusée |
-| T12 | Sauvegarde chez un ami, par plan | l'ami ne reçoit que des blobs natifs du plan ; aucun CID `Qm…` |
+| T12 | Sauvegarde chez un ami, par plan | l'ami ne reçoit que des blobs natifs du plan |
 | T13 | `replay` d'un plan | reconstruit ce plan seulement |
 | T14 | Arrêt de Kubo | ORIGIN dégradé (anciens fichiers illisibles), **les autres plans inchangés** |
 | T16 | **Station ZEN + ZEN** (`1…1` et `2…2`), **Kubo éteint** | démarrage normal ; T1, T2, T4, T5, T6, T7, T10 identiques ; aucune requête vers `127.0.0.1:5001` |
@@ -190,12 +189,11 @@ Décidé par Fred :
 Encore ouverts :
 1. **Annuaire ORIGIN des UPlanet.** Publier leur empreinte, nom et charte résumée sur ORIGIN pour qu'on les découvre ? (Une UPlanet privée peut refuser d'y figurer.) Sans objet tant qu'aucune UPlanet n'est publique.
 2. **Économie.** Les parités et valeurs entre UPlanet (1 Zen = 0,1 Ğ1 contre 1 ẐEN = 1 €) : hors de ce plan, à traiter à part.
-3. **Ré-chiffrement** (T21) et transfert des anciens fichiers Kubo (`Qm…`) vers un plan privé : à faire avec la phase 1b restante.
 
 ### Ordre des étapes de la phase 6 (proposé)
 a. `Plane` : regroupe `{ nom, uplanet_name, psk, Db, BlobStore, nœud P2P, Relay, dossier de comptes, charte }` ; `serve` construit la liste ; un plan unique se comporte exactement comme aujourd'hui (aucune migration d'ORIGIN).
 b. Routage HTTP par nom d'hôte (`<plan>.<station>`), le plan connu **avant** l'authentification ; en test, un port par plan.
-c. `--plane <nom>` sur `multipass`, `token`, `import-ucloud`, `replay`, `doctor`, `bridge-copy`, `pool-status` ; dossiers `~/.zen/astroportd/<plan>/…`.
+c. `--plane <nom>` sur `multipass`, `token`, `replay`, `doctor`, `bridge-copy`, `pool-status` ; dossiers `~/.zen/astroportd/<plan>/…`.
 d. Un nœud libp2p et un port par plan réseau privé, même `IPFSNODEID` ; Kubo pour ORIGIN seulement (I1).
 e. Test automatisé « plusieurs plans, un seul processus » (T1, T2, T10, T13) avec de faux pairs.
 f. Sélecteur de plan dans l'en-tête de l'interface.

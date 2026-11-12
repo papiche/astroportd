@@ -1,6 +1,6 @@
 'use strict';
 // Dictionnaire es, phrases communes. Les écrans de `parts` ont aussi m-lang-es-<écran>.js, chargé avec eux (K.mod).
-export const parts = 'account billets call contacts mesh options sync';
+export const parts = 'account billets call contacts coop files mesh options planes sync';
 export default {
 "Aller au contenu": "Ir al contenido",
 "Tableau de bord": "Panel",
@@ -91,6 +91,8 @@ export default {
 "email du MULTIPASS ou npub…": "email del MULTIPASS o npub…",
 "Relier": "Vincular",
 "Délier": "Desvincular",
+"Messagerie": "Mensajería",
+"Cette personne n'est pas joignable d'ici pour le moment.": "No se puede contactar a esta persona desde aquí por ahora.",
 "Fiche reliée": "Ficha vinculada",
 "Fiche déliée": "Ficha desvinculada",
 "Contact": "Contacto",
@@ -338,5 +340,9 @@ export default {
 "Alimenter depuis Cesium ou Ğecko": "Recargar desde Cesium o Ğecko",
 "Glissez la photo : → oui, ← non": "Deslice la foto: → sí, ← no",
 "{0} a perdu sa station et vous demande de l'aide": "{0} perdió su estación y le pide ayuda",
-"Répondre": "Responder"
+"Répondre": "Responder",
+"Constellations": "Constelaciones",
+"Ajouter": "Añadir",
+"Nom de la constellation": "Nombre de la constelación",
+"Confirmer ?": "¿Confirmar?",
 };

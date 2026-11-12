@@ -18,7 +18,7 @@ use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 
-use crate::blob::{BlobError, BlobStore, BlobWriter, is_cid, is_legacy_cid};
+use crate::blob::{BlobError, BlobStore, BlobWriter, is_cid};
 use crate::server::DavState;
 
 /// Côté maximal d'une miniature, en pixels.
@@ -214,7 +214,7 @@ pub async fn generate<B: BlobStore>(st: &Arc<DavState<B>>, owner: &str, path: &s
         })
         .await?;
     let Some((cid, mime, size, key_hex, known)) = found else { return Ok(None) };
-    if !is_thumbable(&mime) || size > MAX_SOURCE_BYTES || !(is_cid(&cid) || is_legacy_cid(&cid)) {
+    if !is_thumbable(&mime) || size > MAX_SOURCE_BYTES || !is_cid(&cid) {
         return Ok(None);
     }
     let info = match known {

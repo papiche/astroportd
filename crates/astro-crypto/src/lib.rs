@@ -1,7 +1,6 @@
 //! Cryptographie d'`astroportd`.
 //!
-//! - [`uenc`] : codec UENC bivalent. Lecture v1 (monolithique, legacy) et v2 (flux chunké de 64 Kio) ;
-//!   écriture v2 uniquement.
+//! - [`uenc`] : codec UENC v2 (flux chunké de 64 Kio, accès aléatoire).
 //! - [`nip98`] : validation durcie de l'en-tête `Authorization: Nostr …`.
 //! - [`UencKey`] : clé AES-256 de fichier, effacée de la mémoire à la destruction.
 

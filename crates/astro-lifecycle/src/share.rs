@@ -153,7 +153,7 @@ impl SecretShare {
             return Err(MultipassError::BadCard("version de part inconnue"));
         }
         let formula: KeyFormula = formula.parse().map_err(|_| MultipassError::BadCard("formule inconnue"))?;
-        if !matches!(formula, KeyFormula::Isolated | KeyFormula::Legacy | KeyFormula::Raw) {
+        if !matches!(formula, KeyFormula::Isolated | KeyFormula::Raw) {
             return Err(MultipassError::BadCard("formule non prévue pour un MULTIPASS"));
         }
         let uplanet_ok = if formula == KeyFormula::Isolated { uplanet.len() == 16 && uplanet.bytes().all(|b| b.is_ascii_hexdigit()) } else { uplanet.is_empty() };
@@ -279,7 +279,7 @@ mod tests {
     use super::*;
 
     fn card() -> SecretCard {
-        SecretCard { email: "lea@example.org".into(), salt: Zeroizing::new("Sel0123456789abcdefghijkl".into()), pepper: Zeroizing::new("Poivre9876543210ZYXWVUTS".into()), formula: KeyFormula::Legacy, uplanet: String::new(), hex: "ab".repeat(32) }
+        SecretCard { email: "lea@example.org".into(), salt: Zeroizing::new("Sel0123456789abcdefghijkl".into()), pepper: Zeroizing::new("Poivre9876543210ZYXWVUTS".into()), formula: KeyFormula::Raw, uplanet: String::new(), hex: "ab".repeat(32) }
     }
 
     #[test]

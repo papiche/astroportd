@@ -14,7 +14,7 @@ export function analyze({ health, cs, ec, ac, tun, tk, dash, dns, en }) {
     if (v.status === 'down' || v.status === 'degraded') add(v.status, 'station', `${name} : ${v.status === 'down' ? 'en panne' : 'dégradé'}`, v.detail || '', 'Voir le détail', '#/station');
   }
   // Constellation
-  if (dash?.p2p && dash.p2p.enabled === false) add('degraded', 'mesh', 'Le maillage P2P est arrêté', 'Sans lui, aucune station ne peut vous joindre ni partager Ollama ou ComfyUI. Démarrez avec --p2p-listen.', 'Voir les plans', '#/planes');
+  if (dash?.p2p && dash.p2p.enabled === false) add('degraded', 'mesh', 'Le maillage P2P est arrêté', 'Sans lui, aucune station ne peut vous joindre ni partager Ollama ou ComfyUI. Démarrez avec --p2p-listen.', 'Voir les constellations', '#/planes');
   else if (cs && !others.length) add('info', 'mesh', 'Vous êtes seul dans l\'essaim', 'Aucune autre station n\'est vue : rejoignez une constellation ou indiquez un dossier de pairs (--swarm-dir).', 'Rejoindre', '#/planes');
   // Adresses de la coopérative (DNSLink) : station et MULTIPASS
   if (dns?.configured === false) add('info', 'mesh', 'Les adresses de la coopérative ne sont pas activées', 'Renseignez les clés OVH dans la configuration coopérative : la station et chaque MULTIPASS auront une adresse.', 'Configurer', '#/coop');

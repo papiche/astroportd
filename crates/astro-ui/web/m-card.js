@@ -110,13 +110,12 @@ export default async function card(K, { path, me, blank, groups, onSaved, onClos
     d.pubkey && d.via === 'vcard' ? h('button', { type: 'button', class: 'ghost', onclick: async () => { try { await api('/api/v1/contacts/link', { method: 'POST', body: { path: d.path, target: null } }); K.toast(t('Fiche déliée'), 1); onSaved(d.path, true); } catch (e) { K.toast(e.message); } } }, t('Délier')) : null));
 
   // Les clés de la personne, une par UPlanet (retrouvées par ses emails et par les liens signés des deux clés) : on écrit dans l'UPlanet commune.
-  const keys = isMe || !(d.keys || []).length ? null : h('div', { class: 'ab-f' }, h('label', {}, t('Messagerie : clés de cette personne')),
-    h('ul', { class: 'ab-keys' }, d.keys.map(k => {
-      const here = !k.plane || k.plane === d.plane, away = !here && K.planeHref ? K.planeHref(k.plane, '#/chat?peer=' + k.hex) : null;
-      const via = { station: t('compte hébergé sur la station'), lien: t('lien signé des deux clés'), fiche: t('clé de la fiche') }[k.via] || k.via;
-      return h('li', {}, h('span', { class: 'pill' + (here ? ' ok' : '') }, k.plane || t('UPlanet inconnue')), ' ', h('small', { class: 'muted' }, via + ' · ' + k.hex.slice(0, 8) + '…'), ' ',
-        here ? h('a', { class: 'btn', href: '#/chat?peer=' + k.hex }, t('Écrire')) : away ? h('a', { class: 'ghost', href: away }, t('Écrire depuis {0}', k.plane)) : h('small', { class: 'muted' }, t('depuis {0}', k.plane)));
-    })));
+  // Une personne = une conversation : la clé à utiliser est choisie ici, sans montrer ni constellation ni clé.
+  const keys = isMe || !(d.keys || []).length ? null : (() => {
+    const mine = d.keys.find(k => !k.plane || k.plane === d.plane);
+    return h('div', { class: 'ab-f' }, h('label', {}, t('Messagerie')),
+      mine ? h('a', { class: 'btn', href: '#/chat?peer=' + mine.hex }, t('Écrire')) : h('small', { class: 'muted' }, t('Cette personne n\'est pas joignable d\'ici pour le moment.')));
+  })();
 
   async function save() {
     if (!f.name?.trim()) { K.toast(t('Un nom est nécessaire')); return; }

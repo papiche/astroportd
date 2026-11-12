@@ -150,7 +150,7 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
     let account_svc = Arc::new(astroportd::account::AccountService::new(db.clone(), dir.join("nostr"), Arc::new(StaticKeySource::new().with(ALICE).with(BOB)), SECRET.to_vec(), relay_publish, None).with_activity(bus.clone()));
     let address_book = Arc::new(astroportd::address_book::AddressBook::new(db.clone(), dav.clone(), links.clone(), Some(account_svc.clone())));
     let site = Arc::new(astroportd::public_site::Site::new(dav.clone(), "ConstellationDeTest".into()));
-    let ui = Arc::new(StationUi::new(services, dav.clone(), memory, client, true).with_stations(Arc::new(astroportd::beacon::Stations::new(db.clone(), "ConstellationDeTest".into(), Some("12D3KooWTest".into())))).with_feedback(Arc::new(astroportd::feedback::Feedback::new(db.clone(), "ConstellationDeTest".into(), bus.clone()))).with_oc(Arc::new(astroportd::oc_member::OcMember::new(db.clone(), "ConstellationDeTest".into()))).with_site(site.clone()).with_planes_home(dir.join("home")).with_agents(agents).with_ai(member_ai).with_registrar(registrar).with_invites(invites.clone()).with_welcome(Arc::new(astroportd::welcome::Welcome::new(db.clone(), invites, Some(bus.clone())))).with_account(account_svc).with_book(address_book).with_chat(chat.clone()).with_people(people).with_contacts(links).with_coop(
+    let ui = StationUi::new(services, dav.clone(), memory, client, true).with_stations(Arc::new(astroportd::beacon::Stations::new(db.clone(), "ConstellationDeTest".into(), Some("12D3KooWTest".into())))).with_feedback(Arc::new(astroportd::feedback::Feedback::new(db.clone(), "ConstellationDeTest".into(), bus.clone()))).with_oc(Arc::new(astroportd::oc_member::OcMember::new(db.clone(), "ConstellationDeTest".into()))).with_site(site.clone()).with_planes_home(dir.join("home")).with_unit_exe(std::path::PathBuf::from("/usr/bin/astroportd")).with_agents(agents).with_ai(member_ai).with_registrar(registrar).with_invites(invites.clone()).with_welcome(Arc::new(astroportd::welcome::Welcome::new(db.clone(), invites, Some(bus.clone())))).with_account(account_svc).with_book(address_book).with_chat(chat.clone()).with_people(people).with_contacts(links).with_coop(
         Arc::new(|| Box::pin(async { Ok(json!({ "exists": false, "sections": [] })) })),
         Arc::new(|values| Box::pin(async move { Ok(json!({ "saved": values.keys().collect::<Vec<_>>() })) })),
     ).with_admin(Arc::new(|section, body| Box::pin(async move {
@@ -160,12 +160,12 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
             ("face", Some(b)) => Ok(b),
             _ => Err(format!("section inconnue : {section}")),
         }
-    }))));
+    })));
     let app = astro_dav::router(dav)
         .merge(site.clone().router())
         .merge(relay.router())
         .merge(astro_ui::web::static_router())
-        .merge(astro_ui::api::router(ui, bus.clone(), Some("https://station.test".into())))
+        .merge(ui.into_router(bus.clone(), Some("https://station.test".into())))
         .layer(axum::middleware::from_fn(astro_ui::web::negotiate));
     Bench { app, db, bus, dir, chat }
 }
@@ -1230,12 +1230,43 @@ async fn the_captain_sets_up_planes_from_the_web_and_nobody_else_can() {
     assert!(v["created_key"].as_str().unwrap().contains("/key/swarm/psk/1.0.0/") && v["http"] == "127.0.0.1:8091");
     let (_, v) = b.get("/api/v1/station/planes", &bob).await;
     assert_eq!((v["configured"].as_bool(), v["planes"].as_array().unwrap().len(), v["restart_needed"].as_bool()), (Some(true), 2, Some(true)));
+    // Démarrage automatique : sans unité, rien à signaler ; une unité qui lance encore `serve` alors que deux plans sont
+    // configurés est dite en désaccord (elle ne servirait que ORIGIN) ; une fois sur `planes`, le désaccord disparaît.
+    assert_eq!((v["service"]["unit"].as_str(), v["service"]["mismatch"].as_bool()), (Some("absent"), Some(false)));
+    assert!(v["service"]["command"].as_str().unwrap().ends_with(" planes"));
+    let unit = b.dir.join("home/.config/systemd/user/astroportd.service");
+    std::fs::create_dir_all(unit.parent().unwrap()).unwrap();
+    std::fs::write(&unit, "[Service]\nExecStart=/usr/bin/astroportd serve --db /x/uplanet.db\n").unwrap();
+    let (_, v) = b.get("/api/v1/station/planes", &bob).await;
+    assert_eq!((v["service"]["unit"].as_str(), v["service"]["mismatch"].as_bool()), (Some("serve"), Some(true)));
+    // Le bouton de l'écran : bascule l'unité (Capitaine seulement), garde l'ancienne à côté, et ne refait rien la seconde fois.
+    assert_eq!(b.post("/api/v1/station/planes/service", &alice, json!({})).await.0, StatusCode::FORBIDDEN);
+    let (s, v) = b.post("/api/v1/station/planes/service", &bob, json!({})).await;
+    assert_eq!((s, v["state"].as_str()), (StatusCode::OK, Some("switched")), "{v}");
+    assert!(std::path::Path::new(v["backup"].as_str().unwrap()).is_file());
+    assert!(std::fs::read_to_string(&unit).unwrap().contains(" planes"));
+    let (_, v) = b.get("/api/v1/station/planes", &bob).await;
+    assert_eq!((v["service"]["unit"].as_str(), v["service"]["mismatch"].as_bool()), (Some("planes"), Some(false)));
+    assert_eq!(b.post("/api/v1/station/planes/service", &bob, json!({})).await.1["state"], "already_planes");
+    // Une unité qui lance autre chose n'est jamais réécrite.
+    std::fs::write(&unit, "[Service]\nExecStart=/usr/bin/ipfs daemon\n").unwrap();
+    assert_eq!(b.post("/api/v1/station/planes/service", &bob, json!({})).await.1["state"], "foreign");
+    assert_eq!(std::fs::read_to_string(&unit).unwrap(), "[Service]\nExecStart=/usr/bin/ipfs daemon\n");
+    // Ajouter une constellation depuis le web bascule aussi une unité restée sur `serve`.
+    std::fs::write(&unit, "[Service]\nExecStart=/usr/bin/astroportd serve --db /x/uplanet.db --lat 43.6\n").unwrap();
+    let (s, v) = b.post("/api/v1/station/planes", &bob, json!({ "name": "zen3" })).await;
+    assert_eq!((s, v["service"]["state"].as_str()), (StatusCode::OK, Some("switched")), "{v}");
+    assert_eq!(v["service"]["carried"], json!(["--lat", "43.6"]));
+    assert!(std::fs::read_to_string(&unit).unwrap().contains(" planes"));
+    std::fs::write(&unit, "[Service]\nExecStart=/usr/bin/astroportd planes\n").unwrap();
+    let (_, v) = b.get("/api/v1/station/planes", &bob).await;
+    assert_eq!((v["service"]["unit"].as_str(), v["service"]["mismatch"].as_bool()), (Some("planes"), Some(false)));
     // Refus : doublon, clé illisible ; ORIGIN jamais retiré ; un plan privé l'est.
     assert_eq!(b.post("/api/v1/station/planes", &bob, json!({ "name": "zen1" })).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(b.post("/api/v1/station/planes", &bob, json!({ "name": "zen2", "swarm_key": "pas une clé" })).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(b.post("/api/v1/station/planes/remove", &bob, json!({ "name": "origin" })).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(b.post("/api/v1/station/planes/remove", &bob, json!({ "name": "zen1" })).await.0, StatusCode::OK);
-    assert_eq!(b.get("/api/v1/station/planes", &bob).await.1["planes"].as_array().unwrap().len(), 1);
+    assert_eq!(b.get("/api/v1/station/planes", &bob).await.1["planes"].as_array().unwrap().len(), 2); // origin et zen3 (ajoutée plus haut)
 }
 
 /// BRO n'apparaît que si le MULTIPASS a déclaré une IA ; la clé d'API ne ressort jamais, et chacun ne voit que la sienne.
@@ -1367,8 +1398,8 @@ async fn a_new_station_opens_only_to_its_captain_with_the_setup_code_from_the_jo
     let journal = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let j = journal.clone();
     let setup = Arc::new(astroportd::first_run::SetupCode::new(Box::new(move |c| j.lock().unwrap().push(c.to_owned()))).unwrap());
-    let ui = Arc::new(StationUi::new(services, dav, None, None, false).with_registrar(registrar).with_setup(Some(setup)).with_conf_path(dir.join("station.conf")));
-    let app = astro_ui::web::static_router().merge(astro_ui::api::router(ui, bus, None));
+    let ui = StationUi::new(services, dav, None, None, false).with_registrar(registrar).with_setup(Some(setup)).with_conf_path(dir.join("station.conf"));
+    let app = astro_ui::web::static_router().merge(ui.into_router(bus, None));
     let json_post = &[("content-type", "application/json")][..];
     let post = |v: Value| v.to_string().into_bytes();
 
@@ -1493,23 +1524,6 @@ async fn a_sponsor_offer_is_handed_once_without_an_account_and_only_as_ciphertex
     assert_eq!(astroportd::sponsor::open(&t, v["sealed"].as_str().unwrap()).unwrap(), payload);
     assert_eq!(call(&b.app, Method::GET, &format!("/api/v1/join/{}", t.id), None, &[], vec![]).await.0, StatusCode::NOT_FOUND, "usage unique");
     assert_eq!(call(&b.app, Method::GET, "/api/v1/join/../../etc", None, &[], vec![]).await.0, StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn an_old_style_invitation_follows_the_living_ucloud_after_migration() {
-    let b = bench("invite-legacy", None).await;
-    // Ancien format : la liste des fichiers figée à la création. Ce fichier a été supprimé depuis (son contenu a pu être libéré).
-    let legacy = json!([{ "path": "/Photos/disparue.jpg", "cid": "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy", "name": "disparue.jpg", "mime": "image/jpeg", "size": 10, "sha_plain": "00" }]);
-    let at = i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()).unwrap();
-    b.db.writer().execute("INSERT INTO invites(token, owner_hex, label, email, contact_path, items, created_at, expires_at) VALUES ('1e9ac10000000000000000000000beef', ?1, 'Léa', NULL, NULL, ?2, ?3, ?4)", vec![V::Text(hex(&ALICE)), V::Text(legacy.to_string()), V::Integer(at), V::Integer(at + 86_400)]).await.unwrap();
-    let count = || async { serde_json::from_slice::<Value>(&call(&b.app, Method::GET, "/api/v1/invite/1e9ac10000000000000000000000beef", None, &[], vec![]).await.2).unwrap()["count"].as_u64() };
-    let (st, _, raw) = call(&b.app, Method::GET, "/api/v1/invite/1e9ac10000000000000000000000beef", None, &[], vec![]).await;
-    assert_eq!(count().await, Some(1), "avant : le fichier disparu est encore promis ({st} {})", String::from_utf8_lossy(&raw));
-    let registrar = Arc::new(astroportd::register::Registrar::new(b.db.clone(), b.dir.join("nostr"), "0".repeat(64), Arc::new(|hex| derive_dav_token(SECRET, hex)), astroportd::register::Limits::default()));
-    let invites = astroportd::invites::Invites::new(b.db.clone(), Arc::new(FsBlobStore::open(b.dir.join("blobs")).unwrap()), Arc::new(StaticKeySource::new()), registrar, Arc::new(|_| Box::pin(async { Ok(()) })));
-    assert_eq!(invites.migrate_legacy().await.unwrap(), 1);
-    assert_eq!(invites.migrate_legacy().await.unwrap(), 0, "idempotent");
-    assert_eq!(count().await, Some(0), "après : l'invitation suit le uCloud vivant, rien n'est promis à tort");
 }
 
 /// Compatibilité des clients historiques (zelkova, coracle) : la carte de station, les clés de l'UPlanet et la sonde NIP-96,
@@ -1701,10 +1715,10 @@ async fn feedback_is_authenticated_bounded_and_kept_on_the_station_without_a_for
 async fn message_attachments_are_stored_encrypted_served_by_cid_and_cannot_be_deleted_by_a_replay() {
     let b = bench_with("attachments", None, |c| c.ipfs_gateway = true, None).await;
     let (alice, bob) = (basic("alice@example.org", &ALICE), basic("bob@example.org", &BOB));
-    // Format UENC v1 : MAGIC + version 1 + AES-256-GCM + IV(12) + chiffré + étiquette(16).
+    // Format UENC v2 : MAGIC + version 2 + AES-256-GCM + chunk_log2 + préfixe(7) + chiffré + étiquette(16).
     let uenc = |fill: u8| {
-        let mut v = b"UENC\x01\x01".to_vec();
-        v.extend([fill; 12 + 40 + 16]);
+        let mut v = b"UENC\x02\x01\x10".to_vec();
+        v.extend([fill; 7 + 40 + 16]);
         v
     };
     let octets = ("content-type", "application/octet-stream");
@@ -1717,7 +1731,7 @@ async fn message_attachments_are_stored_encrypted_served_by_cid_and_cannot_be_de
     for uri in ["/api/v1/attachments?days=0", "/api/v1/attachments?days=91", "/api/v1/attachments?days=x"] {
         assert_eq!(call(&b.app, Method::POST, uri, Some(&alice), &[octets], ok.clone()).await.0, StatusCode::BAD_REQUEST, "{uri}");
     }
-    assert_eq!(call(&b.app, Method::POST, "/api/v1/attachments", Some(&alice), &[octets], b"UENC\x01\x01".to_vec()).await.0, StatusCode::BAD_REQUEST, "tronqué");
+    assert_eq!(call(&b.app, Method::POST, "/api/v1/attachments", Some(&alice), &[octets], b"UENC\x02\x01".to_vec()).await.0, StatusCode::BAD_REQUEST, "tronqué");
 
     let mut huge = uenc(1);
     huge.resize(20 * 1024 * 1024 + 4096, 1);
@@ -1749,4 +1763,102 @@ async fn message_attachments_are_stored_encrypted_served_by_cid_and_cannot_be_de
     // Hors des octets : le préambule CORS est présent pour un client servi d'ailleurs.
     let (status, h, _) = call(&b.app, Method::OPTIONS, "/api/v1/attachments", None, &[], Vec::new()).await;
     assert_eq!((status, h["access-control-allow-origin"].to_str().unwrap()), (StatusCode::NO_CONTENT, "*"));
+}
+
+// ── Filet de sécurité du découpage de l'API : qui peut appeler quelle route ──
+
+/// Les routes déclarées dans le code de l'API (`.route("chemin", get(…).post(…))`), dans tous les fichiers de `astro-ui/src` :
+/// `(méthode, chemin)`. Lue dans les sources pour que ce test survive à un découpage de `api.rs` en modules.
+fn declared_routes() -> Vec<(String, String)> {
+    fn sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                sources(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    sources(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/astro-ui/src"), &mut files);
+    let mut routes = std::collections::BTreeSet::new();
+    for f in files {
+        for line in std::fs::read_to_string(f).unwrap().lines() {
+            let line = line.trim();
+            let Some(rest) = line.strip_prefix(".route(\"") else { continue };
+            let Some((path, expr)) = rest.split_once("\",") else { continue };
+            for (name, method) in [("get(", "GET"), ("post(", "POST"), ("delete(", "DELETE"), ("put(", "PUT")] {
+                let hit = expr.match_indices(name).any(|(i, _)| !expr[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_'));
+                if hit {
+                    routes.insert((method.to_owned(), path.to_owned()));
+                }
+            }
+        }
+    }
+    routes.into_iter().collect()
+}
+
+/// Seulement l'état de la réponse : le corps n'est pas lu (un flux SSE ou une console ne se termine jamais), et un appel qui ne
+/// répond pas en 5 s est noté `0`.
+async fn status_only(app: &Router, method: Method, uri: &str, auth: Option<&str>) -> u16 {
+    let method_is_post = method == Method::POST;
+    let mut req = Request::builder().method(method).uri(uri).header(header::HOST, "station.test");
+    if let Some(a) = auth {
+        req = req.header(header::AUTHORIZATION, a);
+    }
+    // Un corps JSON minimal : sans lui, une route à `Json<…>` répondrait 415 avant même de vérifier le compte.
+    let body = if method_is_post { req = req.header(header::CONTENT_TYPE, "application/json"); Body::from(r#"{"name":"x"}"#) } else { Body::empty() };
+    match tokio::time::timeout(Duration::from_secs(5), app.clone().oneshot(req.body(body).unwrap())).await {
+        Ok(Ok(resp)) => resp.status().as_u16(),
+        _ => 0,
+    }
+}
+
+/// Pour chaque route : l'état rendu à un appel **anonyme** et à un **membre** (pas de Capitaine : aucun effet de bord sur la
+/// station). `401` pour l'anonyme = authentification requise ; `403` pour le membre = réservé au Capitaine. Un banc neuf par appel,
+/// car certaines routes ont un effet (rotation de jeton…). L'instantané est dans `tests/fixtures/route_access.txt` ; le régénérer
+/// (`UPDATE_ROUTE_SNAPSHOT=1`) est une décision de sécurité, à relire ligne à ligne.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_route_keeps_its_access_level() {
+    let routes = declared_routes();
+    assert!(routes.len() > 100, "routes trouvées : {}", routes.len());
+    let member = basic("alice@example.org", &ALICE);
+    let mut lines = Vec::new();
+    // Un banc pour les appels anonymes (refusés avant toute action) ; un pour le membre, recréé si un appel lui retire son accès
+    // (rotation de jeton…) : on le détecte en relisant `/api/v1/me` après chaque appel.
+    let anon_bench = bench("access-anon", None).await;
+    let mut member_bench = bench("access-member-0", None).await;
+    let mut generation = 0;
+    for (method, path) in &routes {
+        let uri = path.replace("{token}", "00000000000000000000000000000000").replace("{hex}", &hex(&ALICE)).replace("{index}", "0").replace("{id}", "1").replace("{section}", "admin").replace("{file}", "x.jpg");
+        let m = Method::from_bytes(method.as_bytes()).unwrap();
+        let anon = status_only(&anon_bench.app, m.clone(), &uri, None).await;
+        let mem = status_only(&member_bench.app, m, &uri, Some(&member)).await;
+        if call(&member_bench.app, Method::GET, "/api/v1/me", Some(&member), &[], vec![]).await.0 != StatusCode::OK {
+            generation += 1;
+            member_bench = bench(&format!("access-member-{generation}"), None).await;
+        }
+        lines.push(format!("{method} {path} anon={anon} member={mem}"));
+    }
+    let got = lines.join("\n") + "\n";
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/route_access.txt");
+    if std::env::var_os("UPDATE_ROUTE_SNAPSHOT").is_some() {
+        std::fs::write(&file, &got).unwrap();
+        return;
+    }
+    // Un instantané illisible fait échouer le test, avec la commande qui le régénère.
+    let want = std::fs::read_to_string(&file).unwrap_or_default();
+    assert!(!want.is_empty(), "instantané {} absent : UPDATE_ROUTE_SNAPSHOT=1 cargo test -p astroportd --test ui_e2e every_route_keeps_its_access_level", file.display());
+    let (g, w): (Vec<&str>, Vec<&str>) = (got.lines().collect(), want.lines().collect());
+    let diff: Vec<String> = g.iter().filter(|l| !w.contains(l)).map(|l| format!("+ {l}")).chain(w.iter().filter(|l| !g.contains(l)).map(|l| format!("- {l}"))).collect();
+    assert!(diff.is_empty(), "une route a changé de niveau d'accès, a disparu ou est apparue :\n{}", diff.join("\n"));
+    // Garde-fou explicite, indépendant de l'instantané : toute route d'administration de la station est fermée au membre.
+    for l in &lines {
+        // La console n'a pas de compte : un ticket à usage unique, remis au seul Capitaine, fait foi (voir `console_ws`).
+        let public = ["/api/v1/station/console"];
+        if l.contains(" /api/v1/station/") && !public.iter().any(|p| l.contains(p)) {
+            assert!(l.contains("member=403") || l.contains("member=401"), "route Capitaine ouverte à un membre : {l}");
+        }
+    }
 }

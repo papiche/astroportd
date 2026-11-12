@@ -320,16 +320,6 @@ mod tests {
         assert!(matches!(r, Err(UencError::BadRange)));
     }
 
-    #[tokio::test]
-    async fn range_on_v1_blob_works() {
-        let plain = data(500);
-        let blob = crate::uenc::v1::encrypt(&key(), &plain).unwrap();
-        let mut out = Vec::new();
-        let total = blob.len() as u64;
-        decrypt_range(&key(), &mut Cursor::new(blob), total, 100, 199, &mut out).await.unwrap();
-        assert_eq!(out, plain[100..200]);
-    }
-
     #[test]
     fn detect_returns_a_cipher() {
         let _ = Cipher::detect();

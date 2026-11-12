@@ -78,10 +78,10 @@ else d.showModal();
 });
 return loginP;
 }
-async function req(path, { method = 'GET', body } = {}) {
+async function req(path, { method = 'GET', body, headers } = {}) {
 for (let i = 0; i < 3; i++) {
 const url = new URL(path, location.origin).href, a = await authHeader(method, url);
-const r = await fetch(url, { method, cache: 'no-store', headers: { ...(a && { Authorization: a }), ...(body && { 'Content-Type': 'application/json' }) }, body: body && JSON.stringify(body) });
+const r = await fetch(url, { method, cache: 'no-store', headers: { ...(a && { Authorization: a }), ...(body && { 'Content-Type': 'application/json' }), ...headers }, body: body && JSON.stringify(body) });
 if (r.status !== 401) return r;
 await login();
 }
@@ -250,13 +250,15 @@ const media = r.entries.filter(x => x.type === 'file' && kindOf(x.mime) !== 'fil
 const li = x => {
 const dir = x.type === 'dir', k = kindOf(x.mime);
 const act = dir ? () => go(x.path) : k !== 'file' ? () => open(media, media.indexOf(x)) : async () => { const u = await blobUrl(x.path); h('a', { href: u, download: x.name }).click(); };
-return h('li', {},
+return h('li', { 'data-path': x.path, 'data-dir': dir ? 1 : null },
 h('input', { type: 'checkbox', 'aria-label': 'Sélectionner ' + x.name, onchange: ev => { ev.target.checked ? sel.add(x.path) : sel.delete(x.path); btn.disabled = send.disabled = pub.disabled = !sel.size; } }),
 h('span', { 'aria-hidden': 'true' }, dir ? '📁' : k === 'image' ? '🖼' : k === 'video' ? '🎬' : '📄'),
 h('button', { class: 'link', onclick: act }, x.name), h('span', { class: 'muted' }, dir ? '' : bytes(x.size)), h('span', { class: 'muted' }, when(x.mtime)));
 };
 root.replaceChildren(tabs, h('div', { class: 'bar' }, crumbs, h('span', { class: 'sp' }), pub, send, btn), pubBox,
 r.entries.length ? h('ul', { class: 'files' }, r.entries.map(li)) : h('p', { class: 'muted' }, 'Dossier vide.'));
+// Téléverser, créer, renommer, déplacer, supprimer, glisser-déposer : m-files.js, chargé avec la liste.
+mod('m-files.js').then(m => m.default(root, K, { path, dav, reload: route }), e => toast(e.message));
 }
 // Tuiles de photos ajoutées à `grid` ; `list` est la liste que la visionneuse parcourt (flèches, Début, Fin).
 function tiles(grid, list, its) {
@@ -329,7 +331,16 @@ try { const m = await import(`/ui/m-lang-${lang}.js`); dict = m.default; PARTS =
 tr(document.body); new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(tr))).observe(document.body, { childList: true, subtree: true });
 }
 // Écrans lourds chargés à la demande (hors budget de la coque) : ils reçoivent la boîte à outils ci-dessous.
-const K = { mod, t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, blob: blobUrl, tiles, every, enc, del, picker, mark, photos, dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n), feed, listeners };
+// Confirmation sans boîte bloquante : un premier clic arme le bouton (et dit ce qui va se passer), le second exécute ; il se désarme seul après 5 s.
+const sure = (label, run, why, attrs) => {
+  const note = h('small', { class: 'muted', role: 'status' }), b = h('button', { class: 'ghost', ...attrs, onclick: ev => {
+    if (b.dataset.armed) { delete b.dataset.armed; note.textContent = ''; return run(ev); }
+    b.dataset.armed = 1; b.textContent = t('Confirmer ?'); note.textContent = ' ' + (why || '');
+    setTimeout(() => { delete b.dataset.armed; b.textContent = label; note.textContent = ''; }, 5000);
+  } }, label);
+  return h('span', {}, b, note);
+};
+const K = { req, auth: authHeader, sure, mod, t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, blob: blobUrl, tiles, every, enc, del, picker, mark, photos, dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n), feed, listeners };
 const lazyView = f => async (root, q) => (await mod(f)).default(root, K, q);
 const views = { stats: viewHome, station: viewStation, cloud: viewCloud };
 for (const n of ['home', 'account', 'contacts', 'chat', 'people', 'replication', 'library', 'coop', 'constellation', 'billets', 'cockpit', 'options', 'mesh', 'planes', 'bro']) views[n] = lazyView(`m-${n}.js`);
@@ -368,9 +379,10 @@ async function planeSwitch() {
     const names = r.planes.map(p => p.name), host = location.hostname, first = host.split('.')[0];
     const onPlane = host.includes('.') && names.includes(first), base = onPlane ? host.slice(first.length + 1) : host;
     const current = onPlane ? first : (r.planes.find(p => p.origin) || r.planes[0]).name;
+    K.plane = current; // constellation de cette interface (écrans du Capitaine)
     planeHref = (n, hash) => { const origin = r.planes.find(p => p.name === n)?.origin; return `${location.protocol}//${origin ? '' : n + '.'}${base}${location.port ? ':' + location.port : ''}/${hash || ''}`; };
     const go = n => { const origin = r.planes.find(p => p.name === n)?.origin; location.href = `${location.protocol}//${origin ? '' : n + '.'}${base}${location.port ? ':' + location.port : ''}/`; };
-    $('.tools').prepend(h('select', { id: 'plane', 'aria-label': t('Plan (UPlanet)'), title: t('Plan (UPlanet)'), onchange: ev => go(ev.target.value) },
+    $('.tools').prepend(h('select', { id: 'plane', 'aria-label': t('Constellation'), title: t('Constellation'), onchange: ev => go(ev.target.value) },
       r.planes.map(p => h('option', { value: p.name, selected: p.name === current }, p.name))));
   } catch { /* pas d'écran des plans (station sans configuration) : pas de sélecteur */ }
 }

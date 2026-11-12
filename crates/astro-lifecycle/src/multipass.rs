@@ -369,7 +369,7 @@ impl SecretCard {
             return Err(MultipassError::BadSecrets);
         }
         let formula: KeyFormula = formula.parse().map_err(|_| MultipassError::BadCard("formule inconnue"))?;
-        if !matches!(formula, KeyFormula::Isolated | KeyFormula::Legacy | KeyFormula::Raw) {
+        if !matches!(formula, KeyFormula::Isolated | KeyFormula::Raw) {
             return Err(MultipassError::BadCard("formule non prévue pour un MULTIPASS"));
         }
         let uplanet_ok = if formula == KeyFormula::Isolated { uplanet.len() == 16 && uplanet.bytes().all(|b| b.is_ascii_hexdigit()) } else { uplanet.is_empty() };
@@ -546,37 +546,36 @@ mod tests {
         let zeros = "0".repeat(64);
         let a = create_with(&root, "alice@exemple.org", &zeros, "fr", "SaltSaltSalt", "PepperPepper").unwrap();
         assert_eq!(SecretCard::from_dir(&a.dir, &zeros).unwrap().to_text(), SecretCard::of(&a, &zeros).to_text());
-        // Dans une autre constellation, ni la formule isolée ni la formule d'avant l'isolation ne redonnent cette clé : refusé.
+        // Dans une autre constellation, la formule isolée ne redonne pas cette clé : refusé.
         assert!(matches!(SecretCard::from_dir(&a.dir, &"ab".repeat(32)), Err(MultipassError::HexMismatch)));
-        // Compte d'avant l'isolation : la formule est retrouvée par la clé, pas par le fichier.
+        // Compte d'avant l'isolation (`(SALT, PEPPER)` bruts) : la formule qui le produisait est retirée, il n'est plus retrouvé.
         let hex = astro_core::kdf::duniter_seed("OldSaltOldSalt", "OldPepperOld").unwrap().nostr_keys().unwrap().pubkey_hex();
         let old = root.join("vieux@exemple.org");
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join(".multipass.json"), json!({ "salt": "OldSaltOldSalt", "pepper": "OldPepperOld" }).to_string()).unwrap();
         std::fs::write(old.join("HEX"), format!("{hex}\n")).unwrap();
-        let card = SecretCard::from_dir(&old, &zeros).unwrap();
-        assert_eq!((card.formula, card.uplanet.as_str(), card.email.as_str()), (KeyFormula::Legacy, "", "vieux@exemple.org"));
+        assert!(matches!(SecretCard::from_dir(&old, &zeros), Err(MultipassError::HexMismatch)));
         std::fs::write(old.join(".multipass.json"), "{}").unwrap();
         assert!(matches!(SecretCard::from_dir(&old, &zeros), Err(MultipassError::BadCard(_))));
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn an_old_account_is_restored_with_its_legacy_formula_and_the_card_rejects_malformed_text() {
-        // Compte d'avant l'isolation : `(SALT, PEPPER)` bruts. Le HEX attendu vient de la formule, pas de l'UPlanet.
+    fn a_raw_formula_account_is_restored_and_the_card_rejects_malformed_text() {
+        // Formule `raw` : `(SALT, PEPPER)` bruts. Le HEX attendu vient de la formule, pas de l'UPlanet.
         let seed = astro_core::kdf::duniter_seed("OldSaltOldSalt", "OldPepperOld").unwrap();
         let hex = seed.nostr_keys().unwrap().pubkey_hex();
-        let text = format!("astro-secret:v1|vieux@exemple.org|OldSaltOldSalt|OldPepperOld|legacy||{hex}");
+        let text = format!("astro-secret:v1|vieux@exemple.org|OldSaltOldSalt|OldPepperOld|raw||{hex}");
         let root = tmp("card-legacy");
         let c = recover(&root, &SecretCard::parse(&text).unwrap(), &"ab".repeat(32), "fr").unwrap();
-        assert_eq!((c.hex.as_str(), c.formula), (hex.as_str(), KeyFormula::Legacy));
+        assert_eq!((c.hex.as_str(), c.formula), (hex.as_str(), KeyFormula::Raw));
         assert_eq!(SecretCard::of(&c, &"ab".repeat(32)).to_text(), text, "la carte se relit à l'identique");
 
         for bad in [
             "",
             "astro-secret:v2|a@b.fr|s|p|isolated||x",
-            &text.replace("legacy", "coop_prefix"),
-            &text.replace("|legacy||", "|legacy|0123456789abcdef|"),
+            &text.replace("raw", "coop_prefix"),
+            &text.replace("|raw||", "|raw|0123456789abcdef|"),
             &text.replace("OldSaltOldSalt", "sel avec espace"),
             &text.replace(&hex, "pas-hex"),
             &format!("{text}|en-trop"),

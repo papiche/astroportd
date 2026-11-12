@@ -115,7 +115,7 @@ async fn did_projects_identity_without_touching_local_state() {
     let dir = TempDir::new("did");
     let db = open_db(&dir);
     host(&db, &ALICE).await;
-    db.writer().execute("UPDATE identities SET role = 'captain', key_formula = 'legacy' WHERE hex = ?1", vec![hex(&ALICE).into()]).await.unwrap();
+    db.writer().execute("UPDATE identities SET role = 'captain', key_formula = 'raw' WHERE hex = ?1", vec![hex(&ALICE).into()]).await.unwrap();
 
     let did = ev(&ALICE, 30_800, 100, vec![t(&["d", "did"]), t(&["t", "uplanet"]), t(&["t", "did-document"])], &did_content(&ALICE, "alice@example.org", "cooperative_member_satellite"));
     assert_eq!(ingest(&db, &did).await, Ingested::Inserted);
@@ -139,7 +139,7 @@ async fn did_projects_identity_without_touching_local_state() {
     let ipns = "/ipns/k51qzi5uqu5dlvj2baxnqndepeb86cbk3ng7n3i46uzyxzyqj2xjonzllnv0v8";
     let g1 = "6dSnXx2reoZ8a41dkToyunPBV8wyn8TkxuLR2g8jp1DN";
     // Alice : rôle, hébergement et formule restent LOCAUX ; le DID n'apporte que email, clés liées, contrat.
-    assert!(a.starts_with(&format!("captain|alice@example.org|{g1}|{ipns}|cooperative_member|cooperative_member_satellite|fr|1|legacy|npub1")), "{a}");
+    assert!(a.starts_with(&format!("captain|alice@example.org|{g1}|{ipns}|cooperative_member|cooperative_member_satellite|fr|1|raw|npub1")), "{a}");
     assert!(c.starts_with(&format!("multipass|carol@example.org|{g1}|{ipns}|active_rental|active_rental|fr|0|isolated|npub1")), "{c}");
 }
 

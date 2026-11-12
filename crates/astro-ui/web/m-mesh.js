@@ -13,7 +13,7 @@ export default async function mesh(root, K) {
   // ── Ma station ──
   const me = m.error ? h('p', { class: 'degraded' }, m.error) : !m.active
     ? h('p', { class: 'degraded', role: 'status' }, t('Maillage coupé : relancez la station sans --no-p2p pour rejoindre les autres stations.'))
-    : [h('p', {}, t('UPlanet : {0} · {1} station(s) connectée(s).', m.plane, m.connected.length)),
+    : [h('p', {}, t('Constellation : {0} · {1} station(s) connectée(s).', m.plane, m.connected.length)),
       h('p', { class: 'muted' }, t('Adresse à donner aux autres Capitaines :')), m.addrs.length ? h('ul', {}, m.addrs.map(a => h('li', {}, h('code', {}, a)))) : h('p', { class: 'muted' }, m.peer_id),
       // Stations relais (`--p2p-use-relay`, `P2P_RELAYS` de la coopérative) : la place réservée rend la station joignable derrière sa box.
       h('h3', {}, t('Stations relais')),
@@ -33,7 +33,7 @@ export default async function mesh(root, K) {
         b.source === 'gardée' ? sure(t('Retirer'), act('mesh', { forget: b.addr }, t('Station retirée'))) : null))) : h('p', { class: 'muted' }, t('Aucune station gardée.')),
       h('fieldset', { class: 'coop-s' }, h('legend', {}, t('Joindre une station')), addr, ' ', h('label', { for: 'ms-keep' }, keep, ' ', t('Garder (rejointe à chaque démarrage)')), ' ',
         h('button', { onclick: ev => addr.value.trim() ? act('mesh', { dial: addr.value.trim(), keep: keep.checked }, t('Station jointe'))(ev) : K.toast(t('Adresse de la station') + ' ?') }, t('Joindre'))),
-      h('p', { class: 'muted' }, t('Seule une station de la même UPlanet (même swarm.key) peut être jointe.')));
+      h('p', { class: 'muted' }, t('Seule une station de la même constellation (même swarm.key) peut être jointe.')));
   }
 
   // ── Capitaines ──
@@ -64,7 +64,7 @@ export default async function mesh(root, K) {
   only.onchange = paint; paint();
   const swarm = h('section', { class: 'card wide' }, h('h2', {}, t('L\'essaim'), h('small', { class: 'muted' }, ` · ${nodes.length}`)),
     h('p', {}, h('label', { for: 'ms-ia' }, only, ' ', t('Seulement celles qui offrent l\'IA (Ollama)'))), grid,
-    h('p', {}, h('a', { class: 'ck-btn', href: '#/planes' }, t('Plans (UPlanet)'))));
+    h('p', {}, h('a', { class: 'ck-btn', href: '#/planes' }, t('Constellations'))));
 
   root.replaceChildren(...[captains, swarm, stations, h('section', { class: 'card wide' }, h('h2', {}, t('Ma station')), me)].filter(Boolean));
 }

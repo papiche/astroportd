@@ -9,6 +9,7 @@
 //! Rien n'est écrit tant qu'une cible n'a pas changé (dernière cible enregistrée dans `kv`), un échec n'est jamais avalé
 //! (bilan dans `kv`, alerte au Capitaine quand il change), et la station ne supprime jamais un enregistrement.
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -221,12 +222,65 @@ impl<T: Transport> Zone<T> {
     }
 }
 
+/// Les paramètres OVH de la configuration coopérative.
+const OVH_KEYS: [&str; 4] = ["OVH_APP_KEY", "OVH_APP_SECRET", "OVH_CONSUMER_KEY", "OVH_ZONE"];
+
+/// Paramètres OVH publiés (secrets déchiffrés avec `UPLANETNAME`), seulement ceux qui sont renseignés.
+async fn stored_ovh(db: &Db, uplanet_name: &str) -> BTreeMap<&'static str, String> {
+    let mut out = BTreeMap::new();
+    let Ok((_, hex)) = coop_config::coop_keys(uplanet_name) else { return out };
+    let Some(stored) = coop_config::load(db, &hex).await else { return out };
+    for k in OVH_KEYS {
+        let Some(v) = stored.values.get(k) else { continue };
+        let v = if coop::is_encrypted(v) { coop::decrypt(uplanet_name, v).unwrap_or_default() } else { v.clone() };
+        if !v.trim().is_empty() {
+            out.insert(k, v);
+        }
+    }
+    out
+}
+
+/// Identifiants OVH complets à partir de `values` ; `Err` dit ce qui manque.
+fn complete(values: &BTreeMap<&'static str, String>) -> Result<Credentials, String> {
+    let missing: Vec<&str> = OVH_KEYS[..3].iter().copied().filter(|k| !values.contains_key(k)).collect();
+    if !missing.is_empty() {
+        return Err(format!("paramètres OVH incomplets : {}", missing.join(", ")));
+    }
+    let zone = values.get("OVH_ZONE").map_or_else(|| DEFAULT_ZONE.to_owned(), |z| z.trim().to_ascii_lowercase());
+    if !coop_config::valid_domain(&zone) {
+        return Err(format!("zone DNS invalide : {zone}"));
+    }
+    Ok(Credentials { app_key: values["OVH_APP_KEY"].clone(), app_secret: values["OVH_APP_SECRET"].clone(), consumer_key: values["OVH_CONSUMER_KEY"].clone(), zone })
+}
+
 /// Identifiants OVH de la coopérative (secrets déchiffrés avec `UPLANETNAME`) ; `None` s'ils ne sont pas tous renseignés.
 pub async fn credentials(db: &Db, uplanet_name: &str) -> Option<Credentials> {
-    let (_, hex) = coop_config::coop_keys(uplanet_name).ok()?;
-    let stored = coop_config::load(db, &hex).await?;
-    let get = |k: &str| stored.values.get(k).map(|v| if coop::is_encrypted(v) { coop::decrypt(uplanet_name, v).unwrap_or_default() } else { v.clone() }).filter(|v| !v.trim().is_empty());
-    Some(Credentials { app_key: get("OVH_APP_KEY")?, app_secret: get("OVH_APP_SECRET")?, consumer_key: get("OVH_CONSUMER_KEY")?, zone: get("OVH_ZONE").map(|z| z.trim().to_ascii_lowercase()).unwrap_or_else(|| DEFAULT_ZONE.to_owned()) })
+    complete(&stored_ovh(db, uplanet_name).await).ok()
+}
+
+/// Valeurs publiées, recouvertes par celles que le Capitaine vient de saisir (les champs vides gardent la valeur publiée).
+fn overlay(mut stored: BTreeMap<&'static str, String>, typed: Option<&Value>) -> Result<BTreeMap<&'static str, String>, String> {
+    if let Some(Value::Object(t)) = typed {
+        for k in OVH_KEYS {
+            let Some(v) = t.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()) else { continue };
+            coop_config::validate(k, v)?;
+            stored.insert(k, v.to_owned());
+        }
+    }
+    Ok(stored)
+}
+
+/// Essai de connexion **en lecture seule** : un appel signé `GET /domain/zone/<zone>`. Contrairement à `/auth/time` (public,
+/// toujours « bon »), il échoue si la clé, le secret ou la clé de consommateur sont faux, ou si la zone n'est pas accordée.
+pub async fn probe<T: Transport>(transport: &T, zone: &str) -> Value {
+    match transport.call("GET", &format!("/domain/zone/{zone}"), None).await {
+        Err(e) => json!({ "ok": false, "error": e }),
+        Ok(raw) => match serde_json::from_str::<Value>(&raw) {
+            Ok(v) if v["message"].is_string() => json!({ "ok": false, "error": v["message"] }),
+            Ok(v) if v["name"].is_string() => json!({ "ok": true, "zone": zone }),
+            _ => json!({ "ok": false, "error": "réponse inattendue d'OVH" }),
+        },
+    }
 }
 
 /// Une adresse voulue : nom (sans `_dnslink.` ni zone) et espace IPNS.
@@ -351,6 +405,22 @@ impl Dnslink {
         status
     }
 
+    /// Teste la connexion à OVH avec les paramètres publiés, recouverts par la saisie `typed` (écran de configuration) : rien
+    /// n'est écrit, aucun secret n'est rendu ni journalisé.
+    pub async fn test(&self, typed: Option<&Value>) -> Value {
+        let merged = match overlay(stored_ovh(&self.db, &self.uplanet_name).await, typed) {
+            Ok(m) => m,
+            Err(e) => return json!({ "ok": false, "error": e }),
+        };
+        match complete(&merged) {
+            Err(e) => json!({ "ok": false, "error": e }),
+            Ok(creds) => {
+                let zone = creds.zone.clone();
+                probe(&HttpsTransport::new(creds), &zone).await
+            }
+        }
+    }
+
     /// Dernier bilan enregistré.
     pub async fn status(&self) -> Option<Value> {
         let raw: Option<String> = self.db.readers().read(|c| Ok(c.query_row("SELECT value FROM kv WHERE scope = ?1 AND key = 'last'", [STATUS_SCOPE], |r| r.get(0)).optional()?)).await.ok().flatten();
@@ -410,6 +480,50 @@ mod tests {
                 })
             })
         }
+    }
+
+    /// Faux OVH pour l'essai de connexion : une réponse fixe, et le journal des appels.
+    struct Probe(Result<&'static str, &'static str>, Mutex<Vec<String>>);
+    impl Transport for Probe {
+        fn call<'a>(&'a self, method: &'a str, path: &'a str, body: Option<String>) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
+            Box::pin(async move {
+                assert!(body.is_none(), "l'essai ne doit rien écrire");
+                self.1.lock().unwrap().push(format!("{method} {path}"));
+                self.0.map(str::to_owned).map_err(str::to_owned)
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn the_probe_reads_the_zone_with_a_signed_get_and_never_writes() {
+        let ok = Probe(Ok(r#"{"name":"z.example","nameServers":[]}"#), Mutex::default());
+        assert_eq!(probe(&ok, "z.example").await, json!({ "ok": true, "zone": "z.example" }));
+        assert_eq!(*ok.1.lock().unwrap(), ["GET /domain/zone/z.example"]);
+        let refused = Probe(Ok(r#"{"class":"Client::Forbidden","message":"This credential is not valid"}"#), Mutex::default());
+        assert_eq!(probe(&refused, "z.example").await, json!({ "ok": false, "error": "This credential is not valid" }));
+        let down = Probe(Err("OVH GET : délai dépassé"), Mutex::default());
+        assert_eq!(probe(&down, "z.example").await["ok"], false);
+        assert_eq!(probe(&Probe(Ok("[]"), Mutex::default()), "z.example").await["error"], "réponse inattendue d'OVH");
+    }
+
+    #[test]
+    fn what_is_typed_covers_what_is_published_and_empty_fields_keep_it() {
+        let stored: BTreeMap<&'static str, String> = [("OVH_APP_KEY", "k".to_owned()), ("OVH_APP_SECRET", "s".to_owned()), ("OVH_CONSUMER_KEY", "c".to_owned())].into();
+        let typed = json!({ "OVH_APP_SECRET": "  nouveau ", "OVH_CONSUMER_KEY": "", "OVH_ZONE": "Coop.Example" });
+        let m = overlay(stored.clone(), Some(&typed)).unwrap();
+        let c = complete(&m).unwrap();
+        assert_eq!((c.app_key.as_str(), c.app_secret.as_str(), c.consumer_key.as_str(), c.zone.as_str()), ("k", "nouveau", "c", "coop.example"));
+        // Rien de saisi : les valeurs publiées servent ; zone absente : celle par défaut.
+        assert_eq!(complete(&overlay(stored.clone(), None).unwrap()).unwrap().zone, DEFAULT_ZONE);
+        // Incomplet : on dit quelles clés manquent, sans rien appeler.
+        let mut partial = stored.clone();
+        partial.remove("OVH_APP_SECRET");
+        assert_eq!(complete(&partial).err().unwrap(), "paramètres OVH incomplets : OVH_APP_SECRET");
+        // Une zone qui ne serait pas un nom de domaine n'est jamais mise dans un chemin d'API.
+        assert!(overlay(stored.clone(), Some(&json!({ "OVH_ZONE": "x/../y" }))).is_err());
+        let mut bad = stored;
+        bad.insert("OVH_ZONE", "a b".to_owned());
+        assert!(complete(&bad).err().unwrap().contains("zone DNS invalide"));
     }
 
     #[test]

@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
-use crate::blob::{BlobError, BlobStore, BlobWriter, is_cid, is_legacy_cid};
+use crate::blob::{BlobError, BlobStore, BlobWriter, is_cid};
 use crate::server::{DavState, now_secs, parse_range};
 use crate::vfs::{self, EntryKind, VfsError};
 
@@ -205,7 +205,7 @@ pub struct Attachment {
     pub expires_at: i64,
 }
 
-/// Dépose la pièce jointe d'un message : des octets **déjà chiffrés par l'expéditeur** (format UENC v1, AES-256-GCM), dont la
+/// Dépose la pièce jointe d'un message : des octets **déjà chiffrés par l'expéditeur** (format UENC v2, AES-256-GCM), dont la
 /// station ne connaît jamais la clé (elle voyage dans le message chiffré de bout en bout). Le blob est servi par la passerelle
 /// `/ipfs/<cid>` tant que son enregistrement n'est pas échu ; l'enregistrement est celui des liens d'invité (même purge,
 /// même révocation, même porte), sans clé ni manifeste.
@@ -214,13 +214,13 @@ pub struct Attachment {
 /// compte atteint, disque presque plein. Des octets déjà connus de la station (même CID) ne créent **pas** de second
 /// enregistrement : sinon l'échéance courte d'un tiers supprimerait le blob de l'expéditeur d'origine.
 pub async fn store_attachment<B: BlobStore>(db: &Db, blobs: &B, owner: &str, data: &[u8], ttl_secs: i64, now: i64) -> Result<Attachment, ShareError> {
-    const HEADER: usize = 4 + 1 + 1 + 12;
+    const HEADER: usize = 4 + 1 + 1 + 1 + 7;
     if data.len() > ATTACHMENT_MAX {
         return Err(ShareError::Refused(format!("pièce jointe trop lourde ({} Mo au plus)", ATTACHMENT_MAX >> 20)));
     }
     // En-tête + au moins l'étiquette d'authentification GCM (16 octets).
-    if data.len() < HEADER + 16 || !is_uenc_v1(data) {
-        return Err(ShareError::Refused("pièce jointe non chiffrée : format UENC v1 (AES-256-GCM) attendu".into()));
+    if data.len() < HEADER + 16 || !is_uenc_v2(data) {
+        return Err(ShareError::Refused("pièce jointe non chiffrée : format UENC v2 (AES-256-GCM) attendu".into()));
     }
     if !(1..=ATTACHMENT_MAX_TTL).contains(&ttl_secs) {
         return Err(ShareError::Refused("durée de conservation : 1 seconde à 90 jours".into()));
@@ -294,9 +294,9 @@ pub async fn replica_bytes(db: &Db, owner: &str, now: i64) -> u64 {
         .map_or(0, |n| u64::try_from(n).unwrap_or(0))
 }
 
-/// Ces octets sont-ils bien une pièce jointe chiffrée (en-tête UENC v1, AES-256-GCM) ? Un hébergeur ne range jamais de clair.
-pub fn is_uenc_v1(head: &[u8]) -> bool {
-    head.starts_with(b"UENC\x01\x01")
+/// Ces octets sont-ils bien une pièce jointe chiffrée (en-tête UENC v2, AES-256-GCM) ? Un hébergeur ne range jamais de clair. Seuls les 6 premiers octets sont examinés.
+pub fn is_uenc_v2(head: &[u8]) -> bool {
+    head.starts_with(b"UENC\x02\x01")
 }
 
 /// Révoque un lien : l'enregistrement et tous ses blobs sont supprimés.
@@ -388,7 +388,6 @@ pub async fn blob<B: BlobStore>(State(st): State<Arc<DavState<B>>>, Path((slug, 
 /// **Désactivée par défaut** (`--ipfs-gateway`), lecture seule, un blob à la fois (jamais de dossier ni de sous-chemin) :
 /// - un blob natif (CID v1) n'est servi que s'il appartient à un **lien de partage actif** : la révocation et l'échéance
 ///   d'un lien ferment donc aussi cette porte ;
-/// - un ancien blob `Qm…` n'est servi que s'il est **épinglé** dans le Kubo local (ORIGIN) : jamais récupéré sur le réseau.
 ///
 /// Ce sont des blobs chiffrés : sans leur clé (dans le lien `#clé`), la passerelle ne donne que du bruit.
 pub async fn ipfs_gateway<B: BlobStore>(State(st): State<Arc<DavState<B>>>, Path(cid): Path<String>, headers: HeaderMap) -> Response {
@@ -397,8 +396,6 @@ pub async fn ipfs_gateway<B: BlobStore>(State(st): State<Arc<DavState<B>>>, Path
     }
     let allowed = if is_cid(&cid) {
         shared_by_active_link(&st, &cid).await
-    } else if is_legacy_cid(&cid) {
-        st.blobs.pinned_legacy(&cid).await
     } else {
         false
     };

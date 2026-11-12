@@ -5,7 +5,7 @@
 //! - `moved` : dossier d'un compte parti vers une autre station (voir [`crate::private_backup`]).
 //!
 //! La nuit de 20h12 efface ce qui y dort depuis plus de [`KEEP_SECS`] (30 jours) ; d'ici là, le Capitaine peut tout
-//! récupérer à la main (`mv`). Les anciens emplacements (`nostr/.moved/`, `nostr.ejected/`) sont vidés par la même passe.
+//! récupérer à la main (`mv`).
 //! Une erreur est toujours dite, jamais avalée.
 
 use std::path::{Path, PathBuf};
@@ -53,7 +53,7 @@ fn sweep(dir: &Path, now: i64, keep: i64) -> Result<usize, String> {
     Ok(gone)
 }
 
-/// Passe de nuit : efface ce qui dort dans la corbeille (et les anciens emplacements) depuis plus de `keep` secondes.
+/// Passe de nuit : efface ce qui dort dans la corbeille depuis plus de `keep` secondes.
 pub fn purge(game: &Path, now: i64, keep: i64) -> Result<usize, String> {
     let mut gone = 0;
     let trash = root(game);
@@ -66,8 +66,6 @@ pub fn purge(game: &Path, now: i64, keep: i64) -> Result<usize, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(format!("lecture de {} : {e}", trash.display())),
     }
-    gone += sweep(&game.join("nostr").join(".moved"), now, keep)?;
-    gone += sweep(&game.join("nostr.ejected"), now, keep)?;
     Ok(gone)
 }
 
@@ -85,10 +83,8 @@ mod tests {
         let at = 1_800_000_000;
         let dest = put(&game, "ejected", "ana@ex.org", &acc, at).unwrap();
         assert!(dest.ends_with("trash/ejected/ana@ex.org.1800000000") && !acc.exists());
-        // Ancien emplacement des comptes déménagés : vidé par la même passe.
-        std::fs::create_dir_all(game.join("nostr/.moved/bob@ex.org-1800000000")).unwrap();
         assert_eq!(purge(&game, at + KEEP_SECS - 1, KEEP_SECS).unwrap(), 0, "trop tôt");
-        assert_eq!(purge(&game, at + KEEP_SECS, KEEP_SECS).unwrap(), 2);
+        assert_eq!(purge(&game, at + KEEP_SECS, KEEP_SECS).unwrap(), 1);
         assert!(!dest.exists());
         let _ = std::fs::remove_dir_all(&game);
     }

@@ -240,7 +240,24 @@ fn with_dropins(file: &str, dropins_first: bool) -> Option<String> {
 }
 
 /// Réglages de la machine dont dépend la station et que le démon ne peut ni ne doit changer lui-même : lus, jamais modifiés.
+/// ONNX Runtime : seulement dans un binaire compilé avec `onnx`. Sans la bibliothèque, FaceCloud et les embeddings de BRO retombent
+/// sur un service externe ; on le dit ici plutôt que de laisser l'administrateur le deviner dans les journaux.
+#[cfg(feature = "onnx")]
+fn onnx_checks(out: &mut Vec<Check>) {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let lib = astro_facecloud::onnx::check_library(std::env::var("ORT_DYLIB_PATH").ok().as_deref(), home.as_deref());
+    match (lib.path, lib.problem) {
+        (Some(path), None) => out.push(check("onnx", Level::Ok, format!("bibliothèque ONNX Runtime : {}", path.display()))),
+        (_, Some(why)) => out.push(check("onnx", Level::Warn, format!("{why}\n      (`astroportd face-check` et `embed-check` détaillent aussi les modèles)"))),
+        (None, None) => {}
+    }
+}
+
+#[cfg(not(feature = "onnx"))]
+fn onnx_checks(_: &mut Vec<Check>) {}
+
 fn system_checks(out: &mut Vec<Check>) {
+    onnx_checks(out);
     if let Some(n) = std::fs::read_to_string("/proc/self/limits").ok().as_deref().and_then(parse_nofile) {
         let (level, detail) = nofile_level(n);
         out.push(check("système/fichiers", level, format!("{detail} (limite de ce shell ; le service a la sienne, voir son unité)")));

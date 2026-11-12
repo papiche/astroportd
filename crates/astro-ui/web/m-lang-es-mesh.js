@@ -1,9 +1,8 @@
 'use strict';
 // Dictionnaire es, écran m-mesh.js.
 export default {
-"Confirmer ?": "¿Confirmar?",
 "Maillage coupé : relancez la station sans --no-p2p pour rejoindre les autres stations.": "Malla desactivada: reinicie la estación sin --no-p2p para unirse a las demás estaciones.",
-"UPlanet : {0} · {1} station(s) connectée(s).": "UPlanet: {0} · {1} estación(es) conectada(s).",
+"Constellation : {0} · {1} station(s) connectée(s).": "Constelación: {0} · {1} estación(es) conectada(s).",
 "Adresse à donner aux autres Capitaines :": "Dirección para dar a los otros Capitanes:",
 "Adresse de la station": "Dirección de la estación",
 "Stations": "Estaciones",
@@ -16,7 +15,7 @@ export default {
 "Garder (rejointe à chaque démarrage)": "Guardar (se vuelve a unir en cada arranque)",
 "Station jointe": "Estación unida",
 "Joindre": "Unirse",
-"Seule une station de la même UPlanet (même swarm.key) peut être jointe.": "Solo se puede unir una estación de la misma UPlanet (misma swarm.key).",
+"Seule une station de la même constellation (même swarm.key) peut être jointe.": "Solo se puede unir una estación de la misma constelación (misma swarm.key).",
 "client de bureau à distance vers {0}": "cliente de escritorio remoto hacia {0}",
 "Accès ouvert": "Acceso abierto",
 "ami": "amigo",
@@ -42,7 +41,6 @@ export default {
 "aucun service partagé": "ningún servicio compartido",
 "L'essaim": "El enjambre",
 "Seulement celles qui offrent l'IA (Ollama)": "Solo las que ofrecen IA (Ollama)",
-"Plans (UPlanet)": "Planos (UPlanet)",
 "Stations relais": "Estaciones relé",
 "Cette station sert de relais aux stations de la constellation qui sont derrière une box.": "Esta estación sirve de relé a las estaciones de la constelación que están detrás de un router.",
 "cette station": "esta estación",

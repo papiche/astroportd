@@ -523,11 +523,6 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
     if embed_threads > 0 {
         serve.push(format!("--embed-threads {embed_threads}"));
     }
-    // Un uCloud repris d'Astroport.ONE (import-ucloud) n'a ses blobs que dans IPFS : sans --kubo, il devient illisible.
-    // ORIGIN seulement : une UPlanet ẐEN n'a jamais de Kubo (étanchéité des constellations).
-    if mode == Mode::Origin && crate::legacy_ucloud::count_ipfs_only(&home.join("uplanet.db")).unwrap_or(0) > 0 {
-        serve.push("--kubo http://127.0.0.1:5001".into());
-    }
     let serve = serve.join(" ");
     // Une station à plusieurs plans se lance par `planes` : `serve` ne servirait que ORIGIN.
     let planes_json = home.join("planes.json");

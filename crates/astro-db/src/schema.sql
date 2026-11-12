@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS identities (
   lon          REAL,
   umap         TEXT,
   key_formula  TEXT NOT NULL DEFAULT 'isolated'
-               CHECK (key_formula IN ('isolated','legacy','raw','concat_swarm','coop_prefix')),
+               CHECK (key_formula IN ('isolated','raw','concat_swarm','coop_prefix')),
   home_station TEXT,                   -- '<IPFSNODEID>:<NODE_HEX>'
   peer_id      TEXT,                   -- PeerID libp2p d'un NODE (flux P2P → NODE)
   contract     TEXT CHECK (contract IN ('active_rental','cooperative_member') OR contract IS NULL),

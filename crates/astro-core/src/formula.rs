@@ -1,6 +1,6 @@
 //! Formules de crédentiels : comment `(SALT, PEPPER)` devient la paire passée à `keygen`.
 //!
-//! Sources legacy : `tools/my.sh` (`uplanet_salt`, `uplanet_pepper`, `resolve_player_dunikey`,
+//! Sources Astroport.ONE : `tools/my.sh` (`uplanet_salt`, `uplanet_pepper`, `resolve_player_dunikey`,
 //! `init_and_cache_wallet`) et `_12345.sh:211-232` (clé swarm).
 
 use std::fmt;
@@ -18,8 +18,6 @@ use crate::kdf::{self, KdfError};
 pub enum KeyFormula {
     /// `(SALT, PEPPER_<UPLANET_SALT>)`, avec `UPLANET_SALT = sha256(UPLANETNAME)[..16]` : référence des nouveaux comptes.
     Isolated,
-    /// `(SALT, PEPPER)` : comptes créés avant l'isolation par UPlanet. Jamais choisie pour un nouveau compte.
-    Legacy,
     /// `(SALT, PEPPER)` fournis tels quels : clés NODE (`secret.june`), ZenCard (diceware), volontairement identiques d'une UPlanet à l'autre.
     Raw,
     /// `(SECRET1‖UPLANETNAME, SECRET2‖UPLANETNAME)` : clés MySwarm.
@@ -30,17 +28,16 @@ pub enum KeyFormula {
 
 impl KeyFormula {
     /// Toutes les formules.
-    pub const ALL: [KeyFormula; 5] =
-        [Self::Isolated, Self::Legacy, Self::Raw, Self::ConcatSwarm, Self::CoopPrefix];
+    pub const ALL: [KeyFormula; 4] = [Self::Isolated, Self::Raw, Self::ConcatSwarm, Self::CoopPrefix];
 
-    /// Ordre d'essai pour retrouver la formule d'un compte existant (comme `resolve_player_dunikey`).
-    pub const RESOLVE_ORDER: [KeyFormula; 2] = [Self::Isolated, Self::Legacy];
+    /// Formules essayées pour retrouver celle d'un compte existant. Les comptes d'avant l'isolation par UPlanet
+    /// (`(SALT, PEPPER)` bruts) ne sont plus retrouvés : la formule qui les produisait a été retirée.
+    pub const RESOLVE_ORDER: [KeyFormula; 1] = [Self::Isolated];
 
     /// Nom stable stocké en base et dans `.keyformula`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Isolated => "isolated",
-            Self::Legacy => "legacy",
             Self::Raw => "raw",
             Self::ConcatSwarm => "concat_swarm",
             Self::CoopPrefix => "coop_prefix",
@@ -54,7 +51,7 @@ impl KeyFormula {
                 let salt = uplanet_salt(input.uplanet_name)?;
                 Ok(Credentials::new(input.salt.to_owned(), format!("{}_{salt}", input.pepper)))
             }
-            Self::Legacy | Self::Raw => Ok(Credentials::new(input.salt.to_owned(), input.pepper.to_owned())),
+            Self::Raw => Ok(Credentials::new(input.salt.to_owned(), input.pepper.to_owned())),
             Self::ConcatSwarm => {
                 let name = require_name(input.uplanet_name)?;
                 Ok(Credentials::new(format!("{}{name}", input.salt), format!("{}{name}", input.pepper)))
@@ -174,7 +171,7 @@ pub enum KeyKind {
     Ipns,
 }
 
-/// Retrouve la formule qui reproduit une clé publique de référence (`Isolated` d'abord, puis `Legacy`).
+/// Retrouve la formule qui reproduit une clé publique de référence (aujourd'hui `Isolated` seulement, voir [`KeyFormula::RESOLVE_ORDER`]).
 ///
 /// `None` si aucune ne correspond : l'appelant ne doit alors pas signer avec la clé dérivée.
 pub fn resolve_formula(
@@ -244,8 +241,6 @@ mod tests {
         let i = input("alice@example.org", "PEP");
         let c = KeyFormula::Isolated.credentials(&i).unwrap();
         assert_eq!((c.salt(), c.pepper()), ("alice@example.org", "PEP_aeeb4f9fe9753492"));
-        let c = KeyFormula::Legacy.credentials(&i).unwrap();
-        assert_eq!((c.salt(), c.pepper()), ("alice@example.org", "PEP"));
         let c = KeyFormula::Raw.credentials(&i).unwrap();
         assert_eq!((c.salt(), c.pepper()), ("alice@example.org", "PEP"));
         let c = KeyFormula::ConcatSwarm.credentials(&i).unwrap();
@@ -263,7 +258,7 @@ mod tests {
         for f in [KeyFormula::Isolated, KeyFormula::ConcatSwarm, KeyFormula::CoopPrefix] {
             assert_eq!(f.credentials(&i).err(), Some(FormulaError::MissingUplanetName), "{f}");
         }
-        assert!(KeyFormula::Legacy.credentials(&i).is_ok());
+        assert!(KeyFormula::Raw.credentials(&i).is_ok());
     }
 
     #[test]

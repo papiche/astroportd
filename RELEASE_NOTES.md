@@ -1,3 +1,12 @@
+## astroportd 1.0.0 — fin des ponts avec Astroport.ONE
+
+Aucun compte existant n'est repris : ces retraits **cassent la lecture des anciennes données**.
+
+- **Retirés** : la commande `astroportd import-ucloud` ; les CID v0 `Qm…` (lecture Kubo, épinglage, passerelle `/ipfs/`) ; la lecture du format **UENC v1** (seul UENC v2 est lu et écrit) ; la migration des anciennes invitations ; les anciens emplacements `nostr/.moved/` et `nostr.ejected/` (la corbeille `trash/` les remplace).
+- **`KeyFormula::Legacy`** (clés d'avant l'isolation par UPlanet, `(SALT, PEPPER)` bruts) est retirée : ces comptes ne sont plus retrouvés par `multipass recover` ni par la carte QR. `raw` produit les mêmes clés pour qui en a besoin. La contrainte SQL `key_formula` n'accepte plus `legacy`.
+- **UPassport / `tools/uenc_codec.py`** écrit et lit désormais l'UENC v2 (même format que astroportd, vérifié dans les deux sens) ; `UENC_OVERHEAD` passe de 64 à 8192 octets.
+- **Pièces jointes de messages** (`/api/v1/attachments`) : chiffrées côté client en UENC v2 (coracle, zelkova via UPassport) ; l'hébergeur exige l'en-tête v2 et ne déchiffre jamais. Une pièce jointe v1 déjà envoyée n'est plus lisible.
+
 ## astroportd 0.6.0-beta
 
 Cette version **soigne l'installation** : un binaire qui tourne sur Debian 12 et Ubuntu 22.04, une station déjà en niveau Y qui n'est jamais redérivée, une constellation reprise depuis kubo, un résumé réseau adapté à chaque cas, et des plugins proposés à l'installation.

@@ -11,14 +11,13 @@
 //! - **jamais d'écrasement** : un chemin déjà pris par un autre contenu est un conflit, laissé tel quel ; le même contenu
 //!   déjà là est ignoré (la commande est **rejouable**) ;
 //! - **le quota du compte de destination s'applique** (la place logique compte, pas la place physique) ;
-//! - seuls les blobs UENC v2 présents **dans le bassin** sont adoptés. Un fichier de l'ancien format (CID `Qm…`, qui ne vit
-//!   que dans Kubo) ou absent du bassin est signalé, jamais copié en silence : leur transfert demande un ré-chiffrement
-//!   (étape suivante du plan).
+//! - seuls les blobs UENC v2 présents **dans le bassin** sont adoptés. Un fichier absent du bassin est signalé, jamais
+//!   copié en silence : son transfert demande un ré-chiffrement (étape suivante du plan).
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use astro_dav::blob::{BlobError, BlobStore, is_legacy_cid};
+use astro_dav::blob::{BlobError, BlobStore};
 use astro_dav::server::DavConfig;
 use astro_dav::vfs::{self, EntryKind, NewFile, VfsError, vfs_tx};
 use astro_db::Db;
@@ -50,8 +49,6 @@ pub struct Report {
     pub same: u64,
     /// Chemin pris par un autre contenu : laissés tels quels.
     pub conflicts: u64,
-    /// Ancien format (Kubo) : non adoptés.
-    pub legacy: u64,
     /// Blob absent du bassin ou clé inconnue : non adoptés.
     pub missing: u64,
     /// Refusés par le quota du compte de destination.
@@ -140,10 +137,6 @@ pub async fn adopt<B: BlobStore>(src_db: &Path, dst: &Db, pool: &B, config: &Dav
     let (files, keys) = read_source(src_db, &opts.from_owner, &root)?;
     let mut report = Report::default();
     for f in files {
-        if is_legacy_cid(&f.cid) {
-            report.legacy += 1;
-            continue;
-        }
         let Some(key) = keys.get(&f.cid).cloned() else {
             report.missing += 1;
             continue;

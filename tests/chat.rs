@@ -158,11 +158,11 @@ async fn one_conversation_per_person_across_planes_and_the_channel_is_the_shared
     assert_eq!(convs.len(), 1, "une seule conversation pour la personne : {list}");
     assert_eq!(convs[0]["channels"].as_array().unwrap().len(), 2, "origin + zen1 : {list}");
     assert_eq!(list["unread"], 0, "les non lus du plan voisin ne gonflent pas la pastille d'ici");
-    // Léa sans clé dans le plan courant : l'erreur dit où écrire.
+    // Zoé sans clé dans le plan courant : le membre lit une phrase humaine, sans plan ni clé.
     let only_zen = hex(&[0x77; 32]);
     zen.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, 'multipass', 'zoe@example.org', 1)", vec![only_zen.clone().into()]).await.unwrap();
     let err = chat.send(&hex(&ALICE), &only_zen, "x").await.unwrap_err().to_string();
-    assert!(err.contains("zen1"), "{err}");
+    assert!(err.contains("pas joignable") && !err.contains("zen1") && !err.contains("UPlanet"), "{err}");
     let _ = std::fs::remove_dir_all(dir);
 }
 

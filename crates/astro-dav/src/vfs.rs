@@ -316,7 +316,7 @@ pub fn commit_file_tx(tx: &Transaction<'_>, owner: &str, path: &str, f: &NewFile
 /// Comme [`commit_file_tx`], mais un fichier dont le clair (SHA-256 + taille) existe déjà chez ce compte, chiffré en
 /// UENC v2, **réutilise** ce blob et sa clé : une photo déposée deux fois n'occupe qu'une place. Retourne l'ancienne
 /// entrée remplacée et, si le blob qu'on vient d'écrire est devenu redondant, son CID (à supprimer du magasin par
-/// l'appelant). Les anciens blobs UENC v1 (Kubo) ne servent jamais de cible : on ne les déplace pas.
+/// l'appelant).
 pub fn commit_file_dedup_tx(tx: &Transaction<'_>, owner: &str, path: &str, f: &NewFile, limits: Limits) -> Result<(Option<Entry>, Option<String>), VfsError> {
     let twin: Option<(String, String, Option<i64>)> = tx
         .query_row(

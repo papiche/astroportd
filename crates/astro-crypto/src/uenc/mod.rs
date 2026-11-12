@@ -2,10 +2,7 @@
 //!
 //! # Formats
 //!
-//! **v1** (legacy, `tools/uenc_codec.py`) : `"UENC" | 0x01 | enc_type=0x01 | iv[12] | ciphertext | tag[16]`,
-//! AES-256-GCM, sans AAD. Lecture seule : aucun CID IPFS existant n'est cassé.
-//!
-//! **v2** (écriture) : `"UENC" | 0x02 | enc_type | chunk_log2 | nonce_prefix[7]` (14 octets) suivis de
+//! **v2** (seule version lue et écrite ; l'ancien v1 monolithique d'Astroport.ONE est retiré) : `"UENC" | 0x02 | enc_type | chunk_log2 | nonce_prefix[7]` (14 octets) suivis de
 //! chunks `ciphertext | tag[16]`. Chaque chunk contient `2^chunk_log2` octets de clair (64 Kio),
 //! sauf le dernier qui en contient entre 0 et `2^chunk_log2`.
 //! Construction STREAM : nonce de 12 octets = `prefix[7] | compteur u32 BE | drapeau « dernier chunk »`,
@@ -17,11 +14,10 @@ use aes_gcm::aead::generic_array::GenericArray;
 use aes_gcm::aead::{AeadInPlace, KeyInit};
 use aes_gcm::Aes256Gcm;
 use chacha20poly1305::ChaCha20Poly1305;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite};
 
 use crate::UencKey;
 
-pub mod v1;
 pub mod v2;
 
 pub use v2::{CHUNK_LOG2, HEADER_LEN, v2_plaintext_len};
@@ -55,9 +51,6 @@ pub enum UencError {
     /// Tag invalide : mauvaise clé ou données altérées.
     #[error("authentification échouée (clé erronée ou données altérées)")]
     AuthFailed,
-    /// Un blob v1 dépasse la limite de lecture en mémoire.
-    #[error("blob v1 trop gros (> {0} octets)")]
-    V1TooLarge(usize),
     /// Plage demandée incohérente avec la taille du clair.
     #[error("plage invalide")]
     BadRange,
@@ -190,7 +183,7 @@ where
     v2::encrypt_stream(key, cipher, reader, writer).await
 }
 
-/// Déchiffre un flux UENC, version détectée à l'exécution (v1 en mémoire, v2 en streaming).
+/// Déchiffre un flux UENC, en streaming.
 pub async fn decrypt_stream<R, W>(key: &UencKey, reader: &mut R, writer: &mut W) -> Result<u64, UencError>
 where
     R: AsyncRead + Unpin,
@@ -199,21 +192,13 @@ where
     let mut head = [0u8; 6];
     read_head(reader, &mut head).await?;
     match head[4] {
-        1 => {
-            let blob = v1::read_remaining(reader, &head).await?;
-            let plain = v1::decrypt(key, &blob)?;
-            writer.write_all(&plain).await?;
-            writer.flush().await?;
-            Ok(plain.len() as u64)
-        }
         2 => v2::decrypt_after_head(key, &head, reader, writer).await,
         other => Err(UencError::UnsupportedVersion(other)),
     }
 }
 
-/// Déchiffre les octets `start..=end_inclusive` du clair sans lire les autres chunks (v2).
+/// Déchiffre les octets `start..=end_inclusive` du clair sans lire les autres chunks.
 ///
-/// Pour un blob v1, le blob est déchiffré en entier puis découpé.
 /// `total_len` est la taille du blob chiffré (taille IPFS ou en-tête `Content-Length` amont).
 pub async fn decrypt_range<R, W>(
     key: &UencKey,
@@ -231,19 +216,6 @@ where
     reader.seek(std::io::SeekFrom::Start(0)).await?;
     read_head(reader, &mut head).await?;
     match head[4] {
-        1 => {
-            let blob = v1::read_remaining(reader, &head).await?;
-            let plain = v1::decrypt(key, &blob)?;
-            let len = plain.len() as u64;
-            if start > end_inclusive || start >= len {
-                return Err(UencError::BadRange);
-            }
-            let end = end_inclusive.min(len - 1);
-            let slice = plain.get(start as usize..=end as usize).ok_or(UencError::BadRange)?;
-            writer.write_all(slice).await?;
-            writer.flush().await?;
-            Ok(slice.len() as u64)
-        }
         2 => v2::decrypt_range_after_head(key, &head, reader, total_len, start, end_inclusive, writer).await,
         other => Err(UencError::UnsupportedVersion(other)),
     }
@@ -269,7 +241,7 @@ pub async fn encrypt_to_vec(key: &UencKey, cipher: Cipher, plain: &[u8]) -> Resu
     Ok(out)
 }
 
-/// Déchiffre un tampon en mémoire (v1 ou v2).
+/// Déchiffre un tampon en mémoire.
 pub async fn decrypt_to_vec(key: &UencKey, blob: &[u8]) -> Result<Vec<u8>, UencError> {
     let mut input = blob;
     let mut out = Vec::with_capacity(blob.len());

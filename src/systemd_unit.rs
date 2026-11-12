@@ -102,6 +102,43 @@ pub fn rewrite(unit: &str, exec: &str, description: Option<&str>) -> String {
     out.join("\n")
 }
 
+/// État de l'unité installée, pour l'interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnitState {
+    /// Pas d'unité : la station n'est pas lancée par systemd (ou par une unité système, hors de ce dossier).
+    Absent,
+    /// L'unité lance `astroportd serve`.
+    Serve,
+    /// L'unité lance `astroportd planes`.
+    Planes,
+    /// L'unité existe mais lance autre chose.
+    Foreign,
+}
+
+impl UnitState {
+    /// Nom donné à l'interface.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Absent => "absent",
+            Self::Serve => "serve",
+            Self::Planes => "planes",
+            Self::Foreign => "foreign",
+        }
+    }
+}
+
+/// Lit l'unité (sans rien écrire).
+pub fn state_of(unit: &Path) -> UnitState {
+    match std::fs::read_to_string(unit) {
+        Err(_) => UnitState::Absent,
+        Ok(t) => match mode_of(&t) {
+            Some(Mode::Serve) => UnitState::Serve,
+            Some(Mode::Planes) => UnitState::Planes,
+            None => UnitState::Foreign,
+        },
+    }
+}
+
 /// Résultat de [`switch_to_planes`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum Switch {
@@ -148,6 +185,71 @@ pub fn switch_to_planes(unit: &Path, exe: &Path, config: Option<&Path>, names: &
     }
 }
 
+/// Bilan de [`apply`], pour la CLI (messages) et l'interface web (JSON).
+#[derive(Debug)]
+pub struct Report {
+    /// `no_unit`, `already_planes`, `foreign` ou `switched`.
+    pub state: &'static str,
+    /// Chemin de l'unité.
+    pub unit: PathBuf,
+    /// Commande à donner à l'unité pour servir tous les plans.
+    pub command: String,
+    /// Sauvegarde de l'ancienne unité (si basculée).
+    pub backup: Option<PathBuf>,
+    /// Options de l'ancien `serve` reportées dans `args` d'un plan, et ce plan.
+    pub carried: Vec<String>,
+    /// Plan qui a reçu ces options.
+    pub carried_to: Option<String>,
+    /// Options à reporter à la main (plan ORIGIN déjà doté d'`args`).
+    pub to_carry: Vec<String>,
+    /// L'ancienne commande avait des guillemets : ses options sont à relire dans la sauvegarde.
+    pub unreadable: bool,
+}
+
+impl Report {
+    /// Forme donnée à l'interface.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "state": self.state, "unit": self.unit.display().to_string(), "command": self.command,
+            "backup": self.backup.as_ref().map(|b| b.display().to_string()), "carried": self.carried, "carried_to": self.carried_to,
+            "to_carry": self.to_carry, "unreadable": self.unreadable,
+        })
+    }
+}
+
+/// Met l'unité d'accord avec `planes.json` : si elle lance `serve`, elle lance désormais `planes` ; les options propres à la
+/// station vont dans `args` du plan ORIGIN (`file` est alors réécrit dans `planes_path`). Ne touche jamais une unité étrangère.
+pub fn apply(user_home: &Path, exe: &Path, planes_path: &Path, file: &mut crate::plane::PlanesFile, now: u64) -> Result<Report, String> {
+    let unit = unit_path(user_home);
+    let names: Vec<String> = file.planes.iter().map(|p| p.name.clone()).collect();
+    let config = (planes_path != crate::plane::default_path(user_home)).then_some(planes_path);
+    let command = planes_exec(exe, config);
+    let mut rep = Report { state: "no_unit", unit: unit.clone(), command, backup: None, carried: Vec::new(), carried_to: None, to_carry: Vec::new(), unreadable: false };
+    match switch_to_planes(&unit, exe, config, &names, now).map_err(|e| format!("unité systemd {} : {e}", unit.display()))? {
+        Switch::NoUnit => {}
+        Switch::Foreign => rep.state = "foreign",
+        Switch::AlreadyPlanes => rep.state = "already_planes",
+        Switch::Switched { extras, backup } => {
+            rep.state = "switched";
+            rep.backup = Some(backup);
+            match extras {
+                Some(e) if !e.is_empty() => match file.planes.iter_mut().find(|p| p.swarm_key.is_none()).filter(|p| p.args.is_empty()) {
+                    Some(origin) => {
+                        origin.args.clone_from(&e);
+                        rep.carried_to = Some(origin.name.clone());
+                        rep.carried = e;
+                        crate::plane::save(planes_path, file).map_err(|e| format!("{} : {e}", planes_path.display()))?;
+                    }
+                    None => rep.to_carry = e,
+                },
+                Some(_) => {}
+                None => rep.unreadable = true,
+            }
+        }
+    }
+    Ok(rep)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,6 +277,21 @@ mod tests {
         assert!(out.contains("ExecStart=/usr/bin/astroportd planes\n"));
         assert!(out.contains("Description=astroportd (plans : origin, zen1)"));
         assert!(out.contains("Environment=RUST_LOG=debug") && out.contains("Restart=on-failure"));
+    }
+
+    #[test]
+    fn l_etat_de_l_unite_est_lu_sans_rien_ecrire() {
+        let dir = std::env::temp_dir().join(format!("unit-state-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let u = dir.join("astroportd.service");
+        assert_eq!(state_of(&u), UnitState::Absent);
+        std::fs::write(&u, SERVE).unwrap();
+        assert_eq!(state_of(&u), UnitState::Serve);
+        std::fs::write(&u, render("d", "/x/astroportd planes")).unwrap();
+        assert_eq!(state_of(&u).as_str(), "planes");
+        std::fs::write(&u, "[Service]\nExecStart=/usr/bin/ipfs daemon\n").unwrap();
+        assert_eq!(state_of(&u), UnitState::Foreign);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

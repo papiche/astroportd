@@ -166,7 +166,9 @@ impl Chat {
             return Ok(k.hex.clone());
         }
         let planes: Vec<&str> = class.iter().map(|k| k.plane.as_str()).filter(|p| !p.is_empty()).collect();
-        Err(ChatError::Invalid(format!("cette personne n'a pas de clé connue dans l'UPlanet « {here} » : écrivez-lui depuis {}", planes.join(" ou "))))
+        // Le membre ne voit ni plan ni clé : le détail va au Capitaine, qui peut aider.
+        self.activity.publish_to(Audience::Captain, "alert", "chat:channel", format!("aucune clé de cette personne dans la constellation « {here} » (connue dans : {})", planes.join(", ")), None);
+        Err(ChatError::Invalid("cette personne n'est pas joignable d'ici pour le moment".to_owned()))
     }
 
     /// Envoie `text` à `peer`. Rend le message tel qu'il est rangé (`state` : `ok` ou `failed`, avec `error`).

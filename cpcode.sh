@@ -81,4 +81,4 @@ $lean && trim+=(--lean)
 if $all || $tests; then trim+=(--tests); fi
 if [ ${#trim[@]} -gt 0 ]; then python3 -I "$repo/trim_copy.py" "$work" "${trim[@]}"; fi
 cd "$work"
-cpcode "${exclude[@]}" "${args[@]}" toml rs json sql html css js md ./
+cpcode "${exclude[@]}" "${args[@]}" toml rs json sql html css js md sh ./

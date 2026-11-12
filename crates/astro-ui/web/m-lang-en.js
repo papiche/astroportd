@@ -1,6 +1,6 @@
 'use strict';
 // Dictionnaire en, phrases communes. Les écrans de `parts` ont aussi m-lang-en-<écran>.js, chargé avec eux (K.mod).
-export const parts = 'account billets call contacts mesh options sync';
+export const parts = 'account billets call contacts coop files mesh options planes sync';
 export default {
 "Aller au contenu": "Skip to content",
 "Tableau de bord": "Dashboard",
@@ -91,6 +91,8 @@ export default {
 "email du MULTIPASS ou npub…": "MULTIPASS email or npub…",
 "Relier": "Link",
 "Délier": "Unlink",
+"Messagerie": "Messaging",
+"Cette personne n'est pas joignable d'ici pour le moment.": "This person can't be reached from here for now.",
 "Fiche reliée": "Card linked",
 "Fiche déliée": "Card unlinked",
 "Contact": "Contact",
@@ -337,5 +339,9 @@ export default {
 "Alimenter depuis Cesium ou Ğecko": "Top up from Cesium or Ğecko",
 "Glissez la photo : → oui, ← non": "Swipe the photo: → yes, ← no",
 "{0} a perdu sa station et vous demande de l'aide": "{0} lost their station and asks for your help",
-"Répondre": "Answer"
+"Répondre": "Answer",
+"Constellations": "Constellations",
+"Ajouter": "Add",
+"Nom de la constellation": "Constellation name",
+"Confirmer ?": "Confirm?",
 };

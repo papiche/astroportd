@@ -90,8 +90,7 @@ async fn files_are_adopted_without_one_more_byte_and_read_back_in_the_other_plan
     put(&r.origin, &owner, "/Photos/2024", "a.bin", photo(1)).await;
     put(&r.origin, &owner, "/Photos", "b.bin", photo(2)).await;
     put(&r.origin, &owner, "/Docs", "hors-sujet.txt", b"pas dans /Photos".to_vec()).await;
-    // Un ancien fichier (Kubo) et un fichier dont le blob manque : jamais copiés en silence.
-    r.origin.dav.db.writer().execute("INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, size, data) VALUES (?1, '/Photos/vieux.bin', '/Photos', 'file', 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG', 10, '{}')", vec![V::Text(owner.clone())]).await.unwrap();
+    // Un fichier dont le blob manque : jamais copié en silence.
     r.origin.dav.db.writer().execute("INSERT INTO ucloud_entries(owner_hex, path, parent, type, cid, size, data) VALUES (?1, '/Photos/perdu.bin', '/Photos', 'file', 'bafkreiabsent', 10, '{}')", vec![V::Text(owner.clone())]).await.unwrap();
     r.origin.dav.db.writer().execute("INSERT INTO ucloud_keyring(owner_hex, cid, key_hex, enc) VALUES (?1, 'bafkreiabsent', ?2, 'uenc2')", vec![V::Text(owner), V::Text("1".repeat(64))]).await.unwrap();
     let before = blobs_in(&r.pool);
@@ -100,14 +99,14 @@ async fn files_are_adopted_without_one_more_byte_and_read_back_in_the_other_plan
 
     // À blanc : on compte, on n'écrit rien.
     let dry = bridge::adopt(&r.origin.db_path, &r.zen.dav.db, &pool, &config, &opts(&ALICE, &ALICE_ZEN, "/Photos", true)).await.unwrap();
-    assert_eq!((dry.adopted, dry.legacy, dry.missing), (2, 1, 1));
+    assert_eq!((dry.adopted, dry.missing), (2, 1));
     assert!(paths(&r.zen, &ALICE_ZEN).await.is_empty());
 
     // Un chemin déjà pris par un autre contenu n'est jamais écrasé.
     put(&r.zen, &hex(&ALICE_ZEN), "/Imports/ORIGIN", "b.bin", b"autre contenu".to_vec()).await;
     let before_zen = blobs_in(&r.pool);
     let real = bridge::adopt(&r.origin.db_path, &r.zen.dav.db, &pool, &config, &opts(&ALICE, &ALICE_ZEN, "/Photos", false)).await.unwrap();
-    assert_eq!((real.adopted, real.conflicts, real.legacy, real.missing), (1, 1, 1, 1), "{real:?}");
+    assert_eq!((real.adopted, real.conflicts, real.missing), (1, 1, 1), "{real:?}");
     assert_eq!(blobs_in(&r.pool), before_zen, "l'adoption n'écrit aucun blob : le disque ne grossit pas");
     assert!(before_zen > before, "(le fichier déjà là dans ZEN avait, lui, sa place)");
     assert_eq!(paths(&r.zen, &ALICE_ZEN).await, ["/Imports/ORIGIN/2024/a.bin", "/Imports/ORIGIN/b.bin"]);

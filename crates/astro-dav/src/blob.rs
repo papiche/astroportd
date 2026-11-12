@@ -56,12 +56,6 @@ pub trait BlobStore: Send + Sync + 'static {
     fn open(&self, cid: &str) -> impl Future<Output = Result<(Self::Reader, u64), BlobError>> + Send;
     /// Supprime un blob (sans erreur s'il est déjà absent).
     fn remove(&self, cid: &str) -> impl Future<Output = Result<(), BlobError>> + Send;
-    /// Un ancien blob d'Astroport.ONE (CID v0 `Qm…`) est-il **épinglé ici** (donc lisible sans aller le chercher sur le réseau
-    /// IPFS) ? Garde de la passerelle `/ipfs/` : sans elle, elle ferait de la station un relais ouvert vers IPFS. `false` par
-    /// défaut : seul un magasin adossé à Kubo (ORIGIN) en a.
-    fn pinned_legacy(&self, _cid: &str) -> impl Future<Output = bool> + Send {
-        async { false }
-    }
     /// Espace disque physique `(libre, total)` de la partition qui porte le stockage ; `None` si le magasin n'est pas
     /// sur le disque local (Kubo distant) ou si la mesure est impossible : aucune garde dans ce cas.
     fn disk_space(&self) -> Option<(u64, u64)> {
@@ -106,16 +100,6 @@ pub fn cid_raw_sha256(digest: &[u8; 32]) -> String {
 /// ou `bafybei…` (racine `dag-pb` d'un fichier UnixFS découpé par Kubo).
 pub fn is_cid(s: &str) -> bool {
     s.len() == 59 && (s.starts_with("bafkrei") || s.starts_with("bafybei")) && s.bytes().all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
-}
-
-/// `true` si `s` est un CID v0 (`Qm…`, sha2-256 en base58 : 46 caractères), le format des blobs qu'Astroport.ONE a mis dans IPFS.
-///
-/// Ces blobs ne se **lisent** que depuis Kubo (`KuboBlobStore`) : ce n'est pas un CID natif ([`is_cid`]) et le magasin disque,
-/// la réplication P2P, le contrôle d'intégrité et la sauvegarde chez les amis les laissent de côté. Alphabet base58 : aucun
-/// caractère de chemin ni de requête.
-#[must_use]
-pub fn is_legacy_cid(s: &str) -> bool {
-    s.len() == 46 && s.starts_with("Qm") && s.bytes().all(|b| b.is_ascii_alphanumeric() && !matches!(b, b'0' | b'O' | b'I' | b'l'))
 }
 
 /// Magasin sur disque.

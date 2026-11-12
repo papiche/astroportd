@@ -25,7 +25,6 @@ export default {
 "La visio demande une adresse sécurisée (https) : le Capitaine l'active avec un nom de domaine (astroportd init --domain).": "Video calls need a secure address (https): the Captain turns it on with a domain name (astroportd init --domain).",
 "Appel visio : touchez pour répondre": "Video call: tap to answer",
 "Appel pris sur un autre écran": "Call answered on another screen",
-"Ajouter": "Add",
 "Ajouter quelqu'un à l'appel": "Add someone to the call",
 "Appel visio": "Video call",
 "{0} a quitté l'appel": "{0} left the call",

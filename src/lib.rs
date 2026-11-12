@@ -26,7 +26,6 @@ pub mod init;
 pub mod first_run;
 pub mod integrity;
 pub mod invites;
-pub mod legacy_ucloud;
 pub mod library;
 pub mod member_ai;
 pub mod mesh_outbox;

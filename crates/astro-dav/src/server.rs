@@ -28,7 +28,7 @@ use zeroize::Zeroizing;
 
 use crate::auth::{Account, Tier, account_token, ct_eq, lookup_by_hex, lookup_by_login, parse_basic};
 use crate::devices::{self, Scope};
-use crate::blob::{BlobStore, BlobWriter, is_cid, is_legacy_cid};
+use crate::blob::{BlobStore, BlobWriter, is_cid};
 use crate::locks::{self, blocked, parse_timeout, token_of_header, tokens_in_if};
 use crate::parse::{MAX_XML, parse_lockinfo, parse_propertyupdate};
 use crate::manifest::ManifestPublisher;
@@ -539,7 +539,7 @@ pub async fn get_owner<B: BlobStore>(st: &DavState<B>, owner: &str, path: &str, 
         return builder.body(Body::empty()).unwrap_or_else(|_| reply(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne"));
     }
     let Ok(key) = UencKey::from_hex(&key_hex) else { return reply(StatusCode::INTERNAL_SERVER_ERROR, "clé du fichier invalide") };
-    if !is_cid(&cid) && !is_legacy_cid(&cid) {
+    if !is_cid(&cid) {
         return reply(StatusCode::INTERNAL_SERVER_ERROR, "CID invalide");
     }
     let Ok((mut reader, blob_len)) = st.blobs.open(&cid).await else { return reply(StatusCode::INTERNAL_SERVER_ERROR, "blob indisponible") };
@@ -567,7 +567,7 @@ pub async fn get_owner<B: BlobStore>(st: &DavState<B>, owner: &str, path: &str, 
 /// Erreurs qui disent que le blob lui-même est mauvais (et non le disque ou le réseau).
 fn is_integrity(e: &uenc::UencError) -> bool {
     use uenc::UencError as U;
-    matches!(e, U::AuthFailed | U::Truncated | U::NotUenc | U::UnsupportedVersion(_) | U::UnsupportedCipher(_) | U::BadChunkSize(_) | U::TooManyChunks | U::V1TooLarge(_))
+    matches!(e, U::AuthFailed | U::Truncated | U::NotUenc | U::UnsupportedVersion(_) | U::UnsupportedCipher(_) | U::BadChunkSize(_) | U::TooManyChunks)
 }
 
 /// Signale un échec de lecture au rappel de la station, ou sur la sortie d'erreur sans rappel.

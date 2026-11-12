@@ -61,9 +61,6 @@ enum Command {
     },
     /// Génère une clé de réseau privé `swarm.key` pour une constellation (à copier sur chaque station).
     SwarmKey,
-    /// Reprend le uCloud d'Astroport.ONE d'un compte (`~/.zen/game/nostr/<email>/.ucloud`) : mêmes blobs chiffrés, mêmes clés,
-    /// rien n'est recopié. L'ancienne base n'est jamais modifiée. Voir `--dry-run`.
-    ImportUcloud(Box<ImportUcloudArgs>),
     /// Remplit le uCloud d'un compte depuis un dossier d'un autre serveur WebDAV (Nextcloud, ownCloud, une autre station) :
     /// mode « pull ». Rejouable : ce qui est déjà là n'est jamais écrasé ni dupliqué. Voir `pull-webdav <compte> add`.
     PullWebdav(Box<PullArgs>),
@@ -594,36 +591,21 @@ fn plane_setup_cmd(args: PlaneSetupArgs) -> Result<(), Failure> {
             if !existed {
                 println!("ORIGIN reste le plan de la station (base et dossier actuels, rien n'est déplacé).");
             }
-            let names: Vec<String> = planes.iter().map(|p| p.name.clone()).collect();
-            let default_cfg = plane::default_path(&home);
-            let config = (path != default_cfg).then_some(path.as_path());
-            let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("astroportd"));
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            match astroportd::systemd_unit::switch_to_planes(&astroportd::systemd_unit::unit_path(&home), &exe, config, &names, now)? {
-                astroportd::systemd_unit::Switch::NoUnit => {
-                    println!("Pour servir tous les plans dans un seul processus : astroportd planes --check, puis astroportd planes (à la place de serve).\nPour qu'il démarre seul : astroportd init --systemd.");
-                }
-                astroportd::systemd_unit::Switch::Foreign => {
-                    println!("L'unité systemd {} ne lance pas astroportd serve|planes : je n'y ai pas touché. Faites-lui lancer : {}", astroportd::systemd_unit::unit_path(&home).display(), astroportd::systemd_unit::planes_exec(&exe, config));
-                }
-                astroportd::systemd_unit::Switch::AlreadyPlanes => {
-                    println!("L'unité systemd lance déjà `planes`. Prise en compte du nouveau plan : systemctl --user daemon-reload && systemctl --user restart astroportd");
-                }
-                astroportd::systemd_unit::Switch::Switched { extras, backup } => {
-                    println!("Unité systemd mise à jour : elle lance maintenant `planes` (ancienne unité : {}).", backup.display());
-                    match extras {
-                        Some(e) if !e.is_empty() => {
-                            if let Some(origin) = file.planes.iter_mut().find(|p| p.swarm_key.is_none()).filter(|p| p.args.is_empty()) {
-                                origin.args = e.clone();
-                                let name = origin.name.clone();
-                                plane::save(&path, &file)?;
-                                println!("Options de l'ancien `serve` reportées sur le plan {name} : {}", e.join(" "));
-                            } else {
-                                println!("Options de l'ancien `serve` à reporter dans `args` du plan ORIGIN de {} : {}", path.display(), e.join(" "));
-                            }
-                        }
-                        Some(_) => {}
-                        None => println!("L'ancien `serve` avait des options que je ne sais pas lire : reportez-les à la main (voir la sauvegarde) dans `args` du plan ORIGIN."),
+            let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("astroportd"));
+            let rep = astroportd::systemd_unit::apply(&home, &exe, &path, &mut file, now)?;
+            match rep.state {
+                "no_unit" => println!("Pour servir tous les plans dans un seul processus : astroportd planes --check, puis astroportd planes (à la place de serve).\nPour qu'il démarre seul : astroportd init --systemd."),
+                "foreign" => println!("L'unité systemd {} ne lance pas astroportd serve|planes : je n'y ai pas touché. Faites-lui lancer : {}", rep.unit.display(), rep.command),
+                "already_planes" => println!("L'unité systemd lance déjà `planes`. Prise en compte du nouveau plan : systemctl --user daemon-reload && systemctl --user restart astroportd"),
+                _ => {
+                    println!("Unité systemd mise à jour : elle lance maintenant `planes` (ancienne unité : {}).", rep.backup.as_ref().map_or_else(String::new, |b| b.display().to_string()));
+                    if let Some(to) = &rep.carried_to {
+                        println!("Options de l'ancien `serve` reportées sur le plan {to} : {}", rep.carried.join(" "));
+                    } else if !rep.to_carry.is_empty() {
+                        println!("Options de l'ancien `serve` à reporter dans `args` du plan ORIGIN de {} : {}", path.display(), rep.to_carry.join(" "));
+                    } else if rep.unreadable {
+                        println!("L'ancien `serve` avait des options que je ne sais pas lire : reportez-les à la main (voir la sauvegarde) dans `args` du plan ORIGIN.");
                     }
                     println!("Prise en compte : systemctl --user daemon-reload && systemctl --user restart astroportd   (je ne redémarre pas le service moi-même)");
                 }
@@ -700,40 +682,6 @@ struct BridgeCopyArgs {
     /// Compte et vérifie, sans rien écrire.
     #[arg(long)]
     dry_run: bool,
-}
-
-/// Options de `import-ucloud`.
-#[derive(clap::Args)]
-struct ImportUcloudArgs {
-    /// Email ou clé Nostr (64 hex) du compte, hébergé ici.
-    account: String,
-    /// Dossier `.ucloud` d'Astroport.ONE (défaut : `<game-dir>/nostr/<email>/.ucloud`).
-    #[arg(long)]
-    legacy_dir: Option<PathBuf>,
-    /// Base `uplanet.db` d'astroportd (défaut : `~/.zen/astroportd/uplanet.db`).
-    #[arg(long)]
-    db: Option<PathBuf>,
-    /// Dossier des blobs d'astroportd (défaut : `~/.zen/astroportd/blobs`).
-    #[arg(long)]
-    blobs: Option<PathBuf>,
-    /// Dossier `~/.zen/game` (défaut : `$ASTRO_GAME_DIR`, sinon `$HOME/.zen/game`).
-    #[arg(long)]
-    game_dir: Option<PathBuf>,
-    /// API RPC d'IPFS Kubo, où vivent les blobs d'Astroport.ONE.
-    #[arg(long, default_value = "http://127.0.0.1:5001")]
-    kubo: String,
-    /// Lit, contrôle et compte, sans rien écrire dans astroportd.
-    #[arg(long)]
-    dry_run: bool,
-    /// Remplace les entrées que le compte aurait déjà dans astroportd.
-    #[arg(long)]
-    replace: bool,
-    /// Fichiers relus, déchiffrés et comparés (taille, SHA-256) avant d'écrire ; 0 pour ne rien contrôler.
-    #[arg(long, default_value_t = 60)]
-    verify: usize,
-    /// Ne publie pas le manifeste Nostr (sauvegarde et réplication) à la fin.
-    #[arg(long)]
-    no_publish: bool,
 }
 
 /// Lit la ligne de commande. `--plane NOM` (partout) remplit base, blobs, dossier de comptes et clé du plan choisi dans `planes.json`
@@ -828,7 +776,6 @@ async fn run(cli: Cli) -> Result<(), Failure> {
                 }
             }
         }
-        Command::ImportUcloud(args) => import_ucloud_cmd(*args).await,
         Command::PullWebdav(args) => pull_webdav_cmd(*args).await,
         Command::BridgeCopy(args) => bridge_copy_cmd(*args).await,
         Command::PoolStatus(args) => pool_status_cmd(*args),
@@ -1408,9 +1355,9 @@ async fn bridge_copy_cmd(args: BridgeCopyArgs) -> Result<(), Failure> {
     let config = astro_dav::DavConfig::new(Vec::new());
     let opts = astroportd::bridge::Options { from_owner, to_owner, path, dest, dry_run };
     let r = astroportd::bridge::adopt(&from_db, &dst, &pool, &config, &opts).await?;
-    println!("{} : {} fichier(s) adopté(s) sans copie ({} Mo), {} déjà là, {} en conflit, {} de l'ancien format (Kubo), {} absent(s) du bassin, {} refusé(s) par le quota", if dry_run { "à blanc" } else { "adoption" }, r.adopted, r.bytes >> 20, r.same, r.conflicts, r.legacy, r.missing, r.quota);
-    if r.missing > 0 || r.legacy > 0 {
-        println!("les fichiers de l'ancien format ou absents du bassin ne sont jamais copiés en silence : leur transfert demande un ré-chiffrement");
+    println!("{} : {} fichier(s) adopté(s) sans copie ({} Mo), {} déjà là, {} en conflit, {} absent(s) du bassin, {} refusé(s) par le quota", if dry_run { "à blanc" } else { "adoption" }, r.adopted, r.bytes >> 20, r.same, r.conflicts, r.missing, r.quota);
+    if r.missing > 0 {
+        println!("les fichiers absents du bassin ne sont jamais copiés en silence : leur transfert demande un ré-chiffrement");
     }
     Ok(())
 }
@@ -1507,60 +1454,6 @@ async fn pull_webdav_cmd(args: PullArgs) -> Result<(), Failure> {
     Ok(())
 }
 
-async fn import_ucloud_cmd(args: ImportUcloudArgs) -> Result<(), Failure> {
-    use astroportd::legacy_ucloud as legacy;
-    let ImportUcloudArgs { account, legacy_dir, db, blobs, game_dir, kubo, dry_run, replace, verify, no_publish } = args;
-    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or("$HOME introuvable")?;
-    let (db_path, blobs_path) = (db.unwrap_or_else(|| home.join(".zen/astroportd/uplanet.db")), blobs.unwrap_or_else(|| home.join(".zen/astroportd/blobs")));
-    let station = identity::resolve(game_dir.as_deref(), true)?;
-    let found = station.discovered.as_ref().ok_or("identités locales introuvables (--game-dir)")?;
-    let owner = found.multipasses.iter().find(|m| m.email.eq_ignore_ascii_case(&account) || m.hex == account.to_ascii_lowercase()).ok_or_else(|| format!("compte « {account} » non hébergé ici"))?;
-    let secrets_dir = station.nostr_dir.clone().ok_or("dossier des comptes introuvable (--game-dir)")?;
-    let legacy_dir = legacy_dir.unwrap_or_else(|| secrets_dir.join(&owner.email).join(".ucloud"));
-
-    println!("compte {} ({}), ancien uCloud : {}", owner.email, owner.hex, legacy_dir.display());
-    let (manifest, report) = legacy::read_legacy(&legacy_dir.join("ucloud.db"), &owner.hex)?;
-    println!("lu : {} fichiers ({:.1} Go), {} dossiers dont {} à créer, {} clés au trousseau", report.files, report.bytes as f64 / 1e9, report.dirs, report.dirs_created, manifest.keyring.len());
-    if !report.skipped.is_empty() {
-        let list = db_path.parent().map_or_else(|| PathBuf::from("import-ucloud-ecartes.tsv"), |p| p.join("import-ucloud-ecartes.tsv"));
-        legacy::write_skipped(&list, &report.skipped).await?;
-        println!("ÉCARTÉES : {} entrées (liste complète : {})", report.skipped.len(), list.display());
-        for (p, why) in report.skipped.iter().take(10) {
-            println!("  {p} : {why}");
-        }
-    }
-
-    let local = Arc::new(AutoBlobStore::new(Some(KuboBlobStore::new(&kubo)), FsBlobStore::open(&blobs_path)?));
-    if verify > 0 {
-        let v = legacy::verify_sample(&*local, &manifest, verify).await;
-        println!("contrôle : {} fichiers relus, déchiffrés et comparés sur {} demandés", v.checked, verify.min(report.files));
-        if !v.failures.is_empty() {
-            for (p, why) in v.failures.iter().take(10) {
-                println!("  ÉCHEC {p} : {why}");
-            }
-            return Err(format!("{} fichiers du contrôle ne sont pas lisibles : rien n'a été écrit (kubo atteignable sur {kubo} ?)", v.failures.len()).into());
-        }
-    }
-    if dry_run {
-        println!("--dry-run : rien n'a été écrit dans astroportd.");
-        return Ok(());
-    }
-
-    let db = Arc::new(Db::open(&db_path, 2)?);
-    db.writer().batch(astro_lifecycle::store::identity_statements(found)).await?;
-    legacy::apply(&db, &manifest, replace).await?;
-    println!("importé : {} entrées et {} clés dans {}", manifest.entries.len(), manifest.keyring.len(), db_path.display());
-    if no_publish {
-        println!("manifeste non publié (--no-publish) : le démon le publiera à la prochaine modification du uCloud.");
-    } else {
-        let keys: Arc<dyn KeySource> = Arc::new(FileKeySource::new(&secrets_dir));
-        let published = astro_dav::manifest::publish(&db, &*local, &*keys, &owner.hex).await?;
-        println!("manifeste publié : révision {}, {} fichiers (événement {})", published.pointer.rev, published.pointer.files, published.event.id);
-    }
-    println!("Pour lire ces fichiers, `astroportd serve` doit tourner avec --kubo {kubo}.");
-    Ok(())
-}
-
 /// `astroportd face-check` : dit ce qui manque pour activer l'inférence faciale locale, et le comment.
 #[cfg(feature = "onnx")]
 fn face_check(models: Option<PathBuf>) -> Result<(), Failure> {
@@ -1580,11 +1473,18 @@ fn face_check(models: Option<PathBuf>) -> Result<(), Failure> {
             println!("      → placez-les dans {} ou passez --face-models DIR (paquet InsightFace buffalo_l : licence de recherche non commerciale)", data.as_ref().map_or_else(|| "~/.zen/astroportd/models".into(), |d| d.join("models").display().to_string()));
         }
     }
-    let lib = onnx::find_library(std::env::var("ORT_DYLIB_PATH").ok().as_deref(), home.as_deref());
-    match &lib {
-        Some(l) => println!("  ✔ bibliothèque ONNX Runtime : {}", l.display()),
-        None => println!("  ✘ libonnxruntime.so introuvable → installez-la (pip install onnxruntime, ou le paquet de votre distribution) ou définissez ORT_DYLIB_PATH"),
-    }
+    let lib = onnx::check_library(std::env::var("ORT_DYLIB_PATH").ok().as_deref(), home.as_deref());
+    let lib = match (&lib.path, &lib.problem) {
+        (Some(l), None) => {
+            println!("  ✔ bibliothèque ONNX Runtime : {}", l.display());
+            lib.path
+        }
+        (_, Some(why)) => {
+            println!("  ✘ {why}");
+            None
+        }
+        (None, None) => None,
+    };
     let (Some(d), Some(_)) = (dir, lib) else { return Err("l'inférence locale n'est pas prête (voir ci-dessus)".into()) };
     let started = std::time::Instant::now();
     onnx::OrtFaceEngine::load(&d, 0)?;
@@ -1627,11 +1527,18 @@ fn embed_check(models: Option<PathBuf>) -> Result<(), Failure> {
             None
         }
     };
-    let lib = astro_facecloud::onnx::find_library(std::env::var("ORT_DYLIB_PATH").ok().as_deref(), home.as_deref());
-    match &lib {
-        Some(l) => println!("  ✔ bibliothèque ONNX Runtime : {}", l.display()),
-        None => println!("  ✘ libonnxruntime.so introuvable → installez-la (pip install onnxruntime, ou le paquet de votre distribution) ou définissez ORT_DYLIB_PATH"),
-    }
+    let lib = astro_facecloud::onnx::check_library(std::env::var("ORT_DYLIB_PATH").ok().as_deref(), home.as_deref());
+    let lib = match (&lib.path, &lib.problem) {
+        (Some(l), None) => {
+            println!("  ✔ bibliothèque ONNX Runtime : {}", l.display());
+            lib.path
+        }
+        (_, Some(why)) => {
+            println!("  ✘ {why}");
+            None
+        }
+        (None, None) => None,
+    };
     let (Some(d), Some(l)) = (dir, lib) else { return Err("les embeddings locaux ne sont pas prêts (voir ci-dessus)".into()) };
     let started = std::time::Instant::now();
     let engine = onnx::OrtEmbedder::load(&d, Some(&l), 0)?;

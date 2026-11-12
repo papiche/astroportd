@@ -11,7 +11,7 @@ vos amis, vous fait **sauvegarder par vos proches** (et retrouver votre compte s
 une **comptabilité coopérative en Ẑen** (monnaie libre Ğ1) — sans plateforme, sans abonnement, sans serveur central.
 C'est le cœur souverain d'[Astroport.ONE](https://github.com/papiche/Astroport.ONE) et d'UPlanet, réécrit en Rust.
 
-> **Préversion 0.6.0-beta.** Le code est testé de bout en bout (≈ 880 tests, `clippy` sans avertissement) mais jeune :
+> **Version 1.0.0.** Le code est testé de bout en bout (≈ 870 tests, `clippy` sans avertissement) :
 > lisez [les limites connues](#8-état-du-projet-et-limites-connues). Licence **AGPL-3.0** · Auteur : Fred
 > (support@qo-op.com) · Rust 2024 (≥ 1.85).
 
@@ -162,7 +162,7 @@ complète (`astro-secret:v1|…`) reste acceptée. Le SALT et le PEPPER ne sont 
   station d'accueil, prévient vos proches (leurs stations mettent à jour votre adresse), et **leurs stations renvoient d'elles-mêmes**
   le manifeste, puis les fichiers sauvegardés ou partagés. Les fichiers qui manquent encore sont redemandés par leur CID.
 - **Déménager** (l'ancienne station tourne encore) : la nouvelle écrit à l'ancienne un message `moved`, signé de la clé du
-  compte ; l'ancienne cesse d'héberger ce compte et met son dossier de côté (`.moved/`, jamais effacé).
+  compte ; l'ancienne cesse d'héberger ce compte et met son dossier de côté (corbeille `trash/moved/`, effacé après 30 jours).
 - **Garde-fous** : la carte d'une autre constellation, ou dont les secrets ne redonnent pas la clé annoncée, est refusée avant
   toute écriture ; aucun événement de naissance n'est republié (il écraserait votre vraie liste d'amis) ; aucun manifeste vide
   n'est publié tant que la restauration dure.
@@ -319,7 +319,7 @@ Le workspace compte **16 crates** (+ le binaire `astroportd`, qui est aussi une 
 | Crate | Rôle |
 |---|---|
 | **`astro-core`** | Socle pur : les 5 formules de crédentiels (`KeyFormula`), dérivations Ğ1/IPFS/Nostr (scrypt, PBKDF2), SS58 préfixe 4450, `Amount` (centimes entiers), semaine ISO, **horloge solaire 20h12**, **bus d'activité** (flux SSE). |
-| **`astro-crypto`** | Chiffrement des fichiers **UENC v1 (lecture) / v2 (écriture)**, NIP-44 v2, NIP-59 (gift wrap), NIP-98 durci (anti-rejeu, liaison URL/méthode/`payload`), sources de clés. |
+| **`astro-crypto`** | Chiffrement des fichiers **UENC v2**, NIP-44 v2, NIP-59 (gift wrap), NIP-98 durci (anti-rejeu, liaison URL/méthode/`payload`), sources de clés. |
 | **`astro-nostr-proto`** | Événements, filtres, messages NIP-01, kinds du projet, signature Schnorr (secp256k1), validation stricte. |
 | **`astro-db`** | `uplanet.db` : schéma, acteur d'écriture unique, pool de lecteurs WAL, recherche vectorielle `sqlite-vec` (mémoire 1024D, visages 512D), stockage des événements (remplaçables, NIP-09, NIP-40), recherche plein texte NIP-50 par index FTS5 (préfixes, sans accents ni casse, classée par pertinence), migrations légères. Base créée en `0600`. |
 | **`astro-relay`** | Relai Nostr WebSocket en **pare-feu social** : lecture publique des kinds publics, tout le reste réservé au cercle N1/N2 authentifié (NIP-42) ; NIP-11 ; anti-abus (débit, tailles). NIP-01, 09 (suppressions par id et par adresse, sans réinsertion), 11 (avec CORS), 17, 40, 42, 45 (`COUNT`), 50 (`search`), 59 et 70 (événements protégés). |
@@ -401,7 +401,7 @@ automatiquement dans `~/.zen/game` (`--game-dir` ou `ASTRO_GAME_DIR`).
 | `astroportd swarm-key` | Génère la clé d'un réseau privé de constellation. |
 | `astroportd plane-setup list \| add \| remove` · `astroportd planes [--check]` | Plusieurs UPlanet (ORIGIN, ZEN1…) dans un seul processus : assistant, puis démarrage de tous les plans. |
 | `astroportd pool-status` · `bridge-copy` | Bassin de blobs partagé entre plans : état et orphelins ; adoption sans copie d'un plan à l'autre. |
-| `astroportd import-ucloud` · `pull-webdav` | Reprend l'uCloud d'Astroport.ONE ; remplit un uCloud depuis un autre serveur WebDAV. |
+| `astroportd pull-webdav` | Remplit un uCloud depuis un autre serveur WebDAV. |
 | `astroportd doctor` · `face-check` | Diagnostic de la station ; vérification de l'inférence faciale locale (ONNX). |
 | `astroportd plugin [--dir plugins] list \| call <nom> '<json>'` | Gère les extensions Wasm. |
 | `astroportd relay`, `astroportd dav` | Le relai seul, le WebDAV seul. |

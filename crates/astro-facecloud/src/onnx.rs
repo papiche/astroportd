@@ -53,6 +53,80 @@ pub fn find_library(env: Option<&str>, home: Option<&Path>) -> Option<PathBuf> {
     found.pop()
 }
 
+/// Verdict sur la bibliothèque ONNX Runtime : son chemin s'il y en a un, et ce qui cloche sinon (message destiné à l'administrateur).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryReport {
+    /// Bibliothèque retenue (variable `ORT_DYLIB_PATH` ou trouvée aux emplacements habituels), même si elle est inutilisable.
+    pub path: Option<PathBuf>,
+    /// Ce qui l'empêche de servir, avec la marche à suivre ; `None` si elle paraît utilisable.
+    pub problem: Option<String>,
+}
+
+/// Les étapes pour installer la bonne bibliothèque sur cette machine.
+pub fn install_steps() -> String {
+    format!(
+        "installez ONNX Runtime pour CETTE machine ({arch}) :\n\
+         \x20     1. `pip install onnxruntime` (dans ~/.astro ou un environnement virtuel) : des roues existent en général pour x86_64 et aarch64 \
+         (Raspberry Pi OS 64 bits, Ubuntu ARM64) ; sur ARM 32 bits il n'y en a pas : utilisez un service d'inférence (`serve --face-engine http://…`).\n\
+         \x20     2. ou le paquet de votre distribution (libonnxruntime).\n\
+         \x20     3. si elle n'est pas trouvée toute seule : `export ORT_DYLIB_PATH=/chemin/vers/libonnxruntime.so` ; pour le service systemd, \
+         ajoutez `Environment=ORT_DYLIB_PATH=…` à l'unité.\n\
+         \x20     Vérifiez ensuite avec `astroportd face-check`.",
+        arch = std::env::consts::ARCH
+    )
+}
+
+/// Code `e_machine` (en-tête ELF) attendu pour l'architecture de ce binaire.
+fn host_machine() -> Option<(u16, &'static str)> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some((0x3E, "x86_64")),
+        "aarch64" => Some((0xB7, "aarch64 (ARM 64 bits)")),
+        "arm" => Some((0x28, "ARM 32 bits")),
+        "x86" => Some((0x03, "x86 32 bits")),
+        "riscv64" => Some((0xF3, "RISC-V 64 bits")),
+        _ => None,
+    }
+}
+
+fn machine_name(code: u16) -> String {
+    match code {
+        0x3E => "x86_64".into(),
+        0xB7 => "aarch64 (ARM 64 bits)".into(),
+        0x28 => "ARM 32 bits".into(),
+        0x03 => "x86 32 bits".into(),
+        0xF3 => "RISC-V 64 bits".into(),
+        c => format!("machine ELF {c:#x}"),
+    }
+}
+
+/// `e_machine` d'un fichier ELF little-endian ; `None` si ce n'est pas de l'ELF (macOS : Mach-O, non vérifié).
+fn elf_machine(path: &Path) -> Option<u16> {
+    use std::io::Read as _;
+    let mut head = [0u8; 20];
+    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+    (head[..4] == [0x7f, b'E', b'L', b'F'] && head[5] == 1).then(|| u16::from_le_bytes([head[18], head[19]]))
+}
+
+/// Examine la bibliothèque ONNX Runtime **sans la charger** : présence, architecture, puis les étapes à suivre s'il manque quelque chose.
+/// Une `.so` d'une autre architecture est la panne silencieuse classique des cartes ARM : `dlopen` échoue avec un message obscur.
+pub fn check_library(env: Option<&str>, home: Option<&Path>) -> LibraryReport {
+    let explicit = env.filter(|p| !p.is_empty()).is_some();
+    let Some(path) = find_library(env, home) else {
+        return LibraryReport { path: None, problem: Some(format!("libonnxruntime introuvable → {}", install_steps())) };
+    };
+    if !path.is_file() {
+        let why = if explicit { format!("ORT_DYLIB_PATH ({}) ne désigne aucun fichier", path.display()) } else { format!("{} n'est pas un fichier", path.display()) };
+        return LibraryReport { problem: Some(format!("{why} → corrigez la variable, ou {}", install_steps())), path: Some(path) };
+    }
+    if let (Some(found), Some((want, want_name))) = (elf_machine(&path), host_machine()) {
+        if found != want {
+            let problem = format!("{} est compilée pour {}, or cette machine est {want_name} → {}", path.display(), machine_name(found), install_steps());
+            return LibraryReport { path: Some(path), problem: Some(problem) };
+        }
+    }
+    LibraryReport { path: Some(path), problem: None }
+}
+
 /// Dossiers où chercher les modèles quand `--face-models` n'est pas donné.
 pub fn default_model_dirs(data_dir: Option<&Path>, home: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = data_dir.map(|d| d.join("models")).into_iter().collect();
@@ -187,6 +261,37 @@ mod tests {
         std::fs::write(capi.join("libonnxruntime.so.1.27.0"), b"").unwrap();
         assert_eq!(find_library(Some("/choix/explicite.so"), Some(&home)), Some(PathBuf::from("/choix/explicite.so")), "l'environnement l'emporte");
         assert_eq!(find_library(Some(""), Some(&home)).unwrap().file_name().unwrap(), "libonnxruntime.so.1.27.0", "variable vide : ignorée");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn the_library_check_names_the_missing_file_the_wrong_architecture_and_the_steps() {
+        let home = tmp("diag");
+        let none = check_library(None, Some(&home));
+        assert!(none.path.is_none() && none.problem.as_deref().is_some_and(|p| p.contains("pip install onnxruntime") && p.contains("ORT_DYLIB_PATH") && p.contains("face-check")));
+        let gone = check_library(Some("/nulle/part/libonnxruntime.so"), Some(&home));
+        assert!(gone.problem.as_deref().is_some_and(|p| p.contains("ne désigne aucun fichier")), "{gone:?}");
+        // Un faux ELF d'une autre architecture (e_machine = 0xB7 sur x86_64, 0x3E ailleurs).
+        let other: u16 = if std::env::consts::ARCH == "aarch64" { 0x3E } else { 0xB7 };
+        let mut elf = vec![0x7f, b'E', b'L', b'F', 2, 1, 1];
+        elf.resize(18, 0);
+        elf.extend(other.to_le_bytes());
+        let lib = home.join("libonnxruntime.so.1.20.0");
+        std::fs::write(&lib, &elf).unwrap();
+        if host_machine().is_some() {
+            let wrong = check_library(Some(lib.to_str().unwrap()), Some(&home));
+            assert!(wrong.problem.as_deref().is_some_and(|p| p.contains("est compilée pour")), "{wrong:?}");
+        }
+        // Un fichier qui n'est pas de l'ELF n'est pas jugé ; l'architecture juste passe.
+        std::fs::write(&lib, b"pas de l'elf").unwrap();
+        assert_eq!(check_library(Some(lib.to_str().unwrap()), Some(&home)).problem, None);
+        if let Some((want, _)) = host_machine() {
+            let mut elf = vec![0x7f, b'E', b'L', b'F', 2, 1, 1];
+            elf.resize(18, 0);
+            elf.extend(want.to_le_bytes());
+            std::fs::write(&lib, &elf).unwrap();
+            assert_eq!(check_library(Some(lib.to_str().unwrap()), Some(&home)).problem, None);
+        }
         let _ = std::fs::remove_dir_all(home);
     }
 

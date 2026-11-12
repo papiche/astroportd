@@ -115,7 +115,11 @@ pub async fn load_local_engine(dir: &Path, threads: usize) -> Result<AnyFaceEngi
     let engine = tokio::task::spawn_blocking(move || astro_facecloud::onnx::OrtFaceEngine::load(&dir, threads))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|e| format!("moteur FaceID local : {e} (modèles attendus : det_10g.onnx et w600k_r50.onnx ; ORT_DYLIB_PATH = libonnxruntime.so)"))?;
+        .map_err(|e| {
+            let lib = astro_facecloud::onnx::check_library(std::env::var("ORT_DYLIB_PATH").ok().as_deref(), std::env::var_os("HOME").map(PathBuf::from).as_deref());
+            let more = lib.problem.map(|p| format!(" — {p}")).unwrap_or_default();
+            format!("moteur FaceID local : {e} (modèles attendus : det_10g.onnx et w600k_r50.onnx){more}")
+        })?;
     Ok(AnyFaceEngine::Local(engine))
 }
 
@@ -458,7 +462,9 @@ impl Admin {
                         match body {
                             None => Ok(d.status().await.unwrap_or_else(|| json!({ "configured": null }))),
                             Some(b) if b["action"] == "sync" => Ok(d.sync().await),
-                            Some(_) => Err("action attendue : sync".to_owned()),
+                            // Essai de connexion en lecture seule, avec la saisie de l'écran par-dessus la configuration publiée.
+                            Some(b) if b["action"] == "test" => Ok(d.test(b.get("values")).await),
+                            Some(_) => Err("action attendue : sync ou test".to_owned()),
                         }
                     }
                     ("tunnels", body) => {

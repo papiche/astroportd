@@ -86,7 +86,7 @@ export default async function options(root, K) {
       nm, ' ', tg, ' ', md, ' ', h('button', { onclick: () => nm.value.trim() && tg.value.trim() ? apply({ share: { name: nm.value.trim(), target: tg.value.trim(), mode: md.value } }, t('{0} partagé', nm.value.trim())) : K.toast(t('Nom du service') + ' ?') }, t('Partager')),
       h('p', { class: 'muted' }, t('Cette machine ou le réseau local seulement. Bureau à distance : serveur VNC (wayvnc, x11vnc) ou RDP, puis un ami nommé, pour une durée limitée.')));
     tunnelsCard = h('section', { class: 'card wide' }, h('h2', {}, t('Tunnels et accès des autres Capitaines')),
-      h('p', { class: 'muted' }, tun.origin ? t('UPlanet ORIGIN : le SSH est ouvert par défaut aux Capitaines amis (suivi réciproque).') : t('UPlanet ẐEN : le SSH est fermé par défaut. Vous le rouvrez pour un ami le temps qu\'il vous aide, ou pour tous vos Capitaines amis.')),
+      h('p', { class: 'muted' }, tun.origin ? t('Constellation ORIGIN : le SSH est ouvert par défaut aux Capitaines amis (suivi réciproque).') : t('Constellation ẐEN : le SSH est fermé par défaut. Vous le rouvrez pour un ami le temps qu\'il vous aide, ou pour tous vos Capitaines amis.')),
       h('p', { class: 'muted' }, t('Le réglage s\'applique tout de suite, y compris aux sessions déjà ouvertes (vérifié chaque minute).')),
       absent.length ? h('p', { class: 'muted', role: 'note' }, t('Non détectés : {0}.', absent.map(sv => `${sv.name} (${sv.target})`).join(', '))) : null, svc, shareForm);
   }

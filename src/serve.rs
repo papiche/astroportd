@@ -109,7 +109,7 @@ pub struct ServeArgs {
     #[arg(long)]
     kubo: Option<String>,
     /// Passerelle de compatibilité `GET /ipfs/<cid>` pour les clients historiques (zelkova, coracle) : lecture seule des
-    /// blobs chiffrés d'un lien de partage actif, et des anciens `Qm…` épinglés dans Kubo (ORIGIN). Désactivée par défaut.
+    /// blobs chiffrés d'un lien de partage actif. Désactivée par défaut.
     #[arg(long)]
     ipfs_gateway: bool,
     /// URL du moteur d'inférence faciale (Brain GPU) : active FaceCloud.
@@ -275,10 +275,11 @@ fn local_embedder(a: &ServeArgs, ollama: &Arc<OllamaClient>) -> Result<AnyEmbedd
             None => astro_bro::onnx::find_models(data.as_deref(), home.as_deref()),
         };
         if let Some(dir) = dir {
-            let lib = astro_facecloud::onnx::find_library(std::env::var("ORT_DYLIB_PATH").ok().as_deref(), home.as_deref());
-            let loaded = match &lib {
-                Some(l) => astro_bro::onnx::OrtEmbedder::load(&dir, Some(l), a.embed_threads).map_err(|e| e.to_string()),
-                None => Err("libonnxruntime introuvable (ORT_DYLIB_PATH, ou pip install onnxruntime)".to_owned()),
+            let lib = astro_facecloud::onnx::check_library(std::env::var("ORT_DYLIB_PATH").ok().as_deref(), home.as_deref());
+            let loaded = match (&lib.path, &lib.problem) {
+                (Some(l), None) => astro_bro::onnx::OrtEmbedder::load(&dir, Some(l), a.embed_threads).map_err(|e| e.to_string()),
+                (_, Some(why)) => Err(why.clone()),
+                (None, None) => Err("libonnxruntime introuvable".to_owned()),
             };
             match loaded {
                 Ok(engine) => {
@@ -512,14 +513,6 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     let ssh_dir = ssh_managed.then(|| a.ssh_dir.clone().or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ssh")))).flatten();
     let tunnel_policy = TunnelPolicy::load(db.clone(), a.swarm_key.is_none(), ssh_dir, activity.clone()).await;
     let mut exposed_names: Vec<String> = a.p2p_expose.iter().filter_map(|s| s.split_once('=').map(|(n, _)| n.to_owned())).collect();
-    if a.kubo.is_none()
-        && a.swarm_key.is_none()
-        && let Some(n) = astroportd::legacy_ucloud::count_ipfs_only(&a.db).filter(|n| *n > 0)
-    {
-        let msg = format!("{n} fichier(s) de l'uCloud repris d'Astroport.ONE ne sont que dans IPFS : sans --kubo (ex. --kubo http://127.0.0.1:5001) ils restent illisibles (fiches, photos, miniatures)");
-        eprintln!("ATTENTION : {msg}");
-        activity.publish("system", "astroportd", msg, None);
-    }
     let local = Arc::new(AutoBlobStore::new(a.kubo.as_deref().map(KuboBlobStore::new), FsBlobStore::open(&a.blobs)?).with_pool_peers(a.pool_peers.clone()));
     if !a.pool_peers.is_empty() {
         println!("bassin de blobs partagé : {} (pairs : {})", a.blobs.display(), a.pool_peers.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "));
@@ -891,11 +884,6 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
         let publish = publish_fn(&event_publisher);
         Arc::new(astroportd::invites::Invites::new(db.clone(), dav.blobs.clone(), invites_keys, registrar.clone(), publish).with_links(links.clone()).with_publisher(publisher.clone()).with_activity(activity.clone()).with_remote(sharing.clone()))
     };
-    match invites.migrate_legacy().await {
-        Ok(0) => {}
-        Ok(n) => println!("invitations : {n} ancienne(s) invitation(s) migrée(s) vers le suivi du uCloud vivant"),
-        Err(e) => eprintln!("invitations : migration de l'ancien format impossible : {e:?}"),
-    }
     let welcome = Arc::new(astroportd::welcome::Welcome::new(db.clone(), invites.clone(), Some(activity.clone())));
     let account_publish = publish_fn(&event_publisher);
     // Agents du membre (kind 31903 `d = agents`) et serveur MCP : un agent demande, le membre accorde ou refuse.
@@ -1060,7 +1048,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     }
     let site = Arc::new(astroportd::public_site::Site::new(dav.clone(), uplanet_name.to_string()));
     ui = ui.with_site(site.clone());
-    let ui = Arc::new(ui::wire(ui, &db, &event_publisher, &uplanet_name, &sharing, &backup, &constellation));
+    let ui = ui::wire(ui, &db, &event_publisher, &uplanet_name, &sharing, &backup, &constellation);
 
     // Reverse proxy : les routes gardées exigent un compte de la station (Basic ou NIP-98).
     let gate: Gate = {
@@ -1082,7 +1070,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
         .merge(relay.clone().router())
         .merge(astro_ui::web::static_router())
         .merge(site.clone().router())
-        .merge(astro_ui::api::router(ui, activity.clone(), public_origin));
+        .merge(ui.into_router(activity.clone(), public_origin));
     if !routes.is_empty() {
         app = app.merge(proxy_router(routes, Duration::from_secs(120)));
     }

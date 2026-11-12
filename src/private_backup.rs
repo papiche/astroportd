@@ -25,7 +25,7 @@
 //! - tant que la restauration est en cours, aucun manifeste vide n'est publié ([`astro_dav::manifest::restoring`]) ;
 //! - **déménagement** : la nouvelle station écrit à l'ancienne Home un message `moved`, signé de la clé du compte (le seul message
 //!   qu'un compte s'adresse à lui-même). L'ancienne station, si elle tourne encore, cesse d'héberger ce compte : il passe à
-//!   « non hébergé », pointe vers la nouvelle Home, et son dossier est mis de côté dans `.moved/` (rien n'est effacé).
+//!   « non hébergé », pointe vers la nouvelle Home, et son dossier est mis de côté dans la corbeille `trash/moved/` (rien n'est effacé tout de suite).
 //!
 //! **Secours par les gardiens** (« J'appelle un ami », sans QR à lire) : sur la nouvelle station, le membre scanne sa carte
 //! imprimée (part P1) et demande de l'aide. La station retrouve sa liste de contacts (crawl de sa clé, [`astro_sync::WANTED_SCOPE`])
@@ -80,7 +80,7 @@ const RESTORE_WANT: usize = 200;
 /// Fichiers qui manquent encore après le manifeste : au plus 4 relances espacées de 6 h.
 const RESTORE_MISSING_ROUNDS: u32 = 4;
 /// Tâches de renvoi côté ami : `kv(scope, "<ami>:<propriétaire>")`.
-/// Durée de garde d'un compte déménagé, mis de côté dans `.moved/` (il contient encore ses clés) : 30 jours, puis effacé.
+/// Durée de garde d'un compte déménagé, mis de côté dans `trash/moved/` (il contient encore ses clés) : 30 jours, puis effacé.
 const MOVED_KEEP_SECS: i64 = 30 * 24 * 3600;
 /// Part P3 de la clé de secours : côté propriétaire, ce qui a déjà été confié (`<owner>:<host>` → empreinte de la part).
 const SHARE_SENT: &str = "backup_share_sent";
@@ -173,7 +173,7 @@ pub struct PrivateBackup<O: Outbox, B: BlobStore> {
     /// `<PeerID>:<NODE_HEX>` de cette station, annoncé dans le DID d'un compte rétabli ici.
     home: Option<String>,
     publish: Option<PublishFn>,
-    /// Dossier des comptes (`~/.zen/game/nostr`) : un compte déménagé y est mis de côté dans `.moved/`.
+    /// Dossier des comptes (`~/.zen/game/nostr`) : un compte déménagé est mis de côté dans la corbeille `trash/moved/` (voir [`crate::trash`]).
     accounts_dir: Option<std::path::PathBuf>,
     activity: ActivityBus,
     notify: Option<Notify>,
@@ -598,7 +598,6 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
                 let mut stmt = c.prepare(
                     "SELECT DISTINCT e.cid, COALESCE(e.size, 0) FROM ucloud_entries e \
                      WHERE e.owner_hex = ?1 AND e.type = 'file' AND e.cid IS NOT NULL \
-                       AND e.cid NOT LIKE 'Qm%' /* anciens blobs d'Astroport.ONE (CID v0) : lisibles par Kubo, pas transférables */ \
                        AND e.path NOT LIKE '/Partages/%' AND e.path NOT LIKE '/Sauvegardes/%' \
                        AND NOT EXISTS (SELECT 1 FROM ucloud_sharing s WHERE s.owner_hex = e.owner_hex AND s.cid = e.cid) \
                        AND NOT EXISTS (SELECT 1 FROM face_shares f WHERE f.owner_hex = e.owner_hex AND f.cid = e.cid) \
@@ -970,7 +969,7 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
     }
 
     /// Côté hébergeur : une copie de pièce jointe de `sender`. Mêmes garde-fous que [`Self::store_item`] (accord accepté, volume
-    /// du pacte, blob vérifié par son CID), plus : octets chiffrés (UENC v1, jamais de clair), taille et durée bornées. Elle compte
+    /// du pacte, blob vérifié par son CID), plus : octets chiffrés (UENC v2, jamais de clair), taille et durée bornées. Elle compte
     /// dans le volume accordé et disparaît d'elle-même à l'échéance (purge des liens), sans la semaine de grâce des sauvegardes.
     async fn store_replica(&self, me: &str, sender: &str, wrap_id: &str, rumor: &Rumor, at: i64, stats: &mut BackupStats) {
         let expires = tag(&rumor.tags, "expires").and_then(|e| e.parse::<i64>().ok());
@@ -998,7 +997,7 @@ impl<O: Outbox, B: BlobStore> PrivateBackup<O, B> {
             let (mut reader, size) = self.blobs.open(cid).await.map_err(|e| e.to_string())?;
             let mut head = [0u8; 6];
             reader.read_exact(&mut head).await.map_err(|e| e.to_string())?;
-            if !astro_dav::share::is_uenc_v1(&head) {
+            if !astro_dav::share::is_uenc_v2(&head) {
                 return Err("pas une pièce jointe chiffrée".to_owned());
             }
             if size > astro_dav::share::ATTACHMENT_MAX as u64 {
@@ -2101,7 +2100,7 @@ mod tests {
     // ───────────────── Clé de secours : la part P3 chez les amis hébergeurs ─────────────────
 
     fn write_rescue_shares(dir: &std::path::Path, secret: &[u8; 32], email: &str) -> Vec<astro_lifecycle::share::SecretShare> {
-        let card = astro_lifecycle::multipass::SecretCard::parse(&format!("astro-secret:v1|{email}|Sel123|Poivre456|legacy||{}", hex(secret))).unwrap();
+        let card = astro_lifecycle::multipass::SecretCard::parse(&format!("astro-secret:v1|{email}|Sel123|Poivre456|raw||{}", hex(secret))).unwrap();
         let shares = astro_lifecycle::share::split_card(&card).unwrap();
         let account = dir.join("nostr").join(email);
         std::fs::create_dir_all(&account).unwrap();
@@ -2649,7 +2648,7 @@ mod tests {
     }
 
     fn uenc(fill: u8, len: usize) -> Vec<u8> {
-        let mut v = b"UENC\x01\x01".to_vec();
+        let mut v = b"UENC\x02\x01\x10".to_vec();
         v.resize(len, fill);
         v
     }

@@ -1,9 +1,8 @@
 'use strict';
 // Dictionnaire en, écran m-mesh.js.
 export default {
-"Confirmer ?": "Confirm?",
 "Maillage coupé : relancez la station sans --no-p2p pour rejoindre les autres stations.": "Mesh off: restart the station without --no-p2p to join other stations.",
-"UPlanet : {0} · {1} station(s) connectée(s).": "UPlanet: {0} · {1} station(s) connected.",
+"Constellation : {0} · {1} station(s) connectée(s).": "Constellation: {0} · {1} station(s) connected.",
 "Adresse à donner aux autres Capitaines :": "Address to give to other Captains:",
 "Adresse de la station": "Station address",
 "Stations": "Stations",
@@ -16,7 +15,7 @@ export default {
 "Garder (rejointe à chaque démarrage)": "Keep (rejoined at every startup)",
 "Station jointe": "Station joined",
 "Joindre": "Join",
-"Seule une station de la même UPlanet (même swarm.key) peut être jointe.": "Only a station of the same UPlanet (same swarm.key) can be joined.",
+"Seule une station de la même constellation (même swarm.key) peut être jointe.": "Only a station of the same constellation (same swarm.key) can be joined.",
 "client de bureau à distance vers {0}": "remote desktop client to {0}",
 "Accès ouvert": "Access opened",
 "ami": "friend",
@@ -42,7 +41,6 @@ export default {
 "aucun service partagé": "no shared service",
 "L'essaim": "The swarm",
 "Seulement celles qui offrent l'IA (Ollama)": "Only those offering AI (Ollama)",
-"Plans (UPlanet)": "Planes (UPlanet)",
 "Stations relais": "Relay stations",
 "Cette station sert de relais aux stations de la constellation qui sont derrière une box.": "This station relays for the constellation's stations that are behind a home router.",
 "cette station": "this station",

@@ -13,7 +13,7 @@ pub mod tls;
 pub mod web;
 
 pub use acme::{AcmeConfig, AcmeError, AcmeManager, CertResolver, ChallengeStore, KvCertStore};
-pub use api::{ApiError, Backend, Principal, Status, Subsystem};
+pub use api::{AccountApi, ApiError, Auth, Backend, CoopApi, FacesApi, OnboardApi, Principal, SocialApi, StationApi, Status, Subsystem, UcloudApi};
 pub use frontend::{Frontend, http_router};
 pub use proxy::{Gate, ProxyRoute, proxy_router};
 pub use tls::{TlsListener, TlsPeer};

@@ -98,7 +98,7 @@ export default async function account(root, K) {
     const send = async body => { try { await K.api('/api/v1/me/ai', { method: 'POST', body }); K.toast(t('Paramètres IA enregistrés'), 1); location.reload(); } catch (e) { K.toast(e.message); } };
     ai.append(h('label', { for: 'ai-url' }, t('Ollama (adresse)')), url, h('label', { for: 'ai-prov' }, t('Ou un fournisseur d\'API')), prov, h('label', { for: 'ai-key' }, t('Clé d\'API')), key, h('label', { for: 'ai-model' }, t('Modèle')), model,
       h('p', {}, h('button', { onclick: () => send({ ollama_url: url.value.trim() || null, provider: prov.value || null, model: model.value.trim() || null, ...(key.value && { api_key: key.value }) }) }, t('Enregistrer')),
-        p.has_key ? [' ', h('button', { class: 'ghost', onclick: () => { if (confirm(t('Retirer la clé d\'API enregistrée ?'))) send({ api_key: null }); } }, t('Retirer la clé'))] : null));
+        p.has_key ? [' ', K.sure(t('Retirer la clé'), () => send({ api_key: null }), t('Retirer la clé d\'API enregistrée ?'))] : null));
   }, e => ai.append(h('p', { class: 'err', role: 'alert' }, e.message)));
 
   // ── Visio : être joignable (mes amis réciproques voient si je suis là ou en appel) et notifications d'appel sur cet appareil ──
@@ -121,26 +121,24 @@ export default async function account(root, K) {
       h('p', { class: 'muted' }, t('Seuls vos amis réciproques voient si vous êtes en ligne ou en appel, et seulement quand une page Astroport est ouverte. Rien n\'est gardé.')), notif);
   }, () => { visio.hidden = true; });
 
-  // ── Mes UPlanet : mes clés dans les autres plans de la station, et l'annonce (publique, sur demande) qu'elles sont les miennes ──
-  const planes = h('section', { class: 'card', hidden: true }, h('h2', {}, t('Mes UPlanet')));
+  // ── Mes autres comptes : l'annonce (publique, sur demande) que mes comptes d'autres espaces de la station sont les miens ──
+  // Le membre ne voit ni constellation ni clé : seulement qu'il peut se faire joindre depuis ses autres comptes.
+  const planes = h('section', { class: 'card', hidden: true }, h('h2', {}, t('Mes autres comptes')));
   K.api('/api/v1/me/links').then(r => {
     if (!r.siblings.length) return;
     planes.hidden = false;
-    planes.append(h('p', { class: 'muted' }, t('Vous avez une clé Nostr différente dans chaque UPlanet. L\'annoncer permet à vos amis de vous écrire dans l\'UPlanet qu\'ils habitent : le lien est public, signé par vos deux clés.')),
-      h('ul', {}, r.keys.map(k => h('li', {}, h('strong', {}, k.plane || '?'), ' ', h('small', { class: 'muted' }, k.hex.slice(0, 8) + '… · ' + k.via)))),
-      h('p', {}, h('button', { id: 'announce-links', onclick: async ev => {
-        if (!confirm(t('Annoncer publiquement que vos comptes des autres UPlanet sont les vôtres ?'))) return;
+    planes.append(h('p', { class: 'muted' }, t('Vous avez d\'autres comptes sur cette station. L\'annoncer permet à vos amis de vous écrire depuis le compte qu\'ils utilisent : le lien est public, signé par vos deux comptes.')),
+      h('p', {}, K.sure(t('Annoncer mes autres comptes'), async ev => {
         ev.target.disabled = true;
         try { const a = await K.api('/api/v1/me/links', { method: 'POST', body: {} }); K.toast(t('{0} lien(s) annoncé(s)', a.linked.length), 1); } catch (e) { K.toast(e.message); } finally { ev.target.disabled = false; }
-      } }, t('Annoncer mes autres comptes')), ' ', h('small', { class: 'muted' }, t('À faire dans chaque UPlanet.'))));
+      }, t('Annoncer publiquement que vos autres comptes sont les vôtres ?'), { id: 'announce-links', class: '' }), ' ', h('small', { class: 'muted' }, t('À faire une fois sur chacun de vos comptes.'))));
   }, () => { /* sans annuaire sur cette station : pas de carte */ });
 
   // ── Accès WebDAV : jeton ──
   // L'API donne un chemin (`/dav`) : on affiche et on copie l'adresse complète, celle qu'on saisit dans un client WebDAV.
   const davUrl = a.dav.url.startsWith('/') ? location.origin + a.dav.url : a.dav.url;
   const shown = h('div', {});
-  const rotate = h('button', { class: 'ghost', onclick: async ev => {
-    if (!confirm(t('Changer le jeton ? L\'ancien cesse de fonctionner tout de suite : téléphone, DAVx⁵ et autres clients WebDAV devront être reconfigurés.'))) return;
+  const rotate = K.sure('Remplacer le jeton principal', async ev => {
     ev.target.disabled = true;
     try {
       const r = await api('/token', {});
@@ -149,7 +147,7 @@ export default async function account(root, K) {
       K.toast(t('Jeton changé'), 1);
     } catch (e) { K.toast(e.message); }
     ev.target.disabled = false;
-  } }, 'Remplacer le jeton principal');
+  }, t('Changer le jeton ? L\'ancien cesse de fonctionner tout de suite : téléphone, DAVx⁵ et autres clients WebDAV devront être reconfigurés.'));
   const dav = h('section', { class: 'card' }, h('h2', {}, 'Accès WebDAV'),
     h('p', { class: 'muted' }, 'Pour monter vos fichiers (uCloud) sur un ordinateur ou un téléphone.'),
     h('dl', {}, h('dt', {}, 'Adresse'), h('dd', {}, code(davUrl), ' ', copy(davUrl, 'adresse')), h('dt', {}, 'Identifiant'), h('dd', {}, code(a.dav.login)), h('dt', {}, 'Jeton principal'), h('dd', {}, a.token_generation ? t('remplacé {0} fois', a.token_generation) : t('celui de la station, jamais remplacé'))),
@@ -200,7 +198,7 @@ export default async function account(root, K) {
       const l = await K.api('/api/v1/devices');
       rows.replaceChildren(...(l.devices.length ? l.devices.map(d => h('div', { class: 'row' },
         h('div', { class: 't' }, h('b', {}, d.label), h('span', { class: 'muted' }, ` · ${t(MODES[d.mode])} · `), code(d.root), h('br'), h('span', { class: 'muted' }, d.last_used ? t('Dernier envoi : {0}', K.when(d.last_used)) : t('Jamais utilisé'))),
-        h('button', { class: 'ghost', onclick: async ev => { if (!confirm(t('Révoquer « {0} » ? Son jeton cesse de fonctionner tout de suite ; ce qu\'il a déposé reste dans votre uCloud.', d.label))) return; ev.target.disabled = true; try { await K.api('/api/v1/devices/revoke', { method: 'POST', body: { id: d.id } }); K.toast(t('Appareil révoqué'), 1); } catch (e) { K.toast(e.message); } refresh(); } }, 'Révoquer')))
+        K.sure('Révoquer', async ev => { ev.target.disabled = true; try { await K.api('/api/v1/devices/revoke', { method: 'POST', body: { id: d.id } }); K.toast(t('Appareil révoqué'), 1); } catch (e) { K.toast(e.message); } refresh(); }, t('Révoquer « {0} » ? Son jeton cesse de fonctionner tout de suite ; ce qu\'il a déposé reste dans votre uCloud.', d.label))))
         : [h('p', { class: 'muted' }, 'Aucun appareil : le jeton principal ci-dessus ouvre tout votre uCloud.')]));
     };
     devices.append(rows, shownToken, h('h3', {}, 'Ajouter un appareil'), h('label', { for: 'dv-label' }, 'Nom'), label, h('label', { for: 'dv-root' }, 'Dossier du uCloud (créé s\'il manque)'), root, h('label', { for: 'dv-mode' }, 'Droits'), mode, h('p', {}, add));
@@ -229,7 +227,7 @@ export default async function account(root, K) {
       const size = h('input', { type: 'number', min: 1, step: 1, value: Math.max(1, Math.round(r.quota_bytes / 2 ** 30)) || 5, 'aria-label': 'Volume en Go' });
       backup.append(h('hr'), h('p', {}, h('strong', {}, r.label), r.status === 'pending' ? ' demande à vous confier sa sauvegarde chiffrée.' : ` : ${gb(r.used_bytes)} / ${gb(r.quota_bytes)} hébergés pour lui.`),
         r.status === 'pending' ? h('p', {}, 'Volume mis à disposition (Go) : ', size, ' ', h('button', { onclick: () => post('/api/v1/backup/respond', { owner: r.owner, accept: true, quota_bytes: Math.round(Number(size.value) * 2 ** 30) }) }, 'Accepter'), ' ', h('button', { class: 'ghost', onclick: () => post('/api/v1/backup/respond', { owner: r.owner, accept: false }) }, 'Refuser'))
-          : h('p', {}, h('button', { class: 'ghost', onclick: () => confirm(t('Révoquer : sa sauvegarde sera supprimée de votre espace.')) && post('/api/v1/backup/respond', { owner: r.owner, accept: false }) }, 'Révoquer et libérer l\'espace')));
+          : h('p', {}, K.sure('Révoquer et libérer l\'espace', () => post('/api/v1/backup/respond', { owner: r.owner, accept: false }), t('Révoquer : sa sauvegarde sera supprimée de votre espace.'))));
       // Secours : cet ami dit avoir perdu sa station. Je confirme seulement après lui avoir parlé : sa part part alors seule.
       if (r.rescue) {
         const ok = h('input', { type: 'checkbox' }), answer = accept => post('/api/v1/backup/rescue', { owner: r.owner, accept });
@@ -264,7 +262,7 @@ export default async function account(root, K) {
     h('p', {}, t('Votre clé est découpée en 3 morceaux ; 2 suffisent pour tout retrouver : la carte de secours imprimée chez vous, la station, et l\'ami qui garde votre sauvegarde.')),
     h('details', { class: 'fold' }, h('summary', {}, t('J\'ai oublié mon code PASS')), h('p', {}, t('Votre station marche toujours : demandez à son Capitaine un code de secours. Rien n\'est perdu.'))),
     h('details', { class: 'fold' }, h('summary', {}, t('Ma station est détruite, ou je déménage')), h('ol', {},
-      h('li', {}, t('Sur une autre station de la même UPlanet, ouvrez la page « Rétablir mon compte » (adresse /restore).')),
+      h('li', {}, t('Sur une autre station de la même constellation, ouvrez la page « Rétablir mon compte » (adresse /restore).')),
       h('li', {}, t('Scannez votre carte de secours imprimée.')),
       h('li', {}, t('Appuyez sur « Prévenir mes gardiens », puis appelez l\'ami qui garde votre sauvegarde : il confirme d\'un geste dans Mon compte › Ma sécurité. Reconnaître votre voix est la seule vérification.')),
       h('li', {}, t('Dès qu\'il confirme, votre compte renaît tout seul. Notez le nouveau code PASS affiché.')),
