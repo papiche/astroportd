@@ -232,6 +232,7 @@ pub fn station_row(summary: &Value, swarm: &str, me: Option<&str>, updated: i64)
         "power": num("hw:power_score").unwrap_or(0.0),
         "gpu_gb": num("hw:gpu_vram_gb").unwrap_or(0.0),
         "price": tag("price:multipass"),
+        "paf_cents": count("paf:machine"),
         "health": tag("health:status").unwrap_or("unknown"),
         "week": tag("week"),
         "at": summary.get("created_at").and_then(Value::as_i64).unwrap_or(updated),
@@ -344,6 +345,8 @@ impl<P: Publisher> Beacon<P> {
         add("register:open", seats.open.to_string());
         add("price:multipass", self.weekly_rent.to_string());
         add("cost:paf", self.weekly_costs.to_string());
+        // PAF de la machine (un tiers de la charge hebdomadaire 3×PAF), en centimes de Ẑ : ce que le Capitaine candidat annonce.
+        add("paf:machine", (self.weekly_costs.0 / 3).to_string());
         let hw = self.hardware;
         add("hw:tier", hw.tier().label().to_ascii_lowercase());
         add("hw:power_score", format!("{:.0}", hw.score()));

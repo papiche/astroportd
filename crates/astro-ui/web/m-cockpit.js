@@ -119,6 +119,23 @@ export default async function cockpit(root, K) {
         h('p', {}, h('button', { type: 'button', class: 'ghost', onclick: () => navigator.clipboard?.writeText(f.master).then(() => K.toast(t('Adresse copiée'), 1), e => K.toast(e.message)) }, t('Copier l\'adresse'))),
         h('p', { class: 'muted' }, t('Disponible : {0} Ğ1 · vérifié le {1}', g1(f.spendable_g1_cents), K.when(f.at))))),
       h('p', { class: 'muted' }, t('Virez-les depuis Cesium ou Ğecko. La station revérifie toutes les 6 h : les portefeuilles s\'ouvrent seuls dès que le dépôt arrive.')))) : null);
+  // PAF de cette machine : fixée par le Capitaine (1×PAF au NODE, 2×PAF à son MULTIPASS), estimée d'après ce que la machine apporte.
+  const pafCard = (p, reload) => {
+    if (!p) return null;
+    const z = c => fmt(c / 100, 2) + ' Ẑ', sg = p.suggestion;
+    const inp = h('input', { id: 'ck-paf', type: 'number', min: 0, max: p.max_cents / 100, step: p.step_cents / 100, inputMode: 'numeric', value: p.paf_cents != null ? (p.paf_cents / 100).toFixed(2) : (sg.paf_cents / 100).toFixed(2), 'aria-describedby': 'ck-paf-h' });
+    const save = async cents => { try { await K.api('/api/v1/station/paf', { method: 'POST', body: { paf_cents: cents } }); K.toast(t('PAF enregistrée : elle sera réglée dès le redémarrage de la station.')); reload(); } catch (e) { K.toast(e.message); } };
+    return h('section', { class: 'card' }, h('h2', {}, '💶 ', t('PAF de cette machine')),
+      h('p', {}, p.paf_cents != null ? h('strong', {}, t('{0} par semaine', z(p.paf_cents))) : t('Non fixée : la station ne règle aucune charge hebdomadaire.'), p.paf_cents != null ? ' · ' + t('NODE {0} · Capitaine {1}', z(p.paf_cents), z(2 * p.paf_cents)) : ''),
+      p.pending_restart ? h('p', { class: 'muted' }, '⏳ ', t('Enregistrée, pas encore réglée : redémarrez la station.')) : null,
+      p.source === 'flag' ? h('p', { class: 'muted' }, t('La commande de lancement impose --weekly-costs : elle l\'emporte sur cette valeur.')) : null,
+      h('p', { class: 'muted', id: 'ck-paf-h' }, t('Estimation : {0} d\'énergie ({1} W {2} × {3} Ẑ/kWh) + {4} de capacité (Power-Score {5}) = {6}, par paliers de {7}.', z(sg.energy_cents), sg.watts, sg.watts_source === 'measured' ? t('mesurés') : t('supposés'), fmt(sg.kwh_price_cents / 100, 2), z(sg.capacity_cents), sg.power_score, z(sg.paf_cents), z(p.step_cents))),
+      sg.coverage_pct != null ? h('p', { class: sg.bingo_cents ? '' : 'muted' }, '☀️ ', t('Le solaire couvre {0} % de la consommation du mois : effort d\'autosuffisance {1}.', sg.coverage_pct, z(sg.solar_cents)), sg.bingo_cents ? [' ', h('strong', {}, t('🎯 Bingo résilience : la production dépasse la consommation, {0} de plus.', z(sg.bingo_cents)))] : null) : null,
+      p.coop_default_cents != null ? h('p', { class: 'muted' }, t('Valeur par défaut de la coopérative : {0}.', z(p.coop_default_cents))) : null,
+      h('form', { class: 'row', onsubmit: ev => { ev.preventDefault(); const c = Math.round(Number(inp.value) * 100); if (!Number.isFinite(c) || c < 0) return K.toast(t('Montant invalide')); save(c); } },
+        h('label', { for: 'ck-paf' }, t('PAF (Ẑ par semaine)')), ' ', inp, ' ', h('button', { type: 'submit', class: 'ck-btn' }, t('Enregistrer')), ' ',
+        h('button', { type: 'button', class: 'ck-btn', onclick: () => { inp.value = (sg.paf_cents / 100).toFixed(2); } }, t('Reprendre l\'estimation'))));
+  };
   // Nom de domaine : vérifié (DNS, ports), enregistré dans station.conf, appliqué au redémarrage (systemd relance la station).
   const restartBlock = (r, out) => (r.restart
     ? h('button', { type: 'button', class: 'primary', onclick: async ev => {
@@ -159,7 +176,7 @@ export default async function cockpit(root, K) {
   };
   const welcome = () => { const d = welcomeDialog(K); K.cleanup(() => d.remove()); };
   const draw = async () => {
-    const [dash, health, cs, ec, ac, tun, tk, dns, fuel, en] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()).catch(() => null), soft('/api/v1/station/constellation'), soft('/api/v1/station/economy'), soft('/api/v1/station/accounts'), soft('/api/v1/station/admin/tunnels'), soft('/api/v1/station/admin/tasks'), soft('/api/v1/station/admin/dnslink'), soft('/api/v1/station/fuel'), soft('/api/v1/station/energy')]);
+    const [dash, health, cs, ec, ac, tun, tk, dns, fuel, en, paf] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()).catch(() => null), soft('/api/v1/station/constellation'), soft('/api/v1/station/economy'), soft('/api/v1/station/accounts'), soft('/api/v1/station/admin/tunnels'), soft('/api/v1/station/admin/tasks'), soft('/api/v1/station/admin/dnslink'), soft('/api/v1/station/fuel'), soft('/api/v1/station/energy'), soft('/api/v1/station/paf')]);
     const a = analyze({ health, cs, ec, ac, tun, tk, dash, dns, en }), st = dash.station, su = setup({ dash, cs, ac, dns });
     // Tant que la mise en service n'est pas finie, ses étapes disent déjà les informations (station seule, adresses) : pas de doublon.
     const todos = su.left ? a.todos.filter(x => x.level !== 'info') : a.todos;
@@ -182,6 +199,7 @@ export default async function cockpit(root, K) {
       h('section', { class: 'card ck-hero ' + a.level, 'aria-live': 'polite' }, h('span', { class: 'ck-big', 'aria-hidden': 'true' }, { ok: '✅', degraded: '🟠', down: '🔴' }[a.level]), h('div', {}, h('h2', {}, t(a.verdict)), h('p', { class: 'muted' }, todos.length ? t('Voici par quoi commencer :') : t('Rien ne demande votre attention. La page se met à jour toute seule.')))),
       fuelCard(fuel),
       energyCard(en),
+      pafCard(paf, draw),
       todos.length ? h('section', { class: 'card' }, h('h2', {}, t('À faire')), h('ul', { class: 'ck-list' }, todos.slice(0, 3).map(todo)), todos.length > 3 ? h('details', {}, h('summary', {}, t('Voir les {0} autres', todos.length - 3)), h('ul', { class: 'ck-list' }, todos.slice(3).map(todo))) : null) : null,
       su.left ? h('section', { class: 'card' }, h('h2', {}, t('Mettre la station en service'), h('small', { class: 'muted' }, ` · ${su.list.length - su.left}/${su.list.length}`)),
         h('progress', { max: su.list.length, value: su.list.length - su.left, 'aria-label': t('Étapes terminées') }),

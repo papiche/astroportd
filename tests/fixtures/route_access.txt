@@ -61,6 +61,7 @@ GET /api/v1/station/energy anon=401 member=403
 GET /api/v1/station/fuel anon=401 member=403
 GET /api/v1/station/hosting anon=401 member=403
 GET /api/v1/station/oc/donations anon=401 member=403
+GET /api/v1/station/paf anon=401 member=403
 GET /api/v1/station/planes anon=401 member=403
 GET /api/v1/station/welcome anon=401 member=403
 GET /api/v1/stations anon=200 member=200
@@ -155,6 +156,7 @@ POST /api/v1/station/coop anon=401 member=403
 POST /api/v1/station/domain anon=401 member=403
 POST /api/v1/station/hosting anon=401 member=403
 POST /api/v1/station/oc/sync anon=401 member=403
+POST /api/v1/station/paf anon=401 member=403
 POST /api/v1/station/planes anon=401 member=403
 POST /api/v1/station/planes/remove anon=401 member=403
 POST /api/v1/station/planes/service anon=401 member=403

@@ -1,12 +1,12 @@
 # Guide du Capitaine : ouvrir et tenir sa station
 
-> Version texte du [guide illustré](guide.html). Pour découvrir Astroport sans rien installer : [la page d'accueil](index.html). Version **1.1.1**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
+> Version texte du [guide illustré](guide.html). Pour découvrir Astroport sans rien installer : [la page d'accueil](index.html). Version **1.2.0**. Chaque étape propose le **terminal (CLI)** et, quand c'est possible, le **navigateur (Web)**.
 
 **Sommaire** :
 
 - [**Partie 1 — Mettre la station en service**](#partie-1) : [1. Avant de commencer](#etape-0) · [2. Installer astroportd](#etape-1) · [3. Donner une identité à la station (Y-Level)](#etape-2) · [4. Choisir sa constellation](#etape-3) · [5. Démarrer la station](#etape-4) · [6. Créer votre compte de Capitaine, puis ceux des membres](#etape-5) · [7. Vérifier que tout va bien](#etape-6) · [8. Entrer dans l'interface web](#etape-7) · [9. Le cockpit du Capitaine](#etape-7b)
 - [**Partie 2 — Ce que la station offre à vos membres**](#partie-2) : [FaceCloud](#etape-8) · [Inviter quelqu'un à recevoir des photos](#etape-8quater) · [La clé de secours](#secours) · [Contacts, agenda et Mon compte](#etape-8b) · [Messages privés, et une personne dans plusieurs UPlanet](#etape-8bis-j) · [Appeler en visio](#visio) · [Le coffre de mots de passe (KeePass)](#etape-8bis-b) · [Le site public](#etape-8bis-m) · [Un jeton par appareil (téléphones, tablettes, ordinateurs)](#etape-8bis-f) · [Reprendre ses fichiers d'un autre serveur (Nextcloud, ownCloud…)](#etape-8bis-d) · [Ranger son uCloud par type](#etape-8bis-e) · [Connexion par PASS, compte sans email, signature déléguée](#etape-8quinquies) · [Sur un smartphone](#sur-un-smartphone)
-- [**Partie 3 — Les Ẑen de la station**](#partie-3) : [Hébergement facturé et partage de la semaine](#etape-8bis-g) · [Ma UPlanet](#etape-8c) · [Les Ẑen](#etape-8bis-l) · [Relier une UPlanet à OpenCollective](#relier-une-uplanet-opencollective) · [Ğ1Billet](#1billet-des-billets-papier-en-en)
+- [**Partie 3 — Les Ẑen de la station**](#partie-3) : [Hébergement facturé et partage de la semaine](#etape-8bis-g) · [Ma UPlanet](#etape-8c) · [Les Ẑen](#etape-8bis-l) · [La PAF de la machine et les nouvelles machines](#la-paf-de-la-machine-et-les-nouvelles-machines) · [Relier une UPlanet à OpenCollective](#relier-une-uplanet-opencollective) · [Ğ1Billet](#1billet-des-billets-papier-en-en)
 - [**Partie 4 — Relier, ouvrir, administrer**](#partie-4) : [Être trouvé](#annuaire) · [Relier sa station aux autres Capitaines](#etape-9) · [Options du Capitaine](#etape-8ter) · [Une adresse pour chaque station et chaque MULTIPASS (DNSLink)](#etape-9b) · [Les anciens clients (zelkova, coracle) sur astroportd](#etape-8bis-h) · [Plusieurs astroportd sur une machine](#plusieurs-astroportd-sur-une-machine-un-seul-bassin-de-fichiers) · [Plusieurs UPlanet dans un seul processus](#etape-8bis-i) · [En cas de problème](#etape-10)
 
 <a id="partie-1"></a>
@@ -44,7 +44,7 @@ date       # l'année doit être 2026 ou plus
 
 Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.
 
-> **À savoir.** astroportd est en **version 1.1.1** : il est testé de bout en bout, et les anciens formats d'Astroport.ONE ne sont plus repris (voir les notes de version). Gardez une sauvegarde de vos clés.
+> **À savoir.** astroportd est en **version 1.2.0** : il est testé de bout en bout, et les anciens formats d'Astroport.ONE ne sont plus repris (voir les notes de version). Gardez une sauvegarde de vos clés.
 
 Vous aurez aussi besoin d'un compte **MULTIPASS** (votre identité Nostr) : astroportd le crée pour vous à l'[étape 6](#etape-5).
 
@@ -60,7 +60,7 @@ Le plus simple : l'installeur. Il choisit le bon fichier pour votre machine et *
 curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 ```
 
-Options utiles : `--version v1.1.1`, `--static` (binaire statique, x86_64 et aarch64 : l'installeur le choisit seul si la glibc de la machine est plus ancienne que la 2.35, et s'arrête net si le binaire ne démarre pas), `--prefix DIR`, `--no-init`, `--yes`.
+Options utiles : `--version v1.2.0`, `--static` (binaire statique, x86_64 et aarch64 : l'installeur le choisit seul si la glibc de la machine est plus ancienne que la 2.35, et s'arrête net si le binaire ne démarre pas), `--prefix DIR`, `--no-init`, `--yes`.
 
 **Plugins** : à la fin, l'installeur propose de les présenter (`install-plugins.sh` : `git clone` du dépôt `astroportd-plugins`, puis l'`install.sh` de chacun : films et musique, énergie, DNSLink). Pour y revenir : `curl -fsSL https://raw.githubusercontent.com/papiche/astroportd-plugins/main/install-plugins.sh | bash`.
 
@@ -874,6 +874,16 @@ Garde-fous : **10 000 Ẑen au plus par versement** (plusieurs tranches au-delà
 
 **Les mouvements des membres.** Sur **Mes chiffres**, **Envoyer des Ẑen** permet à un membre d'envoyer de son propre solde à la **trésorerie de la coopérative** (CASH) ou à un **proche réciproque** hébergé sur la même station. Mêmes plafond et confirmation ; la station signe avec le portefeuille du membre, et la référence du virement ne porte que des préfixes de clés, jamais une adresse e-mail.
 
+## La PAF de la machine et les nouvelles machines
+
+**La PAF** (participation aux frais) est propre à **chaque machine** et fixée par **son Capitaine**. Chaque semaine, la station règle **3×PAF** sur la Ğ1 : **1×PAF au NODE** (l'Armateur, qui prête la machine) et **2×PAF au MULTIPASS du Capitaine** (son administrateur système). Elle se lit dans `station.conf` (`paf = 9`, en Ẑ par semaine, **par paliers de 3 Ẑ** : 9, 12, 15… ; **9 Ẑ par défaut**, et c'est aussi le plancher de l'estimation) ; sans PAF, aucune charge n'est réglée et l'économie de la station reste coupée.
+
+- **À l'installation**, `astroportd init` estime la PAF d'après ce que la machine apporte et vous la propose (`--paf 12` pour l'imposer, `--yes` pour accepter l'estimation). L'estimation ajoute l'**énergie** (puissance moyenne × 168 h × 0,20 Ẑ/kWh : mesurée par le plugin `energy`, supposée d'après le profil sinon) et la **capacité** (1 Ẑ par tranche de 10 points de Power-Score). Avec un **régulateur solaire** (plugin `victron`), l'énergie produite n'est pas un rabais : c'est un **effort d'autosuffisance** qui fait *monter* la PAF de **+3 Ẑ par tiers de la consommation du mois couverte** (+6 Ẑ au plus), et le **🎯 Bingo résilience** ajoute **+3 Ẑ** quand la production du mois **dépasse** la consommation (rien en dessous de 1 kWh mesuré). L'estimation est arrondie au palier de 3 Ẑ supérieur : c'est une proposition, jamais appliquée seule, le Capitaine la confirme dans le cockpit.
+- **Dans le cockpit**, la carte **💶 PAF de cette machine** montre la valeur en vigueur, le détail de l'estimation (avec la consommation mesurée dès que le plugin `energy` tourne) et la valeur par défaut de la coopérative (réglage `PAF`), et permet de l'enregistrer. La station lit la PAF au **démarrage** : la carte dit « enregistrée, pas encore réglée » tant qu'elle n'a pas redémarré. L'option `--weekly-costs` (centimes, déjà 3×PAF) l'emporte si le service la porte.
+- **La balise** de la station annonce sa PAF (étiquette `paf:machine`) à côté de son Power-Score, pour que chacun voie ce que coûte une machine.
+
+**Une nouvelle machine rejoint la constellation.** La station relit l'annuaire de son UPlanet toutes les deux minutes. Chaque machine inconnue donne **une alerte** dans le flux du Capitaine : nom, profil, Power-Score, GPU et PAF annoncée, avec un renvoi vers `#/constellation`. Au tout premier passage, les machines déjà présentes sont seulement notées, sans alerte. L'alerte prévient : elle n'admet personne, l'accueil d'un nouvel Armateur-Capitaine reste une décision du Capitaine. Une station reliée à ORIGIN et à une UPlanet ẐEN reçoit les alertes des deux constellations, chacune dans son plan.
+
 ## Relier une UPlanet à OpenCollective
 
 OpenCollective est l'**entrée en euros** de la coopérative : un don devient des Ẑen sur le MULTIPASS du donateur (1 € = 1 Ẑ), ou une part sociale, ou un don à R&D. La station lit le collectif, vous montre ce qui est à créditer, et verse depuis le Ğ1 maître (voir « Les Ẑen »). Rien ne passe par un tiers : la station interroge l'API d'OpenCollective avec votre clé.
@@ -985,7 +995,7 @@ Chaque station publie sa **balise** (événement NOSTR kind 30850, `d = economic
 
 Grâce à Y-Level, la clé publique SSH d'une station **se déduit de son identité IPFS** (`12D3Koo…`) : c'est la même clé. Quand deux Capitaines se suivent sur Nostr, ils peuvent donc s'ouvrir un accès SSH entre machines de confiance : de l'**individu**, à l'**Astroport**, au **territoire**.
 
-Qui fait quoi ? Le **suivi automatique** entre Capitaines (lecture des rapports économiques kind 30850, suivi mutuel) est fait par **Astroport.ONE** (`DRAGON_p2p_ssh.sh`). **astroportd**, lui, fournit le **tunnel** P2P entre les stations, sans ouvrir de port sur la box ; et il fait suivre le Capitaine par chaque MULTIPASS qu'il crée.
+Qui fait quoi ? Le **suivi** entre Capitaines. **astroportd**, permet d'ouvrir des **tunnels** P2P entre les stations ; le Capitaine est suivi par chaque MULTIPASS créés sur la station.
 
 ![Individus, Astroports et territoire ; les Capitaines qui se suivent.](img/individu-astroport-territoire.svg)
 

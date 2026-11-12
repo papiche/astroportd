@@ -31,6 +31,8 @@ pub mod member_ai;
 pub mod mesh_outbox;
 pub mod organize;
 pub mod p2p_relay;
+pub mod paf;
+pub mod new_stations;
 pub mod person_keys;
 pub mod rotate;
 pub mod private_backup;

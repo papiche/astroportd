@@ -444,6 +444,17 @@ pub async fn run(a: ServeArgs) -> Result<(), Failure> {
 
 /// Comme [`run`], mais s'arrête quand `shutdown` se termine : plusieurs plans d'un même processus partagent un seul signal d'arrêt.
 pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Output = ()>) -> Result<(), Failure> {
+    // Position : sans `--lat`/`--lon` (la commande `planes` n'en a pas), celle de station.conf, du plan puis de la station.
+    if a.lat.is_none() || a.lon.is_none() {
+        let dir = a.db.parent().map(PathBuf::from);
+        let confs = dir.iter().flat_map(|d| [d.join("station.conf"), d.parent().map(|p| p.join("station.conf")).unwrap_or_default()]).collect::<Vec<_>>();
+        let find = |k: &str| confs.iter().find_map(|c| astroportd::init::read_conf(c).into_iter().find(|(key, v)| key == k && v.parse::<f64>().is_ok()).and_then(|(_, v)| v.parse::<f64>().ok()));
+        if let (Some(la), Some(lo)) = (find("lat"), find("lon")) {
+            (a.lat, a.lon) = (Some(la), Some(lo));
+        }
+    }
+    // PAF de cette machine (`paf` de station.conf, en Ẑ par semaine) : la charge réglée chaque semaine est 3×PAF, sauf `--weekly-costs`.
+    a.weekly_costs = astroportd::paf::weekly_costs(a.weekly_costs, &a.db.parent().map_or_else(|| PathBuf::from("station.conf"), |d| d.join("station.conf")));
     // Domaine réglé depuis le cockpit ou `init` : repris de station.conf quand la commande n'en donne pas.
     if a.domains.is_empty() {
         use astroportd::station_domain as sd;
@@ -707,7 +718,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     let peer_id = p2p_handle.as_ref().map(|h| h.peer_id().to_string()).or_else(|| station.discovered.as_ref().map(|d| d.node.peer_id.clone()));
     let services_peer = peer_id.clone();
     let info = StationInfo { node_hex: node_hex.clone(), peer_id, domain: public_domain(&a).cloned(), started: std::time::Instant::now() };
-    let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: station.nostr_dir.clone(), chain, hardware, p2p: p2p_handle.clone(), weekly_rent_cents: a.weekly_rent, activity: activity.clone(), swarm_dir: a.swarm_dir.clone().or_else(default_swarm_dir), origin: a.lat.zip(a.lon), exposed: exposed_names.clone() }));
+    let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: station.nostr_dir.clone(), chain, hardware, p2p: p2p_handle.clone(), weekly_rent_cents: a.weekly_rent, activity: activity.clone(), swarm_dir: a.swarm_dir.clone().or_else(default_swarm_dir), origin: a.lat.zip(a.lon), exposed: exposed_names.clone(), weekly_costs_cents: a.weekly_costs, uplanet_name: uplanet_name.to_string() }));
     println!("matériel : {}", station::hardware_text(&hardware, None));
     let mut background: Vec<tokio::task::JoinHandle<()>> = vec![tokio::spawn(watch_relay(relay.subscribe(), activity.clone(), stop_watch.clone()))];
     {
@@ -867,6 +878,8 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     // Annuaire des stations de l'UPlanet et balise 30850 (places libres, position, matériel) : relai local, `--relay`
     // et relai de la coopérative `wss://relay.<zone OVH>`. Sans clé du NODE, pas de balise, l'annuaire reste lisible.
     let stations = Arc::new(astroportd::beacon::Stations::new(db.clone(), uplanet_name.to_string(), services_peer.clone()));
+    // Une machine qui rejoint la constellation prévient le Capitaine (une alerte par station, jamais au tout premier passage).
+    background.push(tokio::spawn(Arc::new(astroportd::new_stations::NewStations::new(db.clone(), stations.clone(), activity.clone())).run(stop_watch.clone())));
     // Le relai accepte les balises des stations sœurs (même `swarm_id`) : il sert d'annuaire s'il est le relai commun.
     {
         let (circle, stations) = (circle.clone(), stations.clone());

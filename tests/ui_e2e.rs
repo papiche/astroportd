@@ -91,7 +91,7 @@ async fn bench_with(tag: &str, ollama: Option<&str>, tune: impl FnOnce(&mut DavC
     let dav = Arc::new(DavState { db: db.clone(), blobs, replay: Arc::new(SqliteReplayStore::in_memory().unwrap()), publisher: Some(publisher), config, on_upload: None });
     let bus = ActivityBus::new();
     let info = StationInfo { node_hex: hex(&[1; 32]), peer_id: Some("12D3KooWTest".into()), domain: Some("station.test".into()), started: Instant::now() };
-    let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: None, chain: None, hardware: Hardware { vram_gb: 24.0, cpu_cores: 16, ram_gb: 64.0 }, p2p: None, weekly_rent_cents: 100, activity: bus.clone(), swarm_dir, origin: Some((45.76, 4.83)), exposed: vec!["comfyui".into(), "ssh".into()] }));
+    let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: None, chain: None, hardware: Hardware { vram_gb: 24.0, cpu_cores: 16, ram_gb: 64.0 }, p2p: None, weekly_rent_cents: 100, activity: bus.clone(), swarm_dir, origin: Some((45.76, 4.83)), exposed: vec!["comfyui".into(), "ssh".into()], weekly_costs_cents: 0, uplanet_name: "0".repeat(64) }));
     let client = ollama.map(|url| Arc::new(OllamaClient::new(url, "bge-m3", "llama3.2", Duration::from_secs(5))));
     let memory = client.as_ref().map(|o| Arc::new(MemoryStore::new(db.clone(), Arc::new(AnyEmbedder::Ollama(o.clone())), o.clone(), Some(bus.clone()))));
     let registrar = Arc::new(astroportd::register::Registrar::new(db.clone(), dir.join("nostr"), "0".repeat(64), Arc::new(|hex| derive_dav_token(SECRET, hex)), astroportd::register::Limits::default()));
@@ -1391,7 +1391,7 @@ async fn a_new_station_opens_only_to_its_captain_with_the_setup_code_from_the_jo
     let dav = Arc::new(DavState { db: db.clone(), blobs, replay: Arc::new(SqliteReplayStore::in_memory().unwrap()), publisher: None, config: DavConfig::new(SECRET.to_vec()), on_upload: None });
     let bus = ActivityBus::new();
     let info = StationInfo { node_hex: hex(&[1; 32]), peer_id: None, domain: None, started: Instant::now() };
-    let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: None, chain: None, hardware: Hardware { vram_gb: 0.0, cpu_cores: 2, ram_gb: 4.0 }, p2p: None, weekly_rent_cents: 100, activity: bus.clone(), swarm_dir: None, origin: None, exposed: vec![] }));
+    let services = Arc::new(StationServices::new(StationDeps { db: db.clone(), info, nostr_dir: None, chain: None, hardware: Hardware { vram_gb: 0.0, cpu_cores: 2, ram_gb: 4.0 }, p2p: None, weekly_rent_cents: 100, activity: bus.clone(), swarm_dir: None, origin: None, exposed: vec![], weekly_costs_cents: 0, uplanet_name: "0".repeat(64) }));
     let player = dir.join("game/players/.current/.player");
     let registrar = Arc::new(astroportd::register::Registrar::new(db.clone(), dir.join("game/nostr"), "0".repeat(64), Arc::new(|hex| derive_dav_token(SECRET, hex)), astroportd::register::Limits::default()).require_captain().with_player_file(Some(player.clone())));
     // Le « journal » de la station : seul endroit où le code apparaît.

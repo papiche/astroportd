@@ -1,3 +1,15 @@
+## astroportd 1.2.0 — PAF par machine, alerte « nouvelle machine », versements de Ẑen
+
+Les versions 1.1.0 et 1.1.1 n'ont pas été publiées à part : cette version les reprend (voir plus bas).
+
+- **PAF propre à chaque machine** : `paf = 9` dans `station.conf` (Ẑ par semaine, **par paliers de 3**, 9 par défaut). La station règle chaque semaine 3×PAF : 1×PAF au NODE, 2×PAF au Capitaine. `--weekly-costs` l'emporte s'il est donné. Chaque plan d'un processus `planes` a sa PAF.
+- **Estimation** (`astroportd init`, option `--paf`, et carte « 💶 PAF de cette machine » du cockpit : `GET`/`POST /api/v1/station/paf`) : énergie (puissance mesurée par le plugin `energy`, sinon supposée d'après le profil) + capacité (Power-Score), arrondie au palier de 3. Un régulateur solaire (plugin `victron`) **hausse** la PAF : +3 Ẑ par tiers de la consommation du mois couverte (+6 au plus), et le **🎯 Bingo résilience** ajoute +3 Ẑ quand la production dépasse la consommation. Proposé, jamais appliqué seul.
+- **Balise 30850** : nouvelle étiquette `paf:machine` ; l'annuaire expose `paf_cents`.
+- **Alerte « nouvelle machine »** : toutes les 2 minutes, la station compare l'annuaire de son UPlanet aux machines déjà vues et prévient le Capitaine, une fois par machine (jamais au premier passage d'une base). Elle n'admet personne.
+- **`planes`** reprend la position (`lat`, `lon`) de `station.conf` quand la commande n'en donne pas.
+- **Versements de Ẑen** par le Capitaine et par les membres, **synchronisation OpenCollective → Ẑen** avec contrôle de collision, activation du MULTIPASS vide par le portefeuille maître, carte « Déposer » (adresse, QR) dans Constellation : voir le guide, sections « Les Ẑen » et « Relier une UPlanet à OpenCollective ».
+- Le relai accepte les clés de station et de la coopérative dans son cercle social (Ğ1Billet : « author is outside the social circle »).
+
 ## astroportd 1.1.1 — correctif de CI
 
 - Le test du relais d'appel qui écoute une nouvelle adresse de la machine (`127.0.0.2`) est ignoré sous macOS, dont la boucle locale ne porte que `127.0.0.1`. Aucun changement de comportement.

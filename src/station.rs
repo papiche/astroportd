@@ -73,6 +73,10 @@ pub struct StationDeps {
     pub origin: Option<(f64, f64)>,
     /// Services exposés dans le maillage (`--p2p-expose`).
     pub exposed: Vec<String>,
+    /// Charge hebdomadaire réglée (3×PAF, centimes de Ẑ) au démarrage.
+    pub weekly_costs_cents: u64,
+    /// `UPLANETNAME` de la constellation.
+    pub uplanet_name: String,
 }
 
 /// Contexte partagé.
@@ -99,6 +103,10 @@ pub struct StationServices {
     pub origin: Option<(f64, f64)>,
     /// Services exposés dans le maillage.
     pub exposed: Vec<String>,
+    /// Charge hebdomadaire réglée (3×PAF, centimes de Ẑ) au démarrage.
+    pub weekly_costs_cents: u64,
+    /// `UPLANETNAME` de la constellation.
+    pub uplanet_name: String,
     /// Dernier appel Duniter : `(quand, réussi)`, pour `/health` sans appel réseau.
     chain_seen: Mutex<Option<(Instant, bool)>>,
     /// Dernier solde lu par compte : affiché quand le nœud est lent, pour ne jamais bloquer une page.
@@ -112,7 +120,7 @@ pub struct StationServices {
 impl StationServices {
     /// Assemble le contexte.
     pub fn new(d: StationDeps) -> Self {
-        Self { db: d.db, info: d.info, nostr_dir: d.nostr_dir, chain: d.chain, hardware: d.hardware, p2p: d.p2p, weekly_rent_cents: d.weekly_rent_cents, activity: d.activity, swarm_dir: d.swarm_dir, origin: d.origin, exposed: d.exposed, chain_seen: Mutex::new(None), last_balance: Mutex::new(std::collections::HashMap::new()), public_balance: Mutex::new(std::collections::HashMap::new()), tls: std::sync::OnceLock::new() }
+        Self { db: d.db, info: d.info, nostr_dir: d.nostr_dir, chain: d.chain, hardware: d.hardware, p2p: d.p2p, weekly_rent_cents: d.weekly_rent_cents, activity: d.activity, swarm_dir: d.swarm_dir, origin: d.origin, exposed: d.exposed, weekly_costs_cents: d.weekly_costs_cents, uplanet_name: d.uplanet_name, chain_seen: Mutex::new(None), last_balance: Mutex::new(std::collections::HashMap::new()), public_balance: Mutex::new(std::collections::HashMap::new()), tls: std::sync::OnceLock::new() }
     }
 
     /// Branche l'état du certificat HTTPS (une seule fois, quand le frontal TLS démarre).

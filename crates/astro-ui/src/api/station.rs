@@ -12,6 +12,14 @@ pub trait StationApi: Auth {
     fn energy(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Ok(json!({ "state": "absent" })) }
     }
+    /// PAF de cette machine, sa valeur enregistrée, celle qui s'applique et une estimation (Capitaine).
+    fn paf(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("PAF non disponible sur cette station")) }
+    }
+    /// Enregistre la PAF de cette machine, en centimes de Ẑ par semaine (`0` la retire) ; effective au redémarrage (Capitaine).
+    fn paf_set(&self, _who: &Principal, _cents: u64) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("PAF non disponible sur cette station")) }
+    }
     /// Nom de domaine de la station : actuel, enregistré, ports, redémarrage possible (Capitaine).
     fn domain_info(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("réglage du domaine non disponible sur cette station")) }
@@ -64,6 +72,7 @@ pub(super) fn routes<B: StationApi>() -> Router<Arc<UiState<B>>> {
         .route("/api/v1/station/admin/{section}", get(admin_get::<B>).post(admin_set::<B>))
         .route("/api/v1/station/console", get(console_ws::<B>))
         .route("/api/v1/station/energy", get(energy::<B>))
+        .route("/api/v1/station/paf", get(paf::<B>).post(paf_set::<B>))
         .route("/api/v1/station/domain", get(domain_info::<B>).post(domain_set::<B>))
         .route("/api/v1/station/restart", post(restart::<B>))
         .route("/api/v1/station/planes", get(planes::<B>).post(plane_add::<B>))
@@ -78,6 +87,16 @@ async fn dashboard<B: StationApi>(State(st): State<Arc<UiState<B>>>, Authed(p): 
 /// Énergie de la station (plugin `energy`).
 async fn energy<B: StationApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
     reply(st.backend.energy(&p).await)
+}
+
+/// PAF de la machine.
+async fn paf<B: StationApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {
+    reply(st.backend.paf(&p).await)
+}
+
+async fn paf_set<B: StationApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Json(b): Json<Value>) -> Response {
+    let Some(cents) = b["paf_cents"].as_u64() else { return reply(Err(ApiError::bad_request("JSON attendu : { \"paf_cents\": 1450 } (centimes de Ẑ par semaine, 0 pour retirer)"))) };
+    reply(st.backend.paf_set(&p, cents).await)
 }
 
 async fn domain_info<B: StationApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {

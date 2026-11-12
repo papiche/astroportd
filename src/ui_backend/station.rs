@@ -287,6 +287,26 @@ impl<B: BlobStore> StationApi for StationBackend<B> {
         crate::station_domain::request_restart(Duration::from_millis(500));
         Ok(json!({ "restarting": true }))
     }
+    async fn paf(&self, _who: &Principal) -> Result<Value, ApiError> {
+        let conf = self.conf_path.as_deref().ok_or_else(|| ApiError::unavailable("dossier de la station inconnu"))?;
+        let home = conf.parent().ok_or_else(|| ApiError::unavailable("dossier de la station inconnu"))?;
+        let now = u64::try_from(crate::private_backup::now()).unwrap_or(0);
+        let (measured, solar) = match crate::energy::read(home, now) {
+            crate::energy::Energy::Fresh(r) | crate::energy::Energy::Stale { reading: r, .. } => {
+                let solar = r.consumption.as_ref().zip(r.production.as_ref()).map(|(c, p)| crate::paf::Solar { production_wh: p.month_wh, consumption_wh: c.month_kwh * 1000.0 });
+                (r.consumption.map(|c| c.avg_w_recent), solar)
+            }
+            _ => (None, None),
+        };
+        let coop = crate::coop_config::setting(&self.services.db, &self.services.uplanet_name, "PAF").await;
+        Ok(crate::paf::view(conf, self.services.weekly_costs_cents, &self.services.hardware, measured, solar, coop.as_deref()))
+    }
+    async fn paf_set(&self, _who: &Principal, cents: u64) -> Result<Value, ApiError> {
+        let conf = self.conf_path.as_deref().ok_or_else(|| ApiError::unavailable("dossier de la station inconnu"))?;
+        crate::paf::save(conf, cents).map_err(ApiError::bad_request)?;
+        self.services.activity.publish_to(astro_core::Audience::Captain, "info", "station", format!("PAF de la machine : {} Ẑ par semaine (prise en compte au redémarrage)", crate::paf::text_of(cents)), None);
+        self.paf(_who).await
+    }
     async fn energy(&self, _who: &Principal) -> Result<Value, ApiError> {
         let home = self.conf_path.as_deref().and_then(std::path::Path::parent).ok_or_else(|| ApiError::unavailable("dossier de la station inconnu"))?;
         Ok(crate::energy::view(&crate::energy::read(home, u64::try_from(crate::private_backup::now()).unwrap_or(0))))

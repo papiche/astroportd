@@ -31,6 +31,10 @@ pub struct InitArgs {
     /// Constellation : `origin` (ouverte) ou `zen` (privée, demande une swarm.key). Demandé si absent (terminal).
     #[arg(long)]
     mode: Option<Mode>,
+    /// PAF de cette machine, en Ẑ par semaine, par paliers de 3 (ex. `9`, `12`) : 1×PAF au NODE, 2×PAF au Capitaine. Sans cette option,
+    /// l'installation estime la PAF d'après la machine et la propose.
+    #[arg(long)]
+    paf: Option<String>,
     /// Email du Capitaine : conservé dans station.conf, et son MULTIPASS est créé à la fin de l'installation (code PASS affiché).
     #[arg(long)]
     email: Option<String>,
@@ -470,6 +474,21 @@ pub fn init(a: InitArgs) -> Result<InitDone, Box<dyn std::error::Error>> {
     );
     let conf = match &a.joined {
         Some(j) => format!("{conf}sponsor = {}\n", j.from),
+        None => conf,
+    };
+    // PAF de la machine : estimée d'après ce qu'elle apporte (énergie supposée selon son profil, Power-Score), confirmée par le Capitaine.
+    let paf_cents = match a.paf.as_deref() {
+        Some(t) => Some(crate::paf::cents_of(t).filter(|c| *c <= crate::paf::MAX_PAF_CENTS && c % crate::paf::STEP_CENTS == 0).ok_or("--paf : un montant en Ẑ par semaine par paliers de 3 (ex. 9, 12, 15), 1000 au plus")?),
+        None => {
+            let hw = astro_p2p::routing::Hardware::detect();
+            let s = crate::paf::suggest(&hw, None, None);
+            println!("\nPAF de cette machine (participation aux frais, 1×PAF à son Armateur, 2×PAF à vous, son Capitaine) :\n   profil {} · Power-Score {:.0} · énergie supposée {} W ≈ {} Ẑ/semaine + capacité {} Ẑ/semaine", hw.tier().label(), hw.score(), s.watts, crate::paf::text_of(s.energy_cents), crate::paf::text_of(s.capacity_cents));
+            let answer = ask.ask(&format!("PAF en Ẑ par semaine, par paliers de 3 (0 : aucune, l'économie reste coupée) [estimation {}]", crate::paf::text_of(s.paf_cents)), &crate::paf::text_of(s.paf_cents));
+            Some(crate::paf::cents_of(&answer).filter(|c| *c <= crate::paf::MAX_PAF_CENTS && c % crate::paf::STEP_CENTS == 0).unwrap_or(s.paf_cents))
+        }
+    };
+    let conf = match paf_cents.filter(|c| *c > 0) {
+        Some(c) => format!("{conf}paf = {}\n", crate::paf::text_of(c)),
         None => conf,
     };
     write_private(&home.join("station.conf"), &conf)?;
