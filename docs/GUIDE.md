@@ -414,7 +414,7 @@ Le même jeton sert de mot de passe pour monter votre cloud en WebDAV (Finder, E
 3. L'**Accueil** vous propose d'envoyer vos premières photos, de **synchroniser votre smartphone** (photos, contacts, agenda : on quitte Google et Apple), de reconnaître un visage, de retrouver un proche, de mettre vos fichiers à l'abri chez un ami. Les étapes se cochent toutes seules ; la liste disparaît quand tout est fait. Une alerte n'apparaît que si votre espace dépasse 90 %.
 4. **Moi › Mon argent** montre votre solde en Ẑen, la durée que couvre ce solde, votre espace utilisé, vos dépenses des 28 jours (le loyer) et vos parts de matériel (ce que vous possédez, avec leur amortissement).
 
-![L'Accueil d'un membre : trois gestes (photos, proches, assistant ou smartphone) et la liste « Bien démarrer ».](img/ui-accueil.png)
+![L'Accueil d'un membre : quatre gestes (photos, argent, proches, smartphone) et la liste « Bien démarrer ».](img/ui-accueil.png)
 
 Sur un téléphone, installez la page comme application (menu du navigateur : *Ajouter à l'écran d'accueil*).
 
