@@ -29,5 +29,8 @@ export default {
 "pas encore financé": "not funded yet",
 "Aucun billet pour l’instant.": "No note yet.",
 "↩ : la valeur revient sur votre portefeuille à la date de fin si le billet n’est pas encaissé.": "↩: the value goes back to your wallet at the end date if the note is not cashed.",
-"renvoyé à l’émetteur": "sent back to the issuer"
+"renvoyé à l’émetteur": "sent back to the issuer",
+"Supprimer ce billet de Nostr ? La planche imprimée ne vaudra plus rien.": "Delete this billet from Nostr? The printed sheet will be worthless.",
+"🗑 Supprimé de Nostr": "🗑 Deleted from Nostr",
+"Billet supprimé de Nostr": "Billet deleted from Nostr"
 };

@@ -1,10 +1,10 @@
-//! Station (Capitaine) : cockpit, domaine, énergie, réglages, console, constellations (plans).
+//! Station (Capitaine) : cockpit, domaine, énergie, réglages, constellations (plans).
 //!
 //! Routes et gestionnaires de ce domaine ; le trait [`Backend`] et les types partagés restent dans `api/mod.rs`.
 
 use super::*;
 
-/// Station (Capitaine) : cockpit, domaine, énergie, réglages, console, constellations (plans).
+/// Station (Capitaine) : cockpit, domaine, énergie, réglages, constellations (plans).
 pub trait StationApi: Auth {
     /// Tableau de bord et widget de souveraineté.
     fn dashboard(&self, who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send;
@@ -53,10 +53,6 @@ pub trait StationApi: Auth {
     fn admin_get(&self, _who: &Principal, _section: &str) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::not_found("section d'administration inconnue")) }
     }
-    /// Ouvre la console que `ticket` autorise (à usage unique, délivré au Capitaine) ; `None` si le ticket est inconnu, périmé ou déjà utilisé.
-    fn console_open(&self, _ticket: &str) -> impl Future<Output = Option<ConsoleLink>> + Send {
-        async { None }
-    }
     /// Modifie une section d'administration (Capitaine) ; rend la vue mise à jour.
     fn admin_set(&self, _who: &Principal, _section: &str, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::not_found("section d'administration inconnue")) }
@@ -70,7 +66,6 @@ pub(super) fn routes<B: StationApi>() -> Router<Arc<UiState<B>>> {
         .route("/health", get(health::<B>))
         .route("/api/v1/dashboard", get(dashboard::<B>))
         .route("/api/v1/station/admin/{section}", get(admin_get::<B>).post(admin_set::<B>))
-        .route("/api/v1/station/console", get(console_ws::<B>))
         .route("/api/v1/station/energy", get(energy::<B>))
         .route("/api/v1/station/paf", get(paf::<B>).post(paf_set::<B>))
         .route("/api/v1/station/domain", get(domain_info::<B>).post(domain_set::<B>))
@@ -157,57 +152,6 @@ async fn plane_remove<B: StationApi>(State(st): State<Arc<UiState<B>>>, headers:
 
 fn valid_section(s: &str) -> bool {
     !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-}
-
-#[derive(Deserialize)]
-struct ConsoleQuery {
-    ticket: String,
-}
-
-/// Console WebSocket. L'authentification est le ticket (30 s, un seul usage, délivré au seul Capitaine) : un navigateur ne peut
-/// pas poser d'en-tête `Authorization` sur un WebSocket. Une page d'un autre site ne passe pas : `Origin` doit être cette station.
-async fn console_ws<B: StationApi>(State(st): State<Arc<UiState<B>>>, headers: HeaderMap, Query(q): Query<ConsoleQuery>, ws: WebSocketUpgrade) -> Response {
-    let same_origin = headers
-        .get(header::ORIGIN)
-        .and_then(|o| o.to_str().ok())
-        .and_then(|o| o.split_once("://").map(|(_, host)| host))
-        .zip(headers.get(header::HOST).and_then(|h| h.to_str().ok()))
-        .is_some_and(|(origin, host)| origin.eq_ignore_ascii_case(host));
-    if !same_origin {
-        return reply(Err(ApiError::forbidden("origine refusée")));
-    }
-    let Some(link) = st.backend.console_open(&q.ticket).await else { return reply(Err(ApiError::forbidden("ticket inconnu, périmé ou déjà utilisé"))) };
-    ws.max_message_size(64 * 1024).on_upgrade(move |sock| bridge_console(sock, link))
-}
-
-async fn bridge_console(mut sock: WebSocket, link: ConsoleLink) {
-    let ConsoleLink { input, mut output } = link;
-    // Une console inactive reste muette : le ping la garde ouverte derrière un reverse proxy (nginx coupe après 60 s).
-    let every = Duration::from_secs(30);
-    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
-    loop {
-        tokio::select! {
-            _ = ping.tick() => if sock.send(Message::Ping(Default::default())).await.is_err() { break },
-            out = output.recv() => match out {
-                Some(data) => if sock.send(Message::Binary(data.into())).await.is_err() { break },
-                None => {
-                    let _ = sock.send(Message::Close(None)).await;
-                    break;
-                }
-            },
-            msg = sock.recv() => match msg {
-                Some(Ok(Message::Binary(b))) => if input.send(ConsoleIn::Data(b.to_vec())).await.is_err() { break },
-                Some(Ok(Message::Text(t))) => {
-                    let size = serde_json::from_str::<Value>(&t).ok().and_then(|v| Some((u16::try_from(v["resize"][0].as_u64()?).ok()?, u16::try_from(v["resize"][1].as_u64()?).ok()?)));
-                    if let Some((cols, rows)) = size.filter(|(c, r)| (1..=500).contains(c) && (1..=200).contains(r)) {
-                        if input.send(ConsoleIn::Resize(cols, rows)).await.is_err() { break }
-                    }
-                }
-                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
-                _ => break,
-            },
-        }
-    }
 }
 
 async fn admin_get<B: StationApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Path(section): Path<String>) -> Response {

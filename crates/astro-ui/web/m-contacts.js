@@ -131,8 +131,8 @@ export default async function contacts(root, K) {
             h('button', { class: 'ghost', onclick: async ev => { ev.target.disabled = true; try { await api('/api/v1/book/merge', { method: 'POST', body: { keep: c.path, drop: g.cards.filter(x => x.path !== c.path).map(x => x.path) } }); K.toast(t('Fiches fusionnées'), 1); duplicates(); load(); } catch (e) { K.toast(e.message); ev.target.disabled = false; } } }, t('Garder celle-ci')))))))); }
     catch (e) { K.toast(e.message); }
   }
-  const tabs = h('div', { class: 'bar', role: 'tablist' }, h('button', { role: 'tab', 'aria-selected': 'true' }, t('Carnet')),
-    h('button', { role: 'tab', class: 'ghost', 'aria-selected': 'false', onclick: async () => { const sync = (await K.mod('m-sync.js')).default; K.cleanup(() => {}); await sync(root, K); root.prepend(h('p', {}, h('button', { class: 'ghost', onclick: () => contacts(root, K) }, '← ' + t('Retour au carnet')))); } }, t('Synchroniser et inviter')));
+  const tabs = h('div', { class: 'bar' },
+    h('button', { class: 'ghost', onclick: async () => { const sync = (await K.mod('m-sync.js')).default; K.cleanup(() => {}); await sync(root, K); root.prepend(h('p', {}, h('button', { class: 'ghost', onclick: () => contacts(root, K) }, '← ' + t('Retour au carnet')))); } }, t('Synchroniser et inviter')));
   tools.append(h('button', { onclick: create }, '＋ ' + t('Nouvelle fiche')), h('button', { class: 'ghost', onclick: () => file.click() }, t('Importer un .vcf')), dupBtn, selbtn, file);
   dupCount();
   q.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { s.q = q.value; load(); }, 200); };
@@ -148,6 +148,6 @@ export default async function contacts(root, K) {
         h('p', { class: 'muted' }, n ? t('Une question à la fois : « Est-ce Léa ? », « Qui est-ce ? ». Chaque réponse range les visages dans la fiche de la personne.') : t('La station analyse vos nouvelles photos : les visages à ranger apparaîtront ici.'))),
       h('span', { class: 'ab-sas-go' }, n ? h('button', { onclick: go('#/people/tri?grand') }, t('Trier en grand')) : null, h('button', { class: 'ghost', onclick: go('#/people/tri') }, t('Table de tri'))));
   }, () => {});
-  root.replaceChildren(h('h2', {}, t('Personnes')), sas, tabs, tools, selbar, main);
+  root.replaceChildren(h('h2', {}, t('Proches')), sas, tabs, tools, selbar, main);
   show0();
 }

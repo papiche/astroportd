@@ -91,7 +91,6 @@ pub struct StationUi<B: BlobStore> {
     zen_credit: Option<BilletFn>,
     site: Option<Arc<crate::public_site::Site<B>>>,
     admin: Option<AdminFn>,
-    console: Option<Arc<crate::console::Consoles>>,
     account: Option<Arc<crate::account::AccountService>>,
     contacts: Option<Arc<crate::identity_links::IdentityLinks<B>>>,
     invites: Option<Arc<crate::invites::Invites<B>>>,
@@ -185,7 +184,7 @@ pub type SendFn = Arc<dyn Fn(String, Vec<String>, Vec<String>) -> std::pin::Pin<
 impl<B: BlobStore> StationUi<B> {
     /// Assemble l'interface.
     pub fn new(services: Arc<StationServices>, dav: Arc<DavState<B>>, memory: Option<Arc<BroMemory>>, ollama: Option<Arc<OllamaClient>>, faces_enabled: bool) -> Self {
-        Self { services, dav, memory, ollama, faces_enabled, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, replicate_fn: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, zen_credit: None, site: None, admin: None, console: None, account: None, contacts: None, invites: None, welcome: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, stations: None, feedback: None, oc: None, setup: None, conf_path: None, planes_home: None, unit_exe: None, ai: None, book: None, chat: None, people: None, ice: (None, None, Vec::new()), presence: None }
+        Self { services, dav, memory, ollama, faces_enabled, thumbs_fn: None, pending_fn: None, friends_fn: None, backup: None, replicate_fn: None, send_fn: None, coop: None, constellation: None, charter: None, billet: None, zen_credit: None, site: None, admin: None, account: None, contacts: None, invites: None, welcome: None, agents: None, pull: None, organize: None, board: astro_facecloud::board::BoardCache::new(), registrar: None, stations: None, feedback: None, oc: None, setup: None, conf_path: None, planes_home: None, unit_exe: None, ai: None, book: None, chat: None, people: None, ice: (None, None, Vec::new()), presence: None }
     }
 
     /// Annuaire des clés d'une même personne dans plusieurs UPlanet.
@@ -285,11 +284,6 @@ impl<B: BlobStore> StationUi<B> {
         self
     }
 
-    /// Active la console SSH de l'interface (aide acceptée par un ami).
-    pub fn with_console(mut self, consoles: Arc<crate::console::Consoles>) -> Self {
-        self.console = Some(consoles);
-        self
-    }
 
     /// Active l'écran de configuration coopérative du Capitaine.
     pub fn with_coop(mut self, get: CoopGetFn, set: CoopSetFn) -> Self {
@@ -402,7 +396,7 @@ impl<B: BlobStore> StationUi<B> {
             .social(Arc::new(SocialBackend { services: self.services.clone(), dav: self.dav.clone(), memory: self.memory.clone(), contacts: self.contacts.clone(), agents: self.agents.clone(), ai: self.ai.clone(), book: self.book.clone(), chat: self.chat.clone(), ice: self.ice.clone(), presence: self.presence.clone(), people: self.people.clone() }))
             .account(Arc::new(AccountBackend { services: self.services.clone(), dav: self.dav.clone(), billet: self.billet.clone(), site: self.site.clone(), account: self.account.clone(), registrar: self.registrar.clone(), feedback: self.feedback.clone(), ai: self.ai.clone() }))
             .onboarding(Arc::new(OnboardBackend { services: self.services.clone(), dav: self.dav.clone(), backup: self.backup.clone(), invites: self.invites.clone(), welcome: self.welcome.clone(), registrar: self.registrar.clone(), stations: self.stations.clone(), setup: self.setup.clone() }))
-            .station(Arc::new(StationBackend { services: self.services.clone(), dav: self.dav.clone(), ollama: self.ollama.clone(), faces_enabled: self.faces_enabled, admin: self.admin.clone(), console: self.console.clone(), conf_path: self.conf_path.clone(), probe: Mutex::new(None), planes_home: self.planes_home.clone(), unit_exe: self.unit_exe.clone(), ice: self.ice.clone() }))
+            .station(Arc::new(StationBackend { services: self.services.clone(), dav: self.dav.clone(), ollama: self.ollama.clone(), faces_enabled: self.faces_enabled, admin: self.admin.clone(), conf_path: self.conf_path.clone(), probe: Mutex::new(None), planes_home: self.planes_home.clone(), unit_exe: self.unit_exe.clone(), ice: self.ice.clone() }))
             .build()
     }
 }

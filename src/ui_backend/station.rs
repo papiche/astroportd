@@ -1,4 +1,4 @@
-//! Station (Capitaine) : cockpit, domaine, énergie, réglages, console, constellations (plans).
+//! Station (Capitaine) : cockpit, domaine, énergie, réglages, constellations (plans).
 //!
 //! La structure ne porte que les champs que ce domaine utilise ; elle est assemblée par `StationUi::into_router`.
 
@@ -15,7 +15,6 @@ pub struct StationBackend<B: BlobStore> {
     /// FaceCloud est actif.
     pub(super) faces_enabled: bool,
     pub(super) admin: Option<AdminFn>,
-    pub(super) console: Option<Arc<crate::console::Consoles>>,
     /// `station.conf` (domaine réglé depuis le cockpit).
     pub(super) conf_path: Option<std::path::PathBuf>,
     pub(super) probe: Mutex<Option<(Instant, Result<(), String>)>>,
@@ -189,9 +188,6 @@ impl<B: BlobStore> StationApi for StationBackend<B> {
         let view = f(section.to_owned(), Some(body)).await.map_err(admin_error)?;
         self.services.activity.publish_to(astro_core::Audience::Captain, "system", "ui:admin", format!("réglage « {section} » modifié par le Capitaine"), None);
         Ok(view)
-    }
-    async fn console_open(&self, ticket: &str) -> Option<astro_ui::api::ConsoleLink> {
-        self.console.as_ref()?.open(ticket)
     }
     async fn domain_info(&self, _who: &Principal) -> Result<Value, ApiError> {
         use crate::station_domain as sd;

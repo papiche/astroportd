@@ -101,31 +101,9 @@ export default async function options(root, K) {
     const to = h('select', { id: 'as-to', 'aria-label': t('Qui solliciter') }, h('option', { value: '' }, t('Tous mes Capitaines amis')), asst.friends.map(f => h('option', { value: f.hex }, f.label)));
     const first = h('input', { type: 'checkbox', id: 'as-first' }), note = h('input', { id: 'as-note', maxlength: 280, placeholder: t('Ce qui ne va pas (facultatif)'), autocomplete: 'off' });
     const send = h('button', { disabled: !asst.friends.length, onclick: () => act({ action: 'request', service: service.value, hours: Number(hours.value), note: note.value.trim(), to: to.value, exclusive: first.checked }, t('Demande envoyée')) }, t('Demander de l\'aide'));
-    // Console SSH dans le navigateur : la station lance `ssh` vers l'accès local ; le ticket (30 s, un usage) passe dans le fragment de l'adresse.
-    const consoleLauncher = r => {
-      const user = h('input', { 'aria-label': t('Utilisateur sur la station de l\'ami'), placeholder: t('utilisateur'), size: 12, maxlength: 32, autocomplete: 'off', value: (() => { try { return localStorage.getItem('astro.console.user') || ''; } catch { return ''; } })() });
-      const go = h('button', { onclick: async ev => {
-        const u = user.value.trim();
-        if (!u) { K.toast(t('Indiquez votre nom d\'utilisateur sur la machine de l\'ami.')); user.focus(); return; }
-        const w = window.open('about:blank', '_blank'), btn = ev.currentTarget;
-        btn.disabled = true;
-        try {
-          if (!r.local) await post('assist', { action: 'connect', id: r.id });
-          const t = await post('assist', { action: 'console', id: r.id, user: u });
-          try { localStorage.setItem('astro.console.user', u); } catch { /* facultatif */ }
-          if (w) w.location.href = `/ui/console.html#ticket=${t.ticket}&label=${encodeURIComponent(`${u}@${r.from}`)}`; else K.toast(t('Fenêtre bloquée : autorisez les fenêtres de cette page.'));
-          options(root, K);
-        } catch (e) { if (w) w.close(); K.toast(e.message); btn.disabled = false; }
-      } }, t('Ouvrir la console'));
-      return h('span', { class: 'inline' }, user, ' ', go);
-    };
     const incoming = asst.incoming.map(r => h('li', {}, h('strong', {}, r.from), ' ' + t('demande de l\'aide : {0}, {1} h', t(TNAME[r.service] || r.service), r.hours), r.note ? ` — « ${r.note} »` : '', ` (${t(STATUS[r.status])}) `,
       r.status === 'pending' ? h('p', {}, h('button', { onclick: () => act({ action: 'respond', id: r.id, other: r.other, accept: true }, t('Vous aidez {0}', r.from)) }, t('Accepter d\'aider')), ' ', h('button', { class: 'ghost', onclick: () => act({ action: 'respond', id: r.id, other: r.other, accept: false }, t('Demande refusée')) }, t('Refuser'))) : null,
-      r.status === 'accepted' && r.station ? h('p', { class: 'muted' }, r.service === 'ssh'
-        ? [t('Machine de {0} : ', r.from), consoleLauncher(r), r.local ? h('span', {}, ' ', h('button', { class: 'ghost', onclick: () => act({ action: 'disconnect', id: r.id }, t('Accès fermé')) }, t('Fermer l\'accès'))) : null]
-        : r.local
-          ? [t('Accès ouvert jusqu\'à {0} : ', K.when(r.local.until)), r.service === 'comfyui' ? h('a', { href: `http://${r.local.addr}`, target: '_blank', rel: 'noopener' }, `http://${r.local.addr}`) : h('code', {}, `http://${r.local.addr}`), ' ', h('button', { class: 'ghost', onclick: () => act({ action: 'disconnect', id: r.id }, t('Accès fermé')) }, t('Fermer l\'accès'))]
-          : [t('Station de {0} : ', r.from), h('button', { onclick: () => act({ action: 'connect', id: r.id }, t('Accès local ouvert')) }, t('Ouvrir l\'accès'))]) : null));
+      r.status === 'accepted' && r.station ? h('p', { class: 'muted' }, t('Pour ouvrir l\'accès, en ligne de commande : '), h('code', {}, `astroportd tunnel connect ${r.service} --peer ${r.station}`)) : null));
     const outgoing = asst.outgoing.map(r => h('li', {}, `${t(TNAME[r.service] || r.service)}, ${r.hours} h${r.exclusive ? ' ' + t('(le premier qui accepte)') : ''} : `, r.recipients.map(x => `${x.label} ${t(STATUS[x.status])}`).join(', '), ' ',
       r.recipients.some(x => x.status === 'pending') ? h('button', { class: 'ghost', onclick: () => act({ action: 'cancel', id: r.id }, t('Demande retirée')) }, t('Retirer')) : null));
     assistCard = h('section', { class: 'card wide' }, h('h2', {}, t('Assistance entre Capitaines amis')),
@@ -146,10 +124,12 @@ export default async function options(root, K) {
     const failed = tk.kinds.reduce((n, k) => n + k.failed, 0), waiting = tk.kinds.reduce((n, k) => n + k.pending + k.running, 0);
     tasksSummary = t('{0} en cours ou en attente · {1} abandonnée(s)', waiting, failed);
     const retry = async (kind, ev) => { const btn = ev.currentTarget; btn.disabled = true; try { const r = await post('tasks', { action: 'retry', kind }); K.toast(t('{0} tâche(s) relancée(s)', r.retried), 1); options(root, K); } catch (e) { K.toast(e.message); btn.disabled = false; } };
+    const retryAll = async ev => { const btn = ev.currentTarget; btn.disabled = true; try { let n = 0; for (const k of tk.kinds.filter(x => x.failed)) n += (await post('tasks', { action: 'retry', kind: k.kind })).retried; K.toast(t('{0} tâche(s) relancée(s)', n), 1); options(root, K); } catch (e) { K.toast(e.message); btn.disabled = false; } };
     tasksCard = h('section', { class: 'card wide' }, h('h2', {}, t('File de traitement')),
       h('p', { class: 'muted' }, t('Les tâches en arrière-plan (reconnaissance des visages, dépôts demandés à BRO). Une tâche abandonnée après plusieurs essais reste ici jusqu\'à ce que vous la relanciez.')),
       tk.kinds.length ? h('table', {}, h('thead', {}, h('tr', {}, ['Tâche', 'En attente', 'En cours', 'Terminées', 'Abandonnées'].map(x => h('th', { scope: 'col' }, t(x))))),
         h('tbody', {}, tk.kinds.map(k => h('tr', {}, h('td', {}, t(KIND[k.kind] || k.kind)), h('td', {}, String(k.pending)), h('td', {}, String(k.running)), h('td', {}, String(k.done)), h('td', { class: k.failed ? 'down' : '' }, String(k.failed), k.failed ? [' ', h('button', { class: 'ghost', onclick: ev => retry(k.kind, ev) }, t('Relancer'))] : null))))) : h('p', { class: 'muted' }, t('Aucune tâche pour le moment.')),
+      tk.kinds.filter(x => x.failed).length > 1 ? h('p', {}, h('button', { onclick: retryAll }, t('Tout relancer'))) : null,
       tk.failed.length ? [h('h3', {}, t('Dernières abandonnées')), h('ul', {}, tk.failed.map(f => h('li', {}, `#${f.id} ${t(KIND[f.kind] || f.kind)} · ${f.attempts} ` + t('essai(s)') + (f.why ? ` — ${f.why}` : ''))))] : null);
   }
 

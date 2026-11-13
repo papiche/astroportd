@@ -9,20 +9,19 @@
 <link rel="manifest" href="/ui/manifest.webmanifest">
 <link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/ui/app.css">
+<link rel="stylesheet" href="/ui/m-shell.css">
+<link rel="modulepreload" href="/ui/m-routes.js">
+<link rel="modulepreload" href="/ui/m-shell.js">
 </head>
 <body>
 <a class="skip" href="#main">Aller au contenu</a>
 <header>
   <h1><img src="/ui/icon.svg" alt="" width="28" height="28"> <span>Astroport</span></h1>
-  <nav aria-label="Écrans">
-    <a href="#/" data-r="home">Accueil</a>
-    <a href="#/station" data-r="station" hidden>Station</a>
-    <a href="#/cloud" data-r="cloud">uCloud</a>
-    <a href="#/people" data-r="people">Personnes</a>
-    <a href="#/chat" data-r="chat">Messages</a>
-    <a href="#/replication" data-r="replication">Réplication</a>
-    <a href="#/bro" data-r="bro">BRO</a>
-    <a href="#/account" data-r="account">Mon compte</a>
+  <nav aria-label="Mon espace">
+    <a href="#/" data-r="home"><span class="ic" aria-hidden="true">🏠</span><span class="lb">Accueil</span></a>
+    <a href="#/cloud" data-r="files"><span class="ic" aria-hidden="true">🗂️</span><span class="lb">Fichiers</span></a>
+    <a href="#/people" data-r="people"><span class="ic" aria-hidden="true">👥</span><span class="lb">Proches</span></a>
+    <a href="#/account" data-r="me"><span class="ic" aria-hidden="true">⚙️</span><span class="lb">Moi</span></a>
   </nav>
   <div class="tools">
     <select id="style" aria-label="Style de l'interface" title="Style">

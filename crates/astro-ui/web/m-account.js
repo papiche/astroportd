@@ -283,7 +283,7 @@ export default async function account(root, K) {
       h('li', {}, t('Dès qu\'il confirme, votre compte renaît tout seul. Notez le nouveau code PASS affiché.')),
       h('li', {}, t('Vos amis, vos contacts et vos fichiers reviennent d\'eux-mêmes au fil des heures.')))));
   // Trois onglets plutôt qu'une colonne de dix cartes : l'onglet ouvert se garde dans l'adresse (#/account?tab=securite).
-  const TABS = [['moi', t('Moi'), [profile, sitebox, pics, visio, ai, planes]], ['appareils', t('Mes appareils'), [dav, devices]], ['securite', t('Ma sécurité'), [rescue, backup, idCard, keys]]];
+  const TABS = [['moi', t('Moi'), [profile, pics, h('details', { class: 'card wide fold' }, h('summary', {}, t('Réglages avancés')), h('div', { class: 'grid' }, [sitebox, visio, ai, planes]))]], ['appareils', t('Mes appareils'), [dav, devices]], ['securite', t('Ma sécurité'), [h('p', { class: 'muted' }, t('Protégé par votre station et vos amis.')), rescue, backup, idCard, keys]]];
   const want = new URLSearchParams(location.hash.split('?')[1] || '').get('tab'), cur = TABS.some(x => x[0] === want) ? want : 'moi';
   const panels = TABS.map(([k, , cards]) => h('div', { class: 'grid', role: 'tabpanel', id: 'ac-p-' + k, 'aria-labelledby': 'ac-t-' + k, hidden: k !== cur }, cards));
   const tabs = TABS.map(([k, label], i) => h('button', { type: 'button', class: 'link', role: 'tab', id: 'ac-t-' + k, 'aria-controls': 'ac-p-' + k, 'aria-selected': String(k === cur), tabIndex: k === cur ? 0 : -1, onclick: () => pick(i),

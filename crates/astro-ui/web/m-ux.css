@@ -18,12 +18,6 @@
 .stream h3.sticky{position:sticky;top:0;z-index:1;margin:0;padding:.4rem 0;background:var(--bg)}
 .stream h4{margin:.8rem 0 .3rem;font-weight:600;text-transform:capitalize}
 
-/* Onglets de l'espace Capitaine : cibles de 48 px, défilement horizontal sur téléphone, onglet courant en couleur du thème. */
-.cap-nav{display:flex;gap:.4rem;overflow-x:auto;max-width:74rem;margin:0 auto;padding:.8rem 1.2rem 0;box-sizing:border-box;scrollbar-width:thin}
-@media (max-width:40rem){.cap-nav{padding:.6rem .8rem 0}}
-.cap-nav a{flex:none;display:flex;align-items:center;min-height:48px;padding:0 1rem;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink);text-decoration:none;white-space:nowrap}
-.cap-nav a:hover{background:var(--panel2)}
-.cap-nav a[aria-current]{background:var(--grad);border-color:transparent;color:var(--on-accent);font-weight:600}
 /* Fiches de station (onglet Essaim et pairs). */
 .ck-node.self { border-color: var(--accent); }
 .ck-node p { margin: .25rem 0 0; }

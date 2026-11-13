@@ -34,7 +34,6 @@ const b64 = s => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 const bytes = n => { if (n == null) return '—'; const u = ['o', 'Ko', 'Mo', 'Go', 'To']; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return `${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${u[i]}`; };
 const when = t => (t ? new Date(t * 1000).toLocaleString('fr', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
 const span = s => { s = Math.floor(s); const d = Math.floor(s / 86400), hh = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d} j ${hh} h` : hh ? `${hh} h ${m} min` : `${m} min`; };
-const zen = c => (c == null ? '—' : (c / 100).toFixed(2));
 const enc = p => p.split('/').map(encodeURIComponent).join('/');
 const toast = (msg, ok) => { const t = h('div', { class: 'toast' + (ok ? ' ok' : '') }, msg), box = $('#toasts'); box.append(t); while (box.children.length > 4) box.firstChild.remove(); setTimeout(() => t.remove(), 4500); };
 const lastName = p => p.slice(p.lastIndexOf('/') + 1);
@@ -145,106 +144,20 @@ const share = async paths => (await mod('m-share.js')).default({ api, toast, h, 
 let cleanups = [];
 const every = (ms, fn) => { const t = setInterval(fn, ms); cleanups.push(() => clearInterval(t)); };
 const pill = s => h('span', { class: 'pill ' + s }, { ok: 'OK', degraded: 'Dégradé', down: 'Panne', disabled: 'Inactif' }[s] || s);
-const row = (k, v) => [h('dt', {}, k), h('dd', {}, v)];
-const LIFE = { active_rental: 'Locataire actif', cooperative_member: 'Membre coopérateur', grace_period: 'Période de grâce', suspended: 'Suspendu' };
-const tone = s => (s === 'grace_period' ? 'degraded' : s === 'suspended' ? 'down' : s ? 'ok' : 'disabled');
-const day = t => (t ? new Date(t * 1000).toLocaleDateString('fr', { dateStyle: 'medium' }) : '—');
 const table = (cap, head, rows) => h('table', {}, h('caption', { class: 'muted' }, cap), h('thead', {}, h('tr', {}, head.map(x => h('th', { scope: 'col' }, x)))), h('tbody', {}, rows.map(r => h('tr', {}, r.map(c => h('td', {}, Array.isArray(c) ? c.flat(Infinity) : c))))));
-async function viewHome(root) {
-const draw = async () => {
-const [d, fp] = await Promise.all([api('/api/v1/dashboard'), api('/api/v1/me/footprint')]);
-const b = d.balance, e = d.energy, w = d.sovereignty, k = fp.disk, pct = k.quota_bytes ? k.used_bytes / k.quota_bytes : 0, ox = fp.opex, cx = fp.capex;
-root.replaceChildren(h('div', { class: 'grid' },
-h('section', { class: 'card' }, h('h2', {}, 'Solde'),
-b.error ? h('p', { class: 'degraded', role: 'status' }, b.error) : [h('p', { class: 'big' }, zen(b.zen_cents), h('small', { class: 'muted' }, ' Ẑen')), h('p', { class: 'muted' }, `${zen(b.g1_cents)} Ğ1`), b.stale ? h('p', { class: 'muted' }, t('Dernier solde connu : le nœud Duniter est lent.')) : null, h('p', {}, h('button', { type: 'button', class: 'ghost', onclick: async () => (await mod('m-credit.js')).default(K, me.captain ? { to: me.hex } : { mode: 'member' }) }, me.captain ? t('Verser des Ẑen') : t('Envoyer des Ẑen')))]),
-h('section', { class: 'card' }, h('h2', {}, 'Autonomie'),
-e.weeks == null ? h('p', { class: 'muted' }, 'Solde indisponible.') : [h('meter', { min: 0, max: e.max_weeks, low: 2, high: 6, optimum: e.max_weeks, value: Math.min(e.weeks, e.max_weeks), 'aria-label': 'Autonomie en semaines' }),
-h('p', { class: 'big' }, e.weeks.toFixed(1), h('small', { class: 'muted' }, ' semaine(s) de loyer')), h('p', { class: 'muted' }, `Loyer : ${zen(e.weekly_rent_cents)} Ẑen / semaine`)]),
-h('section', { class: 'card' }, h('h2', {}, 'Empreinte sur les communs'),
-h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: Math.min(pct, 1), 'aria-label': 'Disque utilisé' }),
-h('p', { class: 'big' }, bytes(k.used_bytes), h('small', { class: 'muted' }, k.unlimited ? ` ${t('sans quota')} · ${t('disque de la station')} ${bytes(k.quota_bytes)}` : ` / ${bytes(k.quota_bytes)}`)),
-h('p', { class: 'muted' }, `${k.files} fichier(s) · formule ${k.tier}`),
-fp.hosting && fp.hosting.weekly_zen > 0 ? h('p', { class: 'muted' }, `${t('Hébergement')} : ${price(fp.hosting.weekly_zen)}${fp.hosting.lifecycle?.status === 'grace_period' ? ` · ${t('non réglé : période de grâce, votre service continue')}` : fp.hosting.lifecycle?.status === 'suspended' ? ` · ${t('non réglé : compte noté suspendu, votre service continue')}` : fp.hosting.lifecycle?.last_ok_at ? ` · ${t('dernier prélèvement')} ${day(fp.hosting.lifecycle.last_ok_at)}` : ''}`) : null),
-h('section', { class: 'card' }, h('h2', {}, 'Souveraineté ', h('small', {}, 'vos données, chiffrées')),
-h('p', { class: 'big' }, String(w.encrypted_files), h('small', { class: 'muted' }, ` fichiers chiffrés · ${bytes(w.encrypted_bytes)}`)),
-h('dl', {}, row('Dernier manifeste', w.last_manifest_at ? when(w.last_manifest_at) : 'aucun'), row('Événement Nostr', w.last_manifest_event || '—'), row('Révision', w.last_manifest_rev ?? '—'))),
-h('section', { class: 'card' }, h('h2', {}, 'Ẑen Opex ', h('small', {}, 'redevances d\'usage')),
-h('p', { class: 'big' }, zen(ox.total_28d_cents), h('small', { class: 'muted' }, ' Ẑen · 28 jours')),
-h('dl', {}, row('Loyer MULTIPASS', `${zen(ox.weekly_rent_cents)} Ẑ / sem.`), row('Loyers payés', `${zen(ox.rent_28d_cents)} Ẑ`)),
-h('p', { class: 'muted' }, 'Dépenses courantes : elles paient l\'usage du nœud et ne créent aucun capital.')),
-h('section', { class: 'card' }, h('h2', {}, 'Ẑen Capex ', h('small', {}, 'parts d\'investissement · ZenCard')),
-cx.assets.length ? [h('p', { class: 'big' }, zen(cx.net_cents), h('small', { class: 'muted' }, ' Ẑen nets')), h('p', { class: 'muted' }, `valeur ${zen(cx.value_cents)} · amortis ${zen(cx.amortized_cents)}`), h('ul', { class: 'muted' }, cx.assets.map(a => h('li', {}, `${a.label || a.id} : ${zen(a.net_cents)} Ẑ`)))]
-: h('p', { class: 'muted' }, cx.zencard ? 'Sociétaire ZenCard : aucune part de matériel enregistrée à votre nom.' : 'Aucune part. Une ZenCard fait de vous sociétaire : le matériel financé reste votre capital, il s\'amortit.'),
-h('p', { class: 'muted' }, 'Investissement : acheté une fois, jamais confondu avec les redevances.'))));
-};
-await draw();
-every(30000, () => draw().catch(() => {}));
-}
-async function viewStation(root) {
-const draw = async () => {
-const [d, z, ac, hd] = await Promise.all([api('/api/v1/dashboard'), fetch('/health').then(r => r.json()), api('/api/v1/station/accounts'), api('/api/v1/station/hosting')]);
-const s = d.station, r = d.relay, sub = z.subsystems || {};
-root.replaceChildren(h('div', { class: 'grid' },
-h('section', { class: 'card' }, h('h2', {}, 'Station ', pill(z.status)),
-h('dl', {}, row('Nœud', s.node), row('PeerID', s.peer_id || '—'), row('Domaine', s.domain || '—'), row('Version', s.version), row('Disponibilité', span(s.uptime_secs)))),
-h('section', { class: 'card' }, h('h2', {}, 'Relais Nostr ', pill(sub.relay?.status || 'ok')),
-h('p', { class: 'big' }, String(r.events ?? '—'), h('small', { class: 'muted' }, ' événements')),
-h('dl', {}, row('Dernier événement', when(r.last_event_at)), row('Base de données', bytes(r.db_bytes)))),
-h('section', { class: 'card' }, h('h2', {}, 'Sous-systèmes'), h('dl', {}, Object.entries(sub).flatMap(([n, v]) => row(n, [pill(v.status), ' ', v.detail])))),
-h('section', { class: 'card wide' }, h('h2', {}, t('Économie')), h('p', { class: 'muted' }, t('Régie 3×1/3, Love Ledger et vigilance des portefeuilles : onglet Économie.')), h('a', { class: 'ck-btn', href: '#/constellation' }, t('Ouvrir'))),
-h('section', { class: 'card wide', id: 'hosting-edit', hidden: '' }),
-h('section', { class: 'card wide' }, h('h2', {}, 'Comptes hébergés ', h('small', {}, `${ac.accounts.length}`)),
-h('p', { class: 'muted' }, `${t('Palier par défaut des MULTIPASS')} : ${hd.default_quota_bytes == null ? t('quota de leur formule') : bytes(hd.default_quota_bytes)} · ${price(hd.default_weekly_zen)} `, h('button', { class: 'ghost', onclick: () => hosting(null, hd) }, 'Modifier')),
-ac.accounts.length ? table('MULTIPASS et ZenCards de la station', ['Compte', 'Cycle de vie', 'Disque', 'Hébergement', 'Fichiers', 'Secours'],
-ac.accounts.map(a => [a.email || a.hex.slice(0, 12), [pill(tone(a.status)), ' ', LIFE[a.status] || a.status || 'inconnu', a.grace_ends_at ? ` (jusqu'au ${day(a.grace_ends_at)})` : '', a.onboarding ? ` · ${a.onboarding.proved_at ? 'clés reçues' : 'jamais connecté'}${a.onboarding.primo === 'paid' ? ' · 1 Ğ1 reçu' : ''}` : ''],
-[h('meter', { min: 0, max: 1, low: .7, high: .9, optimum: 0, value: a.quota_bytes ? Math.min(a.used_bytes / a.quota_bytes, 1) : 0, 'aria-label': 'Disque' }), ` ${bytes(a.used_bytes)} / ${a.unlimited ? t('illimité') : bytes(a.quota_bytes)}`], a.unlimited ? '—' : `${price(a.weekly_zen)}${a.billet_issuer ? ' 🎫' : ''}${a.fee?.status === 'grace_period' ? ` · ${t('période de grâce')}` : a.fee?.status === 'suspended' ? ` · ${t('suspendu')}` : ''}`, String(a.files),
-[h('button', { class: 'ghost', onclick: () => token(a) }, 'Jeton de secours'), a.unlimited ? null : [' ', h('button', { class: 'ghost', onclick: () => hosting(a) }, 'Hébergement')], a.pass_locked_until ? [' ', h('button', { onclick: async () => { await api(`/api/v1/station/accounts/${a.hex}/unlock-pass`, { method: 'POST' }); toast('PASS déverrouillé', 1); draw(); } }, 'Déverrouiller le PASS')] : null, a.onboarding?.ejectable ? [' ', h('button', { class: 'ghost', title: 'Aucune connexion en 24 h, aucune Ğ1 reçue : ses clés sont rangées, l’adresse pourra se réinscrire', onclick: async ev => { const b = ev.target; if (!b.dataset.armed) { b.dataset.armed = 1; b.textContent = 'Confirmer l’éjection ?'; return; } b.disabled = true; try { await api(`/api/v1/station/accounts/${a.hex}/eject`, { method: 'POST' }); toast('MULTIPASS éjecté', 1); draw(); } catch (e) { toast(e.message); b.disabled = false; } } }, 'Éjecter')] : null]]))
-: h('p', { class: 'muted' }, 'Aucun compte hébergé.'))));
-};
-await draw();
-every(30000, () => draw().catch(() => {}));
-}
-async function token(a) {
-const box = $('#share-b'), dlg = $('#share');
-$('#share-t').textContent = 'Jeton de secours';
-box.replaceChildren(h('p', { class: 'muted' }, 'Génération…'));
-if (!dlg.open) dlg.showModal();
-try {
-const r = await api(`/api/v1/station/accounts/${a.hex}/token`, { method: 'POST' });
-const inp = h('input', { value: r.token, readOnly: true, 'aria-label': 'Jeton', onfocus: () => inp.select() });
-toast('Jeton de secours généré', 1);
-box.replaceChildren(h('p', { class: 'muted' }, `Compte ${r.login}. À transmettre de vive voix ou par un canal chiffré : l'opération est tracée dans le journal d'audit.`), inp);
-} catch (e) { box.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }
-}
-const price = z => z > 0 ? `${z} ẑ / ${t('semaine')}` : t('gratuit');
-// Réglage de l'hébergement d'un compte (ou du palier par défaut) : un panneau dans la page (m-hosting.js), sans fenêtre de saisie.
-async function hosting(a, hd) { const box = $('#hosting-edit'); box.hidden = false; (await mod('m-hosting.js')).default(box, K, a, hd); box.scrollIntoView?.({ behavior: 'smooth' }); }
 async function viewCloud(root, q) {
-const path = q.get('p') || '/', mode = q.get('m'), album = mode === 'album', sources = mode === 'sources', organize = mode === 'organize';
+const path = q.get('p') || '/', mode = q.get('m'), sources = mode === 'sources', organize = mode === 'organize';
 const go = (p, m) => { location.hash = '#/cloud?' + new URLSearchParams({ p, ...(m && { m }) }); };
 const tabs = h('div', { class: 'bar' },
-h('button', { class: album || sources || organize ? 'ghost' : '', onclick: () => go(path) }, 'Dossiers'),
-h('button', { class: album ? '' : 'ghost', onclick: () => go(path, 'album') }, 'Album'),
+h('button', { class: sources || organize ? 'ghost' : '', onclick: () => go(path) }, 'Dossiers'),
 h('button', { class: sources ? '' : 'ghost', onclick: () => go(path, 'sources') }, 'Sources'),
 h('button', { class: organize ? '' : 'ghost', onclick: () => go(path, 'organize') }, 'Ranger'));
 if (sources) return (await mod('m-sources.js')).default(root, K, tabs);
 if (organize) return (await mod('m-organize.js')).default(root, K, tabs);
-if (album) {
-const grid = h('div', { class: 'photos' }), more = h('button', { class: 'ghost' }, 'Plus de photos'), list = [];
-root.replaceChildren(tabs, grid, h('p', {}, more));
-const load = async before => {
-const r = await api('/api/v1/ucloud/photos?limit=60' + (before ? '&before=' + before : ''));
-dav = r.dav || dav;
-tiles(grid, list, r.items);
-more.hidden = !r.next; more.onclick = () => load(r.next);
-if (!list.length) grid.replaceWith(h('p', { class: 'muted' }, 'Aucune photo pour le moment.'));
-};
-return load();
-}
 const r = await api('/api/v1/ucloud/list?path=' + encodeURIComponent(path));
 dav = r.dav || dav;
 const sel = new Set(), btn = h('button', { disabled: true, onclick: () => share([...sel]) }, 'Partager la sélection'), send = h('button', { disabled: true, class: 'ghost', onclick: () => mod('m-send.js').then(m => m.default([...sel], K)) }, 'Envoyer à des proches'), pubBox = h('div', { class: 'card', hidden: '' }), pub = h('button', { disabled: true, class: 'ghost', onclick: () => { pubBox.hidden = false; mod('m-publish.js').then(m => m.default(pubBox, [...sel], K, path, () => go(path))); } }, path.startsWith('/Public') ? 'Retirer de Public' : 'Publier');
-const parts = path.split('/').filter(Boolean), crumbs = h('span', { class: 'crumbs' }, h('a', { href: '#/cloud' }, 'uCloud'));
+const parts = path.split('/').filter(Boolean), crumbs = h('span', { class: 'crumbs' }, h('a', { href: '#/cloud' }, t('Fichiers')));
 parts.forEach((n, i) => crumbs.append(' / ', h('a', { href: '#/cloud?p=' + encodeURIComponent('/' + parts.slice(0, i + 1).join('/')) }, n)));
 const media = r.entries.filter(x => x.type === 'file' && kindOf(x.mime) !== 'file');
 const li = x => {
@@ -271,7 +184,7 @@ grid.append(lazy(btn, () => (kindOf(it.mime) === 'image' ? blobUrl(it.path, !!it
 }
 }
 const feed = [], listeners = new Set(), started = Date.now();
-function badge(n) { const a = $('nav a[data-r=chat]'); let b = a.querySelector('.ch-badge'); if (!n) return b?.remove(); if (!b) a.append(b = h('span', { class: 'ch-badge' })); b.textContent = n; }
+function badge(n) { const a = $('nav a[data-r=people]'); if (!a) return; let b = a.querySelector('.ch-badge'); if (!n) return b?.remove(); if (!b) a.append(b = h('span', { class: 'ch-badge' })); b.textContent = n; }
 const refreshBadge = () => api('/api/v1/chat').then(r => badge(r.unread)).catch(() => {}); // sans chat sur cette station : pas de pastille
 function startLive() {
 startLive = () => {};
@@ -342,12 +255,7 @@ const sure = (label, run, why, attrs) => {
 };
 const K = { req, auth: authHeader, sure, mod, t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, blob: blobUrl, tiles, every, enc, del, picker, mark, photos, dav: v => { if (v) dav = v; }, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n), feed, listeners };
 const lazyView = f => async (root, q) => (await mod(f)).default(root, K, q);
-const views = { stats: viewHome, station: viewStation, cloud: viewCloud };
-for (const n of ['home', 'account', 'contacts', 'chat', 'people', 'replication', 'library', 'coop', 'constellation', 'billets', 'cockpit', 'options', 'mesh', 'planes', 'bro']) views[n] = lazyView(`m-${n}.js`);
-// Personnes : carnet + visages (m-contacts.js), tri en sous-vue (#/people/tri).
-views.people = views.contacts; views.sort = lazyView('m-people.js');
-let me = null;
-const CAP = ['options', 'mesh', 'planes', 'coop', 'cockpit', 'station']; // écrans du Capitaine (onglet Station)
+let me = null, shell = null;
 async function route() {
 cleanups.forEach(c => c()); cleanups = [];
 blobs.forEach(p => p.then(URL.revokeObjectURL, () => {})); blobs.clear();
@@ -356,14 +264,15 @@ blobs.forEach(p => p.then(URL.revokeObjectURL, () => {})); blobs.clear();
 const [p, qs] = (location.hash.slice(1) || '/').split('?'), main = h('main', { id: 'main', tabindex: '-1' }, h('p', { class: 'muted' }, 'Chargement…'));
 $('#main').replaceWith(main);
 try {
-if (!me) { me = await api('/api/v1/me'); mod('m-nostr.js').then(m => m.default(me, api), () => {}); mod('m-ux.js').then(m => m.default(me, api, t), () => {}); }
-$('nav a[data-r=bro]').hidden = !me.ai; // BRO n'existe que pour un MULTIPASS qui a déclaré une IA (Mon compte)
-if (!me.ai && location.hash.startsWith('#/bro')) { toast(t('Déclarez une IA (Ollama ou clé d\'API) dans Mon compte pour utiliser BRO')); location.hash = '#/account'; return; }
+if (!me) { me = await api('/api/v1/me'); mod('m-nostr.js').then(m => m.default(me, api), () => {}); mod('m-ux.js').then(m => m.default(), () => {}); }
+const R = await mod('m-routes.js');
+const res = R.resolve(p, me, store.get('space') || 'me');
+if (res.redirect) { location.replace('#' + res.redirect + (qs ? '?' + qs : '')); return; }
+if (res.route.path === '/bro' && !me.ai) { toast(t('Déclarez une IA dans Mon compte pour utiliser l\'assistant')); location.hash = '#/account'; return; }
+if (res.route.space !== 'both') store.set('space', res.space);
 if (me.captain) planeSwitch();
-document.querySelector('nav a[data-r=station]').hidden = !me.captain; document.querySelector('nav a[data-r=station]').href = '#/cockpit'; // l'écran Capitaine n'existe pas pour un MULTIPASS
-const name = p.startsWith('/chiffres') ? 'stats' : p.startsWith('/people/tri') ? 'sort' : ['cloud', 'bro', 'people', 'replication', 'library', 'account', 'contacts', 'chat', 'constellation', 'billets'].find(n => p.startsWith('/' + n)) || me.captain && CAP.find(n => p.startsWith('/' + n)) || 'home';
-document.querySelectorAll('nav a').forEach(a => (a.dataset.r === (CAP.includes(name) ? 'station' : name === 'stats' ? 'home' : name === 'sort' || name === 'contacts' ? 'people' : name) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
-await views[name](main, new URLSearchParams(qs || ''));
+(shell ??= (await mod('m-shell.js')).default(K, me)).update(res);
+await (res.route.file ? lazyView(res.route.file)(main, new URLSearchParams(qs || '')) : viewCloud(main, new URLSearchParams(qs || '')));
 $('#out').hidden = false;
 startLive(); refreshBadge();
 } catch (e) { main.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }

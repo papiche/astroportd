@@ -175,11 +175,6 @@ details.fold[open] > summary { margin-bottom: .6rem; }
 :root:not([data-style=sobre]) main > h2 { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; width: fit-content; }
 :root:not([data-style=sobre]) .big { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; width: fit-content; }
 :root:not([data-style=sobre]) .big small { -webkit-text-fill-color: var(--muted); }
-:root:not([data-style=sobre]) nav a::before { margin-right: .25rem; }
-nav a[data-r=home]::before { content: "🏠"; } nav a[data-r=station]::before { content: "🛰️"; } nav a[data-r=cloud]::before { content: "☁️"; }
-nav a[data-r=library]::before { content: "🖼️"; } nav a[data-r=people]::before { content: "🫂"; } nav a[data-r=contacts]::before { content: "📇"; }
-nav a[data-r=replication]::before { content: "🔁"; } nav a[data-r=bro]::before { content: "🤖"; } nav a[data-r=account]::before { content: "🔑"; } nav a[data-r=options]::before { content: "⚙️"; }
-:root[data-style=sobre] nav a::before { content: none; }
 .grid > .card:nth-child(6n+1) { --c: var(--c1); } .grid > .card:nth-child(6n+2) { --c: var(--c2); } .grid > .card:nth-child(6n+3) { --c: var(--c3); }
 .grid > .card:nth-child(6n+4) { --c: var(--c4); } .grid > .card:nth-child(6n+5) { --c: var(--c5); } .grid > .card:nth-child(6n) { --c: var(--c6); }
 .card.wide { --c: var(--c2); }

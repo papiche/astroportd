@@ -36,7 +36,7 @@ console.log('accueil : étapes OK');
 // « Pour vous » : rien à faire = encart vide ; partages en attente d'abord, puis ressemblances (avant les visages inconnus).
 assert.deepEqual(news({ faces: null, shares: null }), []);
 let n = news({ faces: { suggestions: [{}, {}], unknown: 9 }, shares: { pending: [{ count: 12, name: 'Fred' }] } });
-assert.equal(n.length, 2); assert.deepEqual(n[0].text.slice(1), [12, 'Fred']); assert.equal(n[1].href, '#/people?grand'); assert.deepEqual(n[1].text, ['{0} visage(s) à confirmer', 2]);
+assert.equal(n.length, 2); assert.deepEqual(n[0].text.slice(1), [12, 'Fred']); assert.equal(n[1].href, '#/people/tri?grand'); assert.deepEqual(n[1].text, ['{0} visage(s) à confirmer', 2]);
 assert.deepEqual(news({ faces: { suggestions: [], unknown: 4 } })[0].text, ['{0} visage(s) à nommer', 4]);
 // Un ami en secours passe avant tout le reste.
 n = news({ faces: { suggestions: [{}], unknown: 0 }, shares: { pending: [] }, backup: { hosting: [{ label: 'Léa', rescue: { station: 'x' } }, { label: 'Max' }] } });

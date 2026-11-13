@@ -1,3 +1,14 @@
+## astroportd 1.3.0 — navigation refondue, fiche de bienvenue, guide mis à jour
+
+- **Navigation par espaces** : table de routes unique (`m-routes.js`). Mon espace : Accueil · Fichiers · Proches · Moi (barre du bas sur téléphone). Ma station (Capitaine, bouton en haut à droite) : Santé · Membres · Réseau · Économie. Sous-onglets et retour calculés depuis la table ; les anciennes adresses (`#/station`, `#/chiffres`) redirigent.
+- **Écrans déplacés sans perte** : comptes hébergés, jeton de secours, hébergement → *Membres* ; chiffres du membre → *Moi › Mon argent* (sans Opex/Capex) ; nœud, relais, sous-systèmes → *Détails techniques*. L'onglet « Album » du uCloud est retiré (doublon de *Fichiers › Photos*).
+- **Proches** réunit carnet et conversations ; la fiche d'une personne porte *Écrire* et *Appeler*. Mon compte : réglages avancés repliés.
+- **Liens corrigés** : « Trier en 1 clic » ouvre le tri ; alertes du cockpit vers l'objet exact (`#/members?f=locked`) ; alertes « À faire » en tête du cockpit ; « Tout relancer » pour les tâches abandonnées.
+- **Console SSH du navigateur supprimée** : l'accès à un service d'un ami passe par `astroportd tunnel connect`.
+- **Documentation** : rôles des sites (astroport.one, map.astroport.one, qo-op.com), mots du guide en clair, dépannage de la vie réelle, nouvelle fiche **BIENVENUE** à remettre aux membres ; la page d'accueil mène à la carte des stations.
+- **Budgets** : coque 46 Ko (57 avant), écrans à la demande relevés à 440 Ko bruts / 176 Ko gzip.
+- Test `crates/astro-ui/tests/routes_rules.mjs` : chaque lien `#/…` tombe sur une route.
+
 ## astroportd 1.2.0 — PAF par machine, alerte « nouvelle machine », versements de Ẑen
 
 Les versions 1.1.0 et 1.1.1 n'ont pas été publiées à part : cette version les reprend (voir plus bas).

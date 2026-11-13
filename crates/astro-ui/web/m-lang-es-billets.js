@@ -29,5 +29,8 @@ export default {
 "pas encore financé": "aún sin financiar",
 "Aucun billet pour l’instant.": "Ningún billete por ahora.",
 "↩ : la valeur revient sur votre portefeuille à la date de fin si le billet n’est pas encaissé.": "↩: el valor vuelve a su cartera en la fecha de fin si el billete no se cobra.",
-"renvoyé à l’émetteur": "devuelto al emisor"
+"renvoyé à l’émetteur": "devuelto al emisor",
+"Supprimer ce billet de Nostr ? La planche imprimée ne vaudra plus rien.": "¿Eliminar este billete de Nostr? La hoja impresa ya no valdrá nada.",
+"🗑 Supprimé de Nostr": "🗑 Eliminado de Nostr",
+"Billet supprimé de Nostr": "Billete eliminado de Nostr"
 };

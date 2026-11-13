@@ -244,7 +244,7 @@ impl<C: Chain> ZenCredit<C> {
         let me = my_hex.to_owned();
         let rows: Vec<(String, String)> = self
             .read(move |c| {
-                let mut stmt = c.prepare("SELECT hex, email FROM identities WHERE hosted = 1 AND role = 'multipass' AND email IS NOT NULL ORDER BY (hex = ?1) DESC, lower(email)")?;
+                let mut stmt = c.prepare("SELECT hex, email FROM identities WHERE hosted = 1 AND role IN ('multipass', 'captain') AND email IS NOT NULL ORDER BY (hex = ?1) DESC, lower(email)")?;
                 Ok(stmt.query_map([&me], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<Result<Vec<_>, _>>()?)
             })
             .await?;
@@ -258,7 +258,7 @@ impl<C: Chain> ZenCredit<C> {
         self.read(move |c| {
             let mut stmt = c.prepare(
                 "SELECT i.hex, i.email FROM identities i \
-                 WHERE i.hosted = 1 AND i.role = 'multipass' AND i.email IS NOT NULL AND i.hex <> ?1 \
+                 WHERE i.hosted = 1 AND i.role IN ('multipass', 'captain') AND i.email IS NOT NULL AND i.hex <> ?1 \
                    AND EXISTS (SELECT 1 FROM social_graph g WHERE g.owner_hex = ?1 AND g.pubkey = i.hex AND g.level = 1) \
                    AND EXISTS (SELECT 1 FROM social_graph g WHERE g.owner_hex = i.hex AND g.pubkey = ?1 AND g.level = 1) \
                  ORDER BY lower(i.email)",
@@ -278,7 +278,7 @@ impl<C: Chain> ZenCredit<C> {
     async fn party(&self, hex: &str) -> R<Party> {
         let h = hex.to_owned();
         let email: String = self
-            .read(move |c| Ok(c.query_row("SELECT email FROM identities WHERE hex = ?1 AND hosted = 1 AND role = 'multipass' AND email IS NOT NULL", [&h], |r| r.get::<_, String>(0)).optional()?))
+            .read(move |c| Ok(c.query_row("SELECT email FROM identities WHERE hex = ?1 AND hosted = 1 AND role IN ('multipass', 'captain') AND email IS NOT NULL", [&h], |r| r.get::<_, String>(0)).optional()?))
             .await?
             .ok_or_else(|| BilletError::Refused("zen_credit_unknown_recipient", "ce MULTIPASS n'est pas hébergé sur cette station".into()))?;
         let account = self.signer_of_email(&email)?.account();
@@ -288,7 +288,7 @@ impl<C: Chain> ZenCredit<C> {
     async fn party_by_email(&self, email: &str) -> R<Party> {
         let e = email.trim().to_ascii_lowercase();
         let hex: String = self
-            .read(move |c| Ok(c.query_row("SELECT hex FROM identities WHERE lower(email) = ?1 AND hosted = 1 AND role = 'multipass'", [&e], |r| r.get::<_, String>(0)).optional()?))
+            .read(move |c| Ok(c.query_row("SELECT hex FROM identities WHERE lower(email) = ?1 AND hosted = 1 AND role IN ('multipass', 'captain')", [&e], |r| r.get::<_, String>(0)).optional()?))
             .await?
             .ok_or_else(|| BilletError::Refused("zen_credit_unknown_recipient", format!("aucun MULTIPASS hébergé ici pour {email}")))?;
         self.party(&hex).await
@@ -607,7 +607,9 @@ pub(crate) mod tests {
         let db = Arc::new(Db::open(&dir.join("u.db"), 2).unwrap());
         let (member, captain, other) = (Ed25519Signer::from_seed([0x62; 32]).account(), Ed25519Signer::from_seed([0x61; 32]).account(), Ed25519Signer::from_seed([0x63; 32]).account());
         for (hex, email) in [(CAPTAIN, "capitaine@exemple.org"), (MEMBER, "membre@exemple.org"), (OTHER, "autre@exemple.org")] {
-            db.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, 'multipass', ?2, 1)", vec![hex.to_owned().into(), email.to_owned().into()]).await.unwrap();
+            // Comme sur une vraie station : l'identité du Capitaine a le rôle `captain`, pas `multipass` (il doit pouvoir se verser des Ẑen à lui-même).
+            let role = if hex == CAPTAIN { "captain" } else { "multipass" };
+            db.writer().execute("INSERT INTO identities(hex, role, email, hosted) VALUES (?1, ?2, ?3, 1)", vec![hex.to_owned().into(), role.to_owned().into(), email.to_owned().into()]).await.unwrap();
         }
         // De quoi lire les portefeuilles coopératifs : le NODE et le MULTIPASS du Capitaine.
         db.writer().execute("INSERT INTO identities(hex, role, hosted, g1pub) VALUES (?1, 'node', 1, ?2)", vec!["11".repeat(32).into(), Account([1; 32]).ss58().into()]).await.unwrap();
@@ -663,6 +665,10 @@ pub(crate) mod tests {
         assert!(r.chain.sent.lock().unwrap().is_empty(), "un devis ne bouge rien");
         let list = r.svc.handle("recipients", &body(true, json!({}))).await.unwrap();
         assert_eq!(list["recipients"][0]["hex"], CAPTAIN, "le MULTIPASS du Capitaine d'abord");
+        assert_eq!(list["recipients"][0]["me"], true);
+        // Le Capitaine se verse des Ẑen à lui-même (son identité a le rôle `captain`).
+        let own = r.svc.handle("preview", &body(true, json!({ "to": CAPTAIN, "amount_zen": 20 }))).await.unwrap();
+        assert_eq!((own["email"].as_str(), own["amount_zen_cents"].as_u64()), (Some("capitaine@exemple.org"), Some(2_000)), "{own}");
         let _ = std::fs::remove_dir_all(r.dir);
     }
 

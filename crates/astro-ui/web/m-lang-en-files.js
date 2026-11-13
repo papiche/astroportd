@@ -23,7 +23,6 @@ export default {
 "Prendre une photo": "Take a photo",
 "Nouveau dossier": "New folder",
 "Déplacer…": "Move…",
-"Supprimer": "Delete",
 "Définitif : la suppression ne peut pas être annulée.": "Permanent: deletion cannot be undone.",
 "Supprimé": "Deleted",
 "Nouveau nom": "New name",

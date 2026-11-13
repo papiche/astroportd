@@ -54,7 +54,6 @@ export default {
 "Sur une autre station de la même constellation, ouvrez la page « Rétablir mon compte » (adresse /restore).": "On another station of the same constellation, open the “Restore my account” page (address /restore).",
 "Scannez votre carte de secours imprimée.": "Scan your printed rescue card.",
 "Vos amis, vos contacts et vos fichiers reviennent d'eux-mêmes au fil des heures.": "Your friends, contacts and files come back by themselves over the following hours.",
-"Moi": "Me",
 "Mes appareils": "My devices",
 "Ma sécurité": "My security",
 "Appuyez sur « Prévenir mes gardiens », puis appelez l'ami qui garde votre sauvegarde : il confirme d'un geste dans Mon compte › Ma sécurité. Reconnaître votre voix est la seule vérification.": "Press “Alert my guardians”, then call the friend who keeps your backup: they confirm with one tap in My account › My security. Recognising your voice is the only check.",
@@ -99,4 +98,6 @@ export default {
 "Image retirée": "Image removed",
 "Retirer cette image ? Elle ne s’affichera plus dans vos publications.": "Remove this image? It will no longer display in your posts.",
 "Aucune image publiée pour l’instant.": "No image published yet.",
+"Réglages avancés": "Advanced settings",
+"Protégé par votre station et vos amis.": "Protected by your station and your friends.",
 };

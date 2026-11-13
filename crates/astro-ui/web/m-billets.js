@@ -57,10 +57,17 @@ export default async function billets(box, K) {
         catch (e) { state.textContent = '❌ ' + t(e.message); btn.disabled = false; }
       };
       btn.onclick = fund; b.fund = fund; b.state = state;
-      return h('div', { class: 'bs-fund' }, h('strong', {}, `#${i + 1}`), h('code', { title: b.g1pub }, short(b.g1pub)), btn, state);
+      // Un billet pas encore financé se retire de Nostr : planche pliée ou abandonnée, il n'encombre pas la liste.
+      const del = K.sure(t('Supprimer'), async ev => {
+        ev.target.disabled = true;
+        try { await K.api('/api/v1/billet/delete', { method: 'POST', body: { g1pub: b.g1pub } }); b.deleted = true; btn.disabled = true; del.hidden = true; state.textContent = t('🗑 Supprimé de Nostr'); loadList(); }
+        catch (e) { ev.target.disabled = false; state.textContent = '❌ ' + t(e.message); }
+      }, t('Supprimer ce billet de Nostr ? La planche imprimée ne vaudra plus rien.'));
+      b.del = del;
+      return h('div', { class: 'bs-fund' }, h('strong', {}, `#${i + 1}`), h('code', { title: b.g1pub }, short(b.g1pub)), btn, ' ', del, state);
     });
     const all = h('button', { type: 'button', class: 'primary' }, t('Tout financer'));
-    all.onclick = async () => { all.disabled = true; for (const b of r.billets) await b.fund(); all.disabled = false; };
+    all.onclick = async () => { all.disabled = true; for (const b of r.billets) if (!b.deleted) await b.fund(); all.disabled = false; };
     const print = h('button', { type: 'button' }, '🖨️ ' + t('Imprimer la planche'));
     print.onclick = () => window.print();
     const host = location.host;
@@ -86,8 +93,8 @@ export default async function billets(box, K) {
     try {
       const r = await K.api('/api/v1/billet/issued');
       listBox.replaceChildren(h('section', { class: 'card wide' }, h('h2', {}, t('Mes billets créés')),
-        r.billets.length ? h('div', { class: 'tw' }, h('table', { class: 'bs-list' }, h('thead', {}, h('tr', {}, ['Billet', 'Valeur', 'État', 'Fin'].map(x => h('th', {}, t(x))))),
-          h('tbody', {}, r.billets.map(b => h('tr', {}, h('td', {}, h('code', { title: b.g1pub }, short(b.g1pub))), h('td', {}, `${b.amount_zen ?? '—'} Ẑen${b.return_to_issuer ? ' ↩' : ''}`), h('td', {}, t(STATUS[b.status] || b.status)), h('td', {}, b.expires_at ? new Date(b.expires_at * 1000).toLocaleDateString() : '—')))))) : h('p', { class: 'muted' }, t('Aucun billet pour l’instant.')),
+        r.billets.length ? h('div', { class: 'tw' }, h('table', { class: 'bs-list' }, h('thead', {}, h('tr', {}, ['Billet', 'Valeur', 'État', 'Fin', ''].map(x => h('th', {}, x ? t(x) : '')))),
+          h('tbody', {}, r.billets.map(b => h('tr', {}, h('td', {}, h('code', { title: b.g1pub }, short(b.g1pub))), h('td', {}, `${b.amount_zen ?? '—'} Ẑen${b.return_to_issuer ? ' ↩' : ''}`), h('td', {}, t(STATUS[b.status] || b.status)), h('td', {}, b.expires_at ? new Date(b.expires_at * 1000).toLocaleDateString() : '—'), h('td', {}, b.status === 'empty' ? K.sure(t('Supprimer'), async ev => { ev.target.disabled = true; try { await K.api('/api/v1/billet/delete', { method: 'POST', body: { g1pub: b.g1pub } }); K.toast(t('Billet supprimé de Nostr')); loadList(); } catch (e) { ev.target.disabled = false; K.toast(t(e.message)); } }, t('Supprimer ce billet de Nostr ? La planche imprimée ne vaudra plus rien.')) : null)))))) : h('p', { class: 'muted' }, t('Aucun billet pour l’instant.')),
         h('p', { class: 'muted' }, t('↩ : la valeur revient sur votre portefeuille à la date de fin si le billet n’est pas encaissé.'))));
     } catch (e) { listBox.replaceChildren(h('p', { class: 'err', role: 'alert' }, t(e.message))); }
   }

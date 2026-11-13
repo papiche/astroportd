@@ -399,7 +399,7 @@ impl<C: Chain, P: PrimalSource> Billets<C, P> {
             }
             // Opérations d'un compte authentifié : `_who` est posé par l'interface après authentification, jamais par le client
             // (les routes publiques n'atteignent que les opérations ci-dessus).
-            "is_issuer" | "set_issuer" | "issue" | "fund" | "issued" => {
+            "is_issuer" | "set_issuer" | "issue" | "fund" | "delete" | "issued" => {
                 let who = body.get("_who").ok_or_else(|| BilletError::Refused("billet_not_issuer", "compte inconnu".into()))?;
                 let (hex, email, captain) = (who["hex"].as_str().unwrap_or(""), who["email"].as_str().unwrap_or(""), who["captain"].as_bool().unwrap_or(false));
                 match op {
@@ -414,6 +414,7 @@ impl<C: Chain, P: PrimalSource> Billets<C, P> {
                     }
                     "issue" => self.issue(hex, email, captain, body).await,
                     "fund" => self.fund(hex, email, captain, field("g1pub")).await,
+                    "delete" => self.delete(hex, captain, field("g1pub")).await,
                     _ => self.issued(hex).await,
                 }
             }
@@ -636,6 +637,34 @@ impl<C: Chain, P: PrimalSource> Billets<C, P> {
         self.mark_funded(&account, want).await;
         self.audit(json!({ "billet": account.ss58(), "step": "funded", "issuer": issuer_hex, "g1_cents": want })).await;
         Ok(json!({ "ok": true, "already": false, "g1_cents": target }))
+    }
+
+    /// Supprime un billet **pas encore financé** : le témoin est retiré de Nostr (NIP-09 : événement `kind 5` signé par la coopérative,
+    /// qui a signé le témoin, citant son adresse), donc de cette station et de ceux qui le suivent. Réservé à son émetteur (ou au
+    /// Capitaine). Un billet qui porte de la valeur ne se supprime pas : il s'encaisse, ou revient à l'émetteur à sa date de fin.
+    /// Le dépôt d'activation de 1 Ğ1 que le billet a pu recevoir du maître y reste : la station ne garde pas la clé d'un billet.
+    pub async fn delete(&self, issuer_hex: &str, captain: bool, g1pub: &str) -> Result<Value, BilletError> {
+        let iss = self.issuing()?;
+        if !self.is_issuer(issuer_hex, captain).await {
+            return Err(BilletError::Refused("billet_not_issuer", "le Capitaine ne vous a pas autorisé à créer des billets".into()));
+        }
+        let account = Self::account_of(g1pub)?;
+        let w = self.witness(&account).await.ok_or_else(|| BilletError::Refused("billet_unknown", "billet inconnu de cette station".into()))?;
+        if w.issuer != issuer_hex && !captain {
+            return Err(BilletError::Refused("billet_not_yours", "ce billet n'a pas été créé par vous".into()));
+        }
+        let (view, _) = self.describe(&account).await?;
+        if view["status"] != "empty" {
+            return Err(BilletError::Refused("billet_not_empty", "ce billet porte de la valeur ou a déjà servi : il ne peut plus être supprimé (encaissez-le, ou attendez sa date de fin)".into()));
+        }
+        let (coop_secret, coop_hex) = crate::coop_config::coop_keys(&self.uplanet_name).map_err(|e| BilletError::Unavailable("billet_unavailable", e))?;
+        let address = format!("{}:{coop_hex}:billet:{}", astro_nostr_proto::kind::APP_PARAMS, account.ss58());
+        let event = UnsignedEvent { created_at: now(), kind: astro_nostr_proto::kind::DELETION, tags: vec![vec!["a".into(), address]], content: "billet supprimé avant financement".into() }
+            .sign(&coop_secret)
+            .map_err(|e| BilletError::Failed("billet_internal", e.to_string()))?;
+        (iss.publish)(event).await.map_err(|e| BilletError::Failed("billet_internal", format!("suppression non publiée : {e}")))?;
+        self.audit(json!({ "billet": account.ss58(), "step": "deleted", "issuer": issuer_hex, "g1_cents": view["g1_cents"] })).await;
+        Ok(json!({ "ok": true, "g1pub": account.ss58(), "g1_cents_left": view["g1_cents"] }))
     }
 
     /// Suivi des billets de cette UPlanet, pour tous les membres (aucun détail personnel) : émis, financés, en circulation et leur valeur,
@@ -1127,6 +1156,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_unfunded_billet_is_deleted_from_nostr_but_never_a_funded_one() {
+        let (r, svc, _, sent) = issuing_rig("delete").await;
+        svc.set_issuer(ISSUER_HEX, true).await.unwrap();
+        let out = svc.issue(ISSUER_HEX, ISSUER_EMAIL, false, &json!({ "count": 2, "amount_zen": 50 })).await.unwrap();
+        let (a, b): (Account, Account) = (out["billets"][0]["g1pub"].as_str().unwrap().parse().unwrap(), out["billets"][1]["g1pub"].as_str().unwrap().parse().unwrap());
+        assert_eq!(svc.issued(ISSUER_HEX).await.unwrap()["billets"].as_array().unwrap().len(), 2);
+        // Un autre émetteur ne supprime pas le billet d'autrui ; un inconnu non plus.
+        svc.set_issuer(&"cc".repeat(32), true).await.unwrap();
+        assert!(matches!(svc.delete(&"cc".repeat(32), false, &a.ss58()).await, Err(BilletError::Refused("billet_not_yours", _))));
+        assert!(matches!(svc.delete(ISSUER_HEX, false, &Account([9; 32]).ss58()).await, Err(BilletError::Refused("billet_unknown", _))));
+        assert!(matches!(svc.delete("dd".repeat(32).as_str(), false, &a.ss58()).await, Err(BilletError::Refused("billet_not_issuer", _))));
+        // Non financé : supprimé, un kind 5 signé par la coopérative cite son adresse, le témoin disparaît (l'autre reste).
+        let done = svc.delete(ISSUER_HEX, false, &a.ss58()).await.unwrap();
+        assert_eq!((done["ok"].as_bool(), done["g1_cents_left"].as_u64()), (Some(true), Some(0)));
+        let del = sent.lock().unwrap().last().unwrap().clone();
+        assert_eq!(del.kind, 5);
+        assert!(del.tag_value("a").unwrap().ends_with(&format!(":billet:{}", a.ss58())), "{:?}", del.tags);
+        let left: Vec<String> = svc.issued(ISSUER_HEX).await.unwrap()["billets"].as_array().unwrap().iter().map(|x| x["g1pub"].as_str().unwrap().to_owned()).collect();
+        assert_eq!(left, vec![b.ss58()], "seul le billet supprimé a disparu");
+        assert!(!svc.addresses().await.contains(&a.ss58()));
+        // Financé : refusé, rien n'est publié.
+        svc.fund(ISSUER_HEX, ISSUER_EMAIL, false, &b.ss58()).await.unwrap();
+        let before = sent.lock().unwrap().len();
+        assert!(matches!(svc.delete(ISSUER_HEX, false, &b.ss58()).await, Err(BilletError::Refused("billet_not_empty", _))));
+        assert_eq!(sent.lock().unwrap().len(), before);
+        // Le Capitaine peut supprimer un billet non financé d'un autre émetteur.
+        let c = svc.issue(ISSUER_HEX, ISSUER_EMAIL, false, &json!({ "count": 1, "amount_zen": 10 })).await.unwrap();
+        let c: Account = c["billets"][0]["g1pub"].as_str().unwrap().parse().unwrap();
+        assert!(svc.delete("ee".repeat(32).as_str(), true, &c.ss58()).await.is_ok());
+        let _ = std::fs::remove_dir_all(r.dir);
+    }
+
+    #[tokio::test]
     async fn a_billet_is_issued_funded_once_and_then_cashed_with_its_printed_parts() {
         let (r, svc, wallet, sent) = issuing_rig("issue").await;
         svc.set_issuer(ISSUER_HEX, true).await.unwrap();
@@ -1252,7 +1314,7 @@ mod tests {
         for part in body.split("\"billet_").skip(1) {
             let name = part.split('"').next().unwrap();
             // Les codes de la création de billets s'affichent dans l'application des membres (qui traduit le message), pas sur /scan.
-            const ISSUER_SIDE: [&str; 11] = ["funded", "no_wallet", "not_issuer", "bad_count", "bad_amount", "bad_days", "return_needs_days", "not_yours", "blank", "issuer_poor", "fund_failed"];
+            const ISSUER_SIDE: [&str; 13] = ["funded", "no_wallet", "not_issuer", "bad_count", "bad_amount", "bad_days", "return_needs_days", "not_yours", "blank", "issuer_poor", "fund_failed", "unknown", "not_empty"];
             if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c == '_') || ISSUER_SIDE.contains(&name) {
                 continue;
             }

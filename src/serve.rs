@@ -929,12 +929,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
     let agents = Arc::new(astroportd::agents::Agents::new(db.clone(), agent_keys, publish_fn(&event_publisher)).with_activity(activity.clone()));
     let member_ai = Arc::new(astroportd::member_ai::MemberAi::new(db.clone(), agent_keys2, publish_fn(&event_publisher)));
     let forwards = Arc::new(astroportd::forwards::Forwards::new(p2p_handle.clone()));
-    let ssh_home = a.ssh_dir.clone().or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ssh")));
-    let identity = ssh_home.as_ref().map(|d| d.join("id_ed25519")).filter(|p| p.exists());
-    let known_hosts = a.db.parent().map_or_else(|| PathBuf::from("console_known_hosts"), |p| p.join("console_known_hosts"));
-    let consoles = Arc::new(astroportd::console::Consoles::new(identity, known_hosts, Some(activity.clone())));
-    let consoles_ui = consoles.clone();
-    let assist_admin = admin::assist_admin(&assist, &forwards, &consoles);
+    let assist_admin = admin::assist_admin(&assist);
     // Maillage (stations, bootstrap gardé) et Capitaines (suivre, services des amis, accès à chaud) pour l'écran du Capitaine.
     let mut mesh = astroportd::mesh_admin::Mesh::new(db.clone(), p2p_handle.clone(), a.p2p_bootstrap.clone(), station_planes(&a.db).0, activity.clone())
         .with_relays(a.p2p_use_relay.clone(), Some(uplanet_name.to_string()), p2p_role.relay_server)
@@ -967,7 +962,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
             None => eprintln!("essaim : HOME introuvable et --swarm-dir absent : les cartes des stations ne sont pas gardées"),
         }
     }
-    let captains = Arc::new(astroportd::captains::Captains::new(db.clone(), captains_keys, Some(publish_fn(&event_publisher)), p2p_handle.clone(), forwards.clone(), Some(consoles.clone()), activity.clone()));
+    let captains = Arc::new(astroportd::captains::Captains::new(db.clone(), captains_keys, Some(publish_fn(&event_publisher)), p2p_handle.clone(), forwards.clone(), activity.clone()));
     let (mesh_admin, captains_admin) = admin::mesh_admins(&mesh, &captains);
     let account_origin = public_domain(&a).map(|d| format!("https://{d}"));
     let account_svc = Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone()).with_public_images(public_images.clone()));
@@ -1070,7 +1065,7 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
         }
         Err(e) => eprintln!("contrôle local indisponible : {e}"),
     }
-    let mut ui = StationUi::new(services.clone(), dav.clone(), memory, ollama, true).with_setup(setup_code).with_conf_path(conf_path.clone()).with_ice(stun_port, turn.map(|t| t.0), a.ice_servers.clone()).with_presence(presence).with_chat(chat).with_people(people.clone()).with_console(consoles_ui).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_stations(stations.clone()).with_invites(invites).with_welcome(welcome).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
+    let mut ui = StationUi::new(services.clone(), dav.clone(), memory, ollama, true).with_setup(setup_code).with_conf_path(conf_path.clone()).with_ice(stun_port, turn.map(|t| t.0), a.ice_servers.clone()).with_presence(presence).with_chat(chat).with_people(people.clone()).with_agents(agents).with_ai(member_ai).with_pull(pull).with_organize(organize).with_registrar(registrar.clone()).with_stations(stations.clone()).with_invites(invites).with_welcome(welcome).with_contacts(links.clone()).with_account(account_svc).with_book(address_book)
         .with_admin(admin_fn.clone());
     ui = ui.with_feedback(Arc::new(astroportd::feedback::Feedback::new(db.clone(), uplanet_name.to_string(), activity.clone()))).with_oc(Arc::new(astroportd::oc_member::OcMember::new(db.clone(), uplanet_name.to_string())));
     if let Some(f) = thumbs_fn {

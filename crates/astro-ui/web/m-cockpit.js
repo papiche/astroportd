@@ -3,7 +3,7 @@
 // (le détail des stations est dans l'onglet Essaim et pairs).
 // Les règles (`analyze`) sont une fonction pure : tests/cockpit_rules.mjs les rejoue sans navigateur.
 const RANK = { down: 0, degraded: 1, info: 2, ok: 3 };
-const FLOORS = [['machine', '🖥️', 'Machine', '#/station'], ['station', '📡', 'Station', '#/station'], ['mesh', '🌐', 'Constellation', '#/planes'], ['services', '🔌', 'Services et accès', '#/options'], ['members', '👥', 'Membres', '#/station'], ['economy', '🪙', 'Économie', '#/coop']];
+const FLOORS = [['machine', '🖥️', 'Machine', '#/machine'], ['station', '📡', 'Station', '#/machine'], ['mesh', '🌐', 'Constellation', '#/planes'], ['services', '🔌', 'Services et accès', '#/options'], ['members', '👥', 'Membres', '#/members'], ['economy', '🪙', 'Économie', '#/coop']];
 const worst = (a, b) => (RANK[a] <= RANK[b] ? a : b);
 
 export function analyze({ health, cs, ec, ac, tun, tk, dash, dns, en }) {
@@ -11,7 +11,7 @@ export function analyze({ health, cs, ec, ac, tun, tk, dash, dns, en }) {
   const nodes = cs?.nodes || [], me = nodes.find(n => n.self), others = nodes.filter(n => !n.self);
   // Station
   for (const [name, v] of Object.entries(health?.subsystems || {})) {
-    if (v.status === 'down' || v.status === 'degraded') add(v.status, 'station', `${name} : ${v.status === 'down' ? 'en panne' : 'dégradé'}`, v.detail || '', 'Voir le détail', '#/station');
+    if (v.status === 'down' || v.status === 'degraded') add(v.status, 'station', `${name} : ${v.status === 'down' ? 'en panne' : 'dégradé'}`, v.detail || '', 'Voir le détail', '#/machine');
   }
   // Constellation
   if (dash?.p2p && dash.p2p.enabled === false) add('degraded', 'mesh', 'Le maillage P2P est arrêté', 'Sans lui, aucune station ne peut vous joindre ni partager Ollama ou ComfyUI. Démarrez avec --p2p-listen.', 'Voir les constellations', '#/planes');
@@ -28,13 +28,13 @@ export function analyze({ health, cs, ec, ac, tun, tk, dash, dns, en }) {
   if (failed) add('degraded', 'station', `${failed} tâche(s) abandonnée(s)`, 'Une analyse, un envoi ou une sauvegarde n\'a pas abouti : rien n\'est perdu, vous pouvez la relancer.', 'Voir la file', '#/options');
   // Membres
   const accounts = ac?.accounts || [], full = accounts.filter(a => !a.unlimited && a.quota_bytes && a.used_bytes / a.quota_bytes >= .9).length;
-  if (full) add('degraded', 'members', `${full} MULTIPASS presque plein(s)`, 'Plus de 90 % du disque : leurs prochains envois seront refusés.', 'Voir les comptes', '#/station');
+  if (full) add('degraded', 'members', `${full} MULTIPASS presque plein(s)`, 'Plus de 90 % du disque : leurs prochains envois seront refusés.', 'Voir les comptes', '#/members');
   // PASS verrouillé : l'action se fait d'ici (un bouton par compte, 3 au plus), sans passer par la table des comptes.
   const locked = accounts.filter(a => a.pass_locked_until);
-  for (const a of locked.slice(0, 3)) add('degraded', 'members', ['Le PASS de {0} est verrouillé', a.email || a.hex?.slice(0, 12)], 'Trop de PASS faux : le membre l\'a peut-être oublié, ou quelqu\'un essaie. Débloquez si c\'est bien lui qui vous le demande.', 'Débloquer', '#/station', `/api/v1/station/accounts/${a.hex}/unlock-pass`);
-  if (locked.length > 3) add('degraded', 'members', ['{0} autre(s) compte(s) verrouillé(s)', locked.length - 3], '', 'Voir les comptes', '#/station');
+  for (const a of locked.slice(0, 3)) add('degraded', 'members', ['Le PASS de {0} est verrouillé', a.email || a.hex?.slice(0, 12)], 'Trop de PASS faux : le membre l\'a peut-être oublié, ou quelqu\'un essaie. Débloquez si c\'est bien lui qui vous le demande.', 'Débloquer', '#/members?f=locked', `/api/v1/station/accounts/${a.hex}/unlock-pass`);
+  if (locked.length > 3) add('degraded', 'members', ['{0} autre(s) compte(s) verrouillé(s)', locked.length - 3], '', 'Voir les comptes', '#/members?f=locked');
   const grace = accounts.filter(a => a.grace_ends_at).length;
-  if (grace) add('degraded', 'members', `${grace} compte(s) en période de grâce`, 'Hébergement non réglé : passé le délai, le compte est suspendu.', 'Voir les comptes', '#/station');
+  if (grace) add('degraded', 'members', `${grace} compte(s) en période de grâce`, 'Hébergement non réglé : passé le délai, le compte est suspendu.', 'Voir les comptes', '#/members?f=grace_period');
   // Économie
   if (ec?.kind === 'drawdown') add('degraded', 'economy', `Semaine ${ec.week} : trésorerie entamée`, 'Les dépenses ont dépassé les recettes de la semaine.', 'Voir la régie', '#/coop');
   else if (ec?.kind === 'volunteer') add('info', 'economy', `Semaine ${ec.week} : bénévolat actif`, 'Votre apport a couvert l\'écart de la semaine.', 'Voir la régie', '#/coop');
@@ -197,10 +197,10 @@ export default async function cockpit(root, K) {
     const online = a.others.filter(n => n.status === 'connected').length, brains = a.nodes.filter(n => n.tier === 'Brain' && n.services?.includes('ollama')).length;
     root.replaceChildren(...[
       h('section', { class: 'card ck-hero ' + a.level, 'aria-live': 'polite' }, h('span', { class: 'ck-big', 'aria-hidden': 'true' }, { ok: '✅', degraded: '🟠', down: '🔴' }[a.level]), h('div', {}, h('h2', {}, t(a.verdict)), h('p', { class: 'muted' }, todos.length ? t('Voici par quoi commencer :') : t('Rien ne demande votre attention. La page se met à jour toute seule.')))),
+      todos.length ? h('section', { class: 'card' }, h('h2', {}, t('À faire')), h('ul', { class: 'ck-list' }, todos.slice(0, 3).map(todo)), todos.length > 3 ? h('details', {}, h('summary', {}, t('Voir les {0} autres', todos.length - 3)), h('ul', { class: 'ck-list' }, todos.slice(3).map(todo))) : null) : null,
       fuelCard(fuel),
       energyCard(en),
       pafCard(paf, draw),
-      todos.length ? h('section', { class: 'card' }, h('h2', {}, t('À faire')), h('ul', { class: 'ck-list' }, todos.slice(0, 3).map(todo)), todos.length > 3 ? h('details', {}, h('summary', {}, t('Voir les {0} autres', todos.length - 3)), h('ul', { class: 'ck-list' }, todos.slice(3).map(todo))) : null) : null,
       su.left ? h('section', { class: 'card' }, h('h2', {}, t('Mettre la station en service'), h('small', { class: 'muted' }, ` · ${su.list.length - su.left}/${su.list.length}`)),
         h('progress', { max: su.list.length, value: su.list.length - su.left, 'aria-label': t('Étapes terminées') }),
         h('ul', { class: 'ck-steps' }, su.list.map(x => h('li', { class: x.done ? 'done' : '' }, h('span', { 'aria-hidden': 'true' }, x.done ? '✅' : '⬜'), h('div', {}, x.done ? t(x.title) : h('a', { href: x.href, onclick: x.act ? ev => { ev.preventDefault(); x.act === 'domain' ? domainDialog() : welcome(); } : null }, h('strong', {}, t(x.title))), x.done ? null : h('p', { class: 'muted' }, t(x.why))))))) : null,
@@ -211,7 +211,7 @@ export default async function cockpit(root, K) {
         dns.station?.name ? h('p', {}, '📡 ', h('code', {}, dns.station.name), h('small', { class: 'muted' }, ' ' + t('cette station'))) : null,
         h('p', { class: 'muted' }, t('{0} adresse(s) à jour sur {1}', dns.unchanged + dns.written, dns.total), dns.pending ? ' · ' + t('{0} en attente', dns.pending) : '', dns.failed ? ' · ' + t('{0} en échec', dns.failed) : ''),
         h('button', { onclick: async ev => { const btn = ev.currentTarget; btn.disabled = true; try { await K.api('/api/v1/station/admin/dnslink', { method: 'POST', body: { action: 'sync' } }); await draw(); } catch (e) { K.toast(e.message); btn.disabled = false; } } }, t('Enregistrer maintenant'))) : null,
-      h('p', { class: 'ck-acts' }, h('button', { class: 'primary', onclick: welcome }, '✉️ ' + t('Liens d\'accueil')), h('a', { class: 'ck-btn', href: '#/station' }, t('Détails techniques')))].filter(Boolean));
+      h('p', { class: 'ck-acts' }, h('button', { class: 'primary', onclick: welcome }, '✉️ ' + t('Liens d\'accueil')), h('a', { class: 'ck-btn', href: '#/machine' }, t('Détails techniques')))].filter(Boolean));
   };
   K.cleanup(() => link.remove());
   await draw();

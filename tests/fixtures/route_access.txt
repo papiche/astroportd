@@ -52,7 +52,6 @@ GET /api/v1/register anon=200 member=200
 GET /api/v1/replication anon=401 member=200
 GET /api/v1/station/accounts anon=401 member=403
 GET /api/v1/station/admin/{section} anon=401 member=403
-GET /api/v1/station/console anon=400 member=400
 GET /api/v1/station/constellation anon=401 member=403
 GET /api/v1/station/coop anon=401 member=403
 GET /api/v1/station/domain anon=401 member=403
@@ -91,6 +90,7 @@ POST /api/v1/attachments anon=401 member=501
 POST /api/v1/backup anon=401 member=422
 POST /api/v1/backup/rescue anon=401 member=422
 POST /api/v1/backup/respond anon=401 member=422
+POST /api/v1/billet/delete anon=401 member=501
 POST /api/v1/billet/fund anon=401 member=501
 POST /api/v1/billet/identify anon=501 member=501
 POST /api/v1/billet/issue anon=401 member=501

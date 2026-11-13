@@ -1,5 +1,5 @@
 //! Écran des Capitaines entre deux stations réelles : suivre un Capitaine, découvrir les services que **sa** station nous
-//! ouvre (et rien d'autre), s'y connecter à chaud, puis ne plus le suivre — l'amitié et l'accès tombent ensemble.
+//! ouvre (et rien d'autre), voir l'accès ouvert par la ligne de commande, puis ne plus le suivre — l'amitié et l'accès tombent ensemble.
 #![allow(clippy::unwrap_used)]
 
 use std::sync::Arc;
@@ -93,7 +93,7 @@ async fn following_a_captain_shows_only_what_his_station_opens_to_us_and_unfollo
     policy_b.set(&json!({ "service": "ollama", "mode": "listed" }), &fixed, 0).await.unwrap();
 
     let forwards = Arc::new(Forwards::new(Some(na.handle.clone())));
-    let caps = Captains::new(db_a.clone(), Arc::new(StaticKeySource::new().with(CAP_A)), None, Some(na.handle.clone()), forwards, None, ActivityBus::new());
+    let caps = Captains::new(db_a.clone(), Arc::new(StaticKeySource::new().with(CAP_A)), None, Some(na.handle.clone()), forwards.clone(), ActivityBus::new());
     let v = caps.view().await.unwrap();
     let row = |v: &serde_json::Value, h: &str| v["captains"].as_array().unwrap().iter().find(|c| c["hex"] == h).unwrap().clone();
     let b = row(&v, &hex(&CAP_B));
@@ -108,10 +108,16 @@ async fn following_a_captain_shows_only_what_his_station_opens_to_us_and_unfollo
     assert_eq!(names, ["bureau-vnc"], "Ollama est en liste vide : A ne le découvre même pas");
     assert!(caps.act(&json!({ "follow": hex(&CAP_A) })).await.is_err(), "se suivre soi-même");
     assert!(caps.act(&json!({ "follow": "zz" })).await.is_err());
-    assert!(caps.act(&json!({ "connect": { "peer": "12D3KooWRxhgiLtvqhypB6uyQNbDD1D6wMV7Zt6vYYZF68czb9aG", "service": "bureau-vnc" } })).await.is_err(), "station d'un inconnu : refusé ici");
+    // Ouvrir un accès n'est plus possible depuis cet écran (ni depuis le navigateur) : c'est la ligne de commande, `astroportd tunnel connect`,
+    // qui parle au démon par son socket de contrôle et ouvre l'accès par les `Forwards`.
+    let refused = caps.act(&json!({ "connect": { "peer": pb, "service": "bureau-vnc" } })).await.unwrap_err();
+    assert!(refused.contains("astroportd tunnel connect"), "{refused}");
+    assert!(caps.act(&json!({ "console": { "peer": pb, "service": "ssh", "user": "x" } })).await.is_err(), "plus de console dans le navigateur");
 
-    // Se connecter : un accès local relié au bureau de B.
-    let v = caps.act(&json!({ "connect": { "peer": pb, "service": "bureau-vnc" } })).await.unwrap();
+    // Un accès ouvert par la ligne de commande apparaît dans l'écran, relié au bureau de B.
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    forwards.open(&format!("cap:{pb}/bureau-vnc"), &pb, "bureau-vnc", now + 3600, now).await.unwrap();
+    let v = caps.view().await.unwrap();
     let local: std::net::SocketAddr = row(&v, &hex(&CAP_B))["services"][0]["local"]["addr"].as_str().unwrap().parse().unwrap();
     let mut s = tokio::net::TcpStream::connect(local).await.unwrap();
     s.write_all(b"ping").await.unwrap();
@@ -123,7 +129,6 @@ async fn following_a_captain_shows_only_what_his_station_opens_to_us_and_unfollo
     let v = caps.act(&json!({ "unfollow": hex(&CAP_B) })).await.unwrap();
     let b = row(&v, &hex(&CAP_B));
     assert_eq!((b["i_follow"].as_bool(), b["friend"].as_bool()), (Some(false), Some(false)));
-    assert!(caps.act(&json!({ "connect": { "peer": pb, "service": "bureau-vnc" } })).await.is_err(), "plus ami : plus d'accès depuis cet écran");
     for d in [da, dbb] {
         let _ = std::fs::remove_dir_all(d);
     }

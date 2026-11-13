@@ -85,13 +85,14 @@ export default async function card(K, { path, me, blank, groups, onSaved, onClos
 
   // En-tête : qui est-ce, lien avec un MULTIPASS, visages.
   const pic = h('div', { class: 'ab-picker', hidden: true });
-  const head = h('div', { class: 'ab-head' }, h('button', { type: 'button', class: 'ghost ab-back', onclick: onClose }, '← ' + t('Contacts')),
+  const chatKey = isMe ? null : ((d.keys || []).find(k => !k.plane || k.plane === d.plane)?.hex || d.pubkey || null); // une personne = une conversation
+  const head = h('div', { class: 'ab-head' }, h('button', { type: 'button', class: 'ghost ab-back', onclick: onClose }, '← ' + t('Proches')),
     h('div', { class: 'ab-pic' }, f.picture ? h('img', { src: f.picture, alt: '', width: 64, height: 64, referrerpolicy: 'no-referrer' }) : embedded(d.path, f.name), !isMe && d.path ? h('button', { type: 'button', class: 'ghost', onclick: () => photoEditor(K, pic, d.path, onSaved) }, t('Photo…')) : null),
     h('div', {}, h('h3', {}, f.name || t('Nouvelle fiche'), isMe ? h('span', { class: 'pill ok' }, t('Moi')) : null),
       isMe ? h('p', { class: 'muted' }, t('Votre profil Nostr et votre fiche sont réunis : ce que vous changez ici est publié (champs « public ») et enregistré dans votre fiche chiffrée (tout le reste, qui ne quitte jamais votre uCloud).'))
         : d.pubkey ? [h('p', {}, h('span', { class: 'pill ok' }, d.hosted_here ? t('MULTIPASS de la station') : t('Clé Nostr')), d.faces ? ` · ${d.faces} ${t('visage(s) reconnu(s)')}` : ''),
           // Visio : une personne reliée à un MULTIPASS s'appelle d'ici (la sonnerie ne passe que si elle vous suit aussi).
-          h('p', {}, h('button', { type: 'button', onclick: () => K.mod('m-call.js').then(m => m.call(K, d.pubkey, f.name), e => K.toast(e.message)) }, '📹 ' + t('Appeler en visio')))] : h('p', { class: 'muted' }, t('Pas encore reliée à un MULTIPASS'), d.faces ? ` · ${d.faces} ${t('visage(s) reconnu(s)')}` : '')));
+          h('p', { class: 'ck-acts' }, chatKey ? h('a', { class: 'btn', href: '#/chat?peer=' + chatKey }, '💬 ' + t('Écrire')) : null, h('button', { type: 'button', class: 'ghost', onclick: () => K.mod('m-call.js').then(m => m.call(K, d.pubkey, f.name), e => K.toast(e.message)) }, '📹 ' + t('Appeler')))] : h('p', { class: 'muted' }, t('Pas encore reliée à un MULTIPASS'), d.faces ? ` · ${d.faces} ${t('visage(s) reconnu(s)')}` : '')));
 
   // Comparaison avec le profil Nostr de la personne : on prend chaque valeur, une par une.
   const compare = () => {
@@ -109,13 +110,7 @@ export default async function card(K, { path, me, blank, groups, onSaved, onClos
     h('button', { type: 'button', class: 'ghost', onclick: async () => { try { await api('/api/v1/contacts/link', { method: 'POST', body: { path: d.path, target: target.value.trim() } }); K.toast(t('Fiche reliée'), 1); onSaved(d.path, true); } catch (e) { K.toast(e.message); } } }, t('Relier')),
     d.pubkey && d.via === 'vcard' ? h('button', { type: 'button', class: 'ghost', onclick: async () => { try { await api('/api/v1/contacts/link', { method: 'POST', body: { path: d.path, target: null } }); K.toast(t('Fiche déliée'), 1); onSaved(d.path, true); } catch (e) { K.toast(e.message); } } }, t('Délier')) : null));
 
-  // Les clés de la personne, une par UPlanet (retrouvées par ses emails et par les liens signés des deux clés) : on écrit dans l'UPlanet commune.
-  // Une personne = une conversation : la clé à utiliser est choisie ici, sans montrer ni constellation ni clé.
-  const keys = isMe || !(d.keys || []).length ? null : (() => {
-    const mine = d.keys.find(k => !k.plane || k.plane === d.plane);
-    return h('div', { class: 'ab-f' }, h('label', {}, t('Messagerie')),
-      mine ? h('a', { class: 'btn', href: '#/chat?peer=' + mine.hex }, t('Écrire')) : h('small', { class: 'muted' }, t('Cette personne n\'est pas joignable d\'ici pour le moment.')));
-  })();
+  const keys = null; // « Écrire » est dans l'en-tête, à côté de « Appeler »
 
   async function save() {
     if (!f.name?.trim()) { K.toast(t('Un nom est nécessaire')); return; }

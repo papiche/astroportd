@@ -28,7 +28,6 @@
 //! | `GET /api/v1/ucloud/memories` · `…/timeline[?ym=]` · `…/search` · `…/duplicates` | « ce jour-là », chronologie par mois, recherche à filtres, doublons exacts et visuels |
 //! | `GET /api/v1/replication` | où et par qui les données du compte sont répliquées (stations, amis, fichiers) |
 //! | `POST /api/v1/bro/say` | dialogue avec BRO |
-//! | `GET /api/v1/station/console?ticket=` | console (WebSocket) ouverte par un ticket à usage unique que le Capitaine a obtenu par `admin/assist` |
 //!
 //! L'authentification est portée par l'en-tête `Authorization` (Basic ou NIP-98), jamais par un cookie : l'API
 //! n'est donc pas exposée aux requêtes forgées depuis un autre site.
@@ -40,7 +39,6 @@ use std::time::{Duration, Instant};
 
 use astro_core::ActivityBus;
 use axum::Router;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
@@ -169,23 +167,6 @@ pub struct LibrarySearch {
     pub after_p: Option<String>,
     /// Résultats par page.
     pub limit: Option<usize>,
-}
-
-/// Ce que le navigateur envoie à une console.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConsoleIn {
-    /// Frappes à transmettre telles quelles.
-    Data(Vec<u8>),
-    /// Nouvelle taille du terminal `(colonnes, lignes)`.
-    Resize(u16, u16),
-}
-
-/// Les deux sens d'une console ouverte par la station : la fermer côté navigateur (abandon de `input`) la termine.
-pub struct ConsoleLink {
-    /// Vers le processus.
-    pub input: tokio::sync::mpsc::Sender<ConsoleIn>,
-    /// Depuis le processus ; fermé quand il se termine.
-    pub output: tokio::sync::mpsc::Receiver<Vec<u8>>,
 }
 
 /// Qui réclame une invitation : une adresse email, ou un invité (adresse générée par la station, `alias` facultatif).
@@ -651,23 +632,6 @@ mod tests {
         async fn dashboard(&self, p: &Principal) -> Result<Value, ApiError> {
             Ok(json!({ "who": p.hex }))
         }
-        async fn console_open(&self, ticket: &str) -> Option<ConsoleLink> {
-            // Console de test : renvoie en majuscules ce qu'elle reçoit ; « bye » la termine ; une taille est rapportée.
-            (ticket == "good").then(|| {
-                let (in_tx, mut in_rx) = tokio::sync::mpsc::channel::<ConsoleIn>(8);
-                let (out_tx, out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
-                tokio::spawn(async move {
-                    while let Some(m) = in_rx.recv().await {
-                        match m {
-                            ConsoleIn::Data(d) if d == b"bye" => break,
-                            ConsoleIn::Data(d) => drop(out_tx.send(d.to_ascii_uppercase()).await),
-                            ConsoleIn::Resize(c, r) => drop(out_tx.send(format!("{c}x{r}").into_bytes()).await),
-                        }
-                    }
-                });
-                ConsoleLink { input: in_tx, output: out_rx }
-            })
-        }
         async fn health(&self) -> Vec<Subsystem> {
             vec![Subsystem::new("db", Status::Ok, "WAL"), Subsystem::new("p2p", Status::Disabled, "non activé")]
         }
@@ -748,31 +712,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_console_socket_needs_a_valid_ticket_and_the_same_origin() {
-        use futures_util::{SinkExt, StreamExt};
-        use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as M};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let app = app(&ActivityBus::new());
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let connect = |ticket: &str, origin: Option<String>| {
-            let mut req = format!("ws://{addr}/api/v1/station/console?ticket={ticket}").into_client_request().unwrap();
-            if let Some(o) = origin {
-                req.headers_mut().insert("origin", o.parse().unwrap());
-            }
-            tokio_tungstenite::connect_async(req)
-        };
-        assert!(connect("good", None).await.is_err(), "sans Origin : refusé");
-        assert!(connect("good", Some("http://evil.example".into())).await.is_err(), "autre origine : refusé");
-        assert!(connect("bad", Some(format!("http://{addr}"))).await.is_err(), "ticket inconnu : refusé");
-        let (mut ws, _) = connect("good", Some(format!("http://{addr}"))).await.unwrap();
-        ws.send(M::Binary(b"salut".to_vec().into())).await.unwrap();
-        assert_eq!(ws.next().await.unwrap().unwrap().into_data().as_ref(), b"SALUT");
-        ws.send(M::Text(r#"{"resize":[120,40]}"#.into())).await.unwrap();
-        assert_eq!(ws.next().await.unwrap().unwrap().into_data().as_ref(), b"120x40");
-        ws.send(M::Text(r#"{"resize":[0,9999]}"#.into())).await.unwrap();
-        ws.send(M::Binary(b"bye".to_vec().into())).await.unwrap();
-        assert!(matches!(ws.next().await, Some(Ok(M::Close(_))) | None), "la fin du processus ferme la socket");
+    async fn the_browser_console_no_longer_exists_but_tunnel_sharing_is_the_captains() {
+        let bus = ActivityBus::new();
+        assert_eq!(call_as(app(&bus), Method::GET, "/api/v1/station/console?ticket=good", "Basic cap", None).await.0, StatusCode::NOT_FOUND);
+        // Déclarer et régler les services partagés reste au Capitaine, depuis le navigateur ; un membre n'y touche pas.
+        let body = Some(json!({ "service": "ssh", "mode": "listed" }));
+        assert_ne!(call_as(app(&bus), Method::POST, "/api/v1/station/admin/tunnels", "Basic cap", body.clone()).await.0, StatusCode::FORBIDDEN);
+        assert_eq!(call_as(app(&bus), Method::POST, "/api/v1/station/admin/tunnels", "Basic ok", body).await.0, StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

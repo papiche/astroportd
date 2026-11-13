@@ -24,11 +24,6 @@ struct Assets;
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; \
                    connect-src 'self'; font-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
-/// Page de la console : xterm.js crée des éléments `<style>` à l'exécution (couleurs, dimensions des cellules), ce que
-/// `style-src 'self'` interdit. Seuls les **styles** sont assouplis, pour cette page-là ; les scripts restent `'self'`.
-const CSP_CONSOLE: &str = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; \
-                           base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
-
 fn mime_of(path: &str) -> &'static str {
     match path.rsplit('.').next() {
         Some("html") => "text/html; charset=utf-8",
@@ -50,7 +45,7 @@ pub fn embedded_bytes() -> usize {
 /// Fichiers chargés à la demande : la page d'inscription (`register.*`, pour les seuls nouveaux venus) et les écrans
 /// lourds (`m-*.js` / `m-*.css`, tri des visages, réplication) n'entrent pas dans le budget de la coque ; ils ont le leur.
 fn is_lazy(path: &str) -> bool {
-    path.starts_with("look.") || path.starts_with("register.") || path.starts_with("restore.") || path.starts_with("stations.") || path.starts_with("invite.") || path.starts_with("claim.") || path.starts_with("scan") || path.starts_with("jsqr.") || path.starts_with("m-") || path.starts_with("console.") || path.starts_with("xterm")
+    path.starts_with("look.") || path.starts_with("register.") || path.starts_with("restore.") || path.starts_with("stations.") || path.starts_with("invite.") || path.starts_with("claim.") || path.starts_with("scan") || path.starts_with("jsqr.") || path.starts_with("m-")
 }
 
 /// Fichiers de la coque de l'application (tout sauf les fichiers chargés à la demande).
@@ -217,7 +212,7 @@ fn asset(path: &str, headers_in: &HeaderMap) -> Response {
     put(&mut headers, header::CACHE_CONTROL, "no-cache");
     put(&mut headers, header::X_CONTENT_TYPE_OPTIONS, "nosniff");
     put(&mut headers, header::REFERRER_POLICY, "no-referrer");
-    put(&mut headers, header::CONTENT_SECURITY_POLICY, if path == "console.html" { CSP_CONSOLE } else { CSP });
+    put(&mut headers, header::CONTENT_SECURITY_POLICY, CSP);
     // Le service worker pilote tout le site (scope `/`) bien qu'il vive sous `/ui/` ; la page `/` varie selon `Accept`.
     if path == "sw.js" {
         headers.insert(header::HeaderName::from_static("service-worker-allowed"), HeaderValue::from_static("/"));
@@ -401,7 +396,7 @@ mod tests {
         let (mraw, mgz) = module_bytes();
         eprintln!("écrans à la demande : {mraw} o bruts, {mgz} o en gzip");
         // Le cumul des écrans (qu'un visiteur ne télécharge qu'à la demande) est borné, et chaque écran garde sa propre limite.
-        assert!(mraw > 0 && mraw < 424 * 1024 && mgz < 162 * 1024, "écrans à la demande : {mraw} o bruts (budget 424 Ko, 392 Ko avant la gestion de fichiers du uCloud (m-files : téléverser, glisser-déposer, renommer, déplacer), 388 Ko avant le bouton de bascule du service, 384 Ko avant l'état du démarrage automatique et le test OVH des écrans du Capitaine, 380 Ko avant les traductions des écrans du Capitaine (constellations, configuration coopérative, Mon compte), 368 Ko avant l'ergonomie Capitaine et MULTIPASS : onglets de Mon compte, procédure de secours, « Pour vous », tri au pouce, voix seule automatique ; 352 Ko avant la vigilance des intrus, 336 Ko avant le maillage et les Capitaines amis, 328 Ko avant les liens d'accueil, la voix seule et les brouillons du chat, 324 Ko avant le carburant et le domaine du cockpit, 316 Ko avant les dictionnaires par écran et les appels de groupe, 312 Ko avant la présence visio, 296 Ko avant la visio, 292 Ko avant la fusion des doublons, 284 Ko avant l'écran Personnes, 280 Ko avant Trier en grand, 260 Ko avant le site public, 240 Ko avant les Ğ1Billets, 224 Ko avant la vision de la constellation), {mgz} o en gzip (budget 162 Ko, 150 Ko avant la gestion de fichiers du uCloud, 148 Ko avant l'état du démarrage automatique et le test OVH, 144 Ko avant les traductions, 136 Ko avant l'ergonomie Capitaine et MULTIPASS, 132 Ko avant le maillage et les Capitaines amis, 128 Ko avant le partage de services à chaud, 120 Ko avant les dictionnaires par écran et les appels de groupe, 116 Ko avant la visio, 112 Ko avant la fusion des doublons, 108 Ko avant l'écran Personnes, 100 Ko avant le site public, 92 Ko avant les Ğ1Billets, 86 Ko avant la vision de la constellation, 80 Ko avant l'accueil des membres, 76 Ko avant le cockpit du Capitaine ; 64 Ko avant le carnet d'adresses, 56 Ko avant la carte et le fil du temps ; 128 Ko et 48 Ko avant les écrans Sources et Ranger)");
+        assert!(mraw > 0 && mraw < 440 * 1024 && mgz < 176 * 1024, "écrans à la demande : {mraw} o bruts (budget 440 Ko, 424 Ko avant la refonte de la navigation : table de routes, Membres, Mon argent, Détails techniques, coque de navigation ; 392 Ko avant la gestion de fichiers du uCloud (m-files : téléverser, glisser-déposer, renommer, déplacer), 388 Ko avant le bouton de bascule du service, 384 Ko avant l'état du démarrage automatique et le test OVH des écrans du Capitaine, 380 Ko avant les traductions des écrans du Capitaine (constellations, configuration coopérative, Mon compte), 368 Ko avant l'ergonomie Capitaine et MULTIPASS : onglets de Mon compte, procédure de secours, « Pour vous », tri au pouce, voix seule automatique ; 352 Ko avant la vigilance des intrus, 336 Ko avant le maillage et les Capitaines amis, 328 Ko avant les liens d'accueil, la voix seule et les brouillons du chat, 324 Ko avant le carburant et le domaine du cockpit, 316 Ko avant les dictionnaires par écran et les appels de groupe, 312 Ko avant la présence visio, 296 Ko avant la visio, 292 Ko avant la fusion des doublons, 284 Ko avant l'écran Personnes, 280 Ko avant Trier en grand, 260 Ko avant le site public, 240 Ko avant les Ğ1Billets, 224 Ko avant la vision de la constellation), {mgz} o en gzip (budget 176 Ko, 162 Ko avant la refonte de la navigation, 150 Ko avant la gestion de fichiers du uCloud, 148 Ko avant l'état du démarrage automatique et le test OVH, 144 Ko avant les traductions, 136 Ko avant l'ergonomie Capitaine et MULTIPASS, 132 Ko avant le maillage et les Capitaines amis, 128 Ko avant le partage de services à chaud, 120 Ko avant les dictionnaires par écran et les appels de groupe, 116 Ko avant la visio, 112 Ko avant la fusion des doublons, 108 Ko avant l'écran Personnes, 100 Ko avant le site public, 92 Ko avant les Ğ1Billets, 86 Ko avant la vision de la constellation, 80 Ko avant l'accueil des membres, 76 Ko avant le cockpit du Capitaine ; 64 Ko avant le carnet d'adresses, 56 Ko avant la carte et le fil du temps ; 128 Ko et 48 Ko avant les écrans Sources et Ranger)");
         for (name, f) in module_files().filter(|(p, _)| !p.starts_with("m-lang-")) {
             let gz = compressed(&name, Encoding::Gzip, &f.data).len();
             assert!(gz < 12 * 1024, "{name} : {gz} o en gzip, au-delà des 12 Ko par écran");

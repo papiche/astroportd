@@ -27,3 +27,6 @@
 .bs-icon { width: 8mm; height: 8mm; border-radius: 50%; object-fit: cover; margin-right: 2mm; }
 .bs-head { align-items: center; }
 .bs-head strong { margin-right: auto; }
+/* Plié sur le pointillé, le bandeau « SOUS LE PLI » (26 mm) recouvre le début du billet : tout ce qui doit rester lisible
+   (logo, montant, QR « À scanner » et « Vérifier », adresse) commence au-delà, pour encaisser sans décoller les deux parties. */
+.bs-main { padding-left: 29mm; }

@@ -54,7 +54,6 @@ export default {
 "Sur une autre station de la même constellation, ouvrez la page « Rétablir mon compte » (adresse /restore).": "En otra estación de la misma constelación, abra la página «Restablecer mi cuenta» (dirección /restore).",
 "Scannez votre carte de secours imprimée.": "Escanee su tarjeta de rescate impresa.",
 "Vos amis, vos contacts et vos fichiers reviennent d'eux-mêmes au fil des heures.": "Sus amigos, contactos y archivos vuelven solos en las horas siguientes.",
-"Moi": "Yo",
 "Mes appareils": "Mis dispositivos",
 "Ma sécurité": "Mi seguridad",
 "Appuyez sur « Prévenir mes gardiens », puis appelez l'ami qui garde votre sauvegarde : il confirme d'un geste dans Mon compte › Ma sécurité. Reconnaître votre voix est la seule vérification.": "Pulse «Avisar a mis guardianes» y llame al amigo que guarda su copia: confirma con un gesto en Mi cuenta › Mi seguridad. Reconocer su voz es la única verificación.",
@@ -99,4 +98,6 @@ export default {
 "Image retirée": "Imagen quitada",
 "Retirer cette image ? Elle ne s’affichera plus dans vos publications.": "¿Quitar esta imagen? Dejará de mostrarse en sus publicaciones.",
 "Aucune image publiée pour l’instant.": "Ninguna imagen publicada por ahora.",
+"Réglages avancés": "Ajustes avanzados",
+"Protégé par votre station et vos amis.": "Protegido por tu estación y tus amigos.",
 };

@@ -15,7 +15,6 @@ use astro_sync::Projector;
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 
-use crate::console::Consoles;
 use crate::forwards::Forwards;
 use crate::register::PublishFn;
 
@@ -23,8 +22,6 @@ use crate::register::PublishFn;
 const MAX_LISTED: i64 = 200;
 /// Amis interrogés au plus à chaque affichage.
 const MAX_ASKED: usize = 40;
-/// Durée d'un accès local ouvert depuis cet écran.
-const CONNECT_HOURS: i64 = 8;
 
 fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
@@ -56,14 +53,13 @@ pub struct Captains {
     publish: Option<PublishFn>,
     handle: Option<P2pHandle>,
     forwards: Arc<Forwards>,
-    consoles: Option<Arc<Consoles>>,
     activity: ActivityBus,
 }
 
 impl Captains {
     /// `publish` : publication des listes de contacts (`None` : seulement rangées ici, pour les tests).
-    pub fn new(db: Arc<Db>, keys: Arc<dyn KeySource>, publish: Option<PublishFn>, handle: Option<P2pHandle>, forwards: Arc<Forwards>, consoles: Option<Arc<Consoles>>, activity: ActivityBus) -> Self {
-        Self { db, keys, publish, handle, forwards, consoles, activity }
+    pub fn new(db: Arc<Db>, keys: Arc<dyn KeySource>, publish: Option<PublishFn>, handle: Option<P2pHandle>, forwards: Arc<Forwards>, activity: ActivityBus) -> Self {
+        Self { db, keys, publish, handle, forwards, activity }
     }
 
     /// Clé du Capitaine hébergé ici (le premier, s'il y en a plusieurs).
@@ -195,42 +191,19 @@ impl Captains {
                 json!({ "hex": c.hex, "label": c.label, "peer": c.peer, "i_follow": c.i_follow, "follows_me": c.follows_me, "friend": friend, "services": services })
             })
             .collect();
-        Ok(json!({ "mesh": self.handle.is_some(), "captains": rows, "console": self.consoles.is_some() }))
+        Ok(json!({ "mesh": self.handle.is_some(), "captains": rows }))
     }
 
-    /// Actions : `{ follow: <hex> }`, `{ unfollow: <hex> }`, `{ connect: { peer, service } }`, `{ disconnect: { peer, service } }`,
-    /// `{ console: { peer, service, user } }` (SSH dans le navigateur, sur un accès déjà ouvert). Rend la vue.
+    /// Actions : `{ follow: <hex> }`, `{ unfollow: <hex> }`. Ouvrir un accès à un service d'un ami (SSH, VNC, Ollama…) se fait
+    /// **uniquement** par la ligne de commande : `astroportd tunnel connect`. Rend la vue.
     pub async fn act(&self, b: &Value) -> Result<Value, String> {
         if let Some(h) = b["follow"].as_str() {
             self.follow(h, true).await?;
         } else if let Some(h) = b["unfollow"].as_str() {
             self.follow(h, false).await?;
-        } else if let Some(c) = b.get("connect").filter(|c| c.is_object()) {
-            let (peer, service) = (c["peer"].as_str().unwrap_or_default(), c["service"].as_str().unwrap_or_default());
-            self.friend_peer(peer).await?;
-            let at = now();
-            self.forwards.open(&Self::local_id(peer, service), peer, service, at + CONNECT_HOURS * 3600, at).await?;
-        } else if let Some(c) = b.get("disconnect").filter(|c| c.is_object()) {
-            self.forwards.close(&Self::local_id(c["peer"].as_str().unwrap_or_default(), c["service"].as_str().unwrap_or_default()));
-        } else if let Some(c) = b.get("console").filter(|c| c.is_object()) {
-            let consoles = self.consoles.as_ref().ok_or("console indisponible (pas de clé ~/.ssh/id_ed25519)")?;
-            let peer = c["peer"].as_str().unwrap_or_default();
-            let id = Self::local_id(peer, "ssh");
-            let (_, addr, until) = self.forwards.list(now()).into_iter().find(|o| o.0 == id).ok_or("ouvrez d'abord l'accès (Se connecter)")?;
-            return Ok(json!({ "ticket": consoles.ticket(addr, c["user"].as_str().unwrap_or(""), peer, until)? }));
         } else {
-            return Err("action attendue : follow, unfollow, connect, disconnect ou console".into());
+            return Err("action attendue : follow ou unfollow (les accès aux services : astroportd tunnel connect, en ligne de commande)".into());
         }
         self.view().await
-    }
-
-    /// `peer` est la station d'un Capitaine ami réciproque (on n'ouvre d'accès que vers eux depuis cet écran).
-    async fn friend_peer(&self, peer: &str) -> Result<(), String> {
-        let (_, caps) = self.list().await?;
-        if caps.iter().any(|c| c.i_follow && c.follows_me && c.peer.as_deref() == Some(peer)) {
-            Ok(())
-        } else {
-            Err("cette station n'est pas celle d'un Capitaine ami réciproque".into())
-        }
     }
 }

@@ -92,6 +92,9 @@ impl<B: BlobStore> CoopApi for CoopBackend<B> {
     async fn billet_fund(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
         self.billet_call("fund", who, body).await
     }
+    async fn billet_delete(&self, who: &Principal, body: Value) -> Result<Value, ApiError> {
+        self.billet_call("delete", who, body).await
+    }
     async fn billet_issued(&self, who: &Principal) -> Result<Value, ApiError> {
         self.billet_call("issued", who, Value::Null).await
     }

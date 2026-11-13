@@ -74,7 +74,7 @@ details.tech[open] summary{color:var(--acc)}
 <a class="skip" href="#contenu">Aller au contenu</a>
 <header class="top">
 <p class="crumbs"><a href="index.html">Accueil</a></p>
-<p><span class="badge">Préversion 1.2.0</span> <span class="badge">AGPL-3.0</span></p>
+<p><span class="badge">Préversion 1.3.0</span> <span class="badge">AGPL-3.0</span></p>
 <h1>Guide du Capitaine</h1>
 <p class="lead">Vous ouvrez une station pour votre famille, votre association ou votre village. La partie 1 vous mène, en neuf étapes, jusqu'à une station qui tourne. Les suivantes se lisent selon vos besoins : ce que vous offrez à vos membres, où va l'argent, comment vous relier aux autres Capitaines.</p>
 <p class="lead2">Chaque étape se fait au <strong>terminal</strong> ou, quand c'est possible, au <strong>navigateur</strong>. Les détails techniques sont repliés : dépliez-les quand vous en avez besoin.</p>
@@ -83,6 +83,79 @@ details.tech[open] summary{color:var(--acc)}
 <main id="contenu" tabindex="-1">
 <section id="partie-1" class="part" aria-labelledby="h-0"><h2 id="h-0"><span class="pn">Partie 1</span> Mettre la station en service</h2>
 <p>Neuf étapes, à suivre dans l'ordre. À la fin, votre station tourne, vous avez votre compte de Capitaine, et le cockpit vous dit d'un regard ce qui demande votre attention.</p>
+<p><strong>Terminal puis navigateur.</strong> Les étapes 1 à 5 se font au terminal : on installe un programme et on lui donne une clé secrète, qui ne doit jamais passer par un navigateur. Le navigateur prend le relais à l'étape 6, dès que la station tourne (page <code>/welcome</code>).</p>
+<p><strong>Où est quoi.</strong></p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Adresse</th>
+<th>À quoi elle sert</th>
+<th>Pour qui</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>astroport.one</code></td>
+<td>Le logiciel libre : télécharger, lire la documentation, ouvrir sa station</td>
+<td>Futurs Capitaines, curieux</td>
+</tr>
+<tr>
+<td><code>map.astroport.one</code></td>
+<td>La carte des stations : trouver celle qui a de la place près de chez soi</td>
+<td>Futurs membres</td>
+</tr>
+<tr>
+<td><code>qo-op.com</code></td>
+<td>Le portail de la coopérative : adhésion, soutien, offres d'hébergement et d'accompagnement</td>
+<td>Sociétaires, partenaires</td>
+</tr>
+<tr>
+<td><code>votre-station.exemple.org</code></td>
+<td>Votre station : l'application de vos membres (photos, proches, messages, compte) et votre cockpit</td>
+<td>Vos membres et vous</td>
+</tr>
+</tbody>
+</table></div>
+<p>Une station n'est pas un portail : ne faites pas pointer le nom de la coopérative sur l'écran de connexion d'une seule station.</p>
+<p><strong>Les mots du guide, en clair.</strong></p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Mot du guide</th>
+<th>Ce que cela veut dire</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Y-Level</td>
+<td>L'identité de la station : une seule clé secrète d'où viennent ses clés SSH, IPFS, Ğ1 et Nostr</td>
+</tr>
+<tr>
+<td>ORIGIN</td>
+<td>Le réseau ouvert, pour découvrir et tester</td>
+</tr>
+<tr>
+<td>ẐEN</td>
+<td>Le réseau privé de la coopérative, sur invitation (clé <code>swarm.key</code>)</td>
+</tr>
+<tr>
+<td>Certification DRAGON</td>
+<td>Le parrainage par un Capitaine du réseau privé</td>
+</tr>
+<tr>
+<td>MULTIPASS</td>
+<td>Le compte d'un membre, avec son code PASS</td>
+</tr>
+<tr>
+<td>Clé de secours</td>
+<td>Une clé en trois morceaux, deux suffisent : un QR imprimé, la station, des amis</td>
+</tr>
+<tr>
+<td>PAF</td>
+<td>Les frais de fonctionnement de la machine (électricité, matériel)</td>
+</tr>
+</tbody>
+</table></div>
 </section>
 <section id="etape-0" aria-labelledby="h-1">
 <h2 id="h-1"><span class="num" aria-hidden="true">1</span> Avant de commencer</h2>
@@ -106,7 +179,7 @@ date       # l'année doit être 2026 ou plus
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p>Il vous faut un navigateur récent (Firefox, Chrome, Safari…). L'interface de la station est une application web : elle s'installe aussi comme une application sur téléphone.</p>
-<div class="box note"><p><span class="lbl">À savoir</span> astroportd est en <strong>version 1.2.0</strong> : il est testé de bout en bout, et les anciens formats d'Astroport.ONE ne sont plus repris (voir les notes de version). Gardez une sauvegarde de vos clés.</p></div>
+<div class="box note"><p><span class="lbl">À savoir</span> astroportd est en <strong>version 1.3.0</strong> : il est testé de bout en bout, et les anciens formats d'Astroport.ONE ne sont plus repris (voir les notes de version). Gardez une sauvegarde de vos clés.</p></div>
 <p>Vous aurez aussi besoin d'un compte <strong>MULTIPASS</strong> (votre identité Nostr) : astroportd le crée pour vous à l'<a href="#etape-5">étape 6</a>.</p>
 </div>
 </div>
@@ -119,7 +192,7 @@ date       # l'année doit être 2026 ou plus
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <div class="code"><pre><code>curl -fsSL https://raw.githubusercontent.com/papiche/astroportd/main/install.sh | bash
 </code></pre></div>
-<p>Options utiles : <code>--version v1.2.0</code>, <code>--static</code> (binaire statique, x86_64 et aarch64 : l'installeur le choisit seul si la glibc de la machine est plus ancienne que la 2.35, et s'arrête net si le binaire ne démarre pas), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>.</p>
+<p>Options utiles : <code>--version v1.3.0</code>, <code>--static</code> (binaire statique, x86_64 et aarch64 : l'installeur le choisit seul si la glibc de la machine est plus ancienne que la 2.35, et s'arrête net si le binaire ne démarre pas), <code>--prefix DIR</code>, <code>--no-init</code>, <code>--yes</code>.</p>
 <p><strong>Plugins</strong> : à la fin, l'installeur propose de les présenter (<code>install-plugins.sh</code> : <code>git clone</code> du dépôt <code>astroportd-plugins</code>, puis l'<code>install.sh</code> de chacun : films et musique, énergie, DNSLink). Pour y revenir : <code>curl -fsSL https://raw.githubusercontent.com/papiche/astroportd-plugins/main/install-plugins.sh | bash</code>.</p>
 <p><strong>Mettre à jour</strong> : relancez simplement le même <code>install.sh</code>. Il montre l'installation en place (version, constellation, domaine, Capitaine, service), installe la nouvelle version, garde vos modèles et votre station, puis redémarre le service. Il ne relance jamais <code>init</code>, qui changerait l'identité de la station. <code>--force</code> réinstalle la même version.</p>
 <p>Ensuite :</p>
@@ -243,7 +316,7 @@ astroportd ylevel --verify   # code de sortie 1 si ça ne correspond pas
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <p>Il n'y a <strong>volontairement pas d'écran web</strong> pour cette étape : une clé privée ne doit jamais passer par un navigateur.</p>
-<p>Une fois la station démarrée (<a href="#etape-4">étape 5</a>), l'écran <em>Station</em> de l'interface web montre l'identité IPFS de votre station.</p>
+<p>Une fois la station démarrée (<a href="#etape-4">étape 5</a>), <em>Ma station › Santé › Détails techniques</em> dans l'interface web montre l'identité IPFS (PeerID) de votre station.</p>
 </div>
 </div>
 </section>
@@ -330,10 +403,10 @@ astroportd init --mode zen --swarm-key ./swarm.key
 <div class="box note"><p><span class="lbl">À savoir</span> Fonder sa constellation crée un <strong>réseau privé</strong> dont vous fixez les règles. La valeur « 1 Ẑen = 1 € » est celle de la coopérative UPlanet ẐEN ; elle ne s'applique pas toute seule à une constellation que vous créez.</p></div>
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
-<p><strong>ORIGIN</strong> — <a href="https://qo-op.com">qo-op.com</a> reste une <strong>option</strong> : c'est une station ORIGIN publique où l'on peut s'inscrire. Ce n'est pas une obligation : sur votre propre station, vous créez vos MULTIPASS vous-même (<a href="#etape-5">étape 6</a>).</p>
+<p><strong>ORIGIN</strong> — pour s'inscrire sur une station ORIGIN publique sans installer quoi que ce soit, choisissez-en une sur la carte <a href="https://map.astroport.one">map.astroport.one</a>. Ce n'est pas une obligation : sur votre propre station, vous créez vos MULTIPASS vous-même (<a href="#etape-5">étape 6</a>). Le portail <a href="https://qo-op.com">qo-op.com</a> est celui de la coopérative (adhésion, soutien, offres d'hébergement), pas une station.</p>
 <p><strong>ẐEN</strong> — pour passer d'ORIGIN à ẐEN, la voie habituelle est la certification DRAGON, puis la réception de la <code>swarm.key</code>. Informations : le dépôt <a href="https://github.com/papiche/Astroport.ONE">Astroport.ONE</a> et support@qo-op.com.</p>
 <div class="box note"><p><span class="lbl">À savoir</span> Une commande <code>astroportd serve</code> sert <strong>une</strong> constellation (une <code>swarm.key</code>, ou aucune). Pour raccorder <strong>la même station</strong> à ORIGIN <strong>et</strong> à une ou plusieurs UPlanet ẐEN, on utilise <code>astroportd planes</code> (voir <a href="#etape-8bis-i">Plusieurs UPlanet dans un seul processus</a>) : un seul processus, la <strong>même identité Y-Level</strong> (même <code>IPFSNODEID</code>), et pour chaque <em>plan</em> sa base, son dossier de comptes, son <strong>réseau P2P privé</strong> (sa <code>swarm.key</code>) et son port. Chaque MULTIPASS est rattaché à un plan et rien ne passe d'un plan à l'autre sans votre accord.</p></div>
-<p>Le <strong>premier</strong> choix (ORIGIN ou ẐEN) se fait au terminal avec <code>astroportd init</code> : il engage une clé secrète. Ensuite, <strong>ajouter</strong> une UPlanet à une station existante (la fonder, ou la rejoindre avec une <code>swarm.key</code> reçue) se fait aussi dans l'interface web, écran <em>Station › Constellations</em> (voir <a href="#etape-8bis-i">Plusieurs UPlanet dans un seul processus</a>).</p>
+<p>Le <strong>premier</strong> choix (ORIGIN ou ẐEN) se fait au terminal avec <code>astroportd init</code> : il engage une clé secrète. Ensuite, <strong>ajouter</strong> une UPlanet à une station existante (la fonder, ou la rejoindre avec une <code>swarm.key</code> reçue) se fait aussi dans l'interface web, écran <em>Ma station › Réseau › Constellations</em> (voir <a href="#etape-8bis-i">Plusieurs UPlanet dans un seul processus</a>).</p>
 </div>
 </div>
 </section>
@@ -421,7 +494,7 @@ systemctl --user enable --now astroportd
 loginctl enable-linger &quot;$USER&quot;   # démarrer au boot sans session ouverte
 journalctl --user -u astroportd -f   # suivre les journaux
 </code></pre></div>
-<p><code>init --systemd</code> choisit seul le mode : si <code>planes.json</code> existe (station à plusieurs UPlanet), l'unité lance <code>astroportd planes</code>, sinon <code>astroportd serve</code>. <code>--systemd-mode serve|planes</code> impose l'un ou l'autre ; <code>planes</code> est refusé, sans rien écrire, si <code>planes.json</code> est absent ou invalide. Quand vous ajoutez un plan avec <code>astroportd plane-setup add</code>, une unité qui lance encore <code>serve</code> est <strong>basculée sur <code>planes</code></strong> (seules <code>ExecStart</code> et <code>Description</code> changent, l'ancienne unité est gardée à côté en <code>astroportd.service.bak-&lt;date&gt;</code> et les options propres à la station, comme <code>--lat</code>, passent dans <code>args</code> du plan ORIGIN). Le service n'est pas redémarré pour vous : <code>systemctl --user daemon-reload &amp;&amp; systemctl --user restart astroportd</code>. L'ajout d'une constellation depuis l'interface fait la même bascule, et le bouton <em>Basculer le service en multi-constellations</em> (confirmé par un second clic) la fait à la demande ; seule une unité qui lance <code>astroportd serve</code> est réécrite. Dans l'interface, l'écran <em>Station › Constellations</em> dit ce que lance l'unité : si elle lance encore <code>serve</code> alors que plusieurs constellations sont configurées, il l'annonce avec la commande à lui donner ; quand elle lance <code>planes</code>, le bouton <em>Redémarrer la station</em> (confirmé par un second clic) exécute <code>daemon-reload</code> puis le redémarrage.</p>
+<p><code>init --systemd</code> choisit seul le mode : si <code>planes.json</code> existe (station à plusieurs UPlanet), l'unité lance <code>astroportd planes</code>, sinon <code>astroportd serve</code>. <code>--systemd-mode serve|planes</code> impose l'un ou l'autre ; <code>planes</code> est refusé, sans rien écrire, si <code>planes.json</code> est absent ou invalide. Quand vous ajoutez un plan avec <code>astroportd plane-setup add</code>, une unité qui lance encore <code>serve</code> est <strong>basculée sur <code>planes</code></strong> (seules <code>ExecStart</code> et <code>Description</code> changent, l'ancienne unité est gardée à côté en <code>astroportd.service.bak-&lt;date&gt;</code> et les options propres à la station, comme <code>--lat</code>, passent dans <code>args</code> du plan ORIGIN). Le service n'est pas redémarré pour vous : <code>systemctl --user daemon-reload &amp;&amp; systemctl --user restart astroportd</code>. L'ajout d'une constellation depuis l'interface fait la même bascule, et le bouton <em>Basculer le service en multi-constellations</em> (confirmé par un second clic) la fait à la demande ; seule une unité qui lance <code>astroportd serve</code> est réécrite. Dans l'interface, l'écran <em>Ma station › Réseau › Constellations</em> dit ce que lance l'unité : si elle lance encore <code>serve</code> alors que plusieurs constellations sont configurées, il l'annonce avec la commande à lui donner ; quand elle lance <code>planes</code>, le bouton <em>Redémarrer la station</em> (confirmé par un second clic) exécute <code>daemon-reload</code> puis le redémarrage.</p>
 
 <div class="cols one">
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
@@ -522,6 +595,7 @@ astroportd multipass list
 </ol>
 <p>L'inscription web est <strong>ouverte par défaut</strong>, avec des garde-fous réglables au démarrage : <code>--max-accounts N</code> (500 par défaut, <code>0</code> = illimité), <code>--register-per-hour N</code> (5 par adresse IP, <code>0</code> = illimité) et <code>--no-register</code> pour la <strong>fermer</strong>. Un email déjà inscrit est refusé (erreur 409), une adresse invalide aussi (400).</p>
 <div class="box note"><p><span class="lbl">À savoir</span> Sur une station publique, pensez à fermer l'inscription (<code>--no-register</code>) quand vos membres sont inscrits.</p></div>
+<p><strong>Pour vos membres.</strong> Remettez à chaque nouveau membre la <a href="BIENVENUE.html">fiche de bienvenue</a> avec son lien d'invitation : connexion, code PASS, clé de secours et premiers pas, en mots simples.</p>
 </div>
 </div>
 </section>
@@ -548,7 +622,7 @@ curl http://127.0.0.1:8090/health
 </section>
 <section id="etape-7" aria-labelledby="h-8">
 <h2 id="h-8"><span class="num" aria-hidden="true">8</span> Entrer dans l'interface web</h2>
-<p>L'application web s'ouvre sur l'<strong>Accueil</strong> : trois gestes (<strong>Mes photos</strong>, <strong>Mes proches</strong>, <strong>Mon assistant</strong> — ou <strong>Mon smartphone</strong> quand il n'y a pas d'assistant) et une liste <strong>Bien démarrer</strong>. Les autres écrans : <strong>Station</strong> (réservé au Capitaine, voir l'<a href="#etape-7b">étape 9</a>), <strong>uCloud</strong>, <strong>Personnes</strong> (le carnet d'adresses et les visages réunis), <strong>Messages</strong>, <strong>Réplication</strong> et <strong>Mon compte</strong>.</p>
+<p>L'application web s'ouvre sur l'<strong>Accueil</strong> : trois gestes (<strong>Mes photos</strong>, <strong>Mes proches</strong>, <strong>Mon assistant</strong> — ou <strong>Mon smartphone</strong> quand il n'y a pas d'assistant) et une liste <strong>Bien démarrer</strong>. La barre du bas a quatre onglets : <strong>Accueil</strong>, <strong>Fichiers</strong> (dossiers et photos), <strong>Proches</strong> (carnet, visages et conversations) et <strong>Moi</strong> (compte, argent, sauvegarde). Le Capitaine a en plus un bouton <strong>Ma station</strong> en haut à droite, qui ouvre son espace d'administration (voir l'<a href="#etape-7b">étape 9</a>).</p>
 <p>Pour s'y connecter, il faut un compte hébergé par la station (<a href="#etape-5">étape 6</a>) et son <strong>jeton</strong>.</p>
 <figure><svg xmlns="http://www.w3.org/2000/svg" class="ill" viewBox="0 0 520 460" role="img" aria-labelledby="mpe-t mpe-d" width="520" height="460">
 <title id="mpe-t">Schéma de l&#x27;écran MULTIPASS</title>
@@ -607,7 +681,7 @@ curl http://127.0.0.1:8090/health
 <li>Ouvrez la station dans votre navigateur.</li>
 <li>Une fenêtre <strong>Connexion</strong> s'affiche : saisissez votre email (ou votre clé) et le jeton.</li>
 <li>L'<strong>Accueil</strong> vous propose d'envoyer vos premières photos, de <strong>synchroniser votre smartphone</strong> (photos, contacts, agenda : on quitte Google et Apple), de reconnaître un visage, de retrouver un proche, de mettre vos fichiers à l'abri chez un ami. Les étapes se cochent toutes seules ; la liste disparaît quand tout est fait. Une alerte n'apparaît que si votre espace dépasse 90 %.</li>
-<li>En bas de l'accueil, <strong>Mes chiffres</strong> montre votre solde en Ẑen, votre autonomie, votre empreinte sur les communs, vos fichiers chiffrés, et deux cartes distinctes : <strong>Ẑen Opex</strong> (ce que vous dépensez : loyer) et <strong>Ẑen Capex</strong> (ce que vous possédez : parts de matériel, avec leur amortissement).</li>
+<li><strong>Moi › Mon argent</strong> montre votre solde en Ẑen, la durée que couvre ce solde, votre espace utilisé, vos dépenses des 28 jours (le loyer) et vos parts de matériel (ce que vous possédez, avec leur amortissement).</li>
 </ol>
 <figure><img src="img/ui-accueil.png" alt="L'Accueil d'un membre : trois gestes (photos, proches, assistant ou smartphone) et la liste « Bien démarrer »." loading="lazy" decoding="async"><figcaption>L'Accueil d'un membre : trois gestes (photos, proches, assistant ou smartphone) et la liste « Bien démarrer ».</figcaption></figure>
 <p>Sur un téléphone, installez la page comme application (menu du navigateur : <em>Ajouter à l'écran d'accueil</em>).</p>
@@ -617,7 +691,7 @@ curl http://127.0.0.1:8090/health
 </section>
 <section id="etape-7b" aria-labelledby="h-9">
 <h2 id="h-9"><span class="num" aria-hidden="true">9</span> Le cockpit du Capitaine</h2>
-<p>Dans l'application web, l'écran <strong>Station</strong> est le <strong>cockpit</strong> : tout ce qu'un Capitaine doit voir, d'un seul regard.</p>
+<p>Dans l'application web, le bouton <strong>Ma station</strong> ouvre l'espace du Capitaine, avec quatre onglets : <strong>Santé</strong>, <strong>Membres</strong>, <strong>Réseau</strong> et <strong>Économie</strong>. <strong>Santé</strong> est le <strong>cockpit</strong> : tout ce qu'un Capitaine doit voir, d'un seul regard. <strong>Mon espace</strong> (même bouton) ramène à l'application des membres.</p>
 
 <div class="cols one">
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
@@ -627,7 +701,7 @@ curl http://127.0.0.1:8090/health
 <li>Sur une station neuve, <strong>Mettre la station en service</strong> : nom de domaine, maillage P2P, autres stations vues, adresses de la coopérative, premier membre invité. Les étapes se cochent d'après l'état réel.</li>
 <li><strong>Les étages de la station</strong>, chacun avec son voyant : Machine, Station, Constellation, Services et accès, Membres, Économie.</li>
 <li><strong>L'essaim</strong> : une carte par station (Power-Score, distance, en ligne ou vue, services partagés) et le nombre de <em>Brains</em> qui offrent Ollama.</li>
-<li>La page se met à jour toute seule toutes les 30 secondes. Les écrans détaillés restent à un clic (<em>Détails techniques</em>).</li>
+<li>La page se met à jour toute seule toutes les 30 secondes. Les écrans détaillés restent à un clic : <em>Détails techniques</em> (nœud, relais, sous-systèmes), <strong>Membres</strong> (comptes, jeton de secours, hébergement), <strong>Réseau</strong> (essaim, constellations, réglages) et <strong>Économie</strong>.</li>
 </ol>
 <figure><img src="img/ui-cockpit.png" alt="Le cockpit d'une station neuve : verdict, À faire, mise en service, étages et essaim." loading="lazy" decoding="async"><figcaption>Le cockpit d'une station neuve : verdict, À faire, mise en service, étages et essaim.</figcaption></figure>
 </div>
@@ -707,7 +781,7 @@ astroportd serve ... --embed-threads 2                     # limite les fils de 
 </code></pre></div>
 <p>Les deux fichiers sont <code>bge-m3-int8.onnx</code> (≈ 540 Mo) et <code>bge-m3-tokenizer.json</code> (≈ 16 Mo), dans <code>~/.zen/astroportd/models</code> : l'installeur les met en place (profils <em>standard</em> et <em>confort</em>), vérifiés par SHA-256. Ils viennent de <code>Xenova/bge-m3</code> (licence MIT). Sans option, <code>serve</code> les utilise <strong>tout seul</strong> quand ils sont présents (et que <code>libonnxruntime</code> est trouvée) ; sinon Ollama reste le moteur, et si les fichiers sont là mais inutilisables, la station le dit à l'écran avant de se rabattre sur Ollama. Ce sont les mêmes 1024 dimensions que celles d'Ollama, et le calcul reproduit exactement celui d'<code>onnxruntime</code> sur ce même fichier (cosinus 1,000). <strong>Attention</strong> : le fichier est <em>quantifié</em> (int8) alors qu'Ollama sert une autre version du modèle ; leurs vecteurs sont très proches mais <strong>non identiques</strong>, et cet écart n'a pas été mesuré. Sur une mémoire déjà indexée par Ollama, gardez le même moteur ou ré-indexez avant de changer.</p>
 <p>Ordres de grandeur sur un PC de bureau à 12 cœurs : chargement ≈ 2 s au démarrage, environ 20 ms pour une phrase courte et 170 ms pour 200 jetons (≈ 150 mots), <strong>≈ 1,3 Go de mémoire au pic</strong>. Ollama reste nécessaire pour les <strong>résumés</strong> du cycle RÊVE ; seuls les vecteurs sont calculés en local. Le binaire statique (musl) n'a pas cette fonction.</p></details>
-<p>L'écran <strong>Personnes</strong> réunit le carnet d'adresses et les visages : <strong>une personne est une fiche de contact</strong>. En tête, le sas <strong>« N visages à ranger »</strong> propose <strong>Trier en grand</strong> (plein écran, une question à la fois : « Ces 3 visages sont-ils Léa ? » Oui / Non, puis « Qui est-ce ? » ; la photo entière s'affiche, le visage entouré ; raccourcis O, N, Espace, Échap) et la <strong>table de tri</strong> pour les gestes en masse. Chaque fiche montre ses visages ; un clic ouvre la photo d'origine, le visage entouré. Si plusieurs fiches portent le nom tapé, l'interface demande laquelle (ou « une nouvelle personne ») : elle ne devine jamais.</p>
+<p>L'onglet <strong>Proches</strong> réunit le carnet d'adresses, les visages et les conversations (sous-onglets <strong>Carnet</strong> et <strong>Conversations</strong>) : <strong>une personne est une fiche de contact</strong>. En tête, le sas <strong>« N visages à ranger »</strong> propose <strong>Trier en grand</strong> (plein écran, une question à la fois : « Ces 3 visages sont-ils Léa ? » Oui / Non, puis « Qui est-ce ? » ; la photo entière s'affiche, le visage entouré ; raccourcis O, N, Espace, Échap) et la <strong>table de tri</strong> pour les gestes en masse. Chaque fiche montre ses visages ; un clic ouvre la photo d'origine, le visage entouré. Si plusieurs fiches portent le nom tapé, l'interface demande laquelle (ou « une nouvelle personne ») : elle ne devine jamais.</p>
 <p>La <strong>table de tri</strong> (<code>#/people/tri</code>) montre les visages sur une table lumineuse : chaque pastille est un visage, les visages inconnus qui se ressemblent sont regroupés en grappes, et on les <strong>glisse</strong> sur la pochette d'une personne (ou au lasso, ou avec la barre d'actions au clavier). Les vignettes sont recadrées par la station ; les empreintes ne quittent jamais la station.</p>
 <p>Déposez vos photos par WebDAV, par exemple avec <code>curl</code> :</p>
 <div class="code"><pre><code>curl -u vous@exemple.org:JETON -T photo.jpg https://votre-domaine/dav/Photos/photo.jpg
@@ -715,7 +789,7 @@ astroportd serve ... --embed-threads 2                     # limite les fils de 
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <ol>
-<li>Écran <strong>uCloud</strong> → bouton <strong>Album</strong> : vos photos, de la plus récente à la plus ancienne.</li>
+<li>Onglet <strong>Fichiers › Photos</strong> : vos photos, de la plus récente à la plus ancienne.</li>
 <li>Écran <strong>Visages &amp; BRO</strong> : les visages détectés. Un visage reconnu à plus de 82 % porte son nom ; entre 55 % et 82 %, la station demande « est-ce X ? » : vous acceptez ou vous nommez vous-même.</li>
 <li>Entre amis N¹ réciproques, les photos sont copiées dans <code>/Partages/De_&lt;nom&gt;/</code> chez l'ami (même station), ou lui sont envoyées chiffrées (autre station).</li>
 <li>Pour partager avec quelqu'un d'autre (cercle N², invités) : ouvrez une photo, bouton <strong>Partager</strong> → <strong>Lien magique</strong>. Durée de 1 heure à 30 jours (72 h par défaut). Envoyez le lien tel quel : la clé de déchiffrement est après le <code>#</code> et ne quitte <strong>jamais</strong> votre navigateur ni celui de l'invité.</li>
@@ -741,7 +815,7 @@ media-add S01E03.mkv --type episode --series &quot;Ma Série&quot; --season 1 --
 <section id="etape-8quater" aria-labelledby="h-12">
 <h2 id="h-12">Inviter quelqu'un à recevoir des photos</h2>
 <p>C'est la meilleure façon de faire entrer quelqu'un : vous lui envoyez les photos où il apparaît, il crée son compte pour les recevoir, et vous voilà amis sur la station. Aucune adresse email à demander, aucun formulaire à remplir pour vous.</p>
-<p>Pour envoyer des photos à une personne qui n'a pas encore de MULTIPASS : écran <strong>Personnes → Synchroniser et inviter → Inviter</strong> (sur une fiche, ou sur une personne reconnue sans fiche : la fiche est alors créée d'abord). La station retient la liste des photos où cette personne apparaît (200 au plus) et rend un <strong>lien</strong> <code>https://&lt;station&gt;/i/&lt;jeton&gt;</code> avec son <strong>QR code</strong>, à envoyer par le moyen de votre choix (le bouton <em>Partager</em> ouvre le menu de partage du téléphone).</p>
+<p>Pour envoyer des photos à une personne qui n'a pas encore de MULTIPASS : <strong>Proches › Synchroniser et inviter → Inviter</strong> (sur une fiche, ou sur une personne reconnue sans fiche : la fiche est alors créée d'abord). La station retient la liste des photos où cette personne apparaît (200 au plus) et rend un <strong>lien</strong> <code>https://&lt;station&gt;/i/&lt;jeton&gt;</code> avec son <strong>QR code</strong>, à envoyer par le moyen de votre choix (le bouton <em>Partager</em> ouvre le menu de partage du téléphone).</p>
 <p>Ce que voit la personne, sans compte : qui l'invite, combien de fichiers, de petites vignettes <strong>floutées</strong> (16 pixels de côté : on reconnaît une scène, pas un visage). Elle saisit <strong>son</strong> adresse email ; la station crée alors son MULTIPASS, lui remet ses identifiants une seule fois, la rend <strong>Proche réciproque</strong> de l'expéditeur (chacun suit l'autre, listes de contacts signées par chacune des deux clés et publiées), range les photos dans <code>/Partages/De_&lt;expéditeur&gt;/</code> (même blob chiffré, même clé : aucune copie) et <strong>relie la fiche de contact</strong> à son nouveau MULTIPASS. Les autres photos où elle apparaît lui sont partagées aussitôt, comme pour tout Proche relié.</p>
 <p>Garde-fous :</p>
 <ul>
@@ -789,7 +863,7 @@ media-add S01E03.mkv --type episode --series &quot;Ma Série&quot; --season 1 --
 <tr>
 <td>PASS oublié, station en marche</td>
 <td>station + Capitaine</td>
-<td>Il demande un code de secours au Capitaine (cockpit : <em>Débloquer</em>, ou écran Station : <em>Jeton de secours</em>). Rien n'est perdu.</td>
+<td>Il demande un code de secours au Capitaine (cockpit : <em>Débloquer</em>, ou <em>Ma station › Membres</em> : <em>Jeton</em>). Rien n'est perdu.</td>
 </tr>
 <tr>
 <td>Carte imprimée perdue</td>
@@ -851,7 +925,7 @@ astroportd multipass recover - --relay wss://relais.ami.example &lt; parts.txt
 </section>
 <section id="etape-8bis-j" aria-labelledby="h-15">
 <h2 id="h-15">Messages privés, et une personne dans plusieurs UPlanet</h2>
-<p><strong>Messages</strong> : des conversations privées, de personne à personne, que seuls les deux interlocuteurs peuvent lire.</p>
+<p><strong>Messages</strong> (onglet <strong>Proches › Conversations</strong>) : des conversations privées, de personne à personne, que seuls les deux interlocuteurs peuvent lire.</p>
 <details class="tech"><summary>Détails techniques</summary><p><strong>Comment ça marche</strong> (<code>#/chat</code>) : conversations 1 à 1 chiffrées (NIP-17 : message kind 14, scellé kind 13, enveloppe kind 1059). La station ouvre toutes les 3 s les enveloppes nouvelles de chaque MULTIPASS hébergé (repère <code>seq</code> dans <code>kv</code>, car NIP-59 brouille les dates) et range les messages déchiffrés dans <code>chat_messages</code> (état local). API : <code>GET /api/v1/chat</code>, <code>GET /api/v1/chat/messages?peer=</code>, <code>POST /api/v1/chat/send</code>, <code>POST /api/v1/chat/read</code>.</p></details>
 <details class="tech"><summary>Détails techniques</summary><p><strong>Une personne, plusieurs UPlanet.</strong> Le MULTIPASS d'une personne a une clé différente dans chaque UPlanet : on ne peut pas la déduire de son email. La station la retrouve de deux façons :</p>
 <ol>
@@ -863,10 +937,10 @@ astroportd multipass recover - --relay wss://relais.ami.example &lt; parts.txt
 </section>
 <section id="visio" aria-labelledby="h-16">
 <h2 id="h-16">Appeler en visio</h2>
-<p>Dans <strong>Messages</strong>, le bouton 📹 en haut d'une conversation appelle votre proche en visio ; la fiche d'une personne reliée à un MULTIPASS (écran <strong>Personnes</strong>) a aussi son bouton <em>Appeler en visio</em>. Chez votre proche, une carte <strong>« Léa vous appelle »</strong> apparaît sur n'importe quel écran, avec une sonnerie et une vibration : <em>Décrocher</em> ou <em>Refuser</em>. Pendant l'appel : <em>Micro</em>, <em>Caméra</em>, <em>Raccrocher</em>. Un appel sans réponse laisse <strong>« 📹 Appel manqué »</strong> dans la conversation, avec un bouton <em>Rappeler</em>.</p>
+<p>Dans <strong>Proches › Conversations</strong>, le bouton 📹 en haut d'une conversation appelle votre proche en visio ; la fiche d'une personne reliée à un MULTIPASS (<strong>Proches › Carnet</strong>) a, côte à côte, ses boutons <em>Écrire</em> et <em>Appeler</em>. Chez votre proche, une carte <strong>« Léa vous appelle »</strong> apparaît sur n'importe quel écran, avec une sonnerie et une vibration : <em>Décrocher</em> ou <em>Refuser</em>. Pendant l'appel : <em>Micro</em>, <em>Caméra</em>, <em>Raccrocher</em>. Un appel sans réponse laisse <strong>« 📹 Appel manqué »</strong> dans la conversation, avec un bouton <em>Rappeler</em>.</p>
 <ul>
 <li>
-<p><strong>Qui est là</strong> : dans <strong>Mon compte → Visio</strong>, cochez <em>Être joignable en visio</em>. Vos amis réciproques voient alors une pastille sur votre avatar dans Messages (« en ligne », ou « en appel » en rouge), tant qu'une page Astroport est ouverte chez vous. Personne d'autre ne la voit, et rien n'est gardé.</p>
+<p><strong>Qui est là</strong> : dans <strong>Mon compte → Visio</strong>, cochez <em>Être joignable en visio</em>. Vos amis réciproques voient alors une pastille sur votre avatar dans Conversations (« en ligne », ou « en appel » en rouge), tant qu'une page Astroport est ouverte chez vous. Personne d'autre ne la voit, et rien n'est gardé.</p>
 </li>
 <li>
 <p><strong>Plusieurs écrans</strong> : si la station est ouverte sur votre téléphone et votre ordinateur, tous sonnent ; décrochez sur l'un, les autres s'arrêtent (« Appel pris sur un autre écran »).</p>
@@ -1085,7 +1159,7 @@ astroportd serve --db ~/.zen/astroportd/uplanet.db --blobs ~/.zen/astroportd/blo
 <section id="etape-8bis-g" aria-labelledby="h-25">
 <h2 id="h-25">Hébergement facturé et partage de la semaine</h2>
 <p>Ce que vous demandez à vos membres, et comment la station le répartit chaque semaine, sans que vous ayez rien à faire à la main.</p>
-<p>Le Capitaine fixe, par MULTIPASS hébergé, un <strong>quota</strong> et un <strong>prix hebdomadaire en ẑ</strong> (Station › Comptes hébergés › <em>Hébergement</em>), et un <strong>palier par défaut</strong> pour les autres. Sans réglage, tout est gratuit.</p>
+<p>Le Capitaine fixe, par MULTIPASS hébergé, un <strong>quota</strong> et un <strong>prix hebdomadaire en ẑ</strong> (<em>Ma station › Membres › Hébergement</em>), et un <strong>palier par défaut</strong> pour les autres. Sans réglage, tout est gratuit.</p>
 <ol>
 <li><strong>Prélèvement</strong> : la machine d'états du cycle de vie décide ; tous les 7 jours depuis le dernier prélèvement réussi, le prix part du MULTIPASS sur la Ğ1 vers le <strong>compte technique d'hébergement</strong> (<code>&lt;UPLANETNAME&gt;.HOSTING.&lt;PeerID du NODE&gt;</code> : indépendant de l'email du Capitaine). Un prix tout juste fixé ne débite que dans une semaine. Solde insuffisant : <em>période de grâce</em> de 7 jours puis <em>suspension</em> — un <strong>statut et un message</strong>, jamais une coupure du service, jamais une suppression.</li>
 <li><strong>Règlement hebdomadaire</strong> (avec <code>--weekly-costs</code> = 3×PAF, en centimes de ẑ ; <code>0</code> désactive) : une fois la semaine clôturée à 20h12, si le montant reçu le permet, le compte technique vire 1×PAF au NODE, 2×PAF au MULTIPASS du Capitaine, puis le surplus ventilé par la clôture (<code>IMPOT</code>, prime de 1 %, <code>TREASURY</code>, <code>RND</code>, <code>ASSETS</code>).</li>
@@ -1118,14 +1192,15 @@ curl -s -X POST -H &quot;Authorization: Basic …&quot; -d '{&quot;sha256&quot;:
 <h2 id="h-27">Les Ẑen : alimenter, verser, encaisser les dons</h2>
 <p>Tout part du <strong>Ğ1 maître</strong> (<code>UPLANETNAME_G1</code>) : un Ẑen n'est jamais créé, il est adossé à de la Ğ1 réellement détenue (<strong>1 Ğ1 = 10 Ẑen</strong>). La première transaction reçue par chaque portefeuille de l'UPlanet vient de lui, ce qui dessine la zone économique Ẑen.</p>
 <p><strong>Alimenter la coopérative.</strong> Dans <strong>Ma UPlanet</strong>, la carte <strong>Alimenter la coopérative</strong> (Capitaine) montre l'adresse du Ğ1 maître en entier, son QR code, un bouton <strong>Copier</strong> et son solde. N'importe quel portefeuille Ğ1 (Cesium, Gecko…) peut y virer des Ğ1. Ce n'est pas un compte personnel : ce qu'un membre y envoie est un don à la coopérative.</p>
-<p><strong>Verser des Ẑen à un MULTIPASS</strong>. Bouton <strong>Verser des Ẑen</strong> (Ma UPlanet ou Mes chiffres), réservé au Capitaine, pour son MULTIPASS comme pour ceux des membres hébergés sur la station :</p>
+<p><strong>Verser des Ẑen à un MULTIPASS</strong>. Bouton <strong>Verser des Ẑen</strong> (Ma UPlanet ou Moi › Mon argent), réservé au Capitaine, pour son MULTIPASS comme pour ceux des membres hébergés sur la station :</p>
 <ul>
 <li><strong>Crédit d'usage</strong> : maître → <code>UPLANETNAME</code> → MULTIPASS, avec la référence <code>UPLANET:&lt;8 car.&gt;:ZENCOIN:&lt;email&gt;</code>. Si le MULTIPASS est encore vide, le maître lui avance <strong>d'abord</strong> son 1 Ğ1 d'activation (c'est sa transaction primale : sans elle, la vigilance des portefeuilles le prendrait pour un intrus) ; le récapitulatif le montre à part.</li>
 <li><strong>Part sociale</strong> (satellite, constellation) : maître → <code>SOCIETY</code>, puis 33 % au MULTIPASS, 33 % à R&amp;D, 33 % à ASSETS, le reste au Capitaine. La ZenCard n'est plus une étape de transit.</li>
 </ul>
+<p>Le Capitaine peut aussi <strong>se verser des Ẑen à lui-même</strong> : son MULTIPASS est le premier de la liste des destinataires.</p>
 <p>Garde-fous : <strong>10 000 Ẑen au plus par versement</strong> (plusieurs tranches au-delà), un récapitulatif (destinataire, Ğ1 débitées, solde restant du maître), puis une confirmation en deux clics. Le versement est refusé si le maître ne couvre pas le montant. Chaque versement a un identifiant : s'il s'arrête en route (panne du nœud), le relancer <strong>reprend là où il s'est arrêté</strong> sans payer deux fois. Si l'issue d'un virement est inconnue, il n'est jamais rejoué : vérifiez les soldes dans Ma UPlanet.</p>
 <p><strong>Les dons OpenCollective</strong>. Une fois <code>OCSLUG</code> et <code>OCAPIKEY</code> réglés dans la configuration coopérative, la station lit les contributions du mois toutes les 30 minutes : don simple → crédit d'usage (1 € = 1 Ẑ), palier infrastructure → part sociale, palier labo → portefeuille R&amp;D (paliers réglables : <code>TIER_SLUG_*</code>). Par défaut elle <strong>liste seulement</strong> : la carte <strong>Dons OpenCollective</strong> de Ma UPlanet montre ce qui est à créditer et vous confirmez. Avec <code>OC_AUTO_CREDIT=1</code>, la station crédite seule. Un don est versé au plus une fois ; un don dont le MULTIPASS vit sur une autre station est laissé à cette station ; un don sans adresse e-mail ou de plus de 10 000 Ẑ reste bloqué, visible dans la carte.</p>
-<p><strong>Les mouvements des membres.</strong> Sur <strong>Mes chiffres</strong>, <strong>Envoyer des Ẑen</strong> permet à un membre d'envoyer de son propre solde à la <strong>trésorerie de la coopérative</strong> (CASH) ou à un <strong>proche réciproque</strong> hébergé sur la même station. Mêmes plafond et confirmation ; la station signe avec le portefeuille du membre, et la référence du virement ne porte que des préfixes de clés, jamais une adresse e-mail.</p>
+<p><strong>Les mouvements des membres.</strong> Sur <strong>Moi › Mon argent</strong>, <strong>Envoyer des Ẑen</strong> permet à un membre d'envoyer de son propre solde à la <strong>trésorerie de la coopérative</strong> (CASH) ou à un <strong>proche réciproque</strong> hébergé sur la même station. Mêmes plafond et confirmation ; la station signe avec le portefeuille du membre, et la référence du virement ne porte que des préfixes de clés, jamais une adresse e-mail.</p>
 
 </section>
 <section id="la-paf-de-la-machine-et-les-nouvelles-machines" aria-labelledby="h-28">
@@ -1244,7 +1319,9 @@ curl -s -d '{&quot;parts&quot;:[&quot;&lt;64 hex&gt;&quot;,&quot;&lt;64 hex&gt;&
 <p>L'écran propose : le <strong>nombre de billets</strong> (1 à 6 par planche), la <strong>valeur de chacun en ẑ</strong>, une <strong>durée de validité</strong> (sans limite, 7 jours, 3 mois, 1 an) et l'option <strong>« retour automatique »</strong>. Puis, en deux temps :</p>
 <ol>
 <li><strong>Créer la planche</strong> : la station tire une clé jetable par billet et affiche une <strong>planche A4 paysage de 6 billets</strong> (2 × 3) : le QR <strong>sous le pli</strong> (bande de gauche), le QR <strong>en clair</strong>, le QR <strong>« vérifier »</strong> (lien <code>/scan?g1pub=…</code>), la valeur, l'adresse et la date de fin. Les parts ne s'affichent <strong>qu'une seule fois</strong> : on imprime tout de suite (<code>Imprimer la planche</code>).</li>
-<li><strong>Financer</strong> chaque billet (ou « Tout financer ») : 1 Ğ1 d'activation avancé par <code>UPLANETNAME_G1</code>, puis la valeur, du <strong>portefeuille de l'émetteur</strong>. Chaque billet a son propre appel : un échec n'en touche pas un autre, et on peut rappeler sans rien payer deux fois. Seul l'émetteur d'un billet peut le financer (sinon n'importe qui ferait avancer des Ğ1 gratuits par la coopérative). Un virement refusé pour cause de nonce (« Invalid Transaction (1010) ») est réessayé.</li>
+<li><strong>Financer</strong> chaque billet (ou « Tout financer ») : 1 Ğ1 d'activation avancé par <code>UPLANETNAME_G1</code>, puis la valeur, du <strong>portefeuille de l'émetteur</strong>. Chaque billet a son propre appel : un échec n'en touche pas un autre, et on peut rappeler sans rien payer deux fois. Seul l'émetteur d'un billet peut le financer (sinon n'importe qui ferait avancer des Ğ1 gratuits par la coopérative). Un virement refusé pour cause de nonce (« Invalid Transaction (1010) ») est réessayé.
+<strong>Plier selon le pointillé</strong> : la bande « sous le pli » (26 mm) vient recouvrir le début du billet ; logo, valeur, QR « à scanner », QR « vérifier » et adresse commencent donc <strong>au-delà</strong> de cette bande, et restent lisibles billet plié, pour encaisser sans décoller les deux parties.
+<strong>Supprimer un billet pas encore financé</strong> : bouton « Supprimer » à côté de « Financer » et dans « Mes billets créés » (état <em>pas encore financé</em>, deux clics pour confirmer). La station publie une suppression Nostr (NIP-09, signée par la coopérative qui a signé le témoin) : le billet disparaît de la station et des relais qui suivent la règle. Un billet qui porte de la valeur ne se supprime pas (on l'encaisse, ou il revient à l'émetteur à sa date de fin) ; le dépôt d'activation de 1 Ğ1 qu'il a pu recevoir du maître y reste, la station ne gardant pas sa clé.</li>
 </ol>
 <p><strong>Retour automatique.</strong> Si l'option est choisie, la station garde <strong>P2 et P3, chiffrées pour son NODE seul</strong> (dans le témoin, événement kind 31903 <code>d = billet:&lt;adresse&gt;</code> signé par la coopérative, tags <code>p</code> émetteur, <code>a</code> valeur, <code>u</code> date de fin, <code>r</code> retour). À la date de fin, si le billet n'a pas été encaissé, le porteur est refusé et la station renvoie la valeur au portefeuille de l'émetteur (par le même circuit), <strong>une fois par jour, à 20h12 solaire</strong> (étape « billets » de la nuit ; sans l'orchestrateur de nuit, rien n'est renvoyé). Sans l'option, la station ne garde <strong>aucune part</strong> : elle ne peut pas toucher au billet. Avec elle, la station garde le billet <strong>en dépôt</strong> jusqu'à l'échéance ; sur ORIGIN (clés publiques) ce dépôt n'est protégé que par la clé du NODE.</p>
 <p>Ces billets servent aussi à <strong>remplir le compte d'un MULTIPASS</strong> : le porteur donne son adresse <code>g1…</code> comme destination.</p>
@@ -1257,7 +1334,7 @@ curl -s -d '{&quot;parts&quot;:[&quot;&lt;64 hex&gt;&quot;,&quot;&lt;64 hex&gt;&
 </section>
 <section id="annuaire" aria-labelledby="h-32">
 <h2 id="h-32">Être trouvé : balise et annuaire des stations</h2>
-<p>Un futur membre clique « Rejoindre » sur astroport.one : il est envoyé vers la station la plus proche qui a encore de la place. Pour que ce soit la vôtre, il suffit d'avoir donné la position de la station à <code>astroportd init</code> ; le reste se fait seul.</p>
+<p>Un futur membre ouvre la carte <a href="https://map.astroport.one">map.astroport.one</a> : il choisit une station (la plus proche qui a encore de la place est proposée) et arrive sur sa page d'inscription. Pour que ce soit la vôtre, il suffit d'avoir donné la position de la station à <code>astroportd init</code> ; le reste se fait seul.</p>
 <p>Chaque station publie sa <strong>balise</strong> (événement NOSTR kind 30850, <code>d = economic-health</code>, signé par le NODE) : santé économique de la dernière semaine close, <strong>places libres</strong> (<code>capacity:multipass_used</code> / <code>capacity:multipass_total</code>, <code>register:open</code>), <strong>position arrondie à la case UMAP</strong> (0,01°, ≈ 1 km ; seulement si <code>--lat</code> / <code>--lon</code> sont réglés, ce que demande <code>astroportd init</code>), matériel, prix du MULTIPASS et adresse publique. Les noms de tags sont ceux d'<code>ECONOMY.broadcast.sh</code> : la vue <strong>LIVE</strong> d'astroport.one et <code>heartbox.js</code> la lisent sans changement.</p>
 <details class="tech"><summary>Détails techniques</summary><p>- <strong>Quand</strong> : au démarrage, dès que le nombre de comptes ou l'ouverture des inscriptions change (au plus toutes les 2 minutes), toutes les 6 heures et après la clôture de 20h12.</p>
 <ul>
@@ -1329,16 +1406,16 @@ curl -s -d '{&quot;parts&quot;:[&quot;&lt;64 hex&gt;&quot;,&quot;&lt;64 hex&gt;&
 <div class="cols one">
 <div class="col cli"><h3><span aria-hidden="true">⌨</span> Terminal (CLI)</h3>
 <p><strong>Le maillage est actif par défaut</strong> : sans <code>--p2p-listen</code>, la station écoute sur <code>/ip4/0.0.0.0/tcp/4101</code> (ou le premier port libre après) ; <code>--no-p2p</code> le coupe. Avec <code>astroportd planes</code>, chaque UPlanet reçoit son propre port (4101, 4102…) et son propre réseau privé : une station d'une autre UPlanet ne peut pas être jointe.</p>
-<p>L'écran du Capitaine <strong>Maillage et Capitaines amis</strong> (<code>#/mesh</code>, lien « Capitaines amis » du cockpit) réunit :</p>
+<p>L'écran du Capitaine <strong>Maillage et Capitaines amis</strong> (<em>Ma station › Réseau › Essaim</em>, <code>#/mesh</code>) réunit :</p>
 <ul>
 <li><em>Ma station</em> : l'UPlanet servie, le nombre de stations connectées et l'adresse à donner aux autres Capitaines ;</li>
 <li><em>Stations</em> : joindre une station à chaud par son adresse (<code>/ip4/…/tcp/4101/p2p/12D3Koo…</code>), et la <strong>garder comme bootstrap</strong> (rejointe à chaque démarrage et rappelée toutes les 5 minutes si la liaison tombe) ;</li>
-<li><em>Capitaines</em> : les Capitaines connus, qui suit qui, <strong>Suivre / Ne plus suivre</strong> (liste de contacts du Capitaine, signée par la station et publiée). Pour un ami réciproque, l'écran demande à <strong>sa</strong> station les services qu'elle nous ouvre ; elle ne répond qu'avec ceux que sa politique de tunnels nous permet, rien n'est publié. <em>Se connecter</em> ouvre un accès local à chaud (<code>127.0.0.1:&lt;port&gt;</code>, 8 heures) : commande <code>ssh</code> toute prête, client de bureau à distance, ou adresse web.</li>
+<li><em>Capitaines</em> : les Capitaines connus, qui suit qui, <strong>Suivre / Ne plus suivre</strong> (liste de contacts du Capitaine, signée par la station et publiée). Pour un ami réciproque, l'écran demande à <strong>sa</strong> station les services qu'elle nous ouvre ; elle ne répond qu'avec ceux que sa politique de tunnels nous permet, rien n'est publié. L'écran montre les services de l'ami et la commande à lancer ; <strong>ouvrir l'accès (SSH compris) se fait en ligne de commande</strong>, sur la machine du Capitaine : <code>astroportd tunnel connect &lt;service&gt; --peer &lt;PeerID&gt;</code> (accès local <code>127.0.0.1:&lt;port&gt;</code>, 8 heures par défaut), puis <code>ssh</code>, un client de bureau à distance ou le navigateur. Il n'y a pas de console SSH dans le navigateur.</li>
 </ul>
 <details class="tech"><summary>Détails techniques</summary><p><strong>Bail géographique.</strong> Par le maillage, chaque station dit aux autres stations de son UPlanet sa position (<code>--lat</code>/<code>--lon</code>) et ses cases de quartier : UMAP (0,01°), SECTOR (0,1°) et REGION (1°), les siennes et celles de ses membres qui ont indiqué leur quartier. Toutes calculent le même propriétaire de chaque case : <strong>la station la plus proche de son centre</strong>, le PeerID départageant deux distances égales. Seule celle-là publiera avec les clés du quartier, si bien que deux stations voisines n'écrivent jamais deux versions concurrentes. Une station muette depuis 36 h sort du calcul et la suivante reprend. L'API <code>mesh</code> du Capitaine en donne l'état (champ <code>geo</code> : cases tenues, cases cédées et à qui). Les noms de cases sont ceux d'Astroport.ONE (<code>_43.61_1.44</code>, <code>_43.6_1.4</code>, <code>_43_1</code>).</p></details>
 <p>Quand le maillage P2P est actif, la station <strong>offre aussi son relai Nostr</strong> aux autres stations (service <code>strfry</code>, tunnel <code>/x/strfry-&lt;PeerID&gt;</code>) : c'est par là que la synchronisation N¹/N² et l'écran « Réplication » joignent les relais des autres stations, sans port public <strong>une fois les deux stations reliées</strong> (voir « Stations derrière une box » ci-dessous).</p>
 <p>Sur la station qui <strong>offre</strong> son accès SSH :</p>
-<div class="code"><pre><code>astroportd serve ... [--swarm-key ./swarm.key]   # maillage actif sur 4101 par défaut ; le SSH est fermé par défaut en ẐEN, ouvert aux Capitaines amis en ORIGIN : réglage dans Options › Tunnels
+<div class="code"><pre><code>astroportd serve ... [--swarm-key ./swarm.key]   # maillage actif sur 4101 par défaut ; le SSH est fermé par défaut en ẐEN, ouvert aux Capitaines amis en ORIGIN : réglage dans Ma station › Réseau › Réglages › Tunnels
 </code></pre></div>
 <p>Sur la station qui <strong>rejoint</strong> (le PeerID est celui de l'hôte, visible avec <code>astroportd ylevel</code>) :</p>
 <div class="code"><pre><code>astroportd serve ... --p2p-forward 127.0.0.1:2222=12D3Koo…/ssh
@@ -1380,7 +1457,7 @@ ssh -p 2222 utilisateur@127.0.0.1
 <div class="code"><pre><code>/dns4/relais.exemple.org/tcp/4101/p2p/12D3Koo…
 /ip4/203.0.113.7/tcp/4101/p2p/12D3Koo…
 </code></pre></div>
-<p>L'adresse d'une station se lit dans son écran <code>#/mesh</code> (<em>Ma station</em>). Ensuite, sans autre réglage :</p>
+<p>L'adresse d'une station se lit dans <em>Ma station › Réseau › Essaim</em> (<code>#/mesh</code>, carte <em>Ma station</em>). Ensuite, sans autre réglage :</p>
 <ol>
 <li>la station inscrite <strong>devient relais</strong> à son prochain démarrage ;</li>
 <li>chaque autre station y <strong>réserve sa place</strong> dans la minute, et la refait si elle se perd (relais redémarré, coupure) ;</li>
@@ -1405,24 +1482,24 @@ astroportd tunnel connect ssh --peer 12D3Koo…   # une station précise ; --hou
 astroportd tunnel close ollama
 astroportd route ollama --mode closest          # affiche seulement le PeerID retenu (power, closest ou random)
 </code></pre></div>
-<p>Le choix part de l'annuaire des balises (Power-Score, position) et ne retient que les stations qui <strong>vous</strong> ouvrent le service : un service fermé, même sur la machine la plus puissante, n'est jamais proposé. La politique de <strong>cette</strong> station se règle de la même façon : <code>astroportd tunnel policy</code>, <code>tunnel mode ssh listed</code>, <code>tunnel allow ollama 12D3Koo… --hours 24</code>, <code>tunnel revoke …</code>, <code>tunnel share vnc 127.0.0.1:5900</code>, <code>tunnel unshare vnc</code>. Ces commandes passent par la même politique que l'écran Options › Tunnels.</p>
+<p>Le choix part de l'annuaire des balises (Power-Score, position) et ne retient que les stations qui <strong>vous</strong> ouvrent le service : un service fermé, même sur la machine la plus puissante, n'est jamais proposé. La politique de <strong>cette</strong> station se règle de la même façon : <code>astroportd tunnel policy</code>, <code>tunnel mode ssh listed</code>, <code>tunnel allow ollama 12D3Koo… --hours 24</code>, <code>tunnel revoke …</code>, <code>tunnel share vnc 127.0.0.1:5900</code>, <code>tunnel unshare vnc</code>. Ces commandes passent par la même politique que l'écran Réseau › Réglages › Tunnels.</p>
 
 <div class="cols one">
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
-<p>Le Capitaine voit dans l'écran <strong>Station</strong> (le cockpit, <a href="#etape-7b">étape 9</a>) l'état de la constellation, l'économie de la station et les comptes hébergés ; les cartes <strong>Ollama</strong> et <strong>ComfyUI</strong> de <em>Options › Tunnels</em> n'apparaissent que si le service répond sur la machine.</p>
+<p>Le Capitaine voit dans <strong>Ma station › Santé</strong> (le cockpit, <a href="#etape-7b">étape 9</a>) l'état de la constellation, l'économie de la station et les comptes hébergés ; les cartes <strong>Ollama</strong> et <strong>ComfyUI</strong> de <em>Réseau › Réglages › Tunnels</em> n'apparaissent que si le service répond sur la machine.</p>
 <p>Le territoire se lit sur la carte UPlanet : chaque dalle de 0,01° (environ 1 km²) a sa propre identité, et les stations voisines forment le territoire.</p>
 </div>
 </div>
 </section>
 <section id="etape-8ter" aria-labelledby="h-34">
 <h2 id="h-34">Options du Capitaine : accès, visages, règles du relai</h2>
-<p>L'écran <strong>Station → Options de la station</strong> change sans redémarrer :</p>
+<p>L'écran <strong>Ma station › Réseau › Réglages</strong> change sans redémarrer :</p>
 <ul>
 <li>
 <p><strong>Tunnels et accès des autres Capitaines</strong> : pour chaque service offert (SSH, ComfyUI, Ollama, plus ceux de <code>--p2p-expose</code>), <em>qui peut l'ouvrir</em> — fermé, la liste seulement, les Capitaines amis, ou tout le réseau — et la liste nominative avec une durée (« laisser un ami m'aider »). Un service qui ne répond pas sur la machine n'a pas de carte : une ligne <em>Non détectés</em> le nomme, jusqu'à ce qu'il démarre. Un réglage s'applique tout de suite, sessions ouvertes comprises.</p>
 </li>
 <li>
-<p><strong>Partager un service de cette machine</strong> : le Capitaine ajoute à chaud un autre port (nom + <code>IP:port</code>), sans redémarrer — par exemple un bureau à distance (serveur VNC <code>wayvnc</code>/<code>x11vnc</code> ou RDP), Jellyfin, Home Assistant ; les services courants qui répondent sont proposés (<em>Détectés</em>). La cible est cette machine ou le réseau local privé, jamais une adresse publique. Un service ajouté est fermé à tous tant que le Capitaine ne nomme personne (« Seulement la liste ») ; <em>Retirer le partage</em> coupe aussi les sessions ouvertes. Le partage passe par le maillage P2P (<code>--p2p-listen</code>) ; l'ami s'y connecte depuis l'assistance (« Se connecter ») ou avec <code>--p2p-forward</code>.</p>
+<p><strong>Partager un service de cette machine</strong> : le Capitaine ajoute à chaud un autre port (nom + <code>IP:port</code>), sans redémarrer — par exemple un bureau à distance (serveur VNC <code>wayvnc</code>/<code>x11vnc</code> ou RDP), Jellyfin, Home Assistant ; les services courants qui répondent sont proposés (<em>Détectés</em>). La cible est cette machine ou le réseau local privé, jamais une adresse publique. Un service ajouté est fermé à tous tant que le Capitaine ne nomme personne (« Seulement la liste ») ; <em>Retirer le partage</em> coupe aussi les sessions ouvertes. Le partage passe par le maillage P2P (<code>--p2p-listen</code>) ; l'ami s'y connecte avec <code>astroportd tunnel connect</code> ou <code>--p2p-forward</code>.</p>
 </li>
 <li>
 <p><strong>Assistance entre Capitaines amis</strong> : demander de l'aide pour un service, pour une durée ; rien ne s'ouvre avant qu'un ami accepte.</p>
@@ -1457,7 +1534,7 @@ kind.7     = read=circle write=circle project=on
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <ol>
-<li>Dans <em>Station › Configuration coopérative</em>, renseignez les clés OVH (elles sont chiffrées, jamais ré-affichées). Le bouton <strong>Tester la connexion OVH</strong> vérifie la saisie en cours (ou, champ vide, la valeur publiée) par une lecture signée de la zone : il échoue avec une clé fausse ou une zone non accordée, et n'écrit rien chez OVH.</li>
+<li>Dans <em>Ma station › Économie › Régie › Configuration coopérative</em>, renseignez les clés OVH (elles sont chiffrées, jamais ré-affichées). Le bouton <strong>Tester la connexion OVH</strong> vérifie la saisie en cours (ou, champ vide, la valeur publiée) par une lecture signée de la zone : il échoue avec une clé fausse ou une zone non accordée, et n'écrit rien chez OVH.</li>
 <li>Dans le cockpit, la carte <strong>Adresses de la coopérative</strong> montre l'adresse de la station, combien d'adresses sont à jour, en attente ou en échec ; <strong>Enregistrer maintenant</strong> lance un passage tout de suite.</li>
 <li>Un MULTIPASS s'appelle <code>&lt;partie locale à l'envers&gt;.&lt;domaine&gt;</code> (<code>geg-la@exemple.org</code> devient <code>la.geg.exemple.org</code>) ; une station <code>&lt;nom de machine&gt;-&lt;6 derniers caractères du PeerID&gt;</code>.</li>
 </ol>
@@ -1516,7 +1593,7 @@ kind.7     = read=circle write=circle project=on
 </table></div>
 <p><strong>Envoi d'images (<code>POST /api/upload/image</code>).</strong> Un client Nostr (coracle…) envoie une image en <code>multipart/form-data</code> (champ <code>file</code>) avec une authentification NIP-98 (ou Basic) : <strong>jamais anonyme</strong>. La station la <strong>relit et la réencode</strong> (JPEG sans aucune métadonnée, donc sans la position GPS d'une photo, ou PNG si elle est transparente ; 2 048 px de côté au plus), la range comme <strong>blob public en clair</strong>, adressé par son contenu (une seule copie, plus de dossier <code>/Public/uploads</code> pour les nouveaux envois) ; ses octets <strong>entament le quota du membre</strong> comme ses fichiers (refus net quand il est atteint ; la renvoyer ne crée pas de doublon) ; elle rend <code>url</code>, l'adresse <code>…/ipfs/&lt;cid&gt;</code> (et <code>cid</code>) : n'importe quelle station amie qui a vu l'image la sert à la même adresse de contenu et la rapatrie chez ses pairs si celle-ci s'éteint, de sorte qu'un post Nostr qui la cite reste lisible. Formats : JPEG, PNG, WebP, 8 Mo au plus ; GIF, SVG, HTML et tout le reste sont refusés. Les routes <code>POST /api/upload/image</code>, <code>/api/v1/account/unlock</code> et <code>/api/v1/account/keys</code> répondent aux requêtes de pré-vérification CORS (<code>Access-Control-Allow-Origin: *</code>, sans cookie : l'authentification est dans l'en-tête <code>Authorization</code>), pour qu'un client servi depuis un autre domaine puisse les appeler. Sur <code>/ipfs/&lt;cid&gt;</code>, les CID inconnus sont rapatriés au plus 4 à la fois et 60 par minute (429 au-delà) ; un CID introuvable n'est pas redemandé pendant 2 minutes. <strong>Gestion par le membre</strong> : dans Mon compte › Moi, « Mes images publiques » liste ses images (aperçu, taille, date, espace utilisé) et permet d'en retirer une, ce qui libère son quota (<code>GET /api/v1/account/images</code>, <code>DELETE /api/v1/account/images/&lt;cid&gt;</code>). Une image qui sert de photo de profil ou de bandeau ne se retire pas avant d'être remplacée. Les stations amies qui l'avaient déjà rapatriée la gardent jusqu'à leur propre nettoyage.</p>
 <p><strong>Pièces jointes de messages (<code>POST /api/v1/attachments?days=N</code>).</strong> L'expéditeur chiffre le fichier <strong>chez lui</strong> (AES-256-GCM, format UENC v2 : <code>UENC</code> + <code>02</code> + <code>01</code> + <code>10</code> + préfixe de nonce de 7 octets, puis des blocs de 64 Kio chiffrés + étiquette de 16 octets) et l'envoie en <code>application/octet-stream</code>, authentifié (Basic ou NIP-98), jamais anonyme. La station ne connaît pas la clé, qui voyage dans le message privé chiffré de bout en bout (<code>{&quot;_uenc_img&quot;: {cid, enc_key, …}}</code>). Elle <strong>refuse tout ce qui n'a pas l'en-tête UENC</strong> (elle n'héberge pas de fichiers lisibles), plus de 20 Mo, <code>days</code> hors 1–90 (30 par défaut), et au-delà de 200 pièces jointes ou 1 Go actifs par compte. Réponse : <code>{cid, size, expires_at, gateway, url}</code> ; <code>cid</code> est le CIDv1 raw sha2-256 des octets reçus, servi par <code>GET /ipfs/&lt;cid&gt;</code> (CORS <code>*</code>, CSP <code>sandbox</code>) tant que l'échéance n'est pas passée. Il faut <code>--ipfs-gateway</code>. L'enregistrement est celui des liens d'invité (même purge à l'échéance, même porte) ; des octets déjà connus de la station ne créent pas de second enregistrement, pour que l'échéance courte d'un tiers ne supprime pas le blob de l'expéditeur d'origine. L'adresse désigne un <strong>contenu</strong> : tout lecteur peut recalculer le CID et vérifier ce qu'une passerelle lui a rendu. <strong>Copie chez les amis hébergeurs.</strong> Dès le dépôt, la station envoie la pièce jointe (message NIP-59 <code>op: attachment</code>, avec <code>cid</code>, <code>size</code>, <code>expires</code>, <code>station</code>) aux amis qui hébergent la sauvegarde de l'expéditeur, ceux qui gardent sa part P3 (trois au plus, accord accepté). L'ami rapatrie le blob par le maillage (CID vérifié, plafonné à 20 Mo et 60 s : un pair qui annonce plus gros est refusé avant le moindre octet reçu) et le sert à son tour à <code>/ipfs/&lt;cid&gt;</code> jusqu'à l'échéance, puis la purge le supprime : pas de semaine de grâce, pas d'entrée dans son uCloud. Il refuse, avant tout rapatriement, ce qui dépasse le volume qu'il a accordé (la copie y compte), plus de 20 Mo, une échéance passée ou au-delà de 90 jours ; il refuse aussi après, d'après le blob réellement reçu, ce qui n'a pas l'en-tête UENC v2 (jamais de clair) et le retire s'il l'a lui-même apporté. Un ami sans volume ou hors ligne ne retarde rien. Le message porte seulement l'adresse de la station de l'expéditeur dans <code>gw</code> : les amis hébergeurs ne sont pas annoncés au destinataire (c'est une information sociale).</p>
-<p><strong>Retours des utilisateurs (<code>POST /api/v1/feedback</code>).</strong> Toute application cliente (coracle, zelkova, une autre) envoie <code>{title, description, source, category?, app_version?, platform?}</code>, authentifiée. La station crée une <strong>issue Git</strong> dans <code>&lt;GIT_OWNER&gt;/&lt;source&gt;</code> (<code>source</code> = nom du dépôt de l'application) avec les réglages de la coopérative (écran Station › Clés d'API) : <code>GIT_HOST</code> (GitHub par défaut, ou l'adresse <code>https://…</code> d'un GitLab), <code>GIT_OWNER</code>, <code>GIT_TOKEN</code> (secret). Sans forge réglée, ou si elle ne répond pas, le retour est <strong>gardé sur la station</strong> (journal) et le Capitaine est prévenu : l'utilisateur n'a jamais d'erreur à lire. Garde-fous : compte authentifié obligatoire, 5 retours par heure et par compte, textes bornés et nettoyés, nom de dépôt réduit à un identifiant simple, et la clé publique n'est jointe à l'issue que si l'utilisateur le demande (<code>share_identity</code>).</p>
+<p><strong>Retours des utilisateurs (<code>POST /api/v1/feedback</code>).</strong> Toute application cliente (coracle, zelkova, une autre) envoie <code>{title, description, source, category?, app_version?, platform?}</code>, authentifiée. La station crée une <strong>issue Git</strong> dans <code>&lt;GIT_OWNER&gt;/&lt;source&gt;</code> (<code>source</code> = nom du dépôt de l'application) avec les réglages de la coopérative (<em>Ma station › Économie › Régie</em>, clés d'API) : <code>GIT_HOST</code> (GitHub par défaut, ou l'adresse <code>https://…</code> d'un GitLab), <code>GIT_OWNER</code>, <code>GIT_TOKEN</code> (secret). Sans forge réglée, ou si elle ne répond pas, le retour est <strong>gardé sur la station</strong> (journal) et le Capitaine est prévenu : l'utilisateur n'a jamais d'erreur à lire. Garde-fous : compte authentifié obligatoire, 5 retours par heure et par compte, textes bornés et nettoyés, nom de dépôt réduit à un identifiant simple, et la clé publique n'est jointe à l'issue que si l'utilisateur le demande (<code>share_identity</code>).</p>
 <p><strong>Inscription OpenCollective (<code>GET /api/v1/account/oc</code>).</strong> Avec <code>OCSLUG</code> et <code>OCAPIKEY</code> réglés (secret) et, pour le lien de rappel, <code>OC_URL_MEMBRE</code>, la station lit les membres du collectif (jusqu'à 1 000) et répond <strong>seulement pour l'adresse du compte qui demande</strong> : <code>{configured, is_member, url}</code>. <code>is_member</code> vaut <code>null</code> si la vérification n'est pas réglée ou en panne : un client ne doit jamais rappeler de s'inscrire dans ce cas. Résultat gardé 10 minutes.</p>
 <p><strong>Codes d'erreur de la connexion par PASS.</strong> Le verrouillage après des PASS faux est décidé <strong>par la station seule</strong> ; les clients n'ont aucun compteur. Les réponses portent un code stable : <code>pass_denied</code> (PASS faux ; le message dit les essais restants), <code>pass_locked</code> (compte verrouillé quelques minutes), <code>rate_limited</code> (limite de débit du réseau ou des exports). <code>POST /api/v1/account/keys</code> renvoie aussi <code>g1pub</code> (adresse Ğ1 du compte) pour que le client vérifie le portefeuille qu'il reconstruit.</p>
 <p>La passerelle <code>/ipfs/&lt;cid&gt;</code> ne sert que des <strong>octets chiffrés</strong> : un blob d'un <strong>lien de partage actif</strong> (révoquer ou laisser échoir le lien ferme aussi cette porte). Les blobs d'un compte qui ne sont pas partagés ne sont jamais servis. Sans leur clé (le <code>#clé</code> du lien), elle ne donne que du bruit.</p>
@@ -1542,15 +1619,15 @@ astroportd serve --db ~/.zen/zen1/uplanet.db   --blobs ~/.zen/pool --pool-peer ~
 <p><strong>Configurer, au choix :</strong></p>
 <ul>
 <li><strong>En ligne de commande</strong> : <code>astroportd plane-setup list</code> · <code>plane-setup add</code> (pose les questions : fonder une UPlanet neuve — la station crée sa <code>swarm.key</code> et vous la montre pour la donner aux autres stations — ou rejoindre avec la clé reçue) · <code>plane-setup add --name zen1 --found</code> · <code>plane-setup add --name zen2 --swarm-key reçue.key</code> · <code>plane-setup remove zen2</code>.</li>
-<li><strong>Sur le web</strong> : Station › <em>Constellations</em> › <em>Ajouter une constellation</em> (Capitaine) : liste, état (servi / au prochain démarrage), ajout (fonder ou coller la <code>swarm.key</code> reçue) et retrait.</li>
+<li><strong>Sur le web</strong> : Ma station › Réseau › <em>Constellations</em> › <em>Ajouter une constellation</em> (Capitaine) : liste, état (servi / au prochain démarrage), ajout (fonder ou coller la <code>swarm.key</code> reçue) et retrait.</li>
 </ul>
-<figure><img src="img/ui-plans.png" alt="Station › Plans : une station qui sert ORIGIN et une UPlanet privée (zen1) dans un seul processus, et le formulaire pour en ajouter une." loading="lazy" decoding="async"><figcaption>Station › Plans : une station qui sert ORIGIN et une UPlanet privée (zen1) dans un seul processus, et le formulaire pour en ajouter une.</figcaption></figure>
+<figure><img src="img/ui-plans.png" alt="Ma station › Réseau › Constellations : une station qui sert ORIGIN et une UPlanet privée (zen1) dans un seul processus, et le formulaire pour en ajouter une." loading="lazy" decoding="async"><figcaption>Ma station › Réseau › Constellations : une station qui sert ORIGIN et une UPlanet privée (zen1) dans un seul processus, et le formulaire pour en ajouter une.</figcaption></figure>
 <p>Dans les deux cas : ports choisis libres, clé écrite en <code>0600</code> sous <code>~/.zen/game/&lt;plan&gt;/swarm.key</code> sans jamais écraser une clé existante, <strong>ORIGIN reste dans sa base et son dossier actuels (rien n'est déplacé)</strong>, et <strong>retirer un plan ne supprime aucune donnée</strong>. Les règles du démarrage sont vérifiées dès l'ajout : Kubo n'appartient qu'à ORIGIN, pas deux plans avec la même clé, la même base ou le même port.</p>
 <p><strong>Servir</strong> : <code>astroportd planes --check</code> valide <code>~/.zen/astroportd/planes.json</code> et prépare les dossiers (liens vers les fichiers du NODE) sans rien lancer ; <code>astroportd planes</code> démarre tous les plans, à la place de <code>serve</code> : chaque plan a son propre <code>serve</code> (donc son propre nœud P2P, avec sa <code>swarm.key</code>) dans le même processus. Ajouter un plan demande de relancer cette commande.</p>
 <ul>
 <li><strong>Un seul nom, plusieurs plans</strong> : <code>astroportd planes --front 127.0.0.1:18000</code> écoute sur un port commun et route <strong>par nom d'hôte</strong> : <code>zen1.votre-domaine</code> ouvre le plan <code>zen1</code>, le nom nu ouvre ORIGIN (en local : <code>zen1.localhost</code>). HTTP en clair : à placer derrière le terminateur TLS (Nginx Proxy Manager).</li>
 <li><strong>Choisir le plan d'une commande</strong> : <code>--plane zen1</code> (par exemple <code>astroportd --plane zen1 multipass create alice@exemple.org</code>, <code>token</code>, <code>doctor</code>, <code>pool-status</code>) remplit la base, les blobs, le dossier de comptes et la clé du plan choisi, sans remplacer ce que vous donnez vous-même. Un plan inconnu est refusé.</li>
-<li><strong>Dans l'interface</strong> : quand la station route par nom d'hôte, le Capitaine a un <strong>sélecteur de plan</strong> dans l'en-tête ; l'écran <em>Station › Plans</em> dit si la station sert plusieurs plans dans un seul processus.</li>
+<li><strong>Dans l'interface</strong> : quand la station route par nom d'hôte, le Capitaine a un <strong>sélecteur de plan</strong> dans l'en-tête ; l'écran <em>Ma station › Réseau › Constellations</em> dit si la station sert plusieurs plans dans un seul processus.</li>
 </ul>
 
 </section>
@@ -1573,17 +1650,20 @@ astroportd serve --db ~/.zen/zen1/uplanet.db   --blobs ~/.zen/pool --pool-peer ~
 <li><strong>La station ne voit pas les autres</strong> : en ẐEN, toutes les stations doivent avoir <strong>exactement la même</strong> <code>swarm.key</code>.</li>
 <li><strong>Passer d'ORIGIN à ẐEN</strong> : ajoutez <code>--swarm-key ./swarm.key</code> au démarrage et redémarrez ; la station ne verra plus que les stations de la même clé.</li>
 </ul>
-<p>Une question, un bug ? Ouvrez un ticket : <a href="https://github.com/papiche/astroportd/issues">https://github.com/papiche/astroportd/issues</a>. Pour la coopérative : support@qo-op.com.</p>
+<p>Une question, un bug ? Ouvrez un ticket : <a href="https://github.com/papiche/astroportd/issues">https://github.com/papiche/astroportd/issues</a>. Pour la coopérative (adhésion, soutien, hébergement géré) : <a href="https://qo-op.com">qo-op.com</a> ou support@qo-op.com.</p>
 </div>
 <div class="col web"><h3><span aria-hidden="true">◐</span> Navigateur (Web)</h3>
 <ul>
 <li><strong>Impossible de se connecter</strong> : le compte doit être hébergé par la station (dossier <code>~/.zen/game/nostr/&lt;email&gt;/</code>) ; le jeton s'obtient avec <code>astroportd token</code>. Pas de compte ? <code>astroportd multipass create &lt;email&gt;</code> ou la page <code>/register</code>.</li>
 <li><strong>La page ne se charge pas</strong> : essayez <code>/health</code> ; si elle répond, videz le cache du navigateur.</li>
 <li><strong>Le lien magique ne s'ouvre pas</strong> : l'adresse doit être copiée en entier, avec le <code>#</code> et ce qui le suit.</li>
+<li><strong>Un membre a perdu son code PASS</strong> : cockpit, alerte <em>Débloquer</em> si le compte est verrouillé, ou <em>Ma station › Membres › Jeton</em> pour lui donner un code de secours. Rien n'est perdu. S'il a aussi perdu sa carte imprimée, le compte marche quand même : réimprimez-la avec <code>astroportd multipass card &lt;email&gt; --svg</code>.</li>
+<li><strong>La reconnaissance des visages classe tout le monde en « inconnu »</strong> : lancez <code>astroportd face-check</code> (fonction compilée, modèles, bibliothèque, chargement), puis vérifiez le mode dans <em>Ma station › Réseau › Réglages</em> (ONNX local, Brain GPU distant ou arrêté).</li>
+<li><strong>Ma box a redémarré, l'adresse a changé</strong> : donnez un <strong>nom de domaine</strong> à la station (un nom DynDNS suffit) ; une IP qui change n'est alors plus un problème pour les autres stations. Vérifiez que le port TCP 4101 est toujours ouvert sur la box, puis <code>astroportd doctor</code>.</li>
 <li><strong>Le guide en ligne</strong> : <a href="https://github.com/papiche/Astroport.ONE">Astroport.ONE</a> pour le suivi automatique des Capitaines, la ZenCard et les QR codes.</li>
 </ul>
 <hr />
-<p>Pour comprendre en profondeur ORIGIN, ẐEN et Y-Level : <a href="CONSTELLATIONS.html">CONSTELLATIONS.md</a>. Licence AGPL-3.0.</p>
+<p>Pour comprendre en profondeur ORIGIN, ẐEN et Y-Level : <a href="CONSTELLATIONS.html">CONSTELLATIONS.md</a>. Fiche à remettre à vos membres : <a href="BIENVENUE.html">BIENVENUE.md</a>. Licence AGPL-3.0.</p>
 </div>
 </div>
 </section>

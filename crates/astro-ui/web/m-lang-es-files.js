@@ -23,7 +23,6 @@ export default {
 "Prendre une photo": "Hacer una foto",
 "Nouveau dossier": "Nueva carpeta",
 "Déplacer…": "Mover…",
-"Supprimer": "Eliminar",
 "Définitif : la suppression ne peut pas être annulée.": "Definitivo: la eliminación no se puede deshacer.",
 "Supprimé": "Eliminado",
 "Nouveau nom": "Nuevo nombre",

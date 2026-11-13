@@ -61,6 +61,10 @@ pub trait CoopApi: Auth {
     fn billet_fund(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("Ğ1Billets non disponibles sur cette station")) }
     }
+    /// Supprime un billet créé par l'appelant qui n'est pas encore financé (retiré de Nostr) : `{ g1pub }`.
+    fn billet_delete(&self, _who: &Principal, _body: Value) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("Ğ1Billets non disponibles sur cette station")) }
+    }
     /// Les billets créés par l'appelant, avec leur état.
     fn billet_issued(&self, _who: &Principal) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("Ğ1Billets non disponibles sur cette station")) }
@@ -101,6 +105,7 @@ pub(super) fn routes<B: CoopApi>() -> Router<Arc<UiState<B>>> {
         .route("/api/v1/billet/redeem", post(billet_redeem::<B>))
         .route("/api/v1/billet/issue", post(billet_issue::<B>))
         .route("/api/v1/billet/fund", post(billet_fund::<B>))
+        .route("/api/v1/billet/delete", post(billet_delete::<B>))
         .route("/api/v1/billet/issued", get(billet_issued::<B>))
         .route("/api/v1/station/zen-credit/recipients", post(zen_credit_recipients::<B>))
         .route("/api/v1/station/zen-credit/preview", post(zen_credit_preview::<B>))
@@ -231,6 +236,10 @@ async fn billet_redeem<B: CoopApi>(State(st): State<Arc<UiState<B>>>, req: axum:
 /// Création de billets : réservée aux émetteurs que le Capitaine a choisis. Les parts ne sont rendues qu'ici, une fois : `no-store`.
 async fn billet_issue<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
     no_store(reply(st.backend.billet_issue(&p, body).await))
+}
+
+async fn billet_delete<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {
+    no_store(reply(st.backend.billet_delete(&p, body).await))
 }
 
 async fn billet_fund<B: CoopApi>(State(st): State<Arc<UiState<B>>>, Authed(p): Authed, Json(body): Json<Value>) -> Response {

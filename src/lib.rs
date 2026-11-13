@@ -12,7 +12,6 @@ pub mod agents;
 pub mod assist;
 pub mod chat;
 pub mod coop_config;
-pub mod console;
 pub mod doctor;
 pub mod dnslink;
 pub mod energy;

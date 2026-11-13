@@ -338,7 +338,7 @@ export default async function people(el, kit, q) {
   tip = h('div', { class: 'pe-tip', hidden: true });
   tray = h('div', { class: 'pe-tray', role: 'region', 'aria-label': 'Visages sélectionnés', hidden: true });
   root.replaceChildren(h('div', { class: 'pe' },
-    h('div', { class: 'bar' }, h('a', { href: '#/people', class: 'ghost' }, '← ' + K.t('Personnes')), h('h2', {}, 'Table de tri'), h('span', { class: 'pe-count muted' }, ''), h('span', { class: 'sp' }),
+    h('div', { class: 'bar' }, h('h2', {}, 'Table de tri'), h('span', { class: 'pe-count muted' }, ''), h('span', { class: 'sp' }),
       h('select', { class: 'pe-dir', 'aria-label': 'Dossier à trier', onchange: ev => { dir = ev.target.value; S.sel.clear(); S.nodes = []; load().catch(e => K.toast(e.message)); } }, h('option', { value: '' }, 'Tous les dossiers (les plus récents)')),
       h('span', { class: 'pe-views' }, h('button', { 'data-v': 'todo', class: 'ghost', 'aria-pressed': 'true', onclick: () => setView('todo') }, 'À ranger'), h('button', { 'data-v': 'all', class: 'ghost', 'aria-pressed': 'false', onclick: () => setView('all') }, 'Tous')),
       h('button', { class: 'ghost', 'aria-pressed': 'false', onclick: ev => { S.lasso = !S.lasso; ev.target.setAttribute('aria-pressed', String(S.lasso)); } }, 'Lasso'),

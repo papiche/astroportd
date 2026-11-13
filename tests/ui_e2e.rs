@@ -1908,9 +1908,8 @@ async fn every_route_keeps_its_access_level() {
     assert!(diff.is_empty(), "une route a changé de niveau d'accès, a disparu ou est apparue :\n{}", diff.join("\n"));
     // Garde-fou explicite, indépendant de l'instantané : toute route d'administration de la station est fermée au membre.
     for l in &lines {
-        // La console n'a pas de compte : un ticket à usage unique, remis au seul Capitaine, fait foi (voir `console_ws`).
-        let public = ["/api/v1/station/console"];
-        if l.contains(" /api/v1/station/") && !public.iter().any(|p| l.contains(p)) {
+        // Plus de console SSH dans le navigateur : toute route `/api/v1/station/*` est fermée au membre.
+        if l.contains(" /api/v1/station/") {
             assert!(l.contains("member=403") || l.contains("member=401"), "route Capitaine ouverte à un membre : {l}");
         }
     }

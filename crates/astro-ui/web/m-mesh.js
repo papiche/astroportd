@@ -1,7 +1,7 @@
 'use strict';
 // Maillage et Capitaines amis (Capitaine) : sa station dans le maillage, les stations jointes (ajout à chaud, gardées comme
 // bootstrap), les Capitaines connus (suivre / ne plus suivre) et, pour chaque ami réciproque, les services que SA station nous
-// ouvre — demandés à elle, jamais publiés. « Se connecter » ouvre un accès local à chaud vers le service.
+// ouvre — demandés à elle, jamais publiés. les accès aux services s'ouvrent en ligne de commande (`astroportd tunnel connect`).
 export default async function mesh(root, K) {
   const { h, t } = K, api = p => K.api('/api/v1/station/admin/' + p), post = (p, body) => K.api('/api/v1/station/admin/' + p, { method: 'POST', body });
   root.replaceChildren(h('p', { class: 'muted' }, t('Chargement…')));
@@ -38,9 +38,10 @@ export default async function mesh(root, K) {
 
   // ── Capitaines ──
   const how = (s, a) => s === 'ssh' ? `ssh -p ${a.split(':').pop()} <utilisateur>@127.0.0.1` : s.startsWith('bureau') ? t('client de bureau à distance vers {0}', a) : `http://${a}`;
+  // Les accès aux services d'un ami (SSH compris) ne s'ouvrent que par la ligne de commande du Capitaine : l'écran les montre, il ne les ouvre pas.
   const svc = (cap, s) => h('li', {}, h('strong', {}, s.name), ' ', s.local
-    ? [h('code', {}, how(s.name, s.local.addr)), ' ', h('button', { class: 'ghost', onclick: act('captains', { disconnect: { peer: cap.peer, service: s.name } }) }, t('Fermer'))]
-    : h('button', { onclick: act('captains', { connect: { peer: cap.peer, service: s.name } }, t('Accès ouvert')) }, t('Se connecter')));
+    ? [t('ouvert : '), h('code', {}, how(s.name, s.local.addr))]
+    : h('code', {}, `astroportd tunnel connect ${s.name} --peer ${cap.peer}`));
   const card = cap => h('div', { class: 'card' }, h('h3', {}, cap.label, ' ', h('span', { class: cap.friend ? 'pill ok' : 'pill disabled' }, cap.friend ? t('ami') : cap.follows_me ? t('vous suit') : cap.i_follow ? t('suivi') : t('inconnu'))),
     cap.i_follow ? sure(t('Ne plus suivre'), act('captains', { unfollow: cap.hex }, t('Vous ne suivez plus {0}', cap.label))) : h('button', { onclick: act('captains', { follow: cap.hex }, t('Vous suivez {0}', cap.label)) }, t('Suivre')),
     !cap.friend ? (cap.i_follow ? h('p', { class: 'muted' }, t('En attente : il doit vous suivre aussi pour partager.')) : null)
@@ -52,7 +53,7 @@ export default async function mesh(root, K) {
   find.oninput = show; show();
   const captains = h('section', { class: 'card wide' }, h('h2', {}, t('Capitaines')),
     c.error ? h('p', { class: 'degraded' }, c.error) : !caps.length ? h('p', { class: 'muted' }, t('Aucun autre Capitaine connu pour l\'instant.')) : [caps.length > 8 ? find : null, list],
-    h('p', { class: 'muted' }, t('Un ami réciproque vous montre ce qu\'il vous partage ; c\'est sa station qui décide. Vos propres partages se règlent dans Options › Tunnels.')));
+    h('p', { class: 'muted' }, t('Un ami réciproque vous montre ce qu\'il vous partage ; c\'est sa station qui décide.'), ' ', h('a', { href: '#/options' }, t('Régler mes partages'))));
 
   // ── Essaim : toutes les stations vues, de la plus puissante à la moins puissante ──
   const TIER = { Light: '🌿', Standard: '⚡', Brain: '🔥' }, nodes = cs?.nodes || [];

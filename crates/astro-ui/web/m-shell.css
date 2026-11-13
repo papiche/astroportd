@@ -1,0 +1,32 @@
+/* Navigation : onglets par espace, sous-onglets, retour, bouton d'assistant. Téléphone d'abord : barre en bas, zones de 48 px. */
+nav a { display: inline-flex; align-items: center; gap: .35rem; min-height: 2.4rem; }
+nav a .ic { font-size: 1.05rem; line-height: 1; }
+:root[data-style=sobre] header nav .ic { display: none; }
+.space-sw .ch-badge { margin-left: .4rem; min-width: 1.2rem; padding: 0 .35rem; border-radius: 1rem; background: var(--bad); color: #fff; font-size: .72rem; text-align: center; display: inline-block; }
+.acts { display: inline-flex; flex-wrap: wrap; gap: .4rem; justify-content: flex-end; }
+.acts button { white-space: nowrap; }
+.filters { display: flex; flex-wrap: wrap; gap: .4rem; }
+:root[data-space=station] header { border-bottom: 3px solid var(--c3); }
+:root[data-space=station] nav a[aria-current] { background: linear-gradient(135deg, var(--c3), var(--c1)); }
+.space-sw { align-self: center; text-decoration: none; padding: .35rem .7rem; border-radius: 2rem; border: 1px solid var(--line); background: var(--panel2); color: var(--ink); font-size: .84rem; white-space: nowrap; }
+.space-sw:hover { border-color: var(--accent); }
+.segs { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; max-width: 74rem; margin: .6rem auto 0; padding: 0 1.2rem; }
+.segs a { color: var(--ink); text-decoration: none; padding: .45rem .9rem; min-height: 2.4rem; display: inline-flex; align-items: center; border-radius: 2rem; border: 1px solid var(--line); background: var(--panel); font-size: .88rem; }
+.segs a[aria-current] { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; }
+.segs.back { gap: .8rem; }
+.segs.back a { border: 0; background: none; padding-left: 0; color: var(--accent); }
+.fab { position: fixed; right: 1rem; bottom: calc(1rem + env(safe-area-inset-bottom)); width: 3.2rem; height: 3.2rem; display: grid; place-items: center; border-radius: 50%; background: var(--grad); color: var(--on-accent); font-size: 1.4rem; text-decoration: none; box-shadow: 0 4px 16px var(--sh); z-index: 6; }
+@media (max-width: 700px) {
+  header { padding-inline: .8rem; backdrop-filter: none; background: var(--panel); }
+  :root[data-style=sobre] header nav .ic { display: block; }
+  header nav { position: fixed; inset: auto 0 0 0; z-index: 7; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 0; padding: .3rem .4rem calc(.3rem + env(safe-area-inset-bottom)); background: var(--panel); border-top: 1px solid var(--line); flex: none; }
+  header nav a { flex-direction: column; gap: .1rem; min-height: 3rem; justify-content: center; border-radius: .8rem; font-size: .72rem; border: 0; position: relative; }
+  header nav a .ic { font-size: 1.35rem; }
+  :root[data-space=station] header nav a[aria-current], header nav a[aria-current] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); box-shadow: none; }
+  nav a .ch-badge { position: absolute; top: .1rem; right: calc(50% - 1.6rem); margin: 0; }
+  .segs { padding-inline: .8rem; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .segs a { white-space: nowrap; }
+  main { padding-bottom: 6rem; }
+  .fab { bottom: calc(4.6rem + env(safe-area-inset-bottom)); }
+}
+.ck-acts { display: flex; flex-wrap: wrap; gap: .6rem; }
