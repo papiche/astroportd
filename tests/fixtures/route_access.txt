@@ -49,6 +49,7 @@ GET /api/v1/invites anon=401 member=200
 GET /api/v1/island anon=401 member=501
 GET /api/v1/join/{id} anon=404 member=404
 GET /api/v1/locate anon=400 member=400
+GET /api/v1/look anon=200 member=200
 GET /api/v1/me anon=401 member=200
 GET /api/v1/me/ai anon=401 member=200
 GET /api/v1/me/blog anon=401 member=200
@@ -238,6 +239,8 @@ POST /api/v1/station/island/open anon=401 member=403
 POST /api/v1/station/oc/sync anon=401 member=403
 POST /api/v1/station/paf anon=401 member=403
 POST /api/v1/station/planes anon=401 member=403
+POST /api/v1/station/planes/domain anon=401 member=403
+POST /api/v1/station/planes/https anon=401 member=403
 POST /api/v1/station/planes/origin anon=401 member=403
 POST /api/v1/station/planes/remove anon=401 member=403
 POST /api/v1/station/planes/service anon=401 member=403

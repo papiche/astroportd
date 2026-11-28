@@ -99,6 +99,31 @@ details.tech[open] summary{color:var(--acc)}
 </tbody>
 </table></div>
 <p>Changer le texte demande une <strong>nouvelle signature</strong> à chaque Capitaine (la signature porte l'empreinte exacte du texte). Détails : guide, <a href="guide.html#etape-8c">Ma UPlanet</a>.</p>
+<h2 id="look">Monnaie et apparence</h2>
+<p>Pour qu'on sache d'un coup d'œil <strong>sur quelle UPlanet</strong> on se trouve. Le nom de l'UPlanet (<code>UPLANET_NAME</code>) s'affiche dans l'en-tête de l'application, à côté du logo, et dans le sélecteur de constellation du Capitaine.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Champ</th>
+<th>Ce qu'il faut y mettre</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CURRENCY_NAME</code></td>
+<td>Le nom de l'unité de compte (16 caractères au plus, sans chiffre), par exemple <code>Sol</code> ou <code>Graine</code>. <strong>Vide</strong> : « Ẑen ». Il remplace « Ẑen » partout dans l'application.</td>
+</tr>
+<tr>
+<td><code>CURRENCY_SYMBOL</code></td>
+<td>Son symbole (3 caractères au plus), par exemple <code>☉</code>. <strong>Vide</strong> : « Ẑ ».</td>
+</tr>
+<tr>
+<td><code>UI_STYLE</code></td>
+<td>Le style proposé par défaut aux membres : Aurore (vide) ou <code>sobre</code>. Chacun garde le choix de son appareil.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Le style <strong>Kraft est réservé à ORIGIN</strong>, le réseau public d'essai : ses membres le voient tout de suite. Sur ORIGIN, ces trois réglages sont <strong>ignorés</strong>, et la monnaie reste « Ẑen ». La configuration d'ORIGIN est signée par une clé que tout le monde peut calculer, donc n'importe qui pourrait la renommer. Seul l'affichage change : les montants, la règle 1 Ẑen = 1 € et la comptabilité restent les mêmes.</p>
 <h2 id="ovh">Domaine de la coopérative (OVH)</h2>
 <p>Sert à donner une adresse en <code>.&lt;votre domaine&gt;</code> à chaque station et à chaque MULTIPASS, et fixe le relai commun <code>wss://relay.&lt;domaine&gt;</code>. Il faut un <strong>nom de domaine dont la zone DNS est chez OVH</strong>.</p>
 <ol>
@@ -253,6 +278,10 @@ PUT  /domain/zone/*
 <tr>
 <td><code>PLANTNET_API_KEY</code></td>
 <td>Compte sur <strong>my.plantnet.org</strong> › <em>Your API key</em>. L'offre gratuite compte 500 reconnaissances par jour et par clé (vérifié : la réponse de Pl@ntNet donne le reste du jour), pour <strong>toute</strong> la constellation ; au-delà, la station dit que le quota est épuisé. Les stations Astroport.ONE lisent la même clé.</td>
+</tr>
+<tr>
+<td><em>Clé de cette station seulement</em></td>
+<td>Votre propre clé Pl@ntNet, quand celle de la coopérative ne suffit plus. Elle <strong>passe avant</strong> celle de la coopérative, pour vos seuls membres. Elle n'est <strong>jamais publiée</strong> et reste sur votre station. Cochez « revenir à la clé de la coopérative » pour la retirer.</td>
 </tr>
 </tbody>
 </table></div>

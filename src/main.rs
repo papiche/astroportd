@@ -826,6 +826,16 @@ struct PlanesArgs {
     /// HTTP en clair : à placer derrière le terminateur TLS (Nginx Proxy Manager) ou à utiliser en local (`zen1.localhost`).
     #[arg(long)]
     front: Option<std::net::SocketAddr>,
+    /// HTTPS par la station elle-même pour tous les plans, sans reverse proxy (comme `"https": {}` dans `planes.json`) : ports 80 et 443,
+    /// un certificat Let's Encrypt pour le domaine de chaque plan (réglé dans l'écran des constellations ou par `--public-domain`).
+    #[arg(long)]
+    tls: bool,
+    /// Écoute HTTPS du front (`--tls`).
+    #[arg(long, default_value = "0.0.0.0:443")]
+    https_listen: std::net::SocketAddr,
+    /// Écoute HTTP du front (`--tls`) : défi ACME et redirection vers HTTPS.
+    #[arg(long, default_value = "0.0.0.0:80")]
+    http_listen: std::net::SocketAddr,
 }
 
 /// Options de `pool-status`.
@@ -1614,17 +1624,47 @@ async fn planes_cmd(args: PlanesArgs) -> Result<(), Failure> {
         println!("configuration valide : {} plan(s)", planes.len());
         return Ok(());
     }
+    // Domaine propre de chaque plan (`station.conf` du plan ou `--public-domain`) : routé par le front, couvert par son certificat.
+    let domains = astroportd::plane::front_domains(&planes)?;
+    for (d, n) in &domains {
+        println!("plan {n} : domaine public {d}");
+    }
+    let tls = args.tls.then(astroportd::plane::HttpsFront::default).or_else(|| file.https.clone());
+    if tls.is_some() && domains.is_empty() {
+        return Err("HTTPS des plans demandé, mais aucun plan n'a de domaine public : réglez-le dans Ma station › Constellations (ou `--public-domain` dans planes.json), puis redémarrez".into());
+    }
     astroportd::plane::set_running(planes.iter().map(|p| p.name.clone()).collect());
-    astroportd::plane::set_front(args.front.is_some());
+    astroportd::plane::set_front(args.front.is_some() || tls.is_some());
+    astroportd::plane::set_front_tls(tls.is_some());
+    // Le bouton « Redémarrer » du cockpit vaut aussi ici : tous les plans s'arrêtent, systemd relance le processus (nouveaux domaines).
+    astroportd::station_domain::arm();
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            () = astroportd::station_domain::RESTART.notified() => {}
+        }
         let _ = stop_tx.send(true);
     });
+    let routes: Vec<(String, String)> = planes.iter().map(|p| (p.name.clone(), format!("http://{}", p.http))).collect();
+    let default = planes.iter().find(|p| p.origin).or(planes.first()).map(|p| format!("http://{}", p.http)).ok_or("aucun plan")?;
+    let mut https_front = None;
+    if let Some(h) = &tls {
+        // Le certificat et le compte ACME vivent dans une petite base à part : jamais de seconde connexion d'écriture sur celle d'un plan.
+        let front_db = Arc::new(Db::open(&path.with_file_name("front.db"), 1)?);
+        let names: Vec<String> = domains.iter().map(|(d, _)| d.clone()).collect();
+        let origin_conf = planes.iter().find(|p| p.origin).map(astroportd::plane::conf_of);
+        let email = h.email.clone().or_else(|| origin_conf.as_deref().and_then(astroportd::station_domain::domain_from_conf).and_then(|(_, e)| e));
+        let mut acme = astro_ui::AcmeConfig::new(names.clone(), email);
+        acme.directory_url = (if h.staging { astro_ui::acme::LETS_ENCRYPT_STAGING } else { astro_ui::acme::LETS_ENCRYPT }).to_owned();
+        let manager = astro_ui::AcmeManager::new(acme, astro_ui::KvCertStore::new(front_db));
+        let app = astro_ui::proxy::host_router(routes.clone(), domains.clone(), &default, Duration::from_secs(60));
+        let front = astro_ui::Frontend::start(manager, app, args.http_listen, args.https_listen).await.map_err(|e| format!("front HTTPS des plans : {e} (ports 80/443 pris par un autre programme, ou interdits : sudo setcap 'cap_net_bind_service=+ep' sur le binaire)"))?;
+        println!("front HTTPS des plans : HTTP {} (défi ACME + redirection) et HTTPS {} pour {}", front.http_addr, front.https_addr, names.join(", "));
+        https_front = Some(front);
+    }
     if let Some(addr) = args.front {
-        let routes: Vec<(String, String)> = planes.iter().map(|p| (p.name.clone(), format!("http://{}", p.http))).collect();
-        let default = planes.iter().find(|p| p.origin).or(planes.first()).map(|p| format!("http://{}", p.http)).ok_or("aucun plan")?;
-        let app = astro_ui::proxy::host_router(routes, &default, Duration::from_secs(60));
+        let app = astro_ui::proxy::host_router(routes, domains, &default, Duration::from_secs(60));
         let listener = tokio::net::TcpListener::bind(addr).await?;
         println!("routage par nom d'hôte sur http://{} : <plan>.<domaine> → son plan, le nom nu → {default}", listener.local_addr()?);
         let mut rx = stop_rx.clone();
@@ -1649,7 +1689,17 @@ async fn planes_cmd(args: PlanesArgs) -> Result<(), Failure> {
             failed += 1;
         }
     }
-    if failed > 0 { Err(format!("{failed} plan(s) arrêté(s) sur erreur").into()) } else { Ok(()) }
+    if let Some(f) = https_front {
+        f.shutdown();
+    }
+    if failed > 0 {
+        return Err(format!("{failed} plan(s) arrêté(s) sur erreur").into());
+    }
+    if astroportd::station_domain::restart_requested() {
+        // Code d'échec voulu : systemd (Restart=on-failure) relance tous les plans avec leur nouvelle configuration.
+        return Err("redémarrage demandé depuis le cockpit : systemd relance les plans".into());
+    }
+    Ok(())
 }
 
 fn pool_status_cmd(args: PoolStatusArgs) -> Result<(), Failure> {

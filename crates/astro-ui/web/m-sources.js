@@ -16,15 +16,15 @@ export default async function sources(root, K, tabs) {
     ev.preventDefault();
     const f = Object.fromEntries(new FormData(ev.target));
     const btn = ev.target.querySelector('button'); btn.disabled = true;
-    try { await call('', { url: f.url, username: f.username, password: f.password, label: f.label, remote_path: f.remote_path, dest: f.dest, kinds: new FormData(ev.target).getAll('kinds'), sort: !!f.sort }); ev.target.reset(); K.toast(t('Source ajoutée'), 1); await draw(); }
+    try { await call('', { url: f.url, username: f.src_user, password: f.src_secret, label: f.label, remote_path: f.remote_path, dest: f.dest, kinds: new FormData(ev.target).getAll('kinds'), sort: !!f.sort }); ev.target.reset(); K.toast(t('Source ajoutée'), 1); await draw(); }
     catch (e) { K.toast(e.message); } finally { btn.disabled = false; }
   } },
     h('h2', {}, 'Ajouter une source'),
     h('p', { class: 'muted' }, 'Adresse WebDAV du serveur, par exemple https://nextcloud.example/remote.php/dav/files/votre-identifiant. Créez de préférence un mot de passe d\'application : il est rangé chiffré pour vous seul et vous pouvez le révoquer côté serveur.'),
     h('label', { for: 'src-url' }, 'Adresse WebDAV'), h('input', { id: 'src-url', name: 'url', type: 'url', required: true, placeholder: 'https://nextcloud.example/remote.php/dav/files/identifiant' }),
     h('div', { class: 'grid' },
-      h('div', {}, h('label', { for: 'src-user' }, 'Identifiant'), h('input', { id: 'src-user', name: 'username', required: true, autocomplete: 'off' })),
-      h('div', {}, h('label', { for: 'src-pass' }, 'Mot de passe d\'application'), h('input', { id: 'src-pass', name: 'password', type: 'password', required: true, autocomplete: 'new-password' }))),
+      h('div', {}, h('label', { for: 'src-user' }, 'Identifiant'), h('input', { id: 'src-user', name: 'src_user', required: true })),
+      h('div', {}, h('label', { for: 'src-pass' }, 'Mot de passe d\'application'), h('input', { id: 'src-pass', name: 'src_secret', secret: true, required: true }))),
     h('div', { class: 'grid' },
       h('div', {}, h('label', { for: 'src-rp' }, 'Dossier distant (facultatif)'), h('input', { id: 'src-rp', name: 'remote_path', placeholder: 'Photos' })),
       h('div', {}, h('label', { for: 'src-label' }, 'Libellé (facultatif)'), h('input', { id: 'src-label', name: 'label', placeholder: 'Mon Nextcloud' }))),

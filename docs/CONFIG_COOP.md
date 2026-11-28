@@ -14,6 +14,18 @@ L'écran **Configuration coopérative** (`#/coop`, espace Capitaine) publie un s
 
 Changer le texte demande une **nouvelle signature** à chaque Capitaine (la signature porte l'empreinte exacte du texte). Détails : guide, [Ma UPlanet](GUIDE.md#etape-8c).
 
+## Monnaie et apparence {#look}
+
+Pour qu'on sache d'un coup d'œil **sur quelle UPlanet** on se trouve. Le nom de l'UPlanet (`UPLANET_NAME`) s'affiche dans l'en-tête de l'application, à côté du logo, et dans le sélecteur de constellation du Capitaine.
+
+| Champ | Ce qu'il faut y mettre |
+|---|---|
+| `CURRENCY_NAME` | Le nom de l'unité de compte (16 caractères au plus, sans chiffre), par exemple `Sol` ou `Graine`. **Vide** : « Ẑen ». Il remplace « Ẑen » partout dans l'application. |
+| `CURRENCY_SYMBOL` | Son symbole (3 caractères au plus), par exemple `☉`. **Vide** : « Ẑ ». |
+| `UI_STYLE` | Le style proposé par défaut aux membres : Aurore (vide) ou `sobre`. Chacun garde le choix de son appareil. |
+
+Le style **Kraft est réservé à ORIGIN**, le réseau public d'essai : ses membres le voient tout de suite. Sur ORIGIN, ces trois réglages sont **ignorés**, et la monnaie reste « Ẑen ». La configuration d'ORIGIN est signée par une clé que tout le monde peut calculer, donc n'importe qui pourrait la renommer. Seul l'affichage change : les montants, la règle 1 Ẑen = 1 € et la comptabilité restent les mêmes.
+
 ## Domaine de la coopérative (OVH) {#ovh}
 
 Sert à donner une adresse en `.<votre domaine>` à chaque station et à chaque MULTIPASS, et fixe le relai commun `wss://relay.<domaine>`. Il faut un **nom de domaine dont la zone DNS est chez OVH**.
@@ -117,6 +129,7 @@ Quand la clé est renseignée, la fiche propose en plus **« Reconnaître la pla
 | Champ | Où le trouver |
 |---|---|
 | `PLANTNET_API_KEY` | Compte sur **my.plantnet.org** › *Your API key*. L'offre gratuite compte 500 reconnaissances par jour et par clé (vérifié : la réponse de Pl@ntNet donne le reste du jour), pour **toute** la constellation ; au-delà, la station dit que le quota est épuisé. Les stations Astroport.ONE lisent la même clé. |
+| *Clé de cette station seulement* | Votre propre clé Pl@ntNet, quand celle de la coopérative ne suffit plus. Elle **passe avant** celle de la coopérative, pour vos seuls membres. Elle n'est **jamais publiée** et reste sur votre station. Cochez « revenir à la clé de la coopérative » pour la retirer. |
 
 ## Stations Astroport.ONE {#legacy}
 

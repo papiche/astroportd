@@ -256,7 +256,7 @@ impl<B: BlobStore> Site<B> {
         let (profile, origin, (peer, app)) = (self.profile(hex).await, origin_of(headers), self.links(base).await);
         let none = std::collections::HashMap::new();
         let notice = if down { "Copie de secours : la station de ce blog est injoignable, une station amie le sert. Les fichiers partagés reviendront avec elle." } else { "" };
-        let ctx = crate::public_blog::Ctx { hex, peer: &peer, app: &app, replies: &none, friends: &[], notice, files_at, base, origin: &origin, profile: &profile, theme: "aurore" };
+        let ctx = crate::public_blog::Ctx { hex, peer: &peer, app: &app, replies: &none, friends: &[], notice, files_at, base, origin: &origin, profile: &profile, theme: "aurore", visits: None };
         match crate::public_blog::route(&self.dav.db, hex, &rel, &ctx, async { Vec::new() }).await {
             Some(page) => {
                 let mut r = blog_response(page, false);
@@ -285,6 +285,12 @@ impl<B: BlobStore> Site<B> {
                 })
                 .await;
         });
+    }
+
+    /// Pages vues du site de `hex` ces 30 derniers jours (pied de page public) ; `None` si la base ne répond pas.
+    async fn month_visits(&self, hex: &str) -> Option<i64> {
+        let (h, today) = (hex.to_owned(), i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) / 86_400).unwrap_or(0));
+        self.dav.db.readers().read(move |c| Ok(c.query_row("SELECT COALESCE(SUM(hits), 0) FROM site_visits WHERE hex = ?1 AND day >= ?2", rusqlite::params![h, today - 29], |r| r.get::<_, i64>(0))?)).await.ok()
     }
 
     /// Visites du site de `hex` : aujourd'hui, 7 jours, 90 jours, par jour sur 30 jours, et les pages les plus vues sur 7 jours.
@@ -345,7 +351,7 @@ impl<B: BlobStore> Site<B> {
         let entries: Vec<Entry> = self.children(hex, path).await.into_iter().filter(|e| !vfs::name_of(&e.path).starts_with('.')).collect();
         let (profile, origin, theme, (peer, app)) = (self.profile(hex).await, origin_of(headers), self.theme(hex).await, self.links(base).await);
         let none = std::collections::HashMap::new();
-        let ctx = crate::public_blog::Ctx { hex, peer: &peer, app: &app, replies: &none, friends: &[], notice: "", files_at: "", base, origin: &origin, profile: &profile, theme: &theme };
+        let ctx = crate::public_blog::Ctx { hex, peer: &peer, app: &app, replies: &none, friends: &[], notice: "", files_at: "", base, origin: &origin, profile: &profile, theme: &theme, visits: self.month_visits(hex).await };
         blog_response(crate::public_blog::Page::Html(crate::public_blog::files_page(&ctx, rel, &entries)), head)
     }
 
@@ -413,7 +419,7 @@ impl<B: BlobStore> Site<B> {
     async fn blog(&self, hex: &str, base: &str, rel: &str, headers: &HeaderMap, head: bool) -> Option<Response> {
         let (profile, origin, theme, (peer, app)) = (self.profile(hex).await, origin_of(headers), self.theme(hex).await, self.links(base).await);
         let none = std::collections::HashMap::new();
-        let ctx = crate::public_blog::Ctx { hex, peer: &peer, app: &app, replies: &none, friends: &[], notice: "", files_at: "", base, origin: &origin, profile: &profile, theme: &theme };
+        let ctx = crate::public_blog::Ctx { hex, peer: &peer, app: &app, replies: &none, friends: &[], notice: "", files_at: "", base, origin: &origin, profile: &profile, theme: &theme, visits: self.month_visits(hex).await };
         let files = async { self.children(hex, DIR).await.into_iter().filter(|e| !vfs::name_of(&e.path).starts_with('.')).collect::<Vec<_>>() };
         let page = crate::public_blog::route(&self.dav.db, hex, rel, &ctx, files).await?;
         Some(blog_response(page, head))

@@ -39,7 +39,7 @@ export default async function aiCard(card, K) {
   const prov = h('select', { id: 'ai-prov', 'aria-label': t('Fournisseur') }, h('option', { value: '' }, t('Aucun')),
     (p.providers || []).map(x => h('option', { value: x.id, selected: p.provider === x.id }, x.label)));
   const rpm = h('input', { id: 'ai-rpm', inputmode: 'numeric', value: p.rpm || '', placeholder: String(p.default_rpm || 50), 'aria-label': t('Requêtes par minute') });
-  const key = h('input', { id: 'ai-key', type: 'password', placeholder: p.has_key ? t('Clé enregistrée : laisser vide pour la garder') : t('Clé d\'API'), autocomplete: 'off', 'aria-label': t('Clé d\'API'), maxlength: 256 });
+  const key = h('input', { id: 'ai-key', secret: true, placeholder: p.has_key ? t('Clé enregistrée : laisser vide pour la garder') : t('Clé d\'API'), autocomplete: 'off', 'aria-label': t('Clé d\'API'), maxlength: 256 });
   const refer = h('p', { class: 'muted' });
   const showRefer = () => {
     const url = (p.referrals || {})[prov.value], name = prov.selectedOptions[0]?.textContent;

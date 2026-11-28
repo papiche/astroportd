@@ -44,10 +44,24 @@ pub struct Section {
 /// Niveaux, dans l'ordre de l'écran.
 pub const LEVELS: &[&str] = &["essential", "money", "rules", "services", "legacy"];
 
+/// Styles qu'une UPlanet privée peut choisir (`UI_STYLE`). **Kraft est réservé à ORIGIN** : on voit d'un coup d'œil qu'on est
+/// dans le bac à sable public.
+pub const STYLES: &[&str] = &["aurore", "sobre"];
+
+/// Clés qu'une **station** peut surdéfinir pour elle seule (le Capitaine y met sa propre clé quand celle de la coopérative
+/// atteint ses limites). La valeur locale est de l'état local (`kv`, portée [`LOCAL_SCOPE`]) : jamais publiée, elle passe
+/// avant celle de la coopérative dans [`setting`].
+pub const STATION_KEYS: &[&str] = &["PLANTNET_API_KEY"];
+/// Portée `kv` des valeurs locales.
+pub const LOCAL_SCOPE: &str = "coop_local";
+/// Préfixe d'une clé de `patch` qui vise la station seule (`station:PLANTNET_API_KEY`), pas la coopérative.
+pub const LOCAL_PREFIX: &str = "station:";
+
 /// Sections et clés connues. Toute autre clé est refusée à l'écriture (liste blanche, comme côté UPassport). L'`id` est
 /// aussi l'ancre de la section dans `docs/CONFIG_COOP.md` (lien « ? » de l'écran).
 pub const SECTIONS: &[Section] = &[
     Section { id: "uplanet", title: "Nom et charte de l'UPlanet", keys: &["UPLANET_NAME", "CHARTER_VERSION", "CHARTER_TEXT"], level: "essential" },
+    Section { id: "look", title: "Monnaie et apparence", keys: &["CURRENCY_NAME", "CURRENCY_SYMBOL", "UI_STYLE"], level: "essential" },
     Section { id: "ovh", title: "Domaine de la coopérative (OVH)", keys: &["OVH_ZONE", "OVH_APP_KEY", "OVH_APP_SECRET", "OVH_CONSUMER_KEY"], level: "essential" },
     Section { id: "mesh", title: "Stations relais du maillage", keys: &["P2P_RELAYS", "ORIGIN_RELAY"], level: "essential" },
     Section { id: "oc", title: "OpenCollective", keys: &["OCSLUG", "OCAPIKEY", "OC_AUTO_CREDIT", "OC_URL_MEMBRE", "OC_URL_CLOUD", "OC_URL_SATELLITE", "OC_URL_CONSTELLATION"], level: "money" },
@@ -213,6 +227,15 @@ pub fn validate(key: &str, value: &str) -> Result<(), String> {
     if key == "UPLANET_NAME" && (value.chars().count() > 48 || value.trim() != value) {
         return Err(format!("{key} : 48 caractères au plus, sans espace au début ni à la fin"));
     }
+    if key == "CURRENCY_NAME" && (value.chars().count() > 16 || value.trim() != value || value.chars().any(|c| c.is_ascii_digit())) {
+        return Err(format!("{key} : 16 caractères au plus, sans chiffre ni espace au début ou à la fin (ex. Ẑen, Sol, Graine)"));
+    }
+    if key == "CURRENCY_SYMBOL" && (value.chars().count() > 3 || value.chars().any(|c| c.is_whitespace() || c.is_ascii_digit())) {
+        return Err(format!("{key} : 3 caractères au plus, sans espace ni chiffre (ex. Ẑ, ☉, G)"));
+    }
+    if key == "UI_STYLE" && !STYLES.contains(&value) {
+        return Err(format!("{key} : {} (le style Kraft est réservé à ORIGIN)", STYLES.join(" ou ")));
+    }
     if key == "CHARTER_VERSION" && !value.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
         return Err(format!("{key} : un numéro de version est attendu (ex. 1.0)"));
     }
@@ -253,13 +276,67 @@ pub async fn domain(db: &Db, uplanet_name: &str) -> Option<String> {
     stored.values.get("OVH_ZONE").map(|d| d.trim().to_ascii_lowercase()).filter(|d| valid_domain(d))
 }
 
-/// Valeur d'un réglage de la coopérative, secret déchiffré, `None` si absent ou vide.
+/// Valeur d'un réglage de la coopérative, secret déchiffré, `None` si absent ou vide. Pour une clé de [`STATION_KEYS`], la valeur
+/// propre à la station passe avant.
 pub async fn setting(db: &Db, uplanet_name: &str, key: &str) -> Option<String> {
+    if STATION_KEYS.contains(&key)
+        && let Some(v) = local(db, key).await
+    {
+        return Some(v);
+    }
     let (_, hex) = coop_keys(uplanet_name).ok()?;
     let stored = load(db, &hex).await?;
     let v = stored.values.get(key)?;
     let v = if astro_crypto::coop::is_encrypted(v) { astro_crypto::coop::decrypt(uplanet_name, v).ok()? } else { v.clone() };
     Some(v.trim().to_owned()).filter(|v| !v.is_empty())
+}
+
+/// Valeur propre à la station d'une clé de [`STATION_KEYS`], `None` si absente.
+pub async fn local(db: &Db, key: &str) -> Option<String> {
+    let k = key.to_owned();
+    db.readers()
+        .read(move |c| Ok(c.query_row("SELECT value FROM kv WHERE scope = ?1 AND key = ?2", [LOCAL_SCOPE, k.as_str()], |r| r.get::<_, String>(0)).optional()?))
+        .await
+        .ok()
+        .flatten()
+        .filter(|v| !v.trim().is_empty())
+}
+
+/// Clés de [`STATION_KEYS`] que cette station a surdéfinies.
+pub async fn local_keys(db: &Db) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for k in STATION_KEYS {
+        if local(db, k).await.is_some() {
+            out.insert((*k).to_owned());
+        }
+    }
+    out
+}
+
+/// Comment l'interface se présente sur cette constellation : nom de l'UPlanet, nom et symbole de la monnaie, style.
+///
+/// **ORIGIN ne se personnalise pas** : sa clé coopérative se calcule par tous (64 zéros), n'importe qui pourrait donc renommer sa
+/// monnaie. ORIGIN reste « Ẑen », « Ẑ », style Kraft. Une UPlanet privée prend ce que sa coopérative publie, sinon les défauts.
+pub async fn look(db: &Db, uplanet_name: &str) -> Value {
+    let origin = uplanet_name == crate::init::ORIGIN_UPLANETNAME;
+    let stored = if origin { None } else { coop_keys(uplanet_name).ok().map(|(_, hex)| hex) };
+    let stored = match stored {
+        Some(hex) => load(db, &hex).await,
+        None => None,
+    };
+    look_of(origin, stored.as_ref().map(|s| &s.values))
+}
+
+/// [`look`] sans base de données (testable). Une valeur invalide (publiée par une station legacy, par exemple) est ignorée.
+pub fn look_of(origin: bool, values: Option<&BTreeMap<String, String>>) -> Value {
+    let get = |k: &str| if origin { None } else { values.and_then(|v| v.get(k)).map(|v| v.trim().to_owned()).filter(|v| !v.is_empty() && validate(k, v).is_ok()) };
+    json!({
+        "origin": origin,
+        "name": if origin { Some("ORIGIN".to_owned()) } else { get("UPLANET_NAME") },
+        "currency": get("CURRENCY_NAME").unwrap_or_else(|| "Ẑen".into()),
+        "symbol": get("CURRENCY_SYMBOL").unwrap_or_else(|| "Ẑ".into()),
+        "style": if origin { Some("kraft".to_owned()) } else { get("UI_STYLE") },
+    })
 }
 
 /// Clé coopérative `<UPLANETNAME>.G1` : `(secret Nostr, clé publique hexadécimale)`.
@@ -304,7 +381,8 @@ pub async fn load(db: &Db, author_hex: &str) -> Option<Stored> {
 }
 
 /// Vue pour l'interface : sections, valeurs en clair, secrets masqués (renseigné ou non, déchiffrable ou non).
-pub fn view(stored: Option<&Stored>, uplanet_name: &str, coop_hex: &str) -> Value {
+/// `local` : clés de [`STATION_KEYS`] que la station a surdéfinies (champ `station` de la vue).
+pub fn view(stored: Option<&Stored>, uplanet_name: &str, coop_hex: &str, local: &std::collections::BTreeSet<String>) -> Value {
     let get = |k: &str| stored.and_then(|s| s.values.get(k));
     let sections: Vec<Value> = SECTIONS
         .iter()
@@ -312,10 +390,16 @@ pub fn view(stored: Option<&Stored>, uplanet_name: &str, coop_hex: &str) -> Valu
             let fields: Vec<Value> = s
                 .keys
                 .iter()
-                .map(|k| match (is_secret(k), get(k)) {
-                    (true, Some(v)) if !v.is_empty() => json!({ "key": k, "secret": true, "set": true, "readable": coop::decrypt(uplanet_name, v).is_ok() }),
-                    (true, _) => json!({ "key": k, "secret": true, "set": false, "readable": true }),
-                    (false, v) => json!({ "key": k, "secret": false, "value": v }),
+                .map(|k| {
+                    let mut f = match (is_secret(k), get(k)) {
+                        (true, Some(v)) if !v.is_empty() => json!({ "key": k, "secret": true, "set": true, "readable": coop::decrypt(uplanet_name, v).is_ok() }),
+                        (true, _) => json!({ "key": k, "secret": true, "set": false, "readable": true }),
+                        (false, v) => json!({ "key": k, "secret": false, "value": v }),
+                    };
+                    if STATION_KEYS.contains(k) {
+                        f["station"] = json!(local.contains(*k));
+                    }
+                    f
                 })
                 .collect();
             json!({ "id": s.id, "title": s.title, "level": s.level, "fields": fields })
@@ -363,21 +447,52 @@ pub fn build_event(stored: Option<&Stored>, patch: &BTreeMap<String, Option<Stri
     UnsignedEvent { created_at, kind: KIND, tags, content: serde_json::to_string(&values).map_err(|e| e.to_string())? }.sign(&secret).map_err(|e| e.to_string())
 }
 
-/// Écrit la configuration : construit, signe, publie. Rend la vue mise à jour.
+/// Écrit la configuration : construit, signe, publie. Rend la vue mise à jour. Les clés préfixées par [`LOCAL_PREFIX`] ne
+/// partent pas : elles règlent la station seule (état local), et ne valent que pour [`STATION_KEYS`].
 pub async fn save<P: Publisher>(db: &Db, publisher: &Arc<P>, uplanet_name: &str, patch: &BTreeMap<String, Option<String>>) -> Result<Value, String> {
+    if patch.is_empty() {
+        return Err("aucune modification".into());
+    }
     let (_, coop_hex) = coop_keys(uplanet_name)?;
-    let stored = load(db, &coop_hex).await;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let event = build_event(stored.as_ref(), patch, uplanet_name, now)?;
-    publisher.publish(event.clone()).await.map_err(|e| format!("publication refusée : {e}"))?;
+    let (mine, shared): (BTreeMap<_, _>, BTreeMap<_, _>) = patch.iter().map(|(k, v)| (k.clone(), v.clone())).partition(|(k, _)| k.starts_with(LOCAL_PREFIX));
+    // Tout est vérifié avant d'écrire quoi que ce soit : une saisie fausse n'enregistre pas la moitié du reste.
+    let mut writes = Vec::new();
+    for (k, v) in &mine {
+        let key = &k[LOCAL_PREFIX.len()..];
+        if !STATION_KEYS.contains(&key) {
+            return Err(format!("{key} : cette clé vaut pour toute la coopérative, une station ne la surdéfinit pas"));
+        }
+        let v = v.as_deref().map(str::trim).filter(|v| !v.is_empty());
+        if let Some(v) = v {
+            validate(key, v)?;
+        }
+        writes.push(match v {
+            Some(v) => astro_db::Statement::new(
+                "INSERT INTO kv(scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                vec![LOCAL_SCOPE.to_owned().into(), key.to_owned().into(), v.to_owned().into(), i64::try_from(now).unwrap_or(0).into()],
+            ),
+            None => astro_db::Statement::new("DELETE FROM kv WHERE scope = ?1 AND key = ?2", vec![LOCAL_SCOPE.to_owned().into(), key.to_owned().into()]),
+        });
+    }
+    let stored = load(db, &coop_hex).await;
+    let event = if shared.is_empty() { None } else { Some(build_event(stored.as_ref(), &shared, uplanet_name, now)?) };
+    if !writes.is_empty() {
+        db.writer().batch(writes).await.map_err(|e| e.to_string())?;
+    }
+    let mut published = None;
+    if let Some(event) = event {
+        publisher.publish(event.clone()).await.map_err(|e| format!("publication refusée : {e}"))?;
+        published = Some(Stored { event_id: event.id.clone(), created_at: event.created_at, values: serde_json::from_str::<BTreeMap<String, String>>(&event.content).unwrap_or_default() });
+    }
     // Journal d'audit : QUELLES clés ont changé, jamais leurs valeurs.
-    let record = json!({ "keys": patch.keys().collect::<Vec<_>>(), "event": event.id });
+    let record = json!({ "keys": patch.keys().collect::<Vec<_>>(), "event": published.as_ref().map(|p| p.event_id.clone()) });
     let _ = db
         .writer()
         .execute("INSERT INTO journal(stream, at, data) VALUES ('coop_config', ?1, ?2)", vec![i64::try_from(now).unwrap_or(0).into(), record.to_string().into()])
         .await;
     let fresh = load(db, &coop_hex).await;
-    Ok(view(fresh.as_ref().or(Some(&Stored { event_id: event.id.clone(), created_at: event.created_at, values: serde_json::from_str::<BTreeMap<String, String>>(&event.content).unwrap_or_default() })), uplanet_name, &coop_hex))
+    Ok(view(fresh.as_ref().or(published.as_ref()).or(stored.as_ref()), uplanet_name, &coop_hex, &local_keys(db).await))
 }
 
 #[cfg(test)]
@@ -451,7 +566,7 @@ mod tests {
         // Chaque clé connue est dans une seule section (l'écran n'en perd ni n'en double aucune).
         let all: Vec<&str> = SECTIONS.iter().flat_map(|s| s.keys.iter().copied()).collect();
         assert!(all.iter().all(|k| all.iter().filter(|x| *x == k).count() == 1), "clé en double");
-        assert_eq!(all.len(), 40, "les 40 clés de la version précédente de l'écran, sans perte");
+        assert_eq!(all.len(), 43, "les 40 clés de la version précédente de l'écran et les 3 de « Monnaie et apparence », sans perte");
         assert!(LEVELS.iter().all(|l| SECTIONS.iter().any(|s| s.level == *l)), "aucun niveau vide");
     }
 
@@ -530,11 +645,47 @@ mod tests {
         // Un secret chiffré par une AUTRE constellation reste visible comme renseigné mais « illisible ».
         let (_, coop_hex) = coop_keys(UP).unwrap();
         let foreign = Stored { event_id: "x".into(), created_at: 1, values: BTreeMap::from([("OCAPIKEY".to_owned(), coop::encrypt("Autre", "s").unwrap()), ("MA_CLE_A_MOI".to_owned(), "1".to_owned())]) };
-        let v = view(Some(&foreign), UP, &coop_hex);
+        let v = view(Some(&foreign), UP, &coop_hex, &std::collections::BTreeSet::new());
         let oc = v["sections"].as_array().unwrap().iter().find(|s| s["id"] == "oc").unwrap()["fields"].as_array().unwrap().clone();
         let f = oc.iter().find(|f| f["key"] == "OCAPIKEY").unwrap();
         assert_eq!((f["set"].clone(), f["readable"].clone()), (json!(true), json!(false)));
         assert_eq!(v["unmanaged"], json!(["MA_CLE_A_MOI"]));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn a_station_overrides_its_plantnet_key_without_publishing_it() {
+        let (dir, db) = db("local").await;
+        let publisher = Arc::new(Store(db.clone(), Mutex::new(Vec::new())));
+        save(&db, &publisher, UP, &patch(&[("PLANTNET_API_KEY", Some("2b10coop"))])).await.unwrap();
+        assert_eq!(setting(&db, UP, "PLANTNET_API_KEY").await.as_deref(), Some("2b10coop"));
+        // La clé de la station passe avant, sans rien publier.
+        let v = save(&db, &publisher, UP, &patch(&[("station:PLANTNET_API_KEY", Some("2b10station"))])).await.unwrap();
+        assert_eq!(publisher.1.lock().unwrap().len(), 1, "une clé de station n'est jamais publiée");
+        assert_eq!(setting(&db, UP, "PLANTNET_API_KEY").await.as_deref(), Some("2b10station"));
+        let pn = v["sections"].as_array().unwrap().iter().find(|s| s["id"] == "plantnet").unwrap()["fields"][0].clone();
+        assert_eq!((pn["set"].clone(), pn["station"].clone()), (json!(true), json!(true)));
+        assert!(!v.to_string().contains("2b10station"), "la valeur ne revient jamais dans la vue");
+        // Retirée : la coopérative reprend la main.
+        save(&db, &publisher, UP, &patch(&[("station:PLANTNET_API_KEY", None)])).await.unwrap();
+        assert_eq!(setting(&db, UP, "PLANTNET_API_KEY").await.as_deref(), Some("2b10coop"));
+        // Seules les clés prévues se surdéfinissent ; une erreur n'écrit rien.
+        assert!(save(&db, &publisher, UP, &patch(&[("station:OCAPIKEY", Some("x"))])).await.unwrap_err().contains("toute la coopérative"));
+        assert!(save(&db, &publisher, UP, &patch(&[("station:PLANTNET_API_KEY", Some("a")), ("TVA_RATE", Some("vingt"))])).await.is_err());
+        assert_eq!(setting(&db, UP, "PLANTNET_API_KEY").await.as_deref(), Some("2b10coop"), "rien d'écrit sur une erreur");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn origin_keeps_kraft_and_zen_a_private_uplanet_names_its_money() {
+        let mine: BTreeMap<String, String> = [("UPLANET_NAME", "Pays Basque"), ("CURRENCY_NAME", "Sol"), ("CURRENCY_SYMBOL", "☉"), ("UI_STYLE", "sobre")].into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect();
+        assert_eq!(look_of(false, Some(&mine)), json!({ "origin": false, "name": "Pays Basque", "currency": "Sol", "symbol": "☉", "style": "sobre" }));
+        // ORIGIN : sa configuration est signable par tous, elle ne change ni la monnaie ni le style.
+        assert_eq!(look_of(true, Some(&mine)), json!({ "origin": true, "name": "ORIGIN", "currency": "Ẑen", "symbol": "Ẑ", "style": "kraft" }));
+        // Rien de publié, ou une valeur invalide (Kraft demandé par une UPlanet privée) : les défauts.
+        let bad: BTreeMap<String, String> = [("UI_STYLE", "kraft"), ("CURRENCY_SYMBOL", "EURO")].into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect();
+        assert_eq!(look_of(false, Some(&bad)), json!({ "origin": false, "name": null, "currency": "Ẑen", "symbol": "Ẑ", "style": null }));
+        assert!(validate("UI_STYLE", "kraft").unwrap_err().contains("réservé à ORIGIN"));
+        assert!(validate("CURRENCY_NAME", "Ẑen").is_ok() && validate("CURRENCY_NAME", "Zen2").is_err());
     }
 }

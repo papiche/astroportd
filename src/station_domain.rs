@@ -33,7 +33,7 @@ pub fn local_listen() -> std::net::SocketAddr {
 
 /// Signal de redémarrage : notifié par l'API, attendu par `serve::run`.
 pub static RESTART: Notify = Notify::const_new();
-/// `serve::run` (une seule constellation par processus) sait redémarrer ; `planes` ne l'arme pas.
+/// `serve::run` et `planes` savent redémarrer (arrêt sur un code d'échec, systemd relance le processus).
 static ARMED: AtomicBool = AtomicBool::new(false);
 static REQUESTED: AtomicBool = AtomicBool::new(false);
 /// Domaine de `station.conf` écarté au démarrage (ports indisponibles) : la cause, pour le cockpit.
@@ -49,7 +49,7 @@ pub fn refused() -> Option<&'static str> {
     REFUSED.get().map(String::as_str)
 }
 
-/// Appelé par `serve::run` : le redémarrage depuis le cockpit devient possible.
+/// Appelé par `serve::run` et `planes` : le redémarrage depuis le cockpit devient possible.
 pub fn arm() {
     ARMED.store(true, Ordering::SeqCst);
 }

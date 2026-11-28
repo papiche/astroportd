@@ -38,6 +38,10 @@ pub trait OnboardApi: Auth {
     fn stations(&self) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("annuaire des stations non disponible")) }
     }
+    /// Présentation de la constellation (nom de l'UPlanet, monnaie, style), publique : l'écran de connexion la montre déjà.
+    fn look(&self) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Ok(serde_json::json!({ "origin": false, "name": null, "currency": "Ẑen", "symbol": "Ẑ", "style": null })) }
+    }
     /// Carte publique de la station (`GET /12345`) : identités publiques et adresses, jamais d'adresse e-mail ni de secret.
     fn station_card(&self) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("carte de station non disponible")) }
@@ -122,6 +126,7 @@ pub(super) fn routes<B: OnboardApi>() -> Router<Arc<UiState<B>>> {
         .route("/api/v1/register", get(register_info::<B>).post(register::<B>))
         .route("/api/v1/stations", get(stations::<B>))
         .route("/api/v1/locate", get(locate::<B>))
+        .route("/api/v1/look", get(look::<B>))
         .route("/12345", get(station_card::<B>))
         .route("/12345/", get(station_card::<B>))
         .route("/api/v1/restore", post(restore::<B>))
@@ -228,6 +233,12 @@ struct RestoreAskBody {
 /// Inscription ouverte ? (aucun compte requis : c'est la porte d'entrée.)
 async fn register_info<B: OnboardApi>(State(st): State<Arc<UiState<B>>>) -> Response {
     any_origin(reply(st.backend.register_info().await))
+}
+
+/// Nom de l'UPlanet, monnaie et style (public, lecture seule : ce que la configuration coopérative publie déjà en kind 30800).
+async fn look<B: OnboardApi>(State(st): State<Arc<UiState<B>>>) -> Response {
+    // Lisible depuis les autres plans de la station (`<plan>.<domaine>`) : le sélecteur de plan y lit le nom de chaque UPlanet.
+    any_origin(reply(st.backend.look().await))
 }
 
 /// Carte de la station au format `12345.json` réduit (public, lecture seule).

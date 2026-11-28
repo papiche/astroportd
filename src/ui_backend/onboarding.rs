@@ -81,6 +81,9 @@ impl<B: BlobStore> OnboardApi for OnboardBackend<B> {
             crate::locate::Found::Unknown => json!({ "where": "unknown" }),
         })
     }
+    async fn look(&self) -> Result<Value, ApiError> {
+        Ok(crate::coop_config::look(&self.services.db, &self.services.uplanet_name).await)
+    }
     async fn station_card(&self) -> Result<Value, ApiError> {
         let svc = &self.services;
         let keys = self.stations.as_ref().ok_or_else(|| ApiError::unavailable("carte de station non disponible"))?.public_keys().await.map_err(ApiError::internal)?;

@@ -169,21 +169,28 @@ pub fn plane_of_host<'a>(host: &str, planes: &'a [(String, String)]) -> Option<&
     planes.iter().find(|(n, _)| n == first).map(|(n, _)| n.as_str())
 }
 
+/// Plan visé par un **domaine propre** (`zen.mondomaine.org` réglé pour le plan `zen1`) : comparaison exacte, port et casse ignorés.
+pub fn plane_of_domain<'a>(host: &str, domains: &'a [(String, String)]) -> Option<&'a str> {
+    let host = host.rsplit_once(':').filter(|(_, p)| p.bytes().all(|b| b.is_ascii_digit())).map_or(host, |(h, _)| h).to_ascii_lowercase();
+    domains.iter().find(|(d, _)| *d == host).map(|(_, n)| n.as_str())
+}
+
 /// Routeur **par nom d'hôte** pour plusieurs plans servis par un même processus : chaque plan écoute sur son port local ; ce routeur, sur
-/// un port commun, envoie `<plan>.<domaine>` vers le plan du même nom et tout le reste vers `default`. Chemins, requêtes, WebSockets
-/// et en-têtes `X-Forwarded-*` suivent comme pour [`proxy_router`]. Le plan est donc connu **avant** toute authentification : un même
-/// email sur deux plans ne prête jamais à confusion.
-pub fn host_router(planes: Vec<(String, String)>, default: &str, timeout: Duration) -> Router {
+/// un port commun, envoie le domaine propre d'un plan (`domains` : `(domaine, plan)`) puis `<plan>.<domaine>` vers ce plan, et tout le
+/// reste vers `default`. Chemins, requêtes, WebSockets et en-têtes `X-Forwarded-*` suivent comme pour [`proxy_router`]. Le plan est donc
+/// connu **avant** toute authentification : un même email sur deux plans ne prête jamais à confusion.
+pub fn host_router(planes: Vec<(String, String)>, domains: Vec<(String, String)>, default: &str, timeout: Duration) -> Router {
     let client = Client::builder(TokioExecutor::new()).build_http();
     let state = |upstream: &str| Arc::new(ProxyState { route: ProxyRoute { prefix: String::new(), upstream: upstream.trim_end_matches('/').to_owned(), gate: None }, client: client.clone(), timeout });
     let by_name: Vec<(String, Arc<ProxyState>)> = planes.iter().map(|(n, u)| (n.clone(), state(u))).collect();
     let fallback = state(default);
-    let shared = Arc::new((planes, by_name, fallback));
+    let shared = Arc::new((planes, by_name, fallback, domains));
     Router::new().fallback(any(move |req: Request| {
         let shared = shared.clone();
         async move {
             let host = req.headers().get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or_default().to_owned();
-            let st = plane_of_host(&host, &shared.0).and_then(|n| shared.1.iter().find(|(name, _)| name == n)).map_or_else(|| shared.2.clone(), |(_, s)| s.clone());
+            let name = plane_of_domain(&host, &shared.3).or_else(|| plane_of_host(&host, &shared.0));
+            let st = name.and_then(|n| shared.1.iter().find(|(name, _)| name == n)).map_or_else(|| shared.2.clone(), |(_, s)| s.clone());
             forward(State(st), req).await
         }
     }))
@@ -215,7 +222,7 @@ mod tests {
             format!("http://{addr}")
         }
         let (origin, zen1, zen2) = (serve("origin").await, serve("zen1").await, serve("zen2").await);
-        let router = host_router(vec![("zen1".into(), zen1), ("zen2".into(), zen2)], &origin, Duration::from_secs(5));
+        let router = host_router(vec![("zen1".into(), zen1), ("zen2".into(), zen2)], vec![("zen.mondomaine.org".into(), "zen2".into())], &origin, Duration::from_secs(5));
         let ask = |host: &'static str, uri: &'static str| {
             let router = router.clone();
             async move {
@@ -228,6 +235,8 @@ mod tests {
         assert_eq!(ask("zen2.station.example:443", "/").await, "zen2|/|");
         assert_eq!(ask("station.example", "/dav/a").await, "origin|/dav/a|");
         assert_eq!(ask("zen9.station.example", "/").await, "origin|/|", "un nom inconnu va au plan par défaut, jamais à un plan par hasard");
+        assert_eq!(ask("Zen.MonDomaine.org:443", "/x").await, "zen2|/x|", "le domaine propre d'un plan mène à ce plan");
+        assert_eq!(ask("mondomaine.org", "/").await, "origin|/|");
     }
 
     #[test]

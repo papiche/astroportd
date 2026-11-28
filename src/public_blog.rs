@@ -196,6 +196,8 @@ pub struct Ctx<'a> {
     pub profile: &'a Value,
     /// Thème : `aurore`, `sobre` ou `kraft`.
     pub theme: &'a str,
+    /// Pages vues ces 30 derniers jours (compteur sans cookie ni identifiant de visiteur), montré en pied de page ; `None` : rien.
+    pub visits: Option<i64>,
 }
 
 /// Réponse d'une page du blog.
@@ -443,6 +445,7 @@ pub async fn route(db: &astro_db::Db, hex: &str, rel: &str, ctx: &Ctx<'_>, files
         ["notes"] => notes_page(ctx, db, hex, 1).await?,
         ["notes", "page", n] => notes_page(ctx, db, hex, page_n(n)?).await?,
         ["files"] => Page::Html(files_page(ctx, "", &files.await)),
+        ["repondre", code] => Page::Html(reply_page(ctx, reply_code(code)?)),
         ["feed.xml"] => Page::Text("application/atom+xml; charset=utf-8", feed(ctx, &articles(db, hex).await)),
         ["sitemap.xml"] => Page::Text("application/xml; charset=utf-8", sitemap(ctx, &articles(db, hex).await)),
         ["robots.txt"] => Page::Text("text/plain; charset=utf-8", format!("User-agent: *\nAllow: /\nSitemap: {}{}/sitemap.xml\n", ctx.origin, ctx.base)),
@@ -604,14 +607,39 @@ fn relay_of(ctx: &Ctx<'_>) -> String {
     ctx.origin.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1)
 }
 
-/// « Répondre » par Nostr : `nostr:` ouvre le client Nostr du visiteur ; `web+nostr:` ouvre SON application Astroport (sur sa propre
-/// station), qui s'est enregistrée pour ces adresses. La réponse part de chez lui ; la synchro N² la ramène ici, sous la note.
-fn reply_link(code: Option<String>, label: &str) -> String {
+/// « Répondre » : une page de ce site ([`reply_page`]) qui guide le visiteur. Un lien `nostr:` ou `web+astro:` nu ne mène nulle
+/// part dans un navigateur qui ne connaît pas ces adresses (le cas de presque tous les visiteurs).
+fn reply_link(ctx: &Ctx<'_>, code: Option<String>, label: &str) -> String {
     match code {
-        // Le relai n'accepte que le cercle N² : l'entrée est l'application Astroport du visiteur (sa station, son cercle).
-        Some(c) => format!("<p class=\"reply\"><a href=\"web+astro:{c}\" title=\"Répondre depuis mon application Astroport\">💬 {label}</a> <a class=\"via\" href=\"nostr:{c}\">autre application Nostr</a></p>"),
+        Some(c) => format!("<p class=\"reply\"><a href=\"{}/repondre/{c}\" rel=\"nofollow\">💬 {label}</a></p>", ctx.base),
         None => String::new(),
     }
+}
+
+/// Adresse Nostr (`nevent1…` ou `naddr1…`) reçue dans un chemin : bech32 seulement, longueur bornée.
+fn reply_code(code: &str) -> Option<&str> {
+    (code.len() <= 600 && (code.starts_with("nevent1") || code.starts_with("naddr1")) && code.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())).then_some(code)
+}
+
+/// Page « Répondre » : chaque visiteur trouve son chemin, sans script. Le relai de la station n'accepte que son cercle : la réponse
+/// part de l'application Astroport du visiteur (cette station ou la sienne), la synchro N² la ramène sous la note.
+/// 1. Compte sur cette station : se connecter, l'éditeur s'ouvre sur la réponse (`/#/write?nostr=…`).
+/// 2. Compte sur une autre station : `web+astro:` ouvre SON application (si ce navigateur l'a enregistrée), sinon l'adresse à copier.
+/// 3. Pas de compte : créer son MULTIPASS. 4. Une autre application Nostr : `nostr:`.
+fn reply_page(ctx: &Ctx<'_>, code: &str) -> String {
+    let (app, who) = (ctx.app, esc(&name(ctx)));
+    let body = format!(
+        "<section class=\"wrap answer\"><h1 class=\"page-title\">Répondre à {who}</h1>\
+<p class=\"lead\">Votre réponse part de <strong>votre</strong> application Astroport, signée par vous, puis apparaît ici sous la publication.</p>\
+<ol class=\"ways\">\
+<li><h2>J'ai un compte sur cette station</h2><p>Connectez-vous : l'éditeur s'ouvre, prêt à répondre.</p><p><a class=\"go\" href=\"{app}/#/write?nostr={code}\">Me connecter et répondre</a></p></li>\
+<li><h2>Mon compte est sur une autre station</h2><p><a class=\"go\" href=\"web+astro:{code}\">Ouvrir mon application Astroport</a></p><p class=\"small\">Rien ne s'ouvre ? Ce navigateur ne connaît pas encore votre station : ouvrez-la une fois et acceptez qu'elle ouvre les liens Astroport, ou collez cette adresse dans « Mon blog » de votre station :</p><p><code class=\"code\">{code}</code></p><p class=\"small\"><a href=\"{app}/stations#membre\">Je ne sais plus où est ma station</a></p></li>\
+<li><h2>Je n'ai pas encore de compte</h2><p>Créez votre MULTIPASS en une minute : un e-mail suffit, sans publicité.</p><p><a class=\"go\" href=\"{app}/register\">Créer mon MULTIPASS</a></p></li>\
+<li><h2>J'utilise une autre application Nostr</h2><p><a href=\"nostr:{code}\">Ouvrir dans mon application Nostr</a> · l'adresse ci-dessus s'y colle aussi.</p></li>\
+</ol><p><a href=\"{b}/\">← Revenir au site de {who}</a></p></section>",
+        b = ctx.base
+    );
+    layout(ctx, &Meta::page("Répondre", &name(ctx)), "", &body)
 }
 
 /// Fil de réponses d'une cible, replié par défaut ; chaque auteur membre mène à son blog.
@@ -640,7 +668,7 @@ fn notes_list(ctx: &Ctx<'_>, ns: &[Note]) -> String {
             fr_date(n.created),
             note_html(&n.content),
             thread(ctx, &n.id, false),
-            reply_link(nevent(&n.id, ctx.hex, &relay_of(ctx)), "Répondre")
+            reply_link(ctx, nevent(&n.id, ctx.hex, &relay_of(ctx)), "Répondre")
         ));
     }
     o.push_str("</ol>");
@@ -806,7 +834,7 @@ fn article(ctx: &Ctx<'_>, arts: &[Article], i: usize) -> String {
     }
     body.push_str(&format!("<footer class=\"byline\">{}<div><strong>{}</strong>{}</div></footer>", avatar_img(ctx), esc(&name(ctx)), ctx.profile["about"].as_str().map(|s| format!("<p>{}</p>", esc(&excerpt(s, 180)))).unwrap_or_default()));
     let target = coord(ctx.hex, &a.slug);
-    body.push_str(&format!("<section class=\"comments\"><h2>Commentaires</h2>{}{}</section>", thread(ctx, &target, true), reply_link(naddr(&a.slug, ctx.hex, &relay_of(ctx)), "Commenter")));
+    body.push_str(&format!("<section class=\"comments\"><h2>Commentaires</h2>{}{}</section>", thread(ctx, &target, true), reply_link(ctx, naddr(&a.slug, ctx.hex, &relay_of(ctx)), "Commenter")));
     let newer = i.checked_sub(1).map(|j| &arts[j]);
     let older = arts.get(i + 1);
     if newer.is_some() || older.is_some() {
@@ -889,8 +917,13 @@ fn layout(ctx: &Ctx<'_>, m: &Meta, current: &str, body: &str) -> String {
         _ => "aurore",
     };
     format!(
-        "<!doctype html><html lang=\"fr\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"light dark\">{head}<style>{CSS}</style></head><body class=\"t-{theme}\"><a class=\"skip\" href=\"#main\">Aller au contenu</a>{notice}{top}<nav class=\"menu\" aria-label=\"Menu\">{nav}<a class=\"rss\" href=\"{b}/feed.xml\" title=\"S'abonner (RSS)\">RSS</a></nav><main id=\"main\">{body}</main><footer class=\"foot\"><p>© {} · <a href=\"{b}/feed.xml\">S'abonner</a></p><p class=\"by\">Publié avec Astroport : chiffré, coopératif, sans publicité.</p></footer></body></html>",
+        "<!doctype html><html lang=\"fr\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"light dark\">{head}<style>{CSS}</style></head><body class=\"t-{theme}\"><a class=\"skip\" href=\"#main\">Aller au contenu</a>{notice}{top}<nav class=\"menu\" aria-label=\"Menu\">{nav}<a class=\"rss\" href=\"{b}/feed.xml\" title=\"S'abonner (RSS)\">RSS</a></nav><main id=\"main\">{body}</main><footer class=\"foot\"><p>© {} · <a href=\"{b}/feed.xml\">S'abonner</a> · <a href=\"{app}/\" rel=\"nofollow\">Se connecter</a> · <a href=\"{app}/register\" rel=\"nofollow\">Créer mon MULTIPASS</a></p><p class=\"by\">{visits}🍪 Aucun cookie, aucun pisteur : ce site ne vous suit pas. Publié avec Astroport : chiffré, coopératif, sans publicité.</p></footer></body></html>",
         esc(&who),
+        app = ctx.app,
+        visits = match ctx.visits {
+            Some(n) if n > 0 => format!("👁 {n} visite{} ces 30 derniers jours · ", if n > 1 { "s" } else { "" }),
+            _ => String::new(),
+        },
         notice = if ctx.notice.is_empty() { String::new() } else { format!("<p class=\"notice\" role=\"status\">🛟 {}</p>", esc(ctx.notice)) }
     )
 }
@@ -1021,6 +1054,7 @@ main{padding:1rem 1.2rem 3rem}
 .thread time{font-size:.75rem;color:var(--soft);margin-left:.4rem}
 .who{display:inline-flex;align-items:center;gap:.45rem;color:var(--ink);text-decoration:none}.who .avatar{width:26px;height:26px;font-size:.75rem}
 .reply{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin:.4rem 0 0;font-size:.88rem;font-weight:600}.reply a{display:inline-flex;align-items:center;min-height:36px;text-decoration:none}.reply .via{font-weight:400;color:var(--soft);font-size:.8rem;text-decoration:underline}
+.answer .lead{font-size:1.05rem}.ways{list-style:none;padding:0;display:grid;gap:1rem}.ways li{border:1px solid var(--line,#8884);border-radius:14px;padding:1rem 1.2rem}.ways h2{font:700 1.1rem var(--serif);margin:0 0 .3rem}.ways .go{display:inline-flex;align-items:center;min-height:44px;padding:.4rem 1.1rem;border-radius:999px;background:var(--grad);color:#fff;font-weight:600;text-decoration:none}.ways .small{font-size:.85rem;color:var(--soft)}.ways .code{display:block;overflow-wrap:anywhere;font-size:.75rem;padding:.4rem;border-radius:6px;background:#8881}
 .comments{margin-top:2.2rem}.comments h2{font:700 1.3rem var(--serif);margin:0 0 .4rem}.comments .reply a:first-child{padding:.5rem 1.1rem;border-radius:999px;background:var(--grad);color:#fff}
 .friends{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:.8rem}
 .friends a{display:flex;flex-direction:column;align-items:center;gap:.4rem;padding:.9rem .5rem;border-radius:var(--r);background:var(--paper);box-shadow:var(--sh);text-decoration:none;color:var(--ink);font-weight:600;font-size:.9rem;text-align:center}
@@ -1039,7 +1073,7 @@ mod tests {
 
     fn ctx(p: &Value) -> Ctx<'_> {
         static NONE: std::sync::LazyLock<std::collections::HashMap<String, Vec<Reply>>> = std::sync::LazyLock::new(Default::default);
-        Ctx { hex: "ab", peer: "/site/{}/", app: "", replies: &NONE, friends: &[], notice: "", files_at: "", base: "/site/x", origin: "https://st.example", profile: p, theme: "aurore" }
+        Ctx { hex: "ab", peer: "/site/{}/", app: "", replies: &NONE, friends: &[], notice: "", files_at: "", base: "/site/x", origin: "https://st.example", profile: p, theme: "aurore", visits: None }
     }
 
     #[test]

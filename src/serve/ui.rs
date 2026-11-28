@@ -11,7 +11,7 @@ pub(super) fn wire<B: astro_dav::BlobStore>(mut ui: StationUi<B>, db: &Arc<Db>, 
         let (db, name) = (for_coop_get.clone(), coop_name.clone());
         Box::pin(async move {
             let (_, hex) = astroportd::coop_config::coop_keys(&name)?;
-            Ok(astroportd::coop_config::view(astroportd::coop_config::load(&db, &hex).await.as_ref(), &name, &hex))
+            Ok(astroportd::coop_config::view(astroportd::coop_config::load(&db, &hex).await.as_ref(), &name, &hex, &astroportd::coop_config::local_keys(&db).await))
         })
     });
     let coop_set: astroportd::ui_backend::CoopSetFn = Arc::new(move |patch| {

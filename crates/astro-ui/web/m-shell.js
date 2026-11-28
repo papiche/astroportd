@@ -43,9 +43,9 @@ export default function shell(K, me) {
     const c = d.balance?.zen_cents;
     if (c == null) { purse?.remove(); purse = null; return; }
     if (!purse) { purse = h('a', { class: 'zen-in', href: '#/money?h=1' }); tools.prepend(purse); }
-    purse.textContent = `${zc(c)} Ẑ`;
+    purse.textContent = K.cur(`${zc(c)} Ẑ`);
     purse.title = t('Voir l’historique des virements') + (d.balance.stale ? ' · ' + t('Dernier solde connu : le réseau est lent.') : '');
-    purse.setAttribute('aria-label', `${t('Mes Ẑen')} : ${zc(c)} Ẑen`);
+    purse.setAttribute('aria-label', K.cur(`${t('Mes Ẑen')} : ${zc(c)} Ẑen`));
   }, () => {});
   balance(); setInterval(balance, 120000);
 

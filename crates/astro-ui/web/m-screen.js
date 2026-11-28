@@ -14,7 +14,7 @@ export function viewer(K, { stream, send, mode = 'drive' }) {
   img.onclick = ev => { if (mode === 'drive') post({ type: 'click', ...at(ev) }); else if (mode === 'point') post({ type: 'point', ...at(ev) }); };
   let wheel = 0, wt = null;
   img.onwheel = ev => { if (mode !== 'drive') return; ev.preventDefault(); wheel += ev.deltaY; const p = at(ev); clearTimeout(wt); wt = setTimeout(() => { post({ type: 'scroll', ...p, dy: wheel }); wheel = 0; }, 80); };
-  const typing = h('input', { type: 'password', class: 'ag-type', autocomplete: 'off', autocapitalize: 'off', spellcheck: false, placeholder: t('Taper ici'), 'aria-label': t('Taper dans la page') });
+  const typing = h('input', { secret: true, class: 'ag-type', placeholder: t('Taper ici'), 'aria-label': t('Taper dans la page') });
   let tt = null;
   const flush = async () => { clearTimeout(tt); const v = typing.value; typing.value = ''; if (v) await post({ type: 'text', text: v }); };
   typing.oninput = () => { clearTimeout(tt); tt = setTimeout(flush, 400); };
@@ -23,7 +23,7 @@ export function viewer(K, { stream, send, mode = 'drive' }) {
     if (ev.key === 'Backspace' && typing.value) return; // efface d'abord ce qui n'est pas encore parti
     ev.preventDefault(); flush().then(() => post({ type: 'key', key: ev.key }));
   };
-  const eye = h('button', { type: 'button', class: 'ghost', 'aria-label': t('Montrer ce que je tape'), onclick: () => { typing.type = typing.type === 'password' ? 'text' : 'password'; } }, '👁');
+  const eye = h('button', { type: 'button', class: 'ghost', 'aria-label': t('Montrer ce que je tape'), onclick: () => typing.classList.toggle('secret') }, '👁');
   const key = (k, label, aria) => h('button', { type: 'button', class: 'ghost', 'aria-label': aria, onclick: () => flush().then(() => post({ type: 'key', key: k })) }, label);
   const scroll = (dy, label, aria) => h('button', { type: 'button', class: 'ghost', 'aria-label': aria, onclick: () => post({ type: 'scroll', x: 0.5, y: 0.5, dy }) }, label);
   const tools = h('div', { class: 'ag-row' }, typing, eye, key('Backspace', '⌫', t('Effacer')), key('Tab', '⇥', t('Champ suivant')), key('Enter', '⏎', t('Valider')), scroll(-500, '▲', t('Monter')), scroll(500, '▼', t('Descendre')));

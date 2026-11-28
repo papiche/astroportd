@@ -96,7 +96,7 @@ with sync_playwright() as pw:
     page.screenshot(path=str(OUT / 'replication.png'), full_page=True)
     # Configuration coopérative (Capitaine) : secrets en écriture seule, seules les clés modifiées partent.
     page.goto(f'http://127.0.0.1:{port}/#/coop'); page.wait_for_selector('form fieldset'); page.wait_for_timeout(200)
-    check(page.locator('main input[type=password]').count() == 4 and page.locator('main input[type=password]').first.get_attribute('placeholder').startswith('● renseigné'), 'les secrets sont masqués et jamais affichés')
+    check(page.locator('main input.secret').count() == 4 and page.locator('main input.secret').first.get_attribute('placeholder').startswith('● renseigné') and page.locator('main input[type=password]').count() == 0, 'les secrets sont masqués et jamais affichés (sans type=password, que le navigateur voudrait remplir)')
     check('ZZ_LEGACY' in page.inner_text('main'), 'les clés hors écran sont signalées')
     page.fill('#cf-OCSLUG', 'autre'); page.fill('#cf-TREASURY_PERCENT', '40'); page.wait_for_timeout(100)
     check('additionne' in page.inner_text('.degraded'), 'la somme des parts différente de 100 % est signalée')

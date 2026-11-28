@@ -417,8 +417,28 @@ async fn without_an_index_the_site_is_a_blog_made_of_the_members_articles_and_no
     Store(r.db.clone()).publish(ev).await.unwrap();
     let (_, _, notes) = get(&r, &format!("{b}/notes/")).await;
     assert!(notes.contains("<details class=\"thread\"><summary>1 réponse</summary>") && notes.contains("Miam"), "fil replié : {notes}");
-    // « Répondre » passe par Nostr : le client du visiteur (`nostr:`) ou SON application Astroport (`web+nostr:`), sur sa propre station.
-    assert!(notes.contains("<a href=\"web+astro:nevent1") && notes.contains("href=\"nostr:nevent1"), "« Répondre » ouvre l'application Astroport du visiteur, nostr: en second");
+    // « Répondre » mène à une page du site qui guide chaque visiteur (un lien `nostr:` nu ne s'ouvre nulle part sans application Nostr) :
+    // compte ici (se connecter, l'éditeur s'ouvre), compte ailleurs (`web+astro:`, son application), pas de compte, autre client (`nostr:`).
+    let at = notes.find(&format!("{b}/repondre/nevent1")).unwrap(); // lien « Répondre » vers la page de réponse
+    let code: String = notes[at + b.len() + "/repondre/".len()..].chars().take_while(char::is_ascii_alphanumeric).collect();
+    let (s, _, page) = get(&r, &format!("{b}/repondre/{code}")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(page.contains(&format!("href=\"/#/write?nostr={code}\"")) && page.contains(&format!("href=\"web+astro:{code}\"")) && page.contains(&format!("href=\"nostr:{code}\"")) && page.contains("href=\"/register\""), "{page}");
+    assert!(!page.contains("<script"), "aucun script sur le site public");
+    assert_eq!(get(&r, &format!("{b}/repondre/javascript:alert(1)")).await.0, StatusCode::NOT_FOUND, "seule une adresse Nostr est acceptée");
+    assert_eq!(get(&r, &format!("{b}/repondre/nevent1%22%3E%3Cb%3E")).await.0, StatusCode::NOT_FOUND);
+    // Pied de page : se connecter, s'inscrire, aucun cookie posé, et les pages vues du mois (compteur sans identifiant de visiteur).
+    assert!(page.contains("Aucun cookie") && page.contains("Se connecter") && page.contains("Créer mon MULTIPASS"));
+    assert!(get(&r, &format!("{b}/notes/")).await.1.get(header::SET_COOKIE).is_none(), "jamais de cookie");
+    let mut seen = false;
+    for _ in 0..40 {
+        if get(&r, &format!("{b}/notes/")).await.2.contains("visites ces 30 derniers jours") {
+            seen = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(seen, "le compteur de visites apparaît en pied de page");
     // Un vrai fichier du membre passe toujours avant une page du blog.
     put(&r, "/Public/blog", "le-levain", "text/plain", "mon propre fichier").await;
     assert_eq!(get(&r, &format!("{b}/blog/le-levain")).await.2, "mon propre fichier");

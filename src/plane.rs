@@ -63,6 +63,22 @@ pub struct PlanesFile {
     pub root: Option<String>,
     /// Les plans.
     pub planes: Vec<PlaneSpec>,
+    /// HTTPS par la station elle-même pour tous ses plans (ports 80 et 443, certificat Let's Encrypt qui couvre le domaine de
+    /// chaque plan) : plus besoin de reverse proxy. Absent : chaque plan écoute en clair sur son port (derrière un proxy).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub https: Option<HttpsFront>,
+}
+
+/// Réglages du front HTTPS des plans (`"https": { "email": "…" }` dans `planes.json`).
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HttpsFront {
+    /// Contact Let's Encrypt (prévenu avant l'expiration d'un certificat) ; défaut : `captain_email` du `station.conf` d'ORIGIN.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    /// Autorité de test de Let's Encrypt (certificats non reconnus, quotas larges) : pour essayer sans risquer le quota.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub staging: bool,
 }
 
 /// Un plan tel que l'écrit le Capitaine.
@@ -321,7 +337,7 @@ pub fn load(path: &Path, home: &Path) -> Result<(PlanesFile, bool), PlaneError> 
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let origin = PlaneSpec { name: "origin".into(), dir: Some("~/.zen/astroportd".into()), game: None, swarm_key: None, http_listen: Some("127.0.0.1:8090".into()), p2p_listen: Vec::new(), kubo: Some(crate::init::DEFAULT_KUBO.into()), args: Vec::new() };
             let _ = home;
-            Ok((PlanesFile { pool: None, game_dir: None, root: None, planes: vec![origin] }, false))
+            Ok((PlanesFile { pool: None, game_dir: None, root: None, planes: vec![origin], https: None }, false))
         }
         Err(e) => Err(PlaneError::Config(format!("{} : {e}", path.display()))),
     }
@@ -524,12 +540,81 @@ pub struct PlaneInfo {
     pub db_exists: bool,
     /// Servi par ce processus.
     pub running: bool,
+    /// Domaine public du plan ([`public_domain`]).
+    pub domain: Option<String>,
 }
 
 /// Décrit les plans de `file` (sans rien créer).
 pub fn describe(file: &PlanesFile, home: &Path) -> Result<Vec<PlaneInfo>, PlaneError> {
     let served = running();
-    Ok(plan(file, home)?.into_iter().map(|p| PlaneInfo { running: served.contains(&p.name) || (served.is_empty() && p.origin), db_exists: p.db.exists(), name: p.name, origin: p.origin, http: p.http, db: p.db.display().to_string() }).collect())
+    Ok(plan(file, home)?.into_iter().map(|p| PlaneInfo { running: served.contains(&p.name) || (served.is_empty() && p.origin), db_exists: p.db.exists(), domain: public_domain(&p), name: p.name, origin: p.origin, http: p.http, db: p.db.display().to_string() }).collect())
+}
+
+/// `station.conf` d'un plan : celui de son dossier (là où `serve` le lit, à côté de sa base).
+pub fn conf_of(p: &Plane) -> PathBuf {
+    p.db.parent().map_or_else(|| PathBuf::from("station.conf"), |d| d.join("station.conf"))
+}
+
+/// Domaine public d'un plan : `--public-domain` de ses arguments, sinon `domain` de son `station.conf` (réglé depuis son cockpit
+/// ou depuis l'écran des constellations). Un plan écoute toujours en clair sur son port : ce domaine lui arrive par le front
+/// HTTPS des plans ou par un reverse proxy.
+pub fn public_domain(p: &Plane) -> Option<String> {
+    let mut it = p.args.iter();
+    while let Some(a) = it.next() {
+        let v = if a == "--public-domain" { it.next().cloned() } else { a.strip_prefix("--public-domain=").map(str::to_owned) };
+        if let Some(d) = v.and_then(|v| crate::station_domain::normalize_domain(&v).ok()) {
+            return Some(d);
+        }
+    }
+    crate::station_domain::domain_from_conf(&conf_of(p)).map(|(d, _)| d)
+}
+
+/// Domaines servis par le front, `(domaine, plan)`. Deux plans ne partagent jamais un domaine : le plan est connu par le nom
+/// d'hôte **avant** toute authentification.
+pub fn front_domains(planes: &[Plane]) -> Result<Vec<(String, String)>, PlaneError> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for p in planes {
+        if let Some(d) = public_domain(p) {
+            if let Some((_, other)) = out.iter().find(|(x, _)| *x == d) {
+                return Err(rule(&p.name, format!("le domaine {d} sert déjà le plan « {other} »")));
+            }
+            out.push((d, p.name.clone()));
+        }
+    }
+    Ok(out)
+}
+
+/// Règle (ou retire, `None`) le domaine public du plan `name` : ligne `domain` de son `station.conf`, prise au redémarrage.
+pub fn set_domain(file: &PlanesFile, home: &Path, name: &str, domain: Option<&str>) -> Result<Option<String>, PlaneError> {
+    let planes = plan(file, home)?;
+    let p = planes.iter().find(|p| p.name == name).ok_or_else(|| PlaneError::Config(format!("plan « {name} » inconnu")))?;
+    if p.args.iter().any(|a| a == "--public-domain" || a.starts_with("--public-domain=")) {
+        return Err(rule(name, "son domaine est fixé par `--public-domain` dans planes.json : changez-le là"));
+    }
+    let domain = domain.map(str::trim).filter(|d| !d.is_empty()).map(crate::station_domain::normalize_domain).transpose().map_err(|e| rule(name, e))?;
+    if let Some(d) = &domain
+        && let Some(other) = planes.iter().filter(|o| o.name != name).find(|o| public_domain(o).as_deref() == Some(d))
+    {
+        return Err(rule(name, format!("le domaine {d} sert déjà le plan « {} »", other.name)));
+    }
+    let conf = conf_of(p);
+    if let Some(dir) = conf.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| PlaneError::Config(format!("{} : {e}", dir.display())))?;
+    }
+    crate::station_domain::set_conf_value(&conf, "domain", domain.as_deref().unwrap_or("")).map_err(|e| PlaneError::Config(format!("{} : {e}", conf.display())))?;
+    Ok(domain)
+}
+
+static FRONT_TLS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Note que ce processus sert lui-même HTTPS pour ses plans (`planes.json` → `https`).
+pub fn set_front_tls(on: bool) {
+    let _ = FRONT_TLS.set(on);
+}
+
+/// Ce processus sert-il HTTPS pour ses plans ? (Le cockpit ne parle alors ni de reverse proxy ni de ports pris.)
+pub fn front_tls() -> bool {
+    FRONT_TLS.get().copied().unwrap_or(false)
 }
 
 /// Prépare le dossier `game` d'un plan : il reçoit, par **liens symboliques**, les fichiers du NODE d'ORIGIN (`secret.nostr`,
@@ -733,5 +818,30 @@ mod tests {
         prepare(&p, &node).unwrap();
         assert_eq!(std::fs::read_to_string(p.game.join("secret.nostr")).unwrap(), "propre à ce plan", "un fichier existant n'est jamais remplacé");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn each_plane_has_its_own_public_domain_and_two_planes_never_share_one() {
+        let dir = std::env::temp_dir().join(format!("astroportd-plane-dom-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let f = file(&format!(r#"{{ "root": "{}", "planes": [ {{ "name": "origin" }}, {{ "name": "zen1", "swarm_key": "/k1" }}, {{ "name": "zen2", "swarm_key": "/k2", "args": ["--public-domain", "Zen2.Exemple.org"] }} ] }}"#, dir.display()));
+        let planes = plan(&f, &home()).unwrap();
+        assert_eq!(public_domain(&planes[2]).as_deref(), Some("zen2.exemple.org"), "--public-domain des arguments, normalisé");
+        assert_eq!(public_domain(&planes[1]), None);
+        // Réglé depuis l'interface : écrit dans le station.conf du plan, relu par `serve` et par le front.
+        assert_eq!(set_domain(&f, &home(), "zen1", Some("https://zen1.exemple.org/")).unwrap().as_deref(), Some("zen1.exemple.org"));
+        assert_eq!(public_domain(&planes[1]).as_deref(), Some("zen1.exemple.org"));
+        assert_eq!(front_domains(&planes).unwrap(), [("zen1.exemple.org".to_owned(), "zen1".to_owned()), ("zen2.exemple.org".to_owned(), "zen2".to_owned())]);
+        assert!(set_domain(&f, &home(), "origin", Some("zen1.exemple.org")).unwrap_err().to_string().contains("sert déjà le plan « zen1 »"));
+        assert!(set_domain(&f, &home(), "zen2", Some("autre.org")).unwrap_err().to_string().contains("--public-domain"));
+        assert!(set_domain(&f, &home(), "zen1", Some("pas un domaine")).is_err());
+        // Retiré : plus de domaine.
+        assert_eq!(set_domain(&f, &home(), "zen1", None).unwrap(), None);
+        assert_eq!(public_domain(&planes[1]), None);
+        // Le bloc `https` de planes.json se relit et se réécrit à l'identique.
+        let g = parse(r#"{ "https": { "email": "cap@exemple.org" }, "planes": [ { "name": "origin" } ] }"#).unwrap();
+        assert_eq!(g.https, Some(HttpsFront { email: Some("cap@exemple.org".into()), staging: false }));
+        assert_eq!(serde_json::to_value(&g).unwrap()["https"], serde_json::json!({ "email": "cap@exemple.org" }));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

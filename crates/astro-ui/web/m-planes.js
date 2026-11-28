@@ -44,6 +44,29 @@ export default async function planes(root, K) {
       n ? h('p', { class: 'muted', role: 'status' }, t('Impossible pour l\'instant : ORIGIN héberge {0} MULTIPASS.', n))
         : h('p', {}, heir, ' ', K.sure(t('Basculer en ẐEN'), go('stop', t('Bascule enregistrée : redémarrez la station')), t('ORIGIN ne sera plus servi au prochain démarrage.'))));
   };
+  // Après un réglage pris au redémarrage (domaine, HTTPS) : le bouton, ou la commande hors systemd.
+  const applied = (x, msg) => result.replaceChildren(h('p', { class: 'ok', role: 'status' }, msg), x.restart
+    ? h('p', {}, K.sure(t('Redémarrer la station'), async () => { try { await K.api('/api/v1/station/restart', { method: 'POST' }); K.toast(t('Redémarrage demandé : la page se rechargera au retour de la station.'), 1); back(); } catch (e) { K.toast(e.message); } }, t('La station sera indisponible quelques secondes.')))
+    : h('p', {}, t('Puis redémarrez la station sur la machine :'), ' ', h('code', {}, x.restart_command)));
+  // Domaine public d'une constellation (`--public-domain`) : vérifié par le DNS, écrit dans son station.conf.
+  const domain = p => {
+    const cell = h('span', {}), inp = h('input', { value: p.domain || '', placeholder: p.origin ? 'station.mondomaine.org' : `${p.name}.mondomaine.org`, inputMode: 'url', spellcheck: false, maxlength: 253, 'aria-label': t('Domaine public de « {0} »', p.name) });
+    const save = async v => {
+      try { const x = await K.api('/api/v1/station/planes/domain', { method: 'POST', body: { name: p.name, domain: v } }); applied(x, x.domain ? t('« {0} » : {1} pointe vers {2}.', p.name, x.domain, x.ips.join(', ')) : t('« {0} » n\'a plus de domaine propre.', p.name)); draw(); } catch (e) { K.toast(e.message); }
+    };
+    const edit = () => cell.replaceChildren(inp, ' ', h('button', { type: 'button', onclick: () => save(inp.value) }, t('Vérifier et enregistrer')), ...(p.domain ? [' ', h('button', { type: 'button', class: 'ghost', onclick: () => save(null) }, t('Retirer'))] : []));
+    cell.append(p.domain ? h('a', { href: `https://${p.domain}/`, target: '_blank', rel: 'noopener' }, p.domain) : h('span', { class: 'muted' }, '—'), ' ', h('button', { type: 'button', class: 'ghost', onclick: edit, 'aria-label': t('Régler le domaine de « {0} »', p.name) }, '✎'));
+    return cell;
+  };
+  // Certificats : la station les obtient elle-même (Let's Encrypt, ports 80/443, tous les domaines ci-dessus), ou un reverse proxy les tient.
+  const https = r => {
+    const on = !!r.https, mail = h('input', { type: 'email', value: r.https?.email || '', placeholder: t('capitaine@exemple.org (facultatif)'), maxlength: 254, 'aria-label': t('Contact Let\'s Encrypt') });
+    const set = async v => { try { const x = await K.api('/api/v1/station/planes/https', { method: 'POST', body: { on: v, email: mail.value } }); applied(x, v ? t('HTTPS par la station : certificats demandés au redémarrage.') : t('HTTPS confié à votre reverse proxy.')); x.warnings.forEach(w => result.append(h('p', { class: 'degraded' }, w))); draw(); } catch (e) { K.toast(e.message); } };
+    return h('div', { class: 'card' }, h('h3', {}, t('Certificats HTTPS')),
+      h('p', { class: on ? 'ok' : 'muted' }, on ? t('La station obtient et renouvelle seule les certificats de tous les domaines ci-dessus (ports 80 et 443 de la box vers cette machine).') + (r.front_tls ? '' : ' ' + t('Pris en compte au prochain démarrage.')) : t('Chaque constellation écoute en clair sur son port : votre reverse proxy (Nginx Proxy Manager…) tient les certificats.')),
+      h('p', {}, h('label', {}, t('Contact Let\'s Encrypt'), ' ', mail)),
+      h('p', {}, on ? h('button', { type: 'button', class: 'ghost', onclick: () => set(false) }, t('Confier à mon reverse proxy')) : h('button', { type: 'button', onclick: () => set(true) }, t('La station gère les certificats')), on ? h('button', { type: 'button', class: 'ghost', onclick: () => set(true) }, t('Enregistrer le contact')) : null));
+  };
   const draw = async () => {
     const r = await K.api('/api/v1/station/planes');
     state.replaceChildren(
@@ -51,12 +74,13 @@ export default async function planes(root, K) {
       h('p', { class: r.multi_process ? 'ok' : 'muted' }, r.multi_process
         ? t('Cette station sert plusieurs constellations dans un seul processus.')
         : t('Cette station ne sert pour l\'instant que la constellation ORIGIN (astroportd serve). Pour en servir aussi d\'autres, privées, dans le même processus, lancez « astroportd planes » à la place.')),
-      K.table(t('Constellations de cette station'), ['Constellation', 'Type', 'Adresse', 'Base', 'État', ''],
-        r.planes.map(p => [h('strong', {}, p.name), p.origin ? 'ORIGIN' : t('Constellation privée'), `http://${p.http}`, p.db_exists ? t('créée') : t('pas encore créée'),
+      K.table(t('Constellations de cette station'), ['Constellation', 'Type', 'Domaine public', 'Adresse', 'Base', 'État', ''],
+        r.planes.map(p => [h('strong', {}, p.name), p.origin ? 'ORIGIN' : t('Constellation privée'), domain(p), `http://${p.http}`, p.db_exists ? t('créée') : t('pas encore créée'),
           p.running ? K.pill('ok') : h('span', { class: 'pill disabled' }, t('au prochain démarrage')),
           p.origin ? h('small', { class: 'muted' }, t('plan de base')) : K.sure(t('Retirer'), async () => {
             try { await K.api('/api/v1/station/planes/remove', { method: 'POST', body: { name: p.name } }); K.toast(t('Constellation retirée'), 1); draw(); } catch (e) { K.toast(e.message); }
           }, t('Retirer la constellation « {0} » de la configuration ? Sa base, ses comptes et sa clé restent sur le disque.', p.name))])),
+      https(r),
       ...[origin(r)].filter(Boolean),
       ...(r.pending.length ? [h('p', { class: 'degraded', role: 'status' }, t('Redémarrez « astroportd planes » pour servir : {0}.', r.pending.join(', ')))] : []),
       ...(r.stopping?.length ? [h('p', { class: 'degraded', role: 'status' }, t('Redémarrez la station pour arrêter : {0}.', r.stopping.join(', ')))] : []), ...[restart(r)].filter(Boolean));

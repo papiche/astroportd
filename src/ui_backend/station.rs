@@ -138,7 +138,7 @@ impl<B: BlobStore> StationApi for StationBackend<B> {
             "restart": crate::station_domain::restart_available(),
         });
         let origin_paused = !info.iter().any(|p| p.origin);
-        Ok(json!({ "configured": existed, "multi_process": multi, "front": plane::front(), "planes": info, "origin_paused": origin_paused, "origin_members": origin_members(&file, home), "restart_needed": !pending.is_empty() || !stopping.is_empty(), "pending": pending, "stopping": stopping, "path": path.display().to_string(), "service": service }))
+        Ok(json!({ "configured": existed, "multi_process": multi, "front": plane::front(), "front_tls": plane::front_tls(), "https": file.https, "planes": info, "origin_paused": origin_paused, "origin_members": origin_members(&file, home), "restart_needed": !pending.is_empty() || !stopping.is_empty(), "pending": pending, "stopping": stopping, "path": path.display().to_string(), "service": service }))
     }
     async fn plane_add(&self, _who: &Principal, name: String, swarm_key: Option<String>) -> Result<Value, ApiError> {
         use crate::plane;
@@ -206,6 +206,58 @@ impl<B: BlobStore> StationApi for StationBackend<B> {
         self.services.activity.publish_to(astro_core::Audience::Captain, "system", "ui:planes", said.to_owned(), None);
         Ok(json!({ "state": if action == "stop" { "stopped" } else { "restored" }, "service": service }))
     }
+    async fn plane_domain(&self, _who: &Principal, name: String, domain: Option<String>) -> Result<Value, ApiError> {
+        use crate::plane;
+        let home = self.planes_home()?;
+        let path = plane::default_path(home);
+        let (file, _) = plane::load(&path, home).map_err(|e| ApiError::internal(e.to_string()))?;
+        let wanted = domain.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(crate::station_domain::normalize_domain).transpose().map_err(ApiError::bad_request)?;
+        // Le DNS d'abord, comme dans le cockpit : sans lui, aucun certificat ne s'obtient.
+        let mut ips: Vec<String> = Vec::new();
+        if let Some(d) = &wanted {
+            if let Ok(Ok(addrs)) = tokio::time::timeout(Duration::from_secs(8), tokio::net::lookup_host((d.as_str(), 443))).await {
+                ips = addrs.map(|a| a.ip().to_string()).collect();
+                ips.sort();
+                ips.dedup();
+            }
+            if ips.is_empty() {
+                return Err(ApiError::bad_request(format!("{d} ne pointe encore nulle part : chez votre fournisseur de domaine, créez un enregistrement A vers l'adresse publique de votre box, puis réessayez (la propagation prend parfois une heure)")));
+            }
+        }
+        let saved = plane::set_domain(&file, home, name.trim(), wanted.as_deref()).map_err(|e| ApiError::bad_request(e.to_string()))?;
+        self.services.activity.publish_to(astro_core::Audience::Captain, "system", "ui:planes", format!("plan « {} » : domaine public {}", name.trim(), saved.as_deref().unwrap_or("retiré")), None);
+        Ok(json!({ "name": name.trim(), "domain": saved, "ips": ips, "restart": crate::station_domain::restart_available(), "restart_command": "systemctl --user restart astroportd" }))
+    }
+    async fn planes_https(&self, _who: &Principal, on: Option<String>) -> Result<Value, ApiError> {
+        use crate::plane;
+        let home = self.planes_home()?;
+        let path = plane::default_path(home);
+        let (mut file, _) = plane::load(&path, home).map_err(|e| ApiError::internal(e.to_string()))?;
+        let email = on.as_deref().map(str::trim).filter(|e| !e.is_empty());
+        if email.is_some_and(|e| !(e.contains('@') && e.contains('.') && !e.contains(char::is_whitespace))) {
+            return Err(ApiError::bad_request("adresse e-mail attendue (contact Let's Encrypt), ou rien"));
+        }
+        if on.is_some() {
+            let planes = plane::plan(&file, home).map_err(|e| ApiError::bad_request(e.to_string()))?;
+            if plane::front_domains(&planes).map_err(|e| ApiError::bad_request(e.to_string()))?.is_empty() {
+                return Err(ApiError::bad_request("donnez d'abord un domaine public à au moins une constellation : c'est pour lui que la station demande le certificat"));
+            }
+        }
+        file.https = on.as_ref().map(|_| plane::HttpsFront { email: email.map(str::to_owned), staging: file.https.as_ref().is_some_and(|h| h.staging) });
+        plane::save(&path, &file).map_err(|e| ApiError::internal(format!("planes.json non écrit : {e}")))?;
+        let (p80, p443) = (crate::station_domain::port_state(80), crate::station_domain::port_state(443));
+        let mut warnings = Vec::new();
+        if on.is_some() && !plane::front_tls() {
+            if p80 == "busy" || p443 == "busy" {
+                warnings.push("les ports 80/443 de cette machine sont tenus par un autre programme (Nginx Proxy Manager ?) : arrêtez-le avant de redémarrer, la station les prend elle-même".to_owned());
+            }
+            if p80 == "privileged" || p443 == "privileged" {
+                let exe = std::env::current_exe().map(|e| e.display().to_string()).unwrap_or_else(|_| "astroportd".into());
+                warnings.push(format!("la station n'a pas le droit d'ouvrir les ports 80 et 443 : sur cette machine, lancez une fois « sudo setcap 'cap_net_bind_service=+ep' {exe} » avant de redémarrer"));
+            }
+        }
+        Ok(json!({ "https": file.https, "warnings": warnings, "restart": crate::station_domain::restart_available(), "restart_command": "systemctl --user restart astroportd" }))
+    }
     async fn plane_remove(&self, _who: &Principal, name: String) -> Result<Value, ApiError> {
         use crate::plane;
         let home = self.planes_home()?;
@@ -236,7 +288,8 @@ impl<B: BlobStore> StationApi for StationBackend<B> {
         let running = self.services.info.domain.clone();
         let mode = self.web_mode();
         // Les gestes réseau de la configuration enregistrée (celle qui vaudra après redémarrage), sinon de l'actuelle.
-        let proxy = if saved.is_some() { saved_proxy } else { mode == "proxy" };
+        // Front HTTPS des plans (`planes` → `https`) : la station tient elle-même 80/443, aucun reverse proxy à régler.
+        let proxy = !crate::plane::front_tls() && if saved.is_some() { saved_proxy } else { mode == "proxy" };
         let domain = saved.clone().or_else(|| running.clone());
         Ok(json!({
             "domain": running, "saved": saved, "mode": mode, "proxy": proxy,
@@ -265,7 +318,12 @@ impl<B: BlobStore> StationApi for StationBackend<B> {
         }
         let mut warnings = Vec::new();
         let mode = self.web_mode();
+        let front = crate::plane::front_tls();
+        if front {
+            warnings.push("servi en HTTPS par la station elle-même (front des constellations) : le certificat s'obtient au redémarrage".to_owned());
+        }
         let proxy = match proxy {
+            _ if front => false,
             Some(p) => p,
             None if mode == "https" => false,
             None if mode == "proxy" => true,
@@ -289,7 +347,7 @@ impl<B: BlobStore> StationApi for StationBackend<B> {
                 }
             }
         };
-        if !proxy && mode != "https" {
+        if !proxy && mode != "https" && !front {
             // La station prendra elle-même les ports 80 et 443 au redémarrage.
             let (p80, p443) = (sd::port_state(80), sd::port_state(443));
             if p80 == "busy" || p443 == "busy" {

@@ -50,6 +50,14 @@ pub trait StationApi: Auth {
     fn plane_add(&self, _who: &Principal, _name: String, _swarm_key: Option<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("configuration des plans non disponible sur cette station")) }
     }
+    /// Règle (ou retire, `None`) le domaine public d'un plan : vérifié par le DNS, pris au redémarrage (Capitaine).
+    fn plane_domain(&self, _who: &Principal, _name: String, _domain: Option<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("configuration des plans non disponible sur cette station")) }
+    }
+    /// HTTPS par la station pour tous ses plans (`Some(email)`, vide permis) ou derrière un reverse proxy (`None`) (Capitaine).
+    fn planes_https(&self, _who: &Principal, _on: Option<String>) -> impl Future<Output = Result<Value, ApiError>> + Send {
+        async { Err(ApiError::unavailable("configuration des plans non disponible sur cette station")) }
+    }
     /// Retire un plan de la configuration, sans toucher à ses données (Capitaine).
     fn plane_remove(&self, _who: &Principal, _name: String) -> impl Future<Output = Result<Value, ApiError>> + Send {
         async { Err(ApiError::unavailable("configuration des plans non disponible sur cette station")) }
@@ -86,6 +94,8 @@ pub(super) fn routes<B: StationApi>() -> Router<Arc<UiState<B>>> {
         .route("/api/v1/station/update", get(update_info::<B>).post(update_start::<B>))
         .route("/api/v1/station/planes", get(planes::<B>).post(plane_add::<B>))
         .route("/api/v1/station/planes/remove", post(plane_remove::<B>))
+        .route("/api/v1/station/planes/domain", post(plane_domain::<B>))
+        .route("/api/v1/station/planes/https", post(planes_https::<B>))
         .route("/api/v1/station/planes/service", post(plane_service::<B>))
         .route("/api/v1/station/planes/origin", post(plane_origin::<B>))
 }
@@ -137,6 +147,34 @@ struct PlaneBody {
     name: String,
     /// Contenu d'une `swarm.key` reçue ; absent : on fonde une UPlanet neuve.
     swarm_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PlaneDomainBody {
+    name: String,
+    /// Vide ou absent : le plan n'a plus de domaine propre.
+    domain: Option<String>,
+}
+
+async fn plane_domain<B: StationApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Json(body): Json<PlaneDomainBody>) -> Response {
+    if body.name.len() > 64 || body.domain.as_ref().is_some_and(|d| d.len() > 253) {
+        return reply(Err(ApiError::bad_request("nom ou domaine trop long")));
+    }
+    reply(st.backend.plane_domain(&p, body.name, body.domain).await)
+}
+
+#[derive(Deserialize)]
+struct PlanesHttpsBody {
+    on: bool,
+    /// Contact Let's Encrypt (facultatif).
+    email: Option<String>,
+}
+
+async fn planes_https<B: StationApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain, Json(body): Json<PlanesHttpsBody>) -> Response {
+    if body.email.as_ref().is_some_and(|e| e.len() > 254) {
+        return reply(Err(ApiError::bad_request("adresse trop longue")));
+    }
+    reply(st.backend.planes_https(&p, body.on.then(|| body.email.unwrap_or_default())).await)
 }
 
 async fn planes<B: StationApi>(State(st): State<Arc<UiState<B>>>, Captain(p): Captain) -> Response {

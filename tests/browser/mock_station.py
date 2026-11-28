@@ -232,6 +232,8 @@ class H(BaseHTTPRequestHandler):
         if p == '/': return self.send(200, (WEB / 'index.html').read_bytes(), 'text/html')
         if p == '/register': return self.send(200, (WEB / 'register.html').read_bytes(), 'text/html')
         if p == '/api/v1/register': return self.send(200, dict(open=True, constellation='ORIGIN', accounts=1, max_accounts=500))
+        # Présentation de la constellation (look.js) : ORIGIN par défaut ; `?look=zen` dans STATE pour une UPlanet privée renommée.
+        if p == '/api/v1/look': return self.send(200, STATE.get('look') or dict(origin=True, name='ORIGIN', currency='Ẑen', symbol='Ẑ', style='kraft'))
         if p == '/stations': return self.send(200, (WEB / 'stations.html').read_bytes(), 'text/html')
         if p == '/api/v1/stations': return self.send(200, dict(stations=[dict(station='ici', name='Station ici', self=True, open=True, used=1, total=500, at=1790000000, lat=43.6, lon=1.44), dict(station='tls', name='Toulouse', open=True, used=3, total=50, url='https://toulouse.invalid', join='https://toulouse.invalid/register', at=1790000000, lat=43.61, lon=1.45)]))
         if p == '/api/v1/locate':
@@ -339,7 +341,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, dict(enabled=True, dav='/dav', faces=STATE['faces'], people=people(), unknown=sum(1 for f in STATE['faces'] if not f['named']), groups_skipped=False, truncated=False))
         if p.startswith('/dav/') and _uq(p[4:]) in STATE.setdefault('dav', {}): return self.send(200, STATE['dav'][_uq(p[4:])], 'text/plain')
         if p.startswith('/dav/'): return self.send(200, base64.b64decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), 'image/gif')
-        if p == '/api/v1/station/planes': return self.send(200, dict(configured=True, multi_process=True, front=True, planes=[dict(name='origin', origin=True, http='127.0.0.1:8090', db='/x/uplanet.db', db_exists=True, running=True), dict(name='zen1', origin=False, http='127.0.0.1:8091', db='/x/zen1/uplanet.db', db_exists=False, running=False)], restart_needed=True, pending=['zen1'], path='/x/planes.json', service=dict(unit=STATE.get('unit', 'serve'), path='/h/.config/systemd/user/astroportd.service', command='/usr/bin/astroportd planes', mismatch=STATE.get('unit', 'serve') == 'serve', restart=True)))
+        if p == '/api/v1/station/planes': return self.send(200, dict(configured=True, multi_process=True, front=True, planes=[dict(name='origin', origin=True, http='127.0.0.1:8090', db='/x/uplanet.db', db_exists=True, running=True, domain='station.exemple.org'), dict(name='zen1', origin=False, http='127.0.0.1:8091', db='/x/zen1/uplanet.db', db_exists=False, running=False, domain=None)], front_tls=False, https=None, restart_needed=True, pending=['zen1'], path='/x/planes.json', service=dict(unit=STATE.get('unit', 'serve'), path='/h/.config/systemd/user/astroportd.service', command='/usr/bin/astroportd planes', mismatch=STATE.get('unit', 'serve') == 'serve', restart=True)))
         if p.startswith('/api/v1/book'):
             STATE.setdefault('gets', []).append(self.path)
             lea = dict(name='Léa Martin', given='Léa', family='Martin', org='Atelier', title='', phones=[dict(kind='mobile', value='+33 6 12 34 56 78')], emails=[dict(kind='home', value='lea@example.org')], addresses=[], birthday='', note='', urls=[], groups=['Famille'], about='', picture='', nip05='', lud16='')

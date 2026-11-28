@@ -2,11 +2,11 @@
 // Configuration coopérative (Capitaine) : kind 30800 `cooperative-config`, partagé par toute la constellation et lisible par
 // les stations legacy. Les valeurs en clair s'éditent ; les SECRETS sont en écriture seule : on voit s'ils sont renseignés,
 // jamais leur valeur, et on les remplace ou on les efface. Seules les clés modifiées sont envoyées.
-const LABEL = { UPLANET_NAME: 'Nom de la constellation', CHARTER_VERSION: 'Version de la charte', CHARTER_TEXT: 'Texte de la charte (signé par la coopérative)', TVA_RATE: 'TVA (%)', IS_RATE_REDUCED: 'Taux réduit (%)', IS_RATE_NORMAL: 'Taux normal (%)', IS_THRESHOLD: 'Seuil du taux réduit (Ẑ par an)', ZENCARD_SATELLITE: 'ZenCard Satellite (€)', ZENCARD_CONSTELLATION: 'ZenCard Constellation (€)', PAF: 'PAF proposée aux nouvelles stations (Ẑ/semaine)', NCARD: 'NCARD (Ẑ/semaine)', ZCARD: 'ZCARD (Ẑ/semaine)', TREASURY_PERCENT: 'Trésorerie (%)', RND_PERCENT: 'R&D (%)', ASSETS_PERCENT: 'Actifs (%)', CAPTAIN_BONUS_PERCENT: 'Prime du Capitaine (%)', OCSLUG: 'Identifiant du collectif', OCAPIKEY: 'Clé d\'API OpenCollective', OC_AUTO_CREDIT: 'Créditer les dons', OC_URL_CLOUD: 'Page Contribuer : bouton « Cloud »', OC_URL_MEMBRE: 'Adresse d\'adhésion (« Membre résident »)', OC_URL_SATELLITE: 'Page Contribuer : bouton « Satellite »', OC_URL_CONSTELLATION: 'Page Contribuer : bouton « Constellation (GPU) »', TIER_SLUG_SATELLITE: 'Paliers Satellite', TIER_SLUG_CONSTELLATION: 'Paliers Constellation', TIER_SLUG_LABO: 'Paliers Labo', TIER_SLUG_CLOUD: 'Paliers Cloud', PLANTNET_API_KEY: 'Clé PlantNet', GIT_HOST: 'Forge (vide : GitHub)', GIT_TOKEN: 'Jeton de la forge', GIT_OWNER: 'Organisation ou compte', MJ_APIKEY_PUBLIC: 'Mailjet : clé publique', MJ_APIKEY_PRIVATE: 'Mailjet : clé privée', MJ_SENDER_EMAIL: 'Mailjet : expéditeur', OVH_APP_KEY: 'OVH : clé d\'application', OVH_APP_SECRET: 'OVH : secret', OVH_CONSUMER_KEY: 'OVH : clé de consommateur', OVH_ZONE: 'Domaine de la coopérative (zone DNS chez OVH)', P2P_RELAYS: 'Stations relais (une adresse par ligne)', ORIGIN_RELAY: 'Relais de la carte des UPlanet (un par ligne)' };
+const LABEL = { UPLANET_NAME: 'Nom de la constellation', CURRENCY_NAME: 'Nom de la monnaie (vide : celui d’origine)', CURRENCY_SYMBOL: 'Symbole de la monnaie (vide : celui d’origine)', UI_STYLE: 'Style par défaut des membres', CHARTER_VERSION: 'Version de la charte', CHARTER_TEXT: 'Texte de la charte (signé par la coopérative)', TVA_RATE: 'TVA (%)', IS_RATE_REDUCED: 'Taux réduit (%)', IS_RATE_NORMAL: 'Taux normal (%)', IS_THRESHOLD: 'Seuil du taux réduit (Ẑ par an)', ZENCARD_SATELLITE: 'ZenCard Satellite (€)', ZENCARD_CONSTELLATION: 'ZenCard Constellation (€)', PAF: 'PAF proposée aux nouvelles stations (Ẑ/semaine)', NCARD: 'NCARD (Ẑ/semaine)', ZCARD: 'ZCARD (Ẑ/semaine)', TREASURY_PERCENT: 'Trésorerie (%)', RND_PERCENT: 'R&D (%)', ASSETS_PERCENT: 'Actifs (%)', CAPTAIN_BONUS_PERCENT: 'Prime du Capitaine (%)', OCSLUG: 'Identifiant du collectif', OCAPIKEY: 'Clé d\'API OpenCollective', OC_AUTO_CREDIT: 'Créditer les dons', OC_URL_CLOUD: 'Page Contribuer : bouton « Cloud »', OC_URL_MEMBRE: 'Adresse d\'adhésion (« Membre résident »)', OC_URL_SATELLITE: 'Page Contribuer : bouton « Satellite »', OC_URL_CONSTELLATION: 'Page Contribuer : bouton « Constellation (GPU) »', TIER_SLUG_SATELLITE: 'Paliers Satellite', TIER_SLUG_CONSTELLATION: 'Paliers Constellation', TIER_SLUG_LABO: 'Paliers Labo', TIER_SLUG_CLOUD: 'Paliers Cloud', PLANTNET_API_KEY: 'Clé PlantNet', GIT_HOST: 'Forge (vide : GitHub)', GIT_TOKEN: 'Jeton de la forge', GIT_OWNER: 'Organisation ou compte', MJ_APIKEY_PUBLIC: 'Mailjet : clé publique', MJ_APIKEY_PRIVATE: 'Mailjet : clé privée', MJ_SENDER_EMAIL: 'Mailjet : expéditeur', OVH_APP_KEY: 'OVH : clé d\'application', OVH_APP_SECRET: 'OVH : secret', OVH_CONSUMER_KEY: 'OVH : clé de consommateur', OVH_ZONE: 'Domaine de la coopérative (zone DNS chez OVH)', P2P_RELAYS: 'Stations relais (une adresse par ligne)', ORIGIN_RELAY: 'Relais de la carte des UPlanet (un par ligne)' };
 // Exemples de saisie.
-const HINT = { OVH_ZONE: 'copylaradio.com', OCSLUG: 'monnaie-libre', GIT_HOST: 'https://gitlab.exemple.org', GIT_OWNER: 'papiche', TIER_SLUG_SATELLITE: '*parrainage*128*,satellite', TIER_SLUG_CONSTELLATION: '*parrainage*gpu*,constellation', TIER_SLUG_LABO: 'labo,r-d,recherche', OC_URL_MEMBRE: 'https://opencollective.com/…/contribute/…' };
+const HINT = { CURRENCY_NAME: 'Sol, Graine…', CURRENCY_SYMBOL: '☉', OVH_ZONE: 'copylaradio.com', OCSLUG: 'monnaie-libre', GIT_HOST: 'https://gitlab.exemple.org', GIT_OWNER: 'papiche', TIER_SLUG_SATELLITE: '*parrainage*128*,satellite', TIER_SLUG_CONSTELLATION: '*parrainage*gpu*,constellation', TIER_SLUG_LABO: 'labo,r-d,recherche', OC_URL_MEMBRE: 'https://opencollective.com/…/contribute/…' };
 
-const TITLE = { uplanet: 'Nom et charte de la constellation', ovh: 'Domaine de la coopérative (OVH)', mesh: 'Stations relais du maillage', oc: 'OpenCollective', tiers: 'Routage des paliers', '3x13': 'Règle 3×1/3 + 1 %', fiscal: 'Impôt sur les sociétés', shares: 'PAF suggérée', api: 'Retours des utilisateurs (Git)', plantnet: 'Reconnaissance des plantes (Pl@ntNet)', legacy: 'Stations Astroport.ONE' };
+const TITLE = { uplanet: 'Nom et charte de la constellation', look: 'Monnaie et apparence', ovh: 'Domaine de la coopérative (OVH)', mesh: 'Stations relais du maillage', oc: 'OpenCollective', tiers: 'Routage des paliers', '3x13': 'Règle 3×1/3 + 1 %', fiscal: 'Impôt sur les sociétés', shares: 'PAF suggérée', api: 'Retours des utilisateurs (Git)', plantnet: 'Reconnaissance des plantes (Pl@ntNet)', legacy: 'Stations Astroport.ONE' };
 // Où trouver chaque valeur : une ancre par section (`id` de `coop_config::SECTIONS`) dans l'annexe publiée du guide.
 const DOC = 'https://papiche.github.io/astroportd/CONFIG_COOP.html#';
 // Par tâche : ce qui met la station en service d'abord ; le reste replié. [niveau, titre, pourquoi, ouvert]
@@ -38,18 +38,24 @@ export default async function coop(box, K) {
     const field = f => {
       const id = 'cf-' + f.key, label = h('label', { for: id }, t(LABEL[f.key] || f.key));
       if (f.secret) {
-        const input = h('input', { id, type: 'password', autocomplete: 'off', placeholder: f.set ? (f.readable ? t('● renseigné — saisir pour remplacer') : t('● renseigné mais illisible ici (autre constellation ?)')) : t('non renseigné') });
+        const input = h('input', { id, secret: true, placeholder: f.set ? (f.readable ? t('● renseigné — saisir pour remplacer') : t('● renseigné mais illisible ici (autre constellation ?)')) : t('non renseigné') });
         const clear = f.set ? h('label', { class: 'muted' }, h('input', { type: 'checkbox', id: id + '-x' }), ' ' + t('effacer')) : null;
         inputs.set(f.key, { input, clear: clear?.querySelector('input'), secret: true });
-        return h('div', {}, label, input, clear);
+        // Clé que la station peut surdéfinir pour elle seule (quota de la coopérative atteint) : jamais publiée.
+        if (f.station === undefined) return h('div', {}, label, input, clear);
+        const sid = id + '-st', own = h('input', { id: sid, secret: true, placeholder: f.station ? t('● clé de la station en service — saisir pour remplacer') : t('vide : la clé de la coopérative sert') });
+        const drop = f.station ? h('label', { class: 'muted' }, h('input', { type: 'checkbox' }), ' ' + t('revenir à la clé de la coopérative')) : null;
+        inputs.set('station:' + f.key, { input: own, clear: drop?.querySelector('input'), secret: true });
+        return h('div', {}, label, input, clear, h('label', { for: sid }, t('Clé de cette station seulement (prioritaire, jamais publiée)')), own, drop);
       }
       const val = f.value ?? '';
       const input = f.key === 'CHARTER_TEXT' ? h('textarea', { id, rows: 14, maxlength: 6000, placeholder: t('Laisser vide : la charte type est proposée aux membres') }, val)
         : f.key === 'P2P_RELAYS' ? h('textarea', { id, rows: 3, maxlength: 1024, placeholder: '/dns4/relais.exemple.org/tcp/4101/p2p/12D3Koo…\n/ip4/203.0.113.7/tcp/4101/p2p/12D3Koo…' }, val)
         : f.key === 'ORIGIN_RELAY' ? h('textarea', { id, rows: 2, maxlength: 1024, placeholder: t('vide : wss://relay.copylaradio.com · none : rien') }, val)
+        : f.key === 'UI_STYLE' ? h('select', { id }, [['', t('Aurore (par défaut)')], ['sobre', t('Sobre')]].map(([o, l]) => h('option', { value: o, selected: (val === 'sobre' ? 'sobre' : '') === o }, l)))
         : f.key === 'OC_AUTO_CREDIT' ? h('select', { id }, [['', t('Je confirme chaque crédit (par défaut)')], ['1', t('La station crédite seule')]].map(([o, l]) => h('option', { value: o, selected: (val === '1' ? '1' : '') === o }, l)))
         : h('input', { id, value: val, autocomplete: 'off', placeholder: HINT[f.key] || '', oninput: check });
-      const orig = f.key === 'OC_AUTO_CREDIT' && val !== '1' ? '' : val;
+      const orig = (f.key === 'OC_AUTO_CREDIT' && val !== '1') || (f.key === 'UI_STYLE' && val !== 'sobre') ? '' : val;
       inputs.set(f.key, { input, orig, get value() { return input.value; } });
       return h('div', {}, label, input);
     };
@@ -69,7 +75,8 @@ export default async function coop(box, K) {
       if (!keys.length) return K.toast(t('Aucune modification'));
       if (!armed) {
         armed = true;
-        summary.textContent = t('Vous allez modifier pour toute la constellation : {0}.', keys.map(k => t(LABEL[k] || k)).join(', '));
+        const name = k => (k.startsWith('station:') ? t('{0} (cette station)', t(LABEL[k.slice(8)] || k)) : t(LABEL[k] || k));
+        summary.textContent = keys.every(k => k.startsWith('station:')) ? t('Vous allez modifier pour cette station seulement : {0}.', keys.map(name).join(', ')) : t('Vous allez modifier pour toute la constellation : {0}.', keys.map(name).join(', '));
         go.textContent = t('Confirmer la publication');
         return;
       }
@@ -115,7 +122,9 @@ export default async function coop(box, K) {
       K.api('/api/v1/station/oc/peek').then(r => r.error ? says(p, false, r.error) : r.waiting ? says(p, null, t('Première lecture dans quelques minutes.')) : says(p, true, t('Collectif lu : {0} don(s) ce mois, {1} à créditer.', (r.donations || []).length, r.pending || 0)), e => says(p, false, e.message));
       return p;
     };
-    const STATE = { uplanet: charter, mesh, oc, shares: () => state(h('span', {}, t('Valeur proposée ; chaque station fixe la sienne :'), ' ', h('a', { href: '#/constellation' }, t('Économie')))) };
+    // ORIGIN : sa clé coopérative se calcule par tous, sa monnaie et son style ne changent pas.
+    const lookState = () => state(K.look().origin ? h('span', { class: 'degraded' }, t('Sur ORIGIN, la monnaie reste « Ẑen » et le style Kraft : ces réglages ne valent que pour une UPlanet privée.')) : h('span', {}, t('Le style Kraft est réservé à ORIGIN : on voit tout de suite qu\'on est sur le réseau public d\'essai.')));
+    const STATE = { uplanet: charter, look: lookState, mesh, oc, shares: () => state(h('span', {}, t('Valeur proposée ; chaque station fixe la sienne :'), ' ', h('a', { href: '#/constellation' }, t('Économie')))) };
     const help = s => h('a', { href: DOC + s.id, target: '_blank', rel: 'noopener', title: t('Où trouver ces valeurs'), 'aria-label': t('Où trouver ces valeurs') }, '?');
     const groups = GROUPS.map(([lv, title, why, open]) => {
       const secs = v.sections.filter(s => (s.level || 'essential') === lv), fs = secs.flatMap(s => s.fields);

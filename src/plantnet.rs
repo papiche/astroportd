@@ -162,8 +162,8 @@ pub async fn identify(api: &str, key: &str, lang: &str, jpeg: &[u8], limits: &Fe
         Ok(g) => g,
         Err(crate::fetch::FetchError::Status(404)) => return Ok(Vec::new()),
         // L'erreur ne recopie jamais l'adresse : elle porte la clé.
-        Err(crate::fetch::FetchError::Status(401 | 403)) => return Err("la clé Pl@ntNet de la coopérative est refusée".into()),
-        Err(crate::fetch::FetchError::Status(429)) => return Err("quota Pl@ntNet de la coopérative épuisé pour aujourd'hui".into()),
+        Err(crate::fetch::FetchError::Status(401 | 403)) => return Err("la clé Pl@ntNet est refusée (celle de la station si le Capitaine en a mis une, sinon celle de la coopérative)".into()),
+        Err(crate::fetch::FetchError::Status(429)) => return Err("quota Pl@ntNet épuisé pour aujourd'hui : le Capitaine peut donner la clé de sa station (Configuration coopérative › Pl@ntNet)".into()),
         Err(e) => return Err(format!("Pl@ntNet injoignable : {e}")),
     };
     let mut out = Vec::new();
@@ -174,7 +174,7 @@ pub async fn identify(api: &str, key: &str, lang: &str, jpeg: &[u8], limits: &Fe
     parse(&out)
 }
 
-/// Le service est-il proposé sur cette constellation (clé publiée par la coopérative) ?
+/// Clé Pl@ntNet : celle de la station si le Capitaine en a mis une, sinon celle publiée par la coopérative.
 pub async fn api_key(db: &Db, uplanet_name: &str) -> Option<String> {
     crate::coop_config::setting(db, uplanet_name, "PLANTNET_API_KEY").await
 }

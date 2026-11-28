@@ -1,35 +1,34 @@
 'use strict';
 const $ = (s, e = document) => e.querySelector(s);
+// Monnaie de la constellation : « Ẑen » et « Ẑ » par défaut ; une UPlanet privée peut les renommer (configuration coopérative,
+// lue par look.js). Appliqué à tout texte posé par `h` (« ẐEN », le type de constellation, reste).
+const LOOK = () => window.astroLook || {};
+const cur = s => { const l = LOOK(); return typeof s === 'string' && l.currency && (l.currency !== 'Ẑen' || l.symbol !== 'Ẑ') ? s.replace(/Ẑen/g, l.currency).replace(/Ẑ(?![A-Za-zÀ-ÿ])/g, l.symbol || 'Ẑ') : s; };
+// Champs qui ne sont PAS des identifiants : sans ces marques, Chrome et les gestionnaires de mots de passe y proposent le
+// compte de la station (seul le formulaire de connexion déclare `username` / `current-password`).
+const NOFILL = { autocomplete: 'off', 'data-1p-ignore': '', 'data-lpignore': 'true', 'data-bwignore': '', 'data-form-type': 'other' };
+const TYPED = /^(text|search|url|email|tel|number|password)?$/;
 const h = (tag, props, ...kids) => {
 const e = document.createElement(tag);
-for (const [k, v] of Object.entries(props || {})) {
+props = props || {};
+// `secret: true` : une clé d'API ou un jeton, masqué SANS être un mot de passe (un vrai `type=password` attire toujours les
+// identifiants enregistrés du navigateur).
+if (props.secret) props = { ...props, type: 'text', class: ((props.class || '') + ' secret').trim(), spellcheck: false, autocapitalize: 'off', secret: null };
+if ((tag === 'input' && TYPED.test(props.type || '')) || tag === 'textarea') props = { ...NOFILL, ...props };
+for (const [k, v] of Object.entries(props)) {
 if (v == null || v === false) continue;
 if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
 else if (k === 'class') e.className = v;
-else if (k in e) e[k] = v;
-else e.setAttribute(k, v);
+else if (k in e) e[k] = k === 'title' || k === 'placeholder' ? cur(v) : v;
+else e.setAttribute(k, k === 'aria-label' ? cur(v) : v);
 }
-e.append(...kids.flat().filter(x => x != null && x !== false));
+e.append(...kids.flat().filter(x => x != null && x !== false).map(x => (tag === 'textarea' ? x : cur(x)))); // le texte à modifier reste tel quel
 return e;
 };
 const store = {
 get: k => { try { return localStorage.getItem(k); } catch { return null; } },
 set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* stockage indisponible : session éphémère */ } },
 };
-// Style (Aurore, Sobre, Kraft) et mode (auto, clair, sombre) : préférences de cet appareil, appliquées dès le chargement.
-const STYLES = ['aurore', 'sobre', 'kraft'], MODES = ['auto', 'light', 'dark'], MODE_ICON = { auto: '◐', light: '☀', dark: '☾' };
-const look = () => {
-  const style = STYLES.includes(store.get('style')) ? store.get('style') : 'aurore', mode = MODES.includes(store.get('mode')) ? store.get('mode') : 'auto';
-  document.documentElement.dataset.style = style;
-  if (mode === 'auto') delete document.documentElement.dataset.mode; else document.documentElement.dataset.mode = mode;
-  return { style, mode };
-};
-{
-  const { style, mode } = look(), pick = document.getElementById('style'), btn = document.getElementById('mode');
-  pick.value = style; btn.textContent = MODE_ICON[mode];
-  pick.onchange = () => { store.set('style', pick.value); look(); };
-  btn.onclick = () => { const next = MODES[(MODES.indexOf(look().mode) + 1) % MODES.length]; store.set('mode', next); btn.textContent = MODE_ICON[next]; look(); };
-}
 const b64 = s => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 const bytes = n => { if (n == null) return '—'; const u = ['o', 'Ko', 'Mo', 'Go', 'To']; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return `${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${u[i]}`; };
 const when = t => (t ? new Date(t * 1000).toLocaleString('fr', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
@@ -252,7 +251,7 @@ let PARTS = new Set(); const parts = new Set();
 const mod = async f => { const c = f.startsWith('c-'), p = c ? 'c' : f.slice(2, -3); if (lang !== 'fr' && (c || PARTS.has(p)) && !parts.has(p)) { parts.add(p); try { Object.assign(dict, (await import(c ? `/ui/c-lang-${lang}.js` : `/ui/m-lang-${lang}-${p}.js`)).default); tr(document.body); } catch (e) { toast(e.message); } } return import('/ui/' + f); };
 const LANGS = ['fr', 'en', 'es'], lsGet = () => { try { return localStorage.getItem('lang'); } catch { return null; } };
 const lang = LANGS.find(l => l === (lsGet() || navigator.language.slice(0, 2))) || 'fr';
-const t = (s, ...a) => a.reduce((r, v, i) => r.replace(`{${i}}`, v), dict[s] ?? s);
+const t = (s, ...a) => cur(a.reduce((r, v, i) => r.replace(`{${i}}`, v), dict[s] ?? s));
 const tr = n => {
 if (n.nodeType === 3) { const k = n.nodeValue.trim(); if (dict[k]) n.nodeValue = n.nodeValue.replace(k, dict[k]); return; }
 if (n.nodeType !== 1) return;
@@ -282,7 +281,7 @@ const sure = (label, run, why, attrs) => {
 // Bulle d'aide « ? » et titre de carte qui la porte : partagés par tous les écrans (une seule apparence, un seul comportement).
 const tip = (...x) => h('details', { class: 'tip' }, h('summary', { 'aria-label': t('Aide'), title: t('Aide') }, '?'), h('div', { class: 'tip-body' }, x.map(p => h('p', {}, p))));
 const head = (title, ...x) => h('div', { class: 'ac-head' }, h('h2', {}, title), x.length ? tip(...x) : null);
-const K = { tip, head, req, auth: authHeader, sure, mod, t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, blob: blobUrl, tiles, every, enc, del, picker, mark, photos, dav: v => { if (v) dav = v; }, davRoot: () => dav, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n), feed, listeners };
+const K = { look: LOOK, cur, tip, head, req, auth: authHeader, sure, mod, t, lang, setLang, login: (u, p) => store.set('basic', btoa(`${u}:${p}`)), h, api, toast, when, bytes, span, pill, table, open, blob: blobUrl, tiles, every, enc, del, picker, mark, photos, dav: v => { if (v) dav = v; }, davRoot: () => dav, cleanup: f => cleanups.push(f), planeHref: (n, hash) => planeHref && planeHref(n, hash), listen: f => { listeners.add(f); cleanups.push(() => listeners.delete(f)); }, chatUnread: n => badge(n), feed, listeners };
 const lazyView = f => async (root, q) => (await mod(f)).default(root, K, q);
 let me = null, shell = null;
 async function route() {
@@ -320,8 +319,11 @@ async function planeSwitch() {
     K.plane = current; // constellation de cette interface (écrans du Capitaine)
     planeHref = (n, hash) => { const origin = r.planes.find(p => p.name === n)?.origin; return `${location.protocol}//${origin ? '' : n + '.'}${base}${location.port ? ':' + location.port : ''}/${hash || ''}`; };
     const go = n => { const origin = r.planes.find(p => p.name === n)?.origin; location.href = `${location.protocol}//${origin ? '' : n + '.'}${base}${location.port ? ':' + location.port : ''}/`; };
-    $('.tools').prepend(h('select', { id: 'plane', 'aria-label': t('Constellation'), title: t('Constellation'), onchange: ev => go(ev.target.value) },
-      r.planes.map(p => h('option', { value: p.name, selected: p.name === current }, p.name))));
+    // Chaque option porte le nom de son UPlanet (configuration coopérative de ce plan, lue sur sa propre adresse).
+    const label = (p, l) => (l?.name && l.name.toLowerCase() !== p.name ? `${l.name} · ${p.name}` : p.origin ? 'ORIGIN' : p.name);
+    const opts = r.planes.map(p => h('option', { value: p.name, selected: p.name === current }, label(p, p.name === current ? LOOK() : null)));
+    $('.tools').prepend(h('select', { id: 'plane', 'aria-label': t('Constellation'), title: t('Constellation'), onchange: ev => go(ev.target.value) }, opts));
+    r.planes.forEach((p, i) => p.name !== current && fetch(new URL('/api/v1/look', planeHref(p.name))).then(x => x.json()).then(l => { opts[i].textContent = label(p, l); }, () => { /* plan arrêté : son nom court reste */ }));
   } catch { /* pas d'écran des plans (station sans configuration) : pas de sélecteur */ }
 }
 let stale; const had = !!navigator.serviceWorker?.controller;
