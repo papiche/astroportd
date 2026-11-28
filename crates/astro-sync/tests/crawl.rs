@@ -129,19 +129,21 @@ async fn a_second_crawl_is_idempotent_and_the_cursor_picks_up_new_events() {
 #[tokio::test]
 async fn crawl_needs_a_station_key_inside_the_remote_circle() {
     let (url, _src_dir, _src) = source_relay(&constellation()).await;
-    for (label, client, expected) in [
-        ("sans clé", WsClient::new(Duration::from_secs(10)), "authentification requise"),
-        ("clé étrangère", WsClient::new(Duration::from_secs(10)).with_signer(Signer::new(STRANGER)), "restricted"),
-    ] {
+    // Sans clé, le relai exige une authentification ; avec une clé étrangère, il la refuse (`restricted`).
+    for (label, client) in [("sans clé", WsClient::new(Duration::from_secs(10))), ("clé étrangère", WsClient::new(Duration::from_secs(10)).with_signer(Signer::new(STRANGER)))] {
         let dir = TempDir::new("crawler3");
         let db = open_db(&dir);
         host(&db, &ALICE).await;
         let crawler = Crawler::new(db.clone(), client, config(&url));
         let stats = crawler.run_once(&[]).await.unwrap();
-        assert_eq!(stats.inserted, 0, "{label}");
-        assert_eq!(stats.errors.len(), 1, "{label} : {:?}", stats.errors);
-        assert!(stats.errors[0].2.contains(expected), "{label} : {}", stats.errors[0].2);
-        assert_eq!(count(&db, "SELECT count(*) FROM nostr_events").await, 0, "{label}");
+        // Le relai refuse le lot : il est relu en kinds publics seulement, et le refus est compté, pas tu.
+        assert!(stats.errors.is_empty(), "{label} : {:?}", stats.errors);
+        assert_eq!(stats.public_only, 1, "{label} : {stats:?}");
+        assert!(stats.inserted > 0, "{label} : le public passe (profil, contacts, DID…)");
+        let private = "SELECT count(*) FROM nostr_events WHERE kind NOT IN (0, 1, 3, 10002, 30023, 30800, 30850)";
+        assert_eq!(count(&db, private).await, 0, "{label} : rien de privé sans clé dans le cercle distant");
+        // Aucun curseur : le jour où ce relai nous ouvre son cercle, le privé est rapatrié depuis le début.
+        assert_eq!(count(&db, "SELECT count(*) FROM kv WHERE scope = 'crawl_cursor'").await, 0, "{label}");
     }
 }
 

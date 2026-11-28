@@ -44,6 +44,13 @@ pub struct CrawlConfig {
     pub n2_kinds: Vec<u32>,
     /// Kinds ajoutés pour les seuls membres **hébergés** (31903 : paramètres applicatifs, chiffrés pour eux).
     pub hosted_kinds: Vec<u32>,
+    /// Kinds demandés pour une clé connue seulement par le maillage (Capitaine annoncé par la carte d'une station, que
+    /// personne ici ne suit encore) : les kinds **publics** seulement, car la station distante refuse toute requête qui en
+    /// contient un autre à une clé hors de son cercle.
+    pub mesh_kinds: Vec<u32>,
+    /// Kinds que tout relai d'astroportd livre sans authentification (`public_kinds` du relai) : quand un relai refuse un
+    /// lot parce que la clé de cette station n'est pas dans son cercle, le lot est relu avec ces kinds seulement.
+    pub public_kinds: Vec<u32>,
     /// Événements demandés par page.
     pub page_size: usize,
     /// Pages au plus par clé et par relai (un lot de `n` clés dispose de `n × max_pages` pages).
@@ -65,6 +72,8 @@ impl Default for CrawlConfig {
             kinds: vec![0, 1, 3, 5, 1063, 10_002, 30_023, 30_800, 30_850, 30_851, 30_852],
             n2_kinds: vec![0, 3, 5, 10_002, 30_800, 30_852],
             hosted_kinds: vec![31_903],
+            mesh_kinds: vec![0, 3, 10_002, 30_800],
+            public_kinds: vec![0, 1, 3, 10_002, 30_023, 30_800, 30_850],
             page_size: 500,
             max_pages: 20,
             overlap_secs: 3600,
@@ -94,12 +103,15 @@ pub struct CrawlStats {
     pub errors: Vec<(String, String, String)>,
     /// Lots réconciliés par Negentropy (NIP-77) plutôt que lus par pages.
     pub negentropy: u64,
+    /// Lots qu'un relai a refusés (clé de la station hors de son cercle) et relus en kinds publics seulement.
+    pub public_only: u64,
 }
 
 impl CrawlStats {
     fn merge(&mut self, other: CrawlStats) {
         self.keys += other.keys;
         self.negentropy += other.negentropy;
+        self.public_only += other.public_only;
         self.fetched += other.fetched;
         self.inserted += other.inserted;
         self.duplicates += other.duplicates;
@@ -115,6 +127,13 @@ impl CrawlStats {
 
 /// Relais à interroger, relus à chaque passage (la constellation change : une station arrive, une autre disparaît).
 pub type RelaySource = Arc<dyn Fn() -> Vec<String> + Send + Sync>;
+
+/// Clés à synchroniser en plus, relues à chaque passage : par exemple les Capitaines annoncés par les cartes du maillage P2P
+/// (une clé disparaît d'elle-même quand sa carte n'est plus là). Aucune écriture en base.
+pub type KeysSource = Arc<dyn Fn() -> Vec<String> + Send + Sync>;
+
+/// Clés données par une [`KeysSource`] à chaque passage, au plus (une carte hostile ne gonfle pas le crawl).
+pub const MAX_SOURCE_KEYS: usize = 256;
 
 /// Bilan d'un passage de la boucle continue.
 #[derive(Debug, Clone)]
@@ -145,6 +164,7 @@ pub struct Crawler<C: RelayClient> {
     source: Option<RelaySource>,
     hook: Option<PassHook>,
     extra_keys: Vec<String>,
+    keys_source: Option<KeysSource>,
     nudge: Option<Arc<tokio::sync::Notify>>,
 }
 
@@ -155,7 +175,7 @@ pub const WANTED_SCOPE: &str = "crawl_wanted";
 impl<C: RelayClient> Crawler<C> {
     /// Crée un crawler.
     pub fn new(db: Arc<Db>, client: C, config: CrawlConfig) -> Self {
-        Self { db, client, config, source: None, hook: None, extra_keys: Vec::new(), nudge: None }
+        Self { db, client, config, source: None, hook: None, extra_keys: Vec::new(), keys_source: None, nudge: None }
     }
 
     /// Ajoute aux relais fixes ceux que `source` donne à chaque passage.
@@ -169,6 +189,28 @@ impl<C: RelayClient> Crawler<C> {
     pub fn with_extra_keys(mut self, keys: Vec<String>) -> Self {
         self.extra_keys = keys;
         self
+    }
+
+    /// Clés suivies en plus, relues à chaque passage (cercle [`Circle::Mesh`] : profil, contacts, relais, DID — les kinds
+    /// publics). Une clé déjà dans un cercle garde ses kinds. Seules les clés hexadécimales de 64 caractères sont retenues,
+    /// [`MAX_SOURCE_KEYS`] au plus.
+    pub fn with_keys_source(mut self, source: KeysSource) -> Self {
+        self.keys_source = Some(source);
+        self
+    }
+
+    /// Clés données par la source du maillage, valides et sans doublon, [`MAX_SOURCE_KEYS`] au plus.
+    pub fn mesh_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = Vec::new();
+        for k in self.keys_source.as_ref().map(|f| f()).unwrap_or_default().into_iter().filter(|k| is_hex64(k)) {
+            if keys.len() >= MAX_SOURCE_KEYS {
+                break;
+            }
+            if !keys.contains(&k) {
+                keys.push(k);
+            }
+        }
+        keys
     }
 
     /// Réveil : un `notify_one` sur `nudge` lance tout de suite le passage suivant de la boucle continue (sans attendre `every`).
@@ -246,6 +288,7 @@ impl<C: RelayClient> Crawler<C> {
             Circle::Hosted => self.config.kinds.iter().chain(&self.config.hosted_kinds).copied().collect(),
             Circle::Near => self.config.kinds.clone(),
             Circle::Far => self.config.n2_kinds.clone(),
+            Circle::Mesh => self.config.mesh_kinds.clone(),
         }
     }
 
@@ -257,6 +300,12 @@ impl<C: RelayClient> Crawler<C> {
                 Some(slot) => slot.1 = slot.1.min(Circle::Near),
                 None if is_hex64(k) => keys.push((k.clone(), Circle::Near)),
                 None => {}
+            }
+        }
+        // Clés du maillage : seulement celles qui ne sont dans aucun cercle (un ami garde ses kinds N¹).
+        for k in self.mesh_keys() {
+            if !keys.iter().any(|(x, _)| *x == k) {
+                keys.push((k, Circle::Mesh));
             }
         }
         let mut stats = CrawlStats::default();
@@ -318,6 +367,23 @@ impl<C: RelayClient> Crawler<C> {
             let Some(open) = session.as_mut() else { continue };
             match self.sync_lot(open.as_mut(), &relay, &lot, &cursors).await {
                 Ok(s) => stats.merge(s),
+                // Relai qui ne nous compte pas dans son cercle (Capitaine ami sur une autre station : c'est son Capitaine, pas
+                // notre NODE, qui est suivi) : ce qui est public passe quand même — profil, contacts, DID… — sans curseur.
+                Err(e) if refused(&e) && self.public_lot(&lot).is_some() => {
+                    let Some(public) = self.public_lot(&lot) else { continue };
+                    match self.sync_lot(open.as_mut(), &relay, &public, &cursors).await {
+                        Ok(s) => {
+                            stats.merge(s);
+                            stats.public_only += 1;
+                        }
+                        Err(e) => {
+                            if stats.errors.len() < 20 {
+                                stats.errors.push((relay.clone(), lot_label(&lot.keys), e.to_string()));
+                            }
+                            session = None;
+                        }
+                    }
+                }
                 Err(e) => {
                     if stats.errors.len() < 20 {
                         stats.errors.push((relay.clone(), lot_label(&lot.keys), e.to_string()));
@@ -330,25 +396,32 @@ impl<C: RelayClient> Crawler<C> {
         stats
     }
 
+    /// Le lot réduit à ses kinds publics, s'il en a et s'il en demandait d'autres. Jamais de curseur : les événements privés
+    /// restent à rapatrier le jour où ce relai nous ouvre son cercle.
+    fn public_lot(&self, lot: &Lot) -> Option<Lot> {
+        let kinds: Vec<u32> = lot.kinds.iter().copied().filter(|k| self.config.public_kinds.contains(k)).collect();
+        (!kinds.is_empty() && kinds.len() < lot.kinds.len()).then(|| Lot { keys: lot.keys.clone(), since: None, kinds, cursor: false })
+    }
+
     /// Lots de clés, par cercle (un lot = un même jeu de kinds) : d'abord les clés jamais synchronisées sur ce relai (sans
     /// `since`), puis les autres triées par curseur, pour qu'un lot rassemble des curseurs voisins.
     fn lots(&self, keys: &[(String, Circle)], cursors: &HashMap<String, u64>) -> Vec<Lot> {
         let size = self.config.batch_keys.clamp(1, MAX_LIST_LEN);
         let mut lots = Vec::new();
-        for circle in [Circle::Hosted, Circle::Near, Circle::Far] {
-            let kinds = self.kinds_for(circle);
+        for circle in [Circle::Hosted, Circle::Near, Circle::Far, Circle::Mesh] {
+            let (kinds, cursor) = (self.kinds_for(circle), circle != Circle::Mesh);
             let (mut fresh, mut known) = (Vec::new(), Vec::new());
             for (k, _) in keys.iter().filter(|(_, c)| *c == circle) {
-                match cursors.get(k).copied().unwrap_or(0) {
+                match if cursor { cursors.get(k).copied().unwrap_or(0) } else { 0 } {
                     0 => fresh.push(k.clone()),
                     c => known.push((c, k.clone())),
                 }
             }
             known.sort();
-            lots.extend(fresh.chunks(size).map(|c| Lot { keys: c.to_vec(), since: None, kinds: kinds.clone() }));
+            lots.extend(fresh.chunks(size).map(|c| Lot { keys: c.to_vec(), since: None, kinds: kinds.clone(), cursor }));
             for chunk in known.chunks(size) {
                 let oldest = chunk.iter().map(|(c, _)| *c).min().unwrap_or(0);
-                lots.push(Lot { keys: chunk.iter().map(|(_, k)| k.clone()).collect(), since: Some(oldest.saturating_sub(self.config.overlap_secs)), kinds: kinds.clone() });
+                lots.push(Lot { keys: chunk.iter().map(|(_, k)| k.clone()).collect(), since: Some(oldest.saturating_sub(self.config.overlap_secs)), kinds: kinds.clone(), cursor });
             }
         }
         lots
@@ -357,7 +430,7 @@ impl<C: RelayClient> Crawler<C> {
     /// Synchronise une clé sur un relai, de façon incrémentale (une session, un lot d'une clé).
     pub async fn sync_key(&self, relay: &str, key: &str) -> Result<CrawlStats, SyncError> {
         let cursors = self.cursors(relay).await?;
-        let lot = self.lots(&[(key.to_owned(), Circle::Near)], &cursors).pop().unwrap_or(Lot { keys: vec![key.to_owned()], since: None, kinds: self.config.kinds.clone() });
+        let lot = self.lots(&[(key.to_owned(), Circle::Near)], &cursors).pop().unwrap_or(Lot { keys: vec![key.to_owned()], since: None, kinds: self.config.kinds.clone(), cursor: true });
         let mut session = match tokio::time::timeout(self.config.fetch_timeout, self.client.session(relay)).await {
             Ok(Ok(s)) => s,
             Ok(Err(e)) => return Err(relay_error(e.to_string())),
@@ -441,7 +514,7 @@ impl<C: RelayClient> Crawler<C> {
             let slot = newest.entry(a).or_insert(0);
             *slot = (*slot).max(at);
         }
-        for (key, at) in newest {
+        for (key, at) in newest.into_iter().filter(|_| lot.cursor) {
             if at > cursors.get(key).copied().unwrap_or(0) {
                 self.set_cursor(&format!("{relay}|{key}"), at).await?;
             }
@@ -483,7 +556,7 @@ impl<C: RelayClient> Crawler<C> {
                 _ => break,
             }
         }
-        for (key, at) in newest {
+        for (key, at) in newest.into_iter().filter(|_| lot.cursor) {
             if at > cursors.get(key).copied().unwrap_or(0) {
                 self.set_cursor(&format!("{relay}|{key}"), at).await?;
             }
@@ -593,6 +666,9 @@ struct Lot {
     keys: Vec<String>,
     since: Option<u64>,
     kinds: Vec<u32>,
+    /// Le lot fait avancer les curseurs de ses clés. Pas pour le cercle [`Circle::Mesh`] : le jour où la clé est suivie, ses
+    /// événements plus anciens (privés) doivent encore être rapatriés depuis le début.
+    cursor: bool,
 }
 
 /// Cercle d'une clé suivie : il décide des kinds demandés pour elle (voir [`CrawlConfig`]). Ordonné du plus proche au plus loin.
@@ -604,6 +680,8 @@ pub enum Circle {
     Near,
     /// N2 seulement.
     Far,
+    /// Annoncé par une carte du maillage, hors de tout cercle : kinds publics seulement, sans curseur.
+    Mesh,
 }
 
 /// Kinds dont l'auteur a quitté le cercle de la station (ni hébergé, ni dans `social_graph`) : la nuit les purge.
@@ -640,6 +718,11 @@ fn lot_label(keys: &[String]) -> String {
 /// Les événements déjà ingérés restent acquis ; le curseur n'avance pas, le prochain passage reprend.
 fn relay_error(reason: String) -> SyncError {
     SyncError::Relay(reason)
+}
+
+/// Le relai a refusé la lecture : authentification exigée (sans clé pour la donner) ou clé hors de son cercle.
+fn refused(e: &SyncError) -> bool {
+    matches!(e, SyncError::Relay(r) if r.contains("authentification requise") || r.contains("restricted:") || r.contains("auth-required"))
 }
 
 #[cfg(test)]

@@ -1158,7 +1158,11 @@ pub async fn run_until(mut a: ServeArgs, shutdown: impl std::future::Future<Outp
             None => eprintln!("essaim : HOME introuvable et --swarm-dir absent : les cartes des stations ne sont pas gardées"),
         }
     }
-    let captains = Arc::new(astroportd::captains::Captains::new(db.clone(), captains_keys, Some(publish_fn(&event_publisher)), p2p_handle.clone(), forwards.clone(), activity.clone()));
+    let captains = Arc::new(astroportd::captains::Captains::new(db.clone(), captains_keys, Some(publish_fn(&event_publisher)), p2p_handle.clone(), forwards.clone(), activity.clone()).with_swarm(a.swarm_dir.clone().or_else(default_swarm_dir)));
+    // Le Capitaine d'ici s'annonce aux autres stations (DID `t = captain` + station d'attache) ; la carte du maillage dit l'inverse.
+    if let Some(home) = services_peer.as_ref().filter(|_| astro_nostr_proto::is_hex64(&node_hex)).map(|peer| format!("{peer}:{node_hex}")) {
+        background.push(tokio::spawn(captains.clone().keep_announced(home, stop_watch.clone())));
+    }
     let (mesh_admin, captains_admin) = admin::mesh_admins(&mesh, &captains);
     let account_origin = public_domain(&a).map(|d| format!("https://{d}"));
     let account_svc = Arc::new(astroportd::account::AccountService::new(db.clone(), secrets_dir.clone(), account_keys, station.secret.clone(), account_publish, account_origin).with_activity(activity.clone()).with_public_images(public_images.clone()));

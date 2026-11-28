@@ -118,7 +118,9 @@ impl Projector {
     /// Déclare une identité hébergée par cette station (état LOCAL, jamais déduit d'un DID).
     pub fn mark_hosted(hex: &str, role: &str) -> Statement {
         Statement::new(
-            "INSERT INTO identities(hex, role, hosted) VALUES (?1, ?2, 1) ON CONFLICT(hex) DO UPDATE SET hosted = 1",
+            // Un rôle `captain` venu d'un DID distant ne survit pas à l'hébergement : le Capitaine d'ici est désigné localement.
+            "INSERT INTO identities(hex, role, hosted) VALUES (?1, ?2, 1) \
+             ON CONFLICT(hex) DO UPDATE SET role = CASE WHEN hosted = 0 AND role = 'captain' THEN excluded.role ELSE role END, hosted = 1",
             vec![text(hex), text(role)],
         )
     }
@@ -236,10 +238,15 @@ fn did(e: &Event) -> Result<Vec<Statement>, ProjectError> {
     let assets = if role == "node" { capital_assets(e, obj, meta) } else { Vec::new() };
     // Station d'attache (`<PeerID>:<NODE_HEX>`) : tag `home_station` ou champ `astroportStation` du DID.
     let home = e.tag_value("home_station").or_else(|| obj.get("astroportStation").and_then(Json::as_str)).or_else(|| meta_str("astroportStation")).filter(|h| valid_home_station(h));
+    // Capitaine d'une autre station : son DID, signé de sa clé, se déclare Capitaine (`t = captain`) ET nomme sa station
+    // d'attache. La carte du maillage, elle, dit l'inverse (la station nomme son Capitaine) : l'écran Capitaines croise les
+    // deux. Le rôle ne change jamais pour un compte hébergé ici (voir le `ON CONFLICT`).
+    let role = if role == "multipass" && home.is_some() && tags_named(e, "t").any(|t| t == "captain") { "captain" } else { role };
     let mut out = vec![Statement::new(
         "INSERT INTO identities(hex, role, email, npub, g1pub_nostr, ipns, lang, contract, status, created_at, src_event, peer_id, home_station) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
-         ON CONFLICT(hex) DO UPDATE SET peer_id = COALESCE(excluded.peer_id, peer_id), home_station = COALESCE(excluded.home_station, home_station), \
+         ON CONFLICT(hex) DO UPDATE SET role = CASE WHEN hosted = 0 AND role IN ('multipass', 'captain') AND excluded.role IN ('multipass', 'captain') \
+             THEN excluded.role ELSE role END, peer_id = COALESCE(excluded.peer_id, peer_id), home_station = COALESCE(excluded.home_station, home_station), \
            email = COALESCE(excluded.email, email), npub = COALESCE(excluded.npub, npub), \
            g1pub_nostr = COALESCE(excluded.g1pub_nostr, g1pub_nostr), ipns = COALESCE(excluded.ipns, ipns), \
            lang = COALESCE(excluded.lang, lang), contract = excluded.contract, status = excluded.status, \

@@ -154,6 +154,15 @@ pub fn prune(swarm: &Path, max_age: Duration) -> usize {
     n
 }
 
+/// Pont maillage → Nostr : les Capitaines nommés par les cartes des **autres** stations (`captainHEX`), relus à chaque
+/// passage du crawl qui va chercher leur profil, leurs contacts et leur DID. Personne ne les suit pour autant.
+pub fn captain_keys(swarm: Option<PathBuf>, own_peer: Option<String>) -> astro_sync::KeysSource {
+    Arc::new(move || {
+        let peers = swarm.as_deref().map(astro_sync::read_peers).unwrap_or_default();
+        peers.into_iter().filter(|p| Some(&p.node_id) != own_peer.as_ref()).filter_map(|p| p.captain_hex).collect()
+    })
+}
+
 /// Tient le dossier : demande sa carte à chaque station connectée, toutes les [`EVERY_SECS`] (la première fois après 30 s).
 pub async fn keep(handle: P2pHandle, swarm: PathBuf, stop: tokio::sync::watch::Receiver<bool>) {
     keep_every(handle, swarm, Duration::from_secs(30), Duration::from_secs(EVERY_SECS), stop).await;

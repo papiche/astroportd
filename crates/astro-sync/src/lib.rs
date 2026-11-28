@@ -18,7 +18,7 @@ pub mod replication;
 pub mod replay;
 
 pub use client::{BoxFuture, ClientError, RelayClient, RelaySession, Signer, SyncResult, WsClient, WsSession};
-pub use crawl::{Circle, CrawlConfig, CrawlStats, Crawler, PassHook, PassReport, RelaySource, WANTED_SCOPE, purge_strangers};
+pub use crawl::{Circle, CrawlConfig, CrawlStats, Crawler, KeysSource, MAX_SOURCE_KEYS, PassHook, PassReport, RelaySource, WANTED_SCOPE, purge_strangers};
 pub use ingest::{Ingested, ingest_event, ingest_events};
 pub use outbox::RelayOutbox;
 pub use peers::{Peer, read_peers};

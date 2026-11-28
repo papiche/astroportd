@@ -153,6 +153,9 @@ pub(super) fn crawl(p: &Parts<'_>, relay_client: &Arc<astroportd::p2p_relay::P2p
             let peers = swarm.as_deref().map(astro_sync::read_peers).unwrap_or_default();
             peers.iter().filter(|p| Some(&p.node_id) != own.as_ref()).map(astro_sync::Peer::target).collect()
         });
+        // Pont maillage → Nostr : le Capitaine annoncé par la carte d'une station du maillage est synchronisé (profil, contacts,
+        // DID) depuis cette station. Il n'est suivi par personne : seul le Capitaine humain décide de le suivre.
+        let captains_on_mesh = astroportd::swarm_cards::captain_keys(a.swarm_dir.clone().or_else(default_swarm_dir), services_peer.clone());
         let (hook_db, hook_bus, hook_client) = (db.clone(), activity.clone(), client.clone());
         let hook: astro_sync::PassHook = Arc::new(move |r| {
             match &r.result {
@@ -179,7 +182,7 @@ pub(super) fn crawl(p: &Parts<'_>, relay_client: &Arc<astroportd::p2p_relay::P2p
         });
         let config = astro_sync::CrawlConfig { relays: a.relays.clone(), ..astro_sync::CrawlConfig::default() };
         let coop_keys: Vec<String> = astroportd::coop_config::coop_keys(uplanet_name).map(|(_, hex)| vec![hex]).unwrap_or_default();
-        let crawler = Arc::new(astro_sync::Crawler::new(db.clone(), client.clone(), config).with_relay_source(source).with_hook(hook).with_extra_keys(coop_keys).with_nudge(crawl_nudge.clone()));
+        let crawler = Arc::new(astro_sync::Crawler::new(db.clone(), client.clone(), config).with_relay_source(source).with_keys_source(captains_on_mesh).with_hook(hook).with_extra_keys(coop_keys).with_nudge(crawl_nudge.clone()));
         // Réplication à la demande du site public : la station d'accueil du membre d'abord, puis les relais du crawl ; 20 s au plus.
         if let Some(mut rx) = p.site_wants.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let (crawler, mut stop) = (crawler.clone(), p.stop_watch.clone());

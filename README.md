@@ -145,6 +145,6 @@ changement, les vérifications de la CI doivent passer sans avertissement : voir
 [docs/DEVELOPPER.md](docs/DEVELOPPER.md#4-construire-et-tester). Code et documentation en français ; messages de commit
 sans mention de co-auteur.
 
-Version 2.2.0 · Licence **AGPL-3.0** · Auteur : Fred (support@qo-op.com). Notes de version : [RELEASE_NOTES.md](RELEASE_NOTES.md).
+Version 2.3.0 · Licence **AGPL-3.0** · Auteur : Fred (support@qo-op.com). Notes de version : [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
 *Astroport est un bien commun : forkez-le, hébergez-le, faites-le vôtre.*
